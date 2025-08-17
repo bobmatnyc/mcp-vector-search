@@ -2,6 +2,8 @@
 
 🔍 **CLI-first semantic code search with MCP integration**
 
+> ⚠️ **Alpha Release (v0.0.3)**: This is an early-stage project under active development. Expect breaking changes and rough edges. Feedback and contributions are welcome!
+
 A modern, fast, and intelligent code search tool that understands your codebase through semantic analysis and AST parsing. Built with Python, powered by ChromaDB, and designed for developer productivity.
 
 ## ✨ Features
@@ -214,27 +216,51 @@ uv run mypy src/
 - **Memory Usage**: ~50MB baseline + ~1MB per 1000 code chunks
 - **Storage**: ~1KB per code chunk (compressed embeddings)
 
+## ⚠️ Known Limitations (Alpha)
+
+- **Tree-sitter Integration**: Currently using regex fallback parsing (Tree-sitter setup needs improvement)
+- **Search Relevance**: Embedding model may need tuning for code-specific queries
+- **Error Handling**: Some edge cases may not be gracefully handled
+- **Documentation**: API documentation is minimal
+- **Testing**: Limited test coverage, needs real-world validation
+
+## 🙏 Feedback Needed
+
+We're actively seeking feedback on:
+
+- **Search Quality**: How relevant are the search results for your codebase?
+- **Performance**: How does indexing and search speed feel in practice?
+- **Usability**: Is the CLI interface intuitive and helpful?
+- **Language Support**: Which languages would you like to see added next?
+- **Features**: What functionality is missing for your workflow?
+
+Please [open an issue](https://github.com/bobmatnyc/mcp-vector-search/issues) or start a [discussion](https://github.com/bobmatnyc/mcp-vector-search/discussions) to share your experience!
+
 ## 🔮 Roadmap
 
-### Phase 1: Foundation ✅
+### v0.0.x: Alpha (Current) 🔄
 - [x] Core CLI interface
 - [x] Python/JS/TS parsing
 - [x] ChromaDB integration
 - [x] File watching
 - [x] Basic search functionality
-
-### Phase 2: Enhancement 🔄
-- [ ] Advanced search modes (contextual, similar code)
+- [ ] Real-world testing and feedback
+- [ ] Bug fixes and stability improvements
 - [ ] Performance optimizations
-- [ ] Additional language support
-- [ ] Configuration improvements
-- [ ] Comprehensive testing
 
-### Phase 3: Integration 🔮
+### v0.1.x: Beta 🔮
+- [ ] Advanced search modes (contextual, similar code)
+- [ ] Additional language support (Java, Go, Rust)
+- [ ] Configuration improvements
+- [ ] Comprehensive testing suite
+- [ ] Documentation improvements
+
+### v1.0.x: Stable 🔮
 - [ ] MCP server implementation
 - [ ] IDE extensions (VS Code, JetBrains)
 - [ ] Git integration
 - [ ] Team collaboration features
+- [ ] Production-ready performance
 
 ## 📄 License
 
