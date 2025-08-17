@@ -271,6 +271,52 @@ Please [open an issue](https://github.com/bobmatnyc/mcp-vector-search/issues) or
 - [ ] Team collaboration features
 - [ ] Production-ready performance
 
+## 🛠️ Development
+
+### Three-Stage Development Workflow
+
+**Stage A: Local Development & Testing**
+```bash
+# Setup development environment
+uv sync && uv pip install -e .
+
+# Run development tests
+./scripts/dev-test.sh
+
+# Test CLI locally
+uv run mcp-vector-search version
+```
+
+**Stage B: Local Deployment Testing**
+```bash
+# Build and test clean deployment
+./scripts/deploy-test.sh
+
+# Test on other projects
+cd ~/other-project
+mcp-vector-search init && mcp-vector-search index
+```
+
+**Stage C: PyPI Publication**
+```bash
+# Publish to PyPI
+./scripts/publish.sh
+
+# Verify published version
+pip install mcp-vector-search --upgrade
+```
+
+### Quick Reference
+```bash
+./scripts/workflow.sh  # Show workflow overview
+```
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development instructions.
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+
 ## 📄 License
 
 MIT License - see [LICENSE](LICENSE) file for details.

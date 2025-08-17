@@ -1,0 +1,243 @@
+# MCP Vector Search - Development Workflow
+
+## 🔄 Three-Stage Development Process
+
+### Stage A: Local Development & Testing 🛠️
+*Test and fix in the current project environment*
+
+#### Setup Development Environment
+```bash
+# Install in development mode
+uv sync
+uv pip install -e .
+
+# Install pre-commit hooks
+uv run pre-commit install
+
+# Run tests
+uv run pytest
+
+# Run type checking
+uv run mypy src/
+
+# Format code
+uv run black src/ tests/
+uv run ruff check src/ tests/ --fix
+```
+
+#### Development Commands
+```bash
+# Test CLI locally
+uv run mcp-vector-search --help
+uv run mcp-vector-search version
+
+# Test on this project
+uv run mcp-vector-search init
+uv run mcp-vector-search index
+uv run mcp-vector-search search "semantic search"
+
+# Run comprehensive tests
+uv run pytest -v --cov=src/mcp_vector_search
+```
+
+#### Pre-commit Workflow
+```bash
+# Check before committing
+uv run pre-commit run --all-files
+
+# Commit changes
+git add .
+git commit -m "feat: your feature description"
+```
+
+---
+
+### Stage B: Local Deployment Testing 🧪
+*Deploy to this machine to test clean deployed version on other projects*
+
+#### Install Clean Version Locally
+```bash
+# Uninstall development version
+pip uninstall mcp-vector-search -y
+
+# Install from local build
+uv run python -m build
+pip install dist/mcp_vector_search-*.whl
+
+# Or install from PyPI (latest published)
+pip install mcp-vector-search --upgrade
+```
+
+#### Test on Other Projects
+```bash
+# Navigate to a different project
+cd ~/Projects/some-other-project
+
+# Test initialization
+mcp-vector-search init
+
+# Test indexing
+mcp-vector-search index
+
+# Test search functionality
+mcp-vector-search search "function definition"
+mcp-vector-search search "error handling"
+
+# Test file watching
+mcp-vector-search watch &
+# Make some file changes and verify updates
+
+# Check status
+mcp-vector-search status
+```
+
+#### Validation Checklist
+- [ ] CLI commands work from any directory
+- [ ] Can initialize new projects
+- [ ] Indexing works on different codebases
+- [ ] Search returns relevant results
+- [ ] File watching detects changes
+- [ ] No import errors or missing dependencies
+- [ ] Performance is acceptable
+
+---
+
+### Stage C: PyPI Publication 🌍
+*Publish to PyPI for others to test*
+
+#### Pre-publication Checklist
+- [ ] All tests pass locally
+- [ ] Local deployment testing successful
+- [ ] Version number updated
+- [ ] CHANGELOG.md updated
+- [ ] README.md reflects current features
+- [ ] No sensitive data in code
+
+#### Publication Process
+```bash
+# Update version in src/mcp_vector_search/__init__.py
+# Update CHANGELOG.md
+
+# Clean previous builds
+rm -rf dist/ build/ *.egg-info
+
+# Build package
+uv run python -m build
+
+# Check package
+uv run twine check dist/*
+
+# Upload to PyPI
+uv run twine upload dist/*
+```
+
+#### Post-publication Testing
+```bash
+# Test fresh installation
+python -m venv test-env
+source test-env/bin/activate
+pip install mcp-vector-search
+
+# Verify installation
+mcp-vector-search version
+mcp-vector-search --help
+
+# Test on sample project
+mkdir test-project && cd test-project
+mcp-vector-search init
+echo "def hello(): pass" > test.py
+mcp-vector-search index
+mcp-vector-search search "hello"
+```
+
+---
+
+## 🔧 Development Scripts
+
+### Quick Development Test
+```bash
+#!/bin/bash
+# scripts/dev-test.sh
+set -e
+
+echo "🧪 Running development tests..."
+uv run pytest -v
+uv run mypy src/
+uv run mcp-vector-search version
+echo "✅ Development tests passed!"
+```
+
+### Local Deployment Test
+```bash
+#!/bin/bash
+# scripts/deploy-test.sh
+set -e
+
+echo "📦 Building and testing local deployment..."
+uv run python -m build
+pip uninstall mcp-vector-search -y || true
+pip install dist/mcp_vector_search-*.whl
+mcp-vector-search version
+echo "✅ Local deployment test passed!"
+```
+
+### PyPI Publication
+```bash
+#!/bin/bash
+# scripts/publish.sh
+set -e
+
+echo "🚀 Publishing to PyPI..."
+rm -rf dist/ build/ *.egg-info
+uv run python -m build
+uv run twine check dist/*
+uv run twine upload dist/*
+echo "✅ Published to PyPI!"
+```
+
+---
+
+## 🐛 Debugging Common Issues
+
+### Stage A Issues
+- **Import errors**: Check `uv sync` and virtual environment
+- **Test failures**: Run `uv run pytest -v` for detailed output
+- **Type errors**: Run `uv run mypy src/` to check types
+
+### Stage B Issues
+- **Command not found**: Check if package installed correctly
+- **Permission errors**: Use virtual environment or `--user` flag
+- **Different behavior**: Clear any cached files or configs
+
+### Stage C Issues
+- **Upload failures**: Check PyPI credentials and network
+- **Installation failures**: Verify package dependencies
+- **Version conflicts**: Ensure version number is incremented
+
+---
+
+## 📋 Version Management
+
+### Semantic Versioning
+- **0.0.x**: Alpha releases (breaking changes expected)
+- **0.x.0**: Beta releases (feature additions)
+- **x.0.0**: Stable releases (production ready)
+
+### Release Process
+1. Update version in `src/mcp_vector_search/__init__.py`
+2. Update `CHANGELOG.md` with changes
+3. Commit: `git commit -m "bump: version 0.0.x"`
+4. Tag: `git tag v0.0.x`
+5. Push: `git push && git push --tags`
+6. Publish to PyPI
+
+---
+
+## 🎯 Best Practices
+
+1. **Always test locally first** (Stage A)
+2. **Verify clean deployment** (Stage B) before publishing
+3. **Use semantic versioning** for clear expectations
+4. **Keep CHANGELOG.md updated** for users
+5. **Test on multiple projects** to ensure compatibility
+6. **Monitor PyPI downloads** and user feedback
