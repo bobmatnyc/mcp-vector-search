@@ -2,6 +2,10 @@
 
 🔍 **CLI-first semantic code search with MCP integration**
 
+[![PyPI version](https://badge.fury.io/py/mcp-vector-search.svg)](https://badge.fury.io/py/mcp-vector-search)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 > ⚠️ **Alpha Release (v0.0.3)**: This is an early-stage project under active development. Expect breaking changes and rough edges. Feedback and contributions are welcome!
 
 A modern, fast, and intelligent code search tool that understands your codebase through semantic analysis and AST parsing. Built with Python, powered by ChromaDB, and designed for developer productivity.
@@ -34,11 +38,16 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 ### Installation
 
 ```bash
-# Install with UV (recommended)
+# Install from PyPI
+pip install mcp-vector-search
+
+# Or with UV (recommended)
 uv add mcp-vector-search
 
-# Or with pip
-pip install mcp-vector-search
+# Or install from source
+git clone https://github.com/bobmatnyc/mcp-vector-search.git
+cd mcp-vector-search
+uv sync && uv pip install -e .
 ```
 
 ### Basic Usage
