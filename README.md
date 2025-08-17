@@ -313,6 +313,20 @@ pip install mcp-vector-search --upgrade
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development instructions.
 
+## 📚 Documentation
+
+For comprehensive documentation, see **[CLAUDE.md](CLAUDE.md)** - the main documentation index.
+
+### Quick Links
+- **[Installation & Deployment](docs/DEPLOY.md)** - Setup and deployment guide
+- **[Project Structure](docs/STRUCTURE.md)** - Architecture and file organization
+- **[Contributing Guidelines](docs/developer/CONTRIBUTING.md)** - How to contribute
+- **[API Reference](docs/developer/API.md)** - Internal API documentation
+- **[Testing Guide](docs/developer/TESTING.md)** - Testing strategies
+- **[Code Quality](docs/developer/LINTING.md)** - Linting and formatting
+- **[Versioning](docs/VERSIONING.md)** - Version management
+- **[Releases](docs/RELEASES.md)** - Release process
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
