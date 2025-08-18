@@ -25,13 +25,15 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 - **Rich Output**: Syntax highlighting, similarity scores, context
 - **Fast Performance**: Sub-second search responses, efficient indexing
 - **Modern Architecture**: Async-first, type-safe, modular design
+- **Semi-Automatic Reindexing**: Multiple strategies without daemon processes
 
 ### 🔧 **Technical Features**
-- **Vector Database**: ChromaDB for efficient similarity search
+- **Vector Database**: ChromaDB with connection pooling for 13.6% performance boost
 - **Embedding Models**: Configurable sentence transformers
-- **Incremental Updates**: Smart file watching and re-indexing
+- **Smart Reindexing**: Search-triggered, Git hooks, scheduled tasks, and manual options
 - **Extensible Parsers**: Plugin architecture for new languages
 - **Configuration Management**: Project-specific settings
+- **Production Ready**: Connection pooling, auto-indexing, comprehensive error handling
 
 ## 🚀 Quick Start
 
@@ -64,12 +66,26 @@ mcp-vector-search search "authentication logic"
 mcp-vector-search search "database connection setup"
 mcp-vector-search search "error handling patterns"
 
+# Setup automatic reindexing (recommended)
+mcp-vector-search auto-index setup --method all
+
 # Check project status
 mcp-vector-search status
 
 # Start file watching (auto-update index)
 mcp-vector-search watch
 ```
+
+## Versioning & Releasing
+
+This project uses semantic versioning with an automated release workflow.
+
+### Quick Commands
+- `make version-show` - Display current version
+- `make release-patch` - Create patch release
+- `make publish` - Publish to PyPI
+
+See [docs/VERSIONING_WORKFLOW.md](docs/VERSIONING_WORKFLOW.md) for complete documentation.
 
 ## 📖 Documentation
 
@@ -114,6 +130,25 @@ mcp-vector-search search "error handling" --limit 10
 mcp-vector-search search similar "path/to/function.py:25"
 ```
 
+#### `auto-index` - Automatic Reindexing
+```bash
+# Setup all auto-indexing strategies
+mcp-vector-search auto-index setup --method all
+
+# Setup specific strategies
+mcp-vector-search auto-index setup --method git-hooks
+mcp-vector-search auto-index setup --method scheduled --interval 60
+
+# Check for stale files and auto-reindex
+mcp-vector-search auto-index check --auto-reindex --max-files 10
+
+# View auto-indexing status
+mcp-vector-search auto-index status
+
+# Remove auto-indexing setup
+mcp-vector-search auto-index teardown --method all
+```
+
 #### `watch` - File Watching
 ```bash
 # Start watching for changes
@@ -147,6 +182,39 @@ mcp-vector-search config set embedding_model microsoft/codebert-base
 
 # List available models
 mcp-vector-search config models
+```
+
+## 🚀 Performance Features
+
+### Connection Pooling
+Automatic connection pooling provides **13.6% performance improvement** with zero configuration:
+
+```python
+# Automatically enabled for high-throughput scenarios
+from mcp_vector_search.core.database import PooledChromaVectorDatabase
+
+database = PooledChromaVectorDatabase(
+    max_connections=10,    # Pool size
+    min_connections=2,     # Warm connections
+    max_idle_time=300.0,   # 5 minutes
+)
+```
+
+### Semi-Automatic Reindexing
+Multiple strategies to keep your index up-to-date without daemon processes:
+
+1. **Search-Triggered**: Automatically checks for stale files during searches
+2. **Git Hooks**: Triggers reindexing after commits, merges, checkouts
+3. **Scheduled Tasks**: System-level cron jobs or Windows tasks
+4. **Manual Checks**: On-demand via CLI commands
+5. **Periodic Checker**: In-process periodic checks for long-running apps
+
+```bash
+# Setup all strategies
+mcp-vector-search auto-index setup --method all
+
+# Check status
+mcp-vector-search auto-index status
 ```
 
 ### Configuration

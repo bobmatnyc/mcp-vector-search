@@ -1,36 +1,35 @@
 """Default configurations for MCP Vector Search."""
 
 from pathlib import Path
-from typing import Dict, List
 
 # Default file extensions to index (prioritize supported languages)
 DEFAULT_FILE_EXTENSIONS = [
-    ".py",      # Python (fully supported)
-    ".js",      # JavaScript (fully supported)
-    ".ts",      # TypeScript (fully supported)
-    ".jsx",     # React JSX (fully supported)
-    ".tsx",     # React TSX (fully supported)
-    ".mjs",     # ES6 modules (fully supported)
-    ".java",    # Java (fallback parsing)
-    ".cpp",     # C++ (fallback parsing)
-    ".c",       # C (fallback parsing)
-    ".h",       # C/C++ headers (fallback parsing)
-    ".hpp",     # C++ headers (fallback parsing)
-    ".cs",      # C# (fallback parsing)
-    ".go",      # Go (fallback parsing)
-    ".rs",      # Rust (fallback parsing)
-    ".php",     # PHP (fallback parsing)
-    ".rb",      # Ruby (fallback parsing)
-    ".swift",   # Swift (fallback parsing)
-    ".kt",      # Kotlin (fallback parsing)
-    ".scala",   # Scala (fallback parsing)
-    ".sh",      # Shell scripts (fallback parsing)
-    ".bash",    # Bash scripts (fallback parsing)
-    ".zsh",     # Zsh scripts (fallback parsing)
+    ".py",  # Python (fully supported)
+    ".js",  # JavaScript (fully supported)
+    ".ts",  # TypeScript (fully supported)
+    ".jsx",  # React JSX (fully supported)
+    ".tsx",  # React TSX (fully supported)
+    ".mjs",  # ES6 modules (fully supported)
+    ".java",  # Java (fallback parsing)
+    ".cpp",  # C++ (fallback parsing)
+    ".c",  # C (fallback parsing)
+    ".h",  # C/C++ headers (fallback parsing)
+    ".hpp",  # C++ headers (fallback parsing)
+    ".cs",  # C# (fallback parsing)
+    ".go",  # Go (fallback parsing)
+    ".rs",  # Rust (fallback parsing)
+    ".php",  # PHP (fallback parsing)
+    ".rb",  # Ruby (fallback parsing)
+    ".swift",  # Swift (fallback parsing)
+    ".kt",  # Kotlin (fallback parsing)
+    ".scala",  # Scala (fallback parsing)
+    ".sh",  # Shell scripts (fallback parsing)
+    ".bash",  # Bash scripts (fallback parsing)
+    ".zsh",  # Zsh scripts (fallback parsing)
 ]
 
 # Language mappings for parsers
-LANGUAGE_MAPPINGS: Dict[str, str] = {
+LANGUAGE_MAPPINGS: dict[str, str] = {
     ".py": "python",
     ".pyw": "python",
     ".js": "javascript",
@@ -58,23 +57,23 @@ LANGUAGE_MAPPINGS: Dict[str, str] = {
 
 # Default embedding models by use case
 DEFAULT_EMBEDDING_MODELS = {
-    "code": "microsoft/codebert-base",
+    "code": "sentence-transformers/all-MiniLM-L6-v2",  # Changed from microsoft/codebert-base which doesn't exist
     "multilingual": "sentence-transformers/all-MiniLM-L6-v2",
     "fast": "sentence-transformers/all-MiniLM-L12-v2",
-    "precise": "microsoft/unixcoder-base",
+    "precise": "sentence-transformers/all-mpnet-base-v2",  # Changed from microsoft/unixcoder-base
 }
 
 # Default similarity thresholds by language
 DEFAULT_SIMILARITY_THRESHOLDS = {
-    "python": 0.75,
-    "javascript": 0.70,
-    "typescript": 0.70,
-    "java": 0.75,
-    "cpp": 0.70,
-    "c": 0.70,
-    "go": 0.75,
-    "rust": 0.75,
-    "default": 0.70,
+    "python": 0.3,
+    "javascript": 0.3,
+    "typescript": 0.3,
+    "java": 0.3,
+    "cpp": 0.3,
+    "c": 0.3,
+    "go": 0.3,
+    "rust": 0.3,
+    "default": 0.3,
 }
 
 # Default chunk sizes by language (in tokens)
@@ -145,6 +144,7 @@ DEFAULT_IGNORE_FILES = [
     "*.lock",
 ]
 
+
 def get_default_config_path(project_root: Path) -> Path:
     """Get the default configuration file path for a project."""
     return project_root / ".mcp-vector-search" / "config.json"
@@ -167,7 +167,9 @@ def get_language_from_extension(extension: str) -> str:
 
 def get_similarity_threshold(language: str) -> float:
     """Get the default similarity threshold for a language."""
-    return DEFAULT_SIMILARITY_THRESHOLDS.get(language.lower(), DEFAULT_SIMILARITY_THRESHOLDS["default"])
+    return DEFAULT_SIMILARITY_THRESHOLDS.get(
+        language.lower(), DEFAULT_SIMILARITY_THRESHOLDS["default"]
+    )
 
 
 def get_chunk_size(language: str) -> int:

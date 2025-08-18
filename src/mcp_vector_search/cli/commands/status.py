@@ -2,7 +2,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 
 import typer
 from loguru import logger
@@ -14,13 +14,10 @@ from ...core.indexer import SemanticIndexer
 from ...core.project import ProjectManager
 from ..output import (
     console,
-    print_config,
     print_dependency_status,
     print_error,
-    print_index_stats,
     print_info,
     print_json,
-    print_project_info,
 )
 
 # Create status subcommand app
@@ -48,10 +45,10 @@ def main(
     ),
 ) -> None:
     """Show project status and indexing statistics.
-    
+
     This command displays comprehensive information about your MCP Vector Search
     project including configuration, indexing status, and system health.
-    
+
     Examples:
         mcp-vector-search status
         mcp-vector-search status --verbose
@@ -59,14 +56,16 @@ def main(
     """
     try:
         project_root = ctx.obj.get("project_root") or Path.cwd()
-        
-        asyncio.run(show_status(
-            project_root=project_root,
-            verbose=verbose,
-            health_check=health_check,
-            json_output=json_output,
-        ))
-        
+
+        asyncio.run(
+            show_status(
+                project_root=project_root,
+                verbose=verbose,
+                health_check=health_check,
+                json_output=json_output,
+            )
+        )
+
     except Exception as e:
         logger.error(f"Status check failed: {e}")
         print_error(f"Status check failed: {e}")
@@ -81,45 +80,45 @@ async def show_status(
 ) -> None:
     """Show comprehensive project status."""
     status_data = {}
-    
+
     try:
         # Check if project is initialized
         project_manager = ProjectManager(project_root)
-        
+
         if not project_manager.is_initialized():
             if json_output:
                 status_data = {
                     "initialized": False,
                     "project_root": str(project_root),
-                    "error": "Project not initialized"
+                    "error": "Project not initialized",
                 }
                 print_json(status_data)
             else:
                 print_error(f"Project not initialized at {project_root}")
                 print_info("Run 'mcp-vector-search init' to initialize the project")
             return
-        
+
         # Get project information
         project_info = project_manager.get_project_info()
         config = project_manager.load_config()
-        
+
         # Get indexing statistics
         embedding_function, _ = create_embedding_function(config.embedding_model)
         database = ChromaVectorDatabase(
             persist_directory=config.index_path,
             embedding_function=embedding_function,
         )
-        
+
         indexer = SemanticIndexer(
             database=database,
             project_root=project_root,
             file_extensions=config.file_extensions,
         )
-        
+
         async with database:
             index_stats = await indexer.get_indexing_stats()
             db_stats = await database.get_stats()
-        
+
         # Compile status data
         status_data = {
             "project": {
@@ -146,12 +145,12 @@ async def show_status(
                 "last_updated": db_stats.last_updated,
             },
         }
-        
+
         # Add health check if requested
         if health_check:
             health_status = await perform_health_check(project_root, config)
             status_data["health"] = health_status
-        
+
         # Add verbose information
         if verbose:
             status_data["verbose"] = {
@@ -160,13 +159,13 @@ async def show_status(
                 "ignore_patterns": list(indexer.get_ignore_patterns()),
                 "parser_info": index_stats.get("parser_info", {}),
             }
-        
+
         # Output results
         if json_output:
             print_json(status_data)
         else:
             _display_status(status_data, verbose)
-            
+
     except ProjectNotFoundError:
         if json_output:
             print_json({"initialized": False, "error": "Project not initialized"})
@@ -181,45 +180,51 @@ async def show_status(
         raise
 
 
-def _display_status(status_data: Dict[str, Any], verbose: bool) -> None:
+def _display_status(status_data: dict[str, Any], verbose: bool) -> None:
     """Display status in human-readable format."""
     project_data = status_data["project"]
     config_data = status_data["configuration"]
     index_data = status_data["index"]
-    
+
     # Project information
     console.print("[bold blue]Project Information[/bold blue]")
     console.print(f"  Name: {project_data['name']}")
     console.print(f"  Root: {project_data['root_path']}")
-    console.print(f"  Languages: {', '.join(project_data['languages']) if project_data['languages'] else 'None detected'}")
+    console.print(
+        f"  Languages: {', '.join(project_data['languages']) if project_data['languages'] else 'None detected'}"
+    )
     console.print(f"  Indexable Files: {project_data['file_count']}")
     console.print()
-    
+
     # Configuration
     console.print("[bold blue]Configuration[/bold blue]")
     console.print(f"  Embedding Model: {config_data['embedding_model']}")
     console.print(f"  Similarity Threshold: {config_data['similarity_threshold']}")
     console.print(f"  File Extensions: {', '.join(config_data['file_extensions'])}")
-    console.print(f"  Cache Embeddings: {'✓' if config_data['cache_embeddings'] else '✗'}")
+    console.print(
+        f"  Cache Embeddings: {'✓' if config_data['cache_embeddings'] else '✗'}"
+    )
     console.print()
-    
+
     # Index statistics
     console.print("[bold blue]Index Statistics[/bold blue]")
-    console.print(f"  Indexed Files: {index_data['indexed_files']}/{index_data['total_files']}")
+    console.print(
+        f"  Indexed Files: {index_data['indexed_files']}/{index_data['total_files']}"
+    )
     console.print(f"  Total Chunks: {index_data['total_chunks']}")
     console.print(f"  Index Size: {index_data['index_size_mb']:.2f} MB")
-    
-    if index_data['languages']:
+
+    if index_data["languages"]:
         console.print("  Language Distribution:")
-        for lang, count in index_data['languages'].items():
+        for lang, count in index_data["languages"].items():
             console.print(f"    {lang}: {count} chunks")
     console.print()
-    
+
     # Health check results
     if "health" in status_data:
         health_data = status_data["health"]
         console.print("[bold blue]Health Check[/bold blue]")
-        
+
         overall_health = health_data.get("overall", "unknown")
         if overall_health == "healthy":
             console.print("[green]✓ System is healthy[/green]")
@@ -227,7 +232,7 @@ def _display_status(status_data: Dict[str, Any], verbose: bool) -> None:
             console.print("[yellow]⚠ System has warnings[/yellow]")
         else:
             console.print("[red]✗ System has issues[/red]")
-        
+
         for component, status in health_data.get("components", {}).items():
             if status == "ok":
                 console.print(f"  [green]✓[/green] {component}")
@@ -236,42 +241,42 @@ def _display_status(status_data: Dict[str, Any], verbose: bool) -> None:
             else:
                 console.print(f"  [red]✗[/red] {component}")
         console.print()
-    
+
     # Verbose information
     if verbose and "verbose" in status_data:
         verbose_data = status_data["verbose"]
         console.print("[bold blue]Detailed Information[/bold blue]")
         console.print(f"  Config Path: {verbose_data['config_path']}")
         console.print(f"  Index Path: {verbose_data['index_path']}")
-        console.print(f"  Ignore Patterns: {', '.join(verbose_data['ignore_patterns'])}")
+        console.print(
+            f"  Ignore Patterns: {', '.join(verbose_data['ignore_patterns'])}"
+        )
 
 
-async def perform_health_check(project_root: Path, config) -> Dict[str, Any]:
+async def perform_health_check(project_root: Path, config) -> dict[str, Any]:
     """Perform comprehensive health check."""
     health_status = {
         "overall": "healthy",
         "components": {},
         "issues": [],
     }
-    
+
     try:
         # Check dependencies
         deps_ok = check_dependencies()
         health_status["components"]["dependencies"] = "ok" if deps_ok else "error"
         if not deps_ok:
             health_status["issues"].append("Missing dependencies")
-        
+
         # Check configuration
-        config_ok = True
         try:
             # Validate embedding model
             embedding_function, _ = create_embedding_function(config.embedding_model)
             health_status["components"]["embedding_model"] = "ok"
         except Exception as e:
-            config_ok = False
             health_status["components"]["embedding_model"] = "error"
             health_status["issues"].append(f"Embedding model error: {e}")
-        
+
         # Check database
         try:
             database = ChromaVectorDatabase(
@@ -284,7 +289,7 @@ async def perform_health_check(project_root: Path, config) -> Dict[str, Any]:
         except Exception as e:
             health_status["components"]["database"] = "error"
             health_status["issues"].append(f"Database error: {e}")
-        
+
         # Check file system permissions
         try:
             config.index_path.mkdir(parents=True, exist_ok=True)
@@ -295,17 +300,19 @@ async def perform_health_check(project_root: Path, config) -> Dict[str, Any]:
         except Exception as e:
             health_status["components"]["file_permissions"] = "error"
             health_status["issues"].append(f"File permission error: {e}")
-        
+
         # Determine overall health
         if any(status == "error" for status in health_status["components"].values()):
             health_status["overall"] = "error"
-        elif any(status == "warning" for status in health_status["components"].values()):
+        elif any(
+            status == "warning" for status in health_status["components"].values()
+        ):
             health_status["overall"] = "warning"
-        
+
     except Exception as e:
         health_status["overall"] = "error"
         health_status["issues"].append(f"Health check failed: {e}")
-    
+
     return health_status
 
 
@@ -322,9 +329,9 @@ def check_dependencies() -> bool:
         ("watchdog", "Watchdog"),
         ("loguru", "Loguru"),
     ]
-    
+
     all_available = True
-    
+
     for module_name, display_name in dependencies:
         try:
             __import__(module_name)
@@ -332,7 +339,7 @@ def check_dependencies() -> bool:
         except ImportError:
             print_dependency_status(display_name, False)
             all_available = False
-    
+
     return all_available
 
 

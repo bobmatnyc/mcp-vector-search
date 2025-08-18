@@ -1,8 +1,23 @@
 #!/bin/bash
+# ============================================================================
+# DEPRECATION NOTICE: This script is deprecated as of v4.0.3
+# Please use the Makefile instead:
+#   make publish        # Publish to PyPI
+#   make publish-test   # Publish to test PyPI
+#   make release-patch  # Full release workflow including publishing
+# 
+# This script will be removed in v5.0.0
+# ============================================================================
+
 # PyPI publication script for Stage C
 
 set -e
 
+echo "============================================================================"
+echo "⚠️  DEPRECATION WARNING: This script is deprecated!"
+echo "   Please use: make publish"
+echo "============================================================================"
+echo ""
 echo "🚀 Stage C: PyPI Publication"
 echo "============================"
 

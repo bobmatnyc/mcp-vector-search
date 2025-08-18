@@ -1,7 +1,6 @@
 """Config command for MCP Vector Search CLI."""
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 from loguru import logger
@@ -34,21 +33,21 @@ def show(
     try:
         project_root = ctx.obj.get("project_root") or Path.cwd()
         project_manager = ProjectManager(project_root)
-        
+
         if not project_manager.is_initialized():
             raise ProjectNotFoundError(
                 f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
             )
-        
+
         config = project_manager.load_config()
         config_dict = config.dict()
-        
+
         if json_output:
             print_json(config_dict, title="Project Configuration")
         else:
             console.print("[bold blue]Project Configuration[/bold blue]\n")
             print_config(config_dict)
-            
+
     except ProjectNotFoundError as e:
         print_error(str(e))
         raise typer.Exit(1)
@@ -65,7 +64,7 @@ def set(
     value: str = typer.Argument(..., help="Configuration value"),
 ) -> None:
     """Set a configuration value.
-    
+
     Examples:
         mcp-vector-search config set similarity_threshold 0.8
         mcp-vector-search config set embedding_model microsoft/unixcoder-base
@@ -74,17 +73,17 @@ def set(
     try:
         project_root = ctx.obj.get("project_root") or Path.cwd()
         project_manager = ProjectManager(project_root)
-        
+
         if not project_manager.is_initialized():
             raise ProjectNotFoundError(
                 f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
             )
-        
+
         config = project_manager.load_config()
-        
+
         # Parse and validate the value
         parsed_value = _parse_config_value(key, value)
-        
+
         # Update configuration
         if hasattr(config, key):
             setattr(config, key, parsed_value)
@@ -94,7 +93,7 @@ def set(
             print_error(f"Unknown configuration key: {key}")
             _show_available_keys()
             raise typer.Exit(1)
-            
+
     except (ProjectNotFoundError, ConfigurationError) as e:
         print_error(str(e))
         raise typer.Exit(1)
@@ -113,14 +112,14 @@ def get(
     try:
         project_root = ctx.obj.get("project_root") or Path.cwd()
         project_manager = ProjectManager(project_root)
-        
+
         if not project_manager.is_initialized():
             raise ProjectNotFoundError(
                 f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
             )
-        
+
         config = project_manager.load_config()
-        
+
         if hasattr(config, key):
             value = getattr(config, key)
             console.print(f"[cyan]{key}[/cyan]: {value}")
@@ -128,7 +127,7 @@ def get(
             print_error(f"Unknown configuration key: {key}")
             _show_available_keys()
             raise typer.Exit(1)
-            
+
     except ProjectNotFoundError as e:
         print_error(str(e))
         raise typer.Exit(1)
@@ -141,7 +140,9 @@ def get(
 @config_app.command()
 def reset(
     ctx: typer.Context,
-    key: Optional[str] = typer.Argument(None, help="Configuration key to reset (resets all if not specified)"),
+    key: str | None = typer.Argument(
+        None, help="Configuration key to reset (resets all if not specified)"
+    ),
     confirm: bool = typer.Option(
         False,
         "--yes",
@@ -153,28 +154,29 @@ def reset(
     try:
         project_root = ctx.obj.get("project_root") or Path.cwd()
         project_manager = ProjectManager(project_root)
-        
+
         if not project_manager.is_initialized():
             raise ProjectNotFoundError(
                 f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
             )
-        
+
         if not confirm:
             from ..output import confirm_action
+
             if key:
                 message = f"Reset '{key}' to default value?"
             else:
                 message = "Reset all configuration to defaults?"
-            
+
             if not confirm_action(message, default=False):
                 print_info("Reset cancelled")
                 raise typer.Exit(0)
-        
+
         if key:
             # Reset specific key
             config = project_manager.load_config()
             default_value = _get_default_value(key)
-            
+
             if hasattr(config, key):
                 setattr(config, key, default_value)
                 project_manager.save_config(config)
@@ -184,8 +186,11 @@ def reset(
                 raise typer.Exit(1)
         else:
             # Reset all configuration by re-initializing
-            from ...config.defaults import DEFAULT_EMBEDDING_MODELS, DEFAULT_FILE_EXTENSIONS
-            
+            from ...config.defaults import (
+                DEFAULT_EMBEDDING_MODELS,
+                DEFAULT_FILE_EXTENSIONS,
+            )
+
             config = project_manager.initialize(
                 file_extensions=DEFAULT_FILE_EXTENSIONS,
                 embedding_model=DEFAULT_EMBEDDING_MODELS["code"],
@@ -193,7 +198,7 @@ def reset(
                 force=True,
             )
             print_success("Reset all configuration to defaults")
-            
+
     except (ProjectNotFoundError, ConfigurationError) as e:
         print_error(str(e))
         raise typer.Exit(1)
@@ -214,7 +219,7 @@ def _parse_config_value(key: str, value: str):
     # Boolean values
     if key in ["cache_embeddings", "watch_files"]:
         return value.lower() in ("true", "yes", "1", "on")
-    
+
     # Float values
     if key in ["similarity_threshold"]:
         try:
@@ -224,7 +229,7 @@ def _parse_config_value(key: str, value: str):
             return parsed
         except ValueError as e:
             raise ConfigurationError(f"Invalid float value for {key}: {value}") from e
-    
+
     # Integer values
     if key in ["max_chunk_size", "max_cache_size"]:
         try:
@@ -234,12 +239,13 @@ def _parse_config_value(key: str, value: str):
             return parsed
         except ValueError as e:
             raise ConfigurationError(f"Invalid integer value for {key}: {value}") from e
-    
+
     # List values
     if key in ["file_extensions", "languages"]:
         if value.startswith("[") and value.endswith("]"):
             # JSON-style list
             import json
+
             try:
                 return json.loads(value)
             except json.JSONDecodeError as e:
@@ -251,11 +257,11 @@ def _parse_config_value(key: str, value: str):
                 # Ensure extensions start with dot
                 items = [ext if ext.startswith(".") else f".{ext}" for ext in items]
             return items
-    
+
     # Path values
     if key in ["project_root", "index_path"]:
         return Path(value)
-    
+
     # String values (default)
     return value
 
@@ -263,25 +269,25 @@ def _parse_config_value(key: str, value: str):
 def _get_default_value(key: str):
     """Get default value for a configuration key."""
     from ...config.defaults import DEFAULT_EMBEDDING_MODELS, DEFAULT_FILE_EXTENSIONS
-    
+
     defaults = {
         "file_extensions": DEFAULT_FILE_EXTENSIONS,
         "embedding_model": DEFAULT_EMBEDDING_MODELS["code"],
-        "similarity_threshold": 0.75,
+        "similarity_threshold": 0.5,
         "max_chunk_size": 512,
         "languages": [],
         "watch_files": False,
         "cache_embeddings": True,
         "max_cache_size": 1000,
     }
-    
+
     return defaults.get(key, "")
 
 
 def _show_available_keys() -> None:
     """Show all available configuration keys."""
     console.print("\n[bold blue]Available Configuration Keys:[/bold blue]")
-    
+
     keys_info = [
         ("file_extensions", "List of file extensions to index", "list"),
         ("embedding_model", "Embedding model name", "string"),
@@ -292,11 +298,13 @@ def _show_available_keys() -> None:
         ("cache_embeddings", "Enable embedding caching", "boolean"),
         ("max_cache_size", "Maximum cache size", "integer"),
     ]
-    
+
     for key, description, value_type in keys_info:
         console.print(f"  [cyan]{key}[/cyan] ({value_type}): {description}")
-    
-    console.print("\n[dim]Use 'mcp-vector-search config set <key> <value>' to change values[/dim]")
+
+    console.print(
+        "\n[dim]Use 'mcp-vector-search config set <key> <value>' to change values[/dim]"
+    )
 
 
 if __name__ == "__main__":

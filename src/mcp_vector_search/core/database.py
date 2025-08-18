@@ -1,12 +1,12 @@
 """Database abstraction and ChromaDB implementation for MCP Vector Search."""
 
-import asyncio
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from loguru import logger
 
+from .connection_pool import ChromaConnectionPool
 from .exceptions import (
     DatabaseError,
     DatabaseInitializationError,
@@ -21,7 +21,7 @@ from .models import CodeChunk, IndexStats, SearchResult
 class EmbeddingFunction(Protocol):
     """Protocol for embedding functions."""
 
-    def __call__(self, texts: List[str]) -> List[List[float]]:
+    def __call__(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for input texts."""
         ...
 
@@ -40,9 +40,9 @@ class VectorDatabase(ABC):
         ...
 
     @abstractmethod
-    async def add_chunks(self, chunks: List[CodeChunk]) -> None:
+    async def add_chunks(self, chunks: list[CodeChunk]) -> None:
         """Add code chunks to the database.
-        
+
         Args:
             chunks: List of code chunks to add
         """
@@ -53,17 +53,17 @@ class VectorDatabase(ABC):
         self,
         query: str,
         limit: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
         similarity_threshold: float = 0.7,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Search for similar code chunks.
-        
+
         Args:
             query: Search query
             limit: Maximum number of results
             filters: Optional filters to apply
             similarity_threshold: Minimum similarity score
-            
+
         Returns:
             List of search results
         """
@@ -72,10 +72,10 @@ class VectorDatabase(ABC):
     @abstractmethod
     async def delete_by_file(self, file_path: Path) -> int:
         """Delete all chunks for a specific file.
-        
+
         Args:
             file_path: Path to the file
-            
+
         Returns:
             Number of deleted chunks
         """
@@ -84,7 +84,7 @@ class VectorDatabase(ABC):
     @abstractmethod
     async def get_stats(self) -> IndexStats:
         """Get database statistics.
-        
+
         Returns:
             Index statistics
         """
@@ -115,7 +115,7 @@ class ChromaVectorDatabase(VectorDatabase):
         collection_name: str = "code_search",
     ) -> None:
         """Initialize ChromaDB vector database.
-        
+
         Args:
             persist_directory: Directory to persist database
             embedding_function: Function to generate embeddings
@@ -141,7 +141,7 @@ class ChromaVectorDatabase(VectorDatabase):
                 settings=chromadb.Settings(
                     anonymized_telemetry=False,
                     allow_reset=True,
-                )
+                ),
             )
 
             # Create or get collection
@@ -153,11 +153,13 @@ class ChromaVectorDatabase(VectorDatabase):
                 },
             )
 
-            logger.info(f"ChromaDB initialized at {self.persist_directory}")
+            logger.debug(f"ChromaDB initialized at {self.persist_directory}")
 
         except Exception as e:
             logger.error(f"Failed to initialize ChromaDB: {e}")
-            raise DatabaseInitializationError(f"ChromaDB initialization failed: {e}") from e
+            raise DatabaseInitializationError(
+                f"ChromaDB initialization failed: {e}"
+            ) from e
 
     async def remove_file_chunks(self, file_path: str) -> int:
         """Remove all chunks for a specific file.
@@ -173,9 +175,7 @@ class ChromaVectorDatabase(VectorDatabase):
 
         try:
             # Get all chunks for this file
-            results = self._collection.get(
-                where={"file_path": file_path}
-            )
+            results = self._collection.get(where={"file_path": file_path})
 
             if not results["ids"]:
                 return 0
@@ -199,7 +199,7 @@ class ChromaVectorDatabase(VectorDatabase):
             self._collection = None
             logger.debug("ChromaDB connections closed")
 
-    async def add_chunks(self, chunks: List[CodeChunk]) -> None:
+    async def add_chunks(self, chunks: list[CodeChunk]) -> None:
         """Add code chunks to the database."""
         if not self._collection:
             raise DatabaseNotInitializedError("Database not initialized")
@@ -251,9 +251,9 @@ class ChromaVectorDatabase(VectorDatabase):
         self,
         query: str,
         limit: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
         similarity_threshold: float = 0.7,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Search for similar code chunks."""
         if not self._collection:
             raise DatabaseNotInitializedError("Database not initialized")
@@ -279,6 +279,7 @@ class ChromaVectorDatabase(VectorDatabase):
                         results["documents"][0],
                         results["metadatas"][0],
                         results["distances"][0],
+                        strict=False,
                     )
                 ):
                     # Convert distance to similarity (ChromaDB uses cosine distance)
@@ -363,7 +364,12 @@ class ChromaVectorDatabase(VectorDatabase):
             index_size_mb = count * 0.001  # Rough estimate
 
             return IndexStats(
-                total_files=len(set(m.get("file_path", "") for m in sample_results.get("metadatas", []))),
+                total_files=len(
+                    {
+                        m.get("file_path", "")
+                        for m in sample_results.get("metadatas", [])
+                    }
+                ),
                 total_chunks=count,
                 languages=languages,
                 file_types=file_types,
@@ -416,7 +422,7 @@ class ChromaVectorDatabase(VectorDatabase):
 
         return "\n".join(parts)
 
-    def _build_where_clause(self, filters: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_where_clause(self, filters: dict[str, Any]) -> dict[str, Any]:
         """Build ChromaDB where clause from filters."""
         where = {}
 
@@ -429,3 +435,282 @@ class ChromaVectorDatabase(VectorDatabase):
                 where[key] = value
 
         return where
+
+
+class PooledChromaVectorDatabase(VectorDatabase):
+    """ChromaDB implementation with connection pooling for improved performance."""
+
+    def __init__(
+        self,
+        persist_directory: Path,
+        embedding_function: EmbeddingFunction,
+        collection_name: str = "code_search",
+        max_connections: int = 10,
+        min_connections: int = 2,
+        max_idle_time: float = 300.0,
+        max_connection_age: float = 3600.0,
+    ) -> None:
+        """Initialize pooled ChromaDB vector database.
+
+        Args:
+            persist_directory: Directory to persist database
+            embedding_function: Function to generate embeddings
+            collection_name: Name of the collection
+            max_connections: Maximum number of connections in pool
+            min_connections: Minimum number of connections to maintain
+            max_idle_time: Maximum time a connection can be idle (seconds)
+            max_connection_age: Maximum age of a connection (seconds)
+        """
+        self.persist_directory = persist_directory
+        self.embedding_function = embedding_function
+        self.collection_name = collection_name
+
+        self._pool = ChromaConnectionPool(
+            persist_directory=persist_directory,
+            embedding_function=embedding_function,
+            collection_name=collection_name,
+            max_connections=max_connections,
+            min_connections=min_connections,
+            max_idle_time=max_idle_time,
+            max_connection_age=max_connection_age,
+        )
+
+    async def initialize(self) -> None:
+        """Initialize the connection pool."""
+        await self._pool.initialize()
+        logger.debug(f"Pooled ChromaDB initialized at {self.persist_directory}")
+
+    async def close(self) -> None:
+        """Close the connection pool."""
+        await self._pool.close()
+        logger.debug("Pooled ChromaDB connections closed")
+
+    async def add_chunks(self, chunks: list[CodeChunk]) -> None:
+        """Add code chunks to the database using pooled connection."""
+        if not chunks:
+            return
+
+        # Ensure pool is initialized
+        if not self._pool._initialized:
+            await self._pool.initialize()
+
+        try:
+            async with self._pool.get_connection() as conn:
+                # Prepare data for ChromaDB
+                documents = []
+                metadatas = []
+                ids = []
+
+                for chunk in chunks:
+                    documents.append(chunk.content)
+                    metadatas.append(
+                        {
+                            "file_path": str(chunk.file_path),
+                            "start_line": chunk.start_line,
+                            "end_line": chunk.end_line,
+                            "language": chunk.language,
+                            "chunk_type": chunk.chunk_type,
+                            "function_name": chunk.function_name or "",
+                            "class_name": chunk.class_name or "",
+                        }
+                    )
+                    ids.append(chunk.id)
+
+                # Add to collection
+                conn.collection.add(documents=documents, metadatas=metadatas, ids=ids)
+
+                logger.debug(f"Added {len(chunks)} chunks to database")
+
+        except Exception as e:
+            logger.error(f"Failed to add chunks: {e}")
+            raise DocumentAdditionError(f"Failed to add chunks: {e}") from e
+
+    async def search(
+        self,
+        query: str,
+        limit: int = 10,
+        filters: dict[str, Any] | None = None,
+        similarity_threshold: float = 0.7,
+    ) -> list[SearchResult]:
+        """Search for similar code chunks using pooled connection."""
+        # Ensure pool is initialized
+        if not self._pool._initialized:
+            await self._pool.initialize()
+
+        try:
+            async with self._pool.get_connection() as conn:
+                # Build where clause
+                where_clause = self._build_where_clause(filters) if filters else None
+
+                # Perform search
+                results = conn.collection.query(
+                    query_texts=[query],
+                    n_results=limit,
+                    where=where_clause,
+                    include=["documents", "metadatas", "distances"],
+                )
+
+                # Process results
+                search_results = []
+
+                if results["documents"] and results["documents"][0]:
+                    for i, (doc, metadata, distance) in enumerate(
+                        zip(
+                            results["documents"][0],
+                            results["metadatas"][0],
+                            results["distances"][0],
+                            strict=False,
+                        )
+                    ):
+                        # Convert distance to similarity (ChromaDB uses cosine distance)
+                        similarity = 1.0 - distance
+
+                        if similarity >= similarity_threshold:
+                            result = SearchResult(
+                                content=doc,
+                                file_path=Path(metadata["file_path"]),
+                                start_line=metadata["start_line"],
+                                end_line=metadata["end_line"],
+                                language=metadata["language"],
+                                similarity_score=similarity,
+                                rank=i + 1,
+                                chunk_type=metadata.get("chunk_type", "code"),
+                                function_name=metadata.get("function_name") or None,
+                                class_name=metadata.get("class_name") or None,
+                            )
+                            search_results.append(result)
+
+                logger.debug(f"Found {len(search_results)} results for query: {query}")
+                return search_results
+
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            raise SearchError(f"Search failed: {e}") from e
+
+    async def delete_by_file(self, file_path: Path) -> int:
+        """Delete all chunks for a specific file using pooled connection."""
+        try:
+            async with self._pool.get_connection() as conn:
+                # Get all chunks for this file
+                results = conn.collection.get(
+                    where={"file_path": str(file_path)}, include=["metadatas"]
+                )
+
+                if not results["ids"]:
+                    return 0
+
+                # Delete the chunks
+                conn.collection.delete(ids=results["ids"])
+
+                deleted_count = len(results["ids"])
+                logger.debug(f"Deleted {deleted_count} chunks for file: {file_path}")
+                return deleted_count
+
+        except Exception as e:
+            logger.error(f"Failed to delete chunks for file {file_path}: {e}")
+            raise DatabaseError(f"Failed to delete chunks: {e}") from e
+
+    async def get_stats(self) -> IndexStats:
+        """Get database statistics using pooled connection."""
+        try:
+            async with self._pool.get_connection() as conn:
+                # Get total count
+                count = conn.collection.count()
+
+                # Get all metadata to analyze
+                results = conn.collection.get(include=["metadatas"])
+
+                # Analyze languages and files
+                languages = set()
+                files = set()
+
+                for metadata in results["metadatas"]:
+                    if "language" in metadata:
+                        languages.add(metadata["language"])
+                    if "file_path" in metadata:
+                        files.add(metadata["file_path"])
+
+                return IndexStats(
+                    total_chunks=count,
+                    total_files=len(files),
+                    languages=list(languages),
+                    last_updated=None,  # ChromaDB doesn't track this
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to get database stats: {e}")
+            raise DatabaseError(f"Failed to get stats: {e}") from e
+
+    async def remove_file_chunks(self, file_path: str) -> int:
+        """Remove all chunks for a specific file using pooled connection."""
+        try:
+            async with self._pool.get_connection() as conn:
+                # Get all chunks for this file
+                results = conn.collection.get(where={"file_path": file_path})
+
+                if not results["ids"]:
+                    return 0
+
+                # Delete the chunks
+                conn.collection.delete(ids=results["ids"])
+
+                return len(results["ids"])
+
+        except Exception as e:
+            logger.error(f"Failed to remove chunks for file {file_path}: {e}")
+            return 0
+
+    async def reset(self) -> None:
+        """Reset the database using pooled connection."""
+        try:
+            async with self._pool.get_connection() as conn:
+                conn.client.reset()
+                # Reinitialize the pool after reset
+                await self._pool.close()
+                await self._pool.initialize()
+                logger.info("Database reset successfully")
+        except Exception as e:
+            logger.error(f"Failed to reset database: {e}")
+            raise DatabaseError(f"Failed to reset database: {e}") from e
+
+    def _build_where_clause(self, filters: dict[str, Any]) -> dict[str, Any] | None:
+        """Build ChromaDB where clause from filters."""
+        if not filters:
+            return None
+
+        conditions = []
+
+        for key, value in filters.items():
+            if key == "language" and value:
+                conditions.append({"language": {"$eq": value}})
+            elif key == "file_path" and value:
+                if isinstance(value, list):
+                    conditions.append({"file_path": {"$in": [str(p) for p in value]}})
+                else:
+                    conditions.append({"file_path": {"$eq": str(value)}})
+            elif key == "chunk_type" and value:
+                conditions.append({"chunk_type": {"$eq": value}})
+
+        if not conditions:
+            return None
+        elif len(conditions) > 1:
+            return {"$and": conditions}
+        else:
+            return conditions[0]
+
+    def get_pool_stats(self) -> dict[str, Any]:
+        """Get connection pool statistics."""
+        return self._pool.get_stats()
+
+    async def health_check(self) -> bool:
+        """Perform a health check on the database and connection pool."""
+        return await self._pool.health_check()
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        await self.initialize()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.close()

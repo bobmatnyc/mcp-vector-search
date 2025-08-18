@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -17,12 +17,12 @@ class CodeChunk:
     end_line: int
     language: str
     chunk_type: str = "code"  # code, function, class, comment, docstring
-    function_name: Optional[str] = None
-    class_name: Optional[str] = None
-    docstring: Optional[str] = None
-    imports: List[str] = None
+    function_name: str | None = None
+    class_name: str | None = None
+    docstring: str | None = None
+    imports: list[str] = None
     complexity_score: float = 0.0
-    
+
     def __post_init__(self) -> None:
         """Initialize default values."""
         if self.imports is None:
@@ -38,7 +38,7 @@ class CodeChunk:
         """Get the number of lines in this chunk."""
         return self.end_line - self.start_line + 1
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for storage."""
         return {
             "content": self.content,
@@ -55,7 +55,7 @@ class CodeChunk:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CodeChunk":
+    def from_dict(cls, data: dict[str, Any]) -> "CodeChunk":
         """Create from dictionary."""
         return cls(
             content=data["content"],
@@ -83,11 +83,13 @@ class SearchResult(BaseModel):
     similarity_score: float = Field(..., description="Similarity score (0.0 to 1.0)")
     rank: int = Field(..., description="Result rank in search results")
     chunk_type: str = Field(default="code", description="Type of code chunk")
-    function_name: Optional[str] = Field(default=None, description="Function name if applicable")
-    class_name: Optional[str] = Field(default=None, description="Class name if applicable")
-    context_before: List[str] = Field(default=[], description="Lines before the match")
-    context_after: List[str] = Field(default=[], description="Lines after the match")
-    highlights: List[str] = Field(default=[], description="Highlighted terms")
+    function_name: str | None = Field(
+        default=None, description="Function name if applicable"
+    )
+    class_name: str | None = Field(default=None, description="Class name if applicable")
+    context_before: list[str] = Field(default=[], description="Lines before the match")
+    context_after: list[str] = Field(default=[], description="Lines after the match")
+    highlights: list[str] = Field(default=[], description="Highlighted terms")
 
     class Config:
         arbitrary_types_allowed = True
@@ -102,7 +104,7 @@ class SearchResult(BaseModel):
         """Get a human-readable location string."""
         return f"{self.file_path}:{self.start_line}-{self.end_line}"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "content": self.content,
@@ -128,13 +130,13 @@ class IndexStats(BaseModel):
 
     total_files: int = Field(..., description="Total number of indexed files")
     total_chunks: int = Field(..., description="Total number of code chunks")
-    languages: Dict[str, int] = Field(..., description="Language distribution")
-    file_types: Dict[str, int] = Field(..., description="File type distribution")
+    languages: dict[str, int] = Field(..., description="Language distribution")
+    file_types: dict[str, int] = Field(..., description="File type distribution")
     index_size_mb: float = Field(..., description="Index size in megabytes")
     last_updated: str = Field(..., description="Last update timestamp")
     embedding_model: str = Field(..., description="Embedding model used")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "total_files": self.total_files,
@@ -155,13 +157,13 @@ class ProjectInfo(BaseModel):
     config_path: Path = Field(..., description="Configuration file path")
     index_path: Path = Field(..., description="Index directory path")
     is_initialized: bool = Field(..., description="Whether project is initialized")
-    languages: List[str] = Field(default=[], description="Detected languages")
+    languages: list[str] = Field(default=[], description="Detected languages")
     file_count: int = Field(default=0, description="Number of indexable files")
 
     class Config:
         arbitrary_types_allowed = True
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "name": self.name,

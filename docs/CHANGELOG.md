@@ -5,18 +5,56 @@ All notable changes to MCP Vector Search will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.3] - 2025-01-18
+
+### Added
+- Consolidated versioning and build system via comprehensive Makefile
+- Unified version management through scripts/version_manager.py
+- Automated release workflows with git integration
+- Dry-run mode for safe testing of version changes
+- **Connection Pooling**: 13.6% performance improvement with automatic connection reuse
+- **Semi-Automatic Reindexing**: 5 strategies without daemon processes
+  - Search-triggered auto-indexing (built-in)
+  - Git hooks integration for development workflows
+  - Scheduled tasks (cron/Windows tasks) for production
+  - Manual checks via CLI commands
+  - Periodic checker for long-running applications
+- **Auto-Index CLI Commands**: Complete management of automatic reindexing
+- **Performance Testing**: Comprehensive benchmarking and optimization
+- **Production Features**: Error handling, monitoring, graceful degradation
+
+### Fixed
+- Import error in factory.py (EmbeddingFunction → CodeBERTEmbeddingFunction)
+- CLI typer.Choice() AttributeError in auto_index.py
+- Missing ConnectionPoolError exception for tests
+- Default embedding model updated to valid 'sentence-transformers/all-MiniLM-L6-v2'
+- **Critical Bug**: Incremental indexing was creating duplicate chunks
+- **Metadata Consistency**: Improved tracking of indexed files
+
+### Changed
+- Deprecated old build scripts in favor of unified Makefile workflow
+- Version management centralized through single interface
+- Build process streamlined with color-coded output
+- **Incremental Indexing**: Now properly removes old chunks before adding new ones
+- **Search Engine**: Integrated with auto-indexing for seamless updates
+- **Database Layer**: Added pooled database option for high-throughput scenarios
+- **CLI Interface**: Added auto-index subcommand with comprehensive options
+
+### Deprecated
+- scripts/build.sh - Use `make` commands instead
+- scripts/dev-build.py - Use `make version-*` commands
+- scripts/publish.sh - Use `make publish`
+
 ## [Unreleased]
 
 ### Added
-- Comprehensive documentation system with CLAUDE.md index
-- Developer documentation (API reference, contributing guidelines, testing guide)
-- Code quality documentation (linting, formatting, type checking)
-- Three-stage development workflow with automated scripts
-- Versioning and release management guidelines
+- 
 
 ### Changed
-- Improved project structure documentation
-- Enhanced development workflow with helper scripts
+- 
+
+### Fixed
+- 
 
 ## [0.0.3] - 2024-01-10
 
