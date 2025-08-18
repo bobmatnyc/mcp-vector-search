@@ -3,7 +3,6 @@
 import hashlib
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import aiofiles
 from loguru import logger
@@ -17,7 +16,7 @@ class EmbeddingCache:
 
     def __init__(self, cache_dir: Path, max_size: int = 1000) -> None:
         """Initialize embedding cache.
-        
+
         Args:
             cache_dir: Directory to store cached embeddings
             max_size: Maximum number of embeddings to keep in memory
@@ -25,45 +24,51 @@ class EmbeddingCache:
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.max_size = max_size
-        self._memory_cache: Dict[str, List[float]] = {}
+        self._memory_cache: dict[str, list[float]] = {}
+        self._access_order: list[str] = []  # For LRU eviction
+        self._cache_hits = 0
+        self._cache_misses = 0
 
     def _hash_content(self, content: str) -> str:
         """Generate cache key from content."""
         return hashlib.sha256(content.encode()).hexdigest()[:16]
 
-    async def get_embedding(self, content: str) -> Optional[List[float]]:
+    async def get_embedding(self, content: str) -> list[float] | None:
         """Get cached embedding for content."""
         cache_key = self._hash_content(content)
 
         # Check memory cache first
         if cache_key in self._memory_cache:
+            self._cache_hits += 1
+            # Move to end for LRU
+            self._access_order.remove(cache_key)
+            self._access_order.append(cache_key)
             return self._memory_cache[cache_key]
 
         # Check disk cache
         cache_file = self.cache_dir / f"{cache_key}.json"
         if cache_file.exists():
             try:
-                async with aiofiles.open(cache_file, "r") as f:
+                async with aiofiles.open(cache_file) as f:
                     content_str = await f.read()
                     embedding = json.loads(content_str)
 
-                    # Add to memory cache if space available
-                    if len(self._memory_cache) < self.max_size:
-                        self._memory_cache[cache_key] = embedding
-
+                    # Add to memory cache with LRU management
+                    self._add_to_memory_cache(cache_key, embedding)
+                    self._cache_hits += 1
                     return embedding
             except Exception as e:
                 logger.warning(f"Failed to load cached embedding: {e}")
 
+        self._cache_misses += 1
         return None
 
-    async def store_embedding(self, content: str, embedding: List[float]) -> None:
+    async def store_embedding(self, content: str, embedding: list[float]) -> None:
         """Store embedding in cache."""
         cache_key = self._hash_content(content)
 
-        # Store in memory cache if space available
-        if len(self._memory_cache) < self.max_size:
-            self._memory_cache[cache_key] = embedding
+        # Store in memory cache with LRU management
+        self._add_to_memory_cache(cache_key, embedding)
 
         # Store in disk cache
         cache_file = self.cache_dir / f"{cache_key}.json"
@@ -73,17 +78,56 @@ class EmbeddingCache:
         except Exception as e:
             logger.warning(f"Failed to cache embedding: {e}")
 
+    def _add_to_memory_cache(self, cache_key: str, embedding: list[float]) -> None:
+        """Add embedding to memory cache with LRU eviction.
+
+        Args:
+            cache_key: Cache key for the embedding
+            embedding: Embedding vector to cache
+        """
+        # If already in cache, update and move to end
+        if cache_key in self._memory_cache:
+            self._access_order.remove(cache_key)
+            self._access_order.append(cache_key)
+            self._memory_cache[cache_key] = embedding
+            return
+
+        # If cache is full, evict least recently used
+        if len(self._memory_cache) >= self.max_size:
+            lru_key = self._access_order.pop(0)
+            del self._memory_cache[lru_key]
+
+        # Add new embedding
+        self._memory_cache[cache_key] = embedding
+        self._access_order.append(cache_key)
+
     def clear_memory_cache(self) -> None:
         """Clear the in-memory cache."""
         self._memory_cache.clear()
+        self._access_order.clear()
 
-    def get_cache_stats(self) -> Dict[str, int]:
-        """Get cache statistics."""
-        disk_files = len(list(self.cache_dir.glob("*.json")))
+    def get_cache_stats(self) -> dict[str, any]:
+        """Get cache performance statistics.
+
+        Returns:
+            Dictionary with cache statistics
+        """
+        total_requests = self._cache_hits + self._cache_misses
+        hit_rate = self._cache_hits / total_requests if total_requests > 0 else 0.0
+        disk_files = (
+            len(list(self.cache_dir.glob("*.json"))) if self.cache_dir.exists() else 0
+        )
+
         return {
-            "memory_cached": len(self._memory_cache),
-            "disk_cached": disk_files,
-            "memory_limit": self.max_size,
+            "memory_cache_size": len(self._memory_cache),
+            "memory_cached": len(self._memory_cache),  # Alias for compatibility
+            "max_cache_size": self.max_size,
+            "memory_limit": self.max_size,  # Alias for compatibility
+            "cache_hits": self._cache_hits,
+            "cache_misses": self._cache_misses,
+            "hit_rate": round(hit_rate, 3),
+            "disk_cache_files": disk_files,
+            "disk_cached": disk_files,  # Alias for compatibility
         }
 
 
@@ -104,7 +148,7 @@ class CodeBERTEmbeddingFunction:
             logger.error(f"Failed to load embedding model {model_name}: {e}")
             raise EmbeddingError(f"Failed to load embedding model: {e}") from e
 
-    def __call__(self, input: List[str]) -> List[List[float]]:
+    def __call__(self, input: list[str]) -> list[list[float]]:
         """Generate embeddings for input texts (ChromaDB interface)."""
         try:
             embeddings = self.model.encode(input, convert_to_numpy=True)
@@ -120,11 +164,11 @@ class BatchEmbeddingProcessor:
     def __init__(
         self,
         embedding_function: CodeBERTEmbeddingFunction,
-        cache: Optional[EmbeddingCache] = None,
+        cache: EmbeddingCache | None = None,
         batch_size: int = 32,
     ) -> None:
         """Initialize batch embedding processor.
-        
+
         Args:
             embedding_function: Function to generate embeddings
             cache: Optional embedding cache
@@ -134,12 +178,12 @@ class BatchEmbeddingProcessor:
         self.cache = cache
         self.batch_size = batch_size
 
-    async def process_batch(self, contents: List[str]) -> List[List[float]]:
+    async def process_batch(self, contents: list[str]) -> list[list[float]]:
         """Process a batch of content for embeddings.
-        
+
         Args:
             contents: List of text content to embed
-            
+
         Returns:
             List of embeddings
         """
@@ -179,7 +223,7 @@ class BatchEmbeddingProcessor:
 
                 # Cache new embeddings and fill placeholders
                 for i, (content, embedding) in enumerate(
-                    zip(uncached_contents, new_embeddings)
+                    zip(uncached_contents, new_embeddings, strict=False)
                 ):
                     if self.cache:
                         await self.cache.store_embedding(content, embedding)
@@ -191,7 +235,7 @@ class BatchEmbeddingProcessor:
 
         return embeddings
 
-    def get_stats(self) -> Dict[str, any]:
+    def get_stats(self) -> dict[str, any]:
         """Get processor statistics."""
         stats = {
             "model_name": self.embedding_function.model_name,
@@ -207,7 +251,7 @@ class BatchEmbeddingProcessor:
 
 def create_embedding_function(
     model_name: str = "microsoft/codebert-base",
-    cache_dir: Optional[Path] = None,
+    cache_dir: Path | None = None,
     cache_size: int = 1000,
 ):
     """Create embedding function and cache.
@@ -236,7 +280,7 @@ def create_embedding_function(
             model_name=actual_model
         )
 
-        logger.info(f"Created ChromaDB embedding function with model: {actual_model}")
+        logger.debug(f"Created ChromaDB embedding function with model: {actual_model}")
 
     except Exception as e:
         logger.warning(f"Failed to create ChromaDB embedding function: {e}")

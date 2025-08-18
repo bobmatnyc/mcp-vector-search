@@ -1,9 +1,8 @@
 """Pydantic configuration schemas for MCP Vector Search."""
 
 from pathlib import Path
-from typing import List, Optional
 
-from pydantic import Field, validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -14,49 +13,57 @@ class ProjectConfig(BaseSettings):
     index_path: Path = Field(
         default=".mcp-vector-search", description="Index storage path"
     )
-    file_extensions: List[str] = Field(
+    file_extensions: list[str] = Field(
         default=[".py", ".js", ".ts", ".jsx", ".tsx"],
         description="File extensions to index",
     )
     embedding_model: str = Field(
-        default="microsoft/codebert-base", description="Embedding model name"
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        description="Embedding model name",
     )
     similarity_threshold: float = Field(
-        default=0.75, ge=0.0, le=1.0, description="Similarity threshold"
+        default=0.3, ge=0.0, le=1.0, description="Similarity threshold"
     )
     max_chunk_size: int = Field(
         default=512, gt=0, description="Maximum chunk size in tokens"
     )
-    languages: List[str] = Field(default=[], description="Detected programming languages")
+    languages: list[str] = Field(
+        default=[], description="Detected programming languages"
+    )
     watch_files: bool = Field(
         default=False, description="Enable file watching for incremental updates"
     )
-    cache_embeddings: bool = Field(
-        default=True, description="Enable embedding caching"
-    )
+    cache_embeddings: bool = Field(default=True, description="Enable embedding caching")
     max_cache_size: int = Field(
         default=1000, gt=0, description="Maximum number of cached embeddings"
     )
 
-    @validator("project_root", "index_path")
+    @field_validator("project_root", "index_path", mode="before")
+    @classmethod
     def validate_paths(cls, v: Path) -> Path:
         """Ensure paths are absolute and normalized."""
-        return v.resolve()
+        if isinstance(v, str):
+            v = Path(v)
+        return v.resolve() if isinstance(v, Path) else v
 
-    @validator("file_extensions")
-    def validate_extensions(cls, v: List[str]) -> List[str]:
+    @field_validator("file_extensions", mode="before")
+    @classmethod
+    def validate_extensions(cls, v: list[str]) -> list[str]:
         """Ensure extensions start with dot."""
-        return [ext if ext.startswith(".") else f".{ext}" for ext in v]
+        if isinstance(v, list):
+            return [ext if ext.startswith(".") else f".{ext}" for ext in v]
+        return v
 
-    class Config:
-        env_prefix = "MCP_VECTOR_SEARCH_"
-        case_sensitive = False
+    model_config = {
+        "env_prefix": "MCP_VECTOR_SEARCH_",
+        "case_sensitive": False,
+    }
 
 
 class DatabaseConfig(BaseSettings):
     """Database configuration settings."""
 
-    persist_directory: Optional[Path] = Field(
+    persist_directory: Path | None = Field(
         default=None, description="ChromaDB persistence directory"
     )
     collection_name: str = Field(
@@ -69,14 +76,18 @@ class DatabaseConfig(BaseSettings):
         default=False, description="Enable ChromaDB telemetry"
     )
 
-    @validator("persist_directory")
-    def validate_persist_directory(cls, v: Optional[Path]) -> Optional[Path]:
+    @field_validator("persist_directory", mode="before")
+    @classmethod
+    def validate_persist_directory(cls, v: Path | None) -> Path | None:
         """Ensure persist directory is absolute if provided."""
-        return v.resolve() if v else None
+        if v and isinstance(v, str):
+            v = Path(v)
+        return v.resolve() if isinstance(v, Path) else None
 
-    class Config:
-        env_prefix = "MCP_VECTOR_SEARCH_DB_"
-        case_sensitive = False
+    model_config = {
+        "env_prefix": "MCP_VECTOR_SEARCH_DB_",
+        "case_sensitive": False,
+    }
 
 
 class SearchConfig(BaseSettings):
@@ -88,21 +99,24 @@ class SearchConfig(BaseSettings):
     max_limit: int = Field(
         default=100, gt=0, description="Maximum number of search results"
     )
-    enable_reranking: bool = Field(
-        default=True, description="Enable result reranking"
-    )
+    enable_reranking: bool = Field(default=True, description="Enable result reranking")
     context_lines: int = Field(
         default=3, ge=0, description="Number of context lines to include"
     )
 
-    @validator("max_limit")
-    def validate_max_limit(cls, v: int, values: dict) -> int:
+    @field_validator("max_limit", mode="after")
+    @classmethod
+    def validate_max_limit(cls, v: int, info) -> int:
         """Ensure max_limit is greater than default_limit."""
-        default_limit = values.get("default_limit", 10)
-        if v < default_limit:
-            raise ValueError("max_limit must be greater than or equal to default_limit")
+        if info.data and "default_limit" in info.data:
+            default_limit = info.data["default_limit"]
+            if v < default_limit:
+                raise ValueError(
+                    "max_limit must be greater than or equal to default_limit"
+                )
         return v
 
-    class Config:
-        env_prefix = "MCP_VECTOR_SEARCH_SEARCH_"
-        case_sensitive = False
+    model_config = {
+        "env_prefix": "MCP_VECTOR_SEARCH_SEARCH_",
+        "case_sensitive": False,
+    }

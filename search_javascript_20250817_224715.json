@@ -1,0 +1,45 @@
+{
+  "query": "javascript",
+  "timestamp": "2025-08-17T22:47:15.878924",
+  "total_results": 3,
+  "results": [
+    {
+      "rank": 1,
+      "file_path": "/Users/masa/Projects/managed/mcp-vector-search/src/mcp_vector_search/parsers/javascript.py",
+      "similarity_score": 0.7852539730072022,
+      "start_line": 16,
+      "end_line": 18,
+      "language": "python",
+      "chunk_type": "function",
+      "function_name": "__init__",
+      "class_name": "JavaScriptParser",
+      "content": "def __init__(self, language: str = \"javascript\") -> None:\n        \"\"\"Initialize JavaScript parser.\"\"\"\n        super().__init__(language)\nFunction: __init__\nClass: JavaScriptParser\nDocumentation: \"\"Initialize JavaScript parser.\"\"\nLanguage: python\nFile: javascript.py",
+      "location": "/Users/masa/Projects/managed/mcp-vector-search/src/mcp_vector_search/parsers/javascript.py:16-18"
+    },
+    {
+      "rank": 2,
+      "file_path": "/Users/masa/Projects/managed/mcp-vector-search/src/mcp_vector_search/parsers/javascript.py",
+      "similarity_score": 0.7279858303070069,
+      "start_line": 168,
+      "end_line": 189,
+      "language": "python",
+      "chunk_type": "function",
+      "function_name": "_find_block_end",
+      "class_name": "JavaScriptParser",
+      "content": "def _find_block_end(self, lines: List[str], start_line: int, open_char: str, close_char: str) -> int:\n        \"\"\"Find the end of a block by matching braces.\"\"\"\n        if start_line > len(lines):\n            return len(lines)\n        \n        brace_count = 0\n        found_opening = False\n        \n        for i in range(start_line - 1, len(lines)):\n            line = lines[i]\n            \n            for char in line:\n                if char == open_char:\n                    brace_count += 1\n                    found_opening = True\n                elif char == close_char:\n                    brace_count -= 1\n                    \n                    if found_opening and brace_count == 0:\n                        return i + 1  # Return 1-based line number\n        \n        return len(lines)\nFunction: _find_block_end\nClass: JavaScriptParser\nDocumentation: \"\"Find the end of a block by matching braces.\"\"\nLanguage: python\nFile: javascript.py",
+      "location": "/Users/masa/Projects/managed/mcp-vector-search/src/mcp_vector_search/parsers/javascript.py:168-189"
+    },
+    {
+      "rank": 3,
+      "file_path": "/Users/masa/Projects/managed/mcp-vector-search/tests/test_js_parser.py",
+      "similarity_score": 0.7142232513427735,
+      "start_line": 11,
+      "end_line": 107,
+      "language": "python",
+      "chunk_type": "function",
+      "function_name": "test_javascript_parser",
+      "content": "async def test_javascript_parser():\n    \"\"\"Test JavaScript parser functionality.\"\"\"\n    print(\"🔍 Testing JavaScript parser...\")\n    \n    # Create test JavaScript file\n    js_content = \"\"\"\nimport React from 'react';\nimport { useState } from 'react';\n\n/**\n * A simple counter component\n * @param {Object} props - Component props\n * @returns {JSX.Element} Counter component\n */\nfunction Counter(props) {\n    const [count, setCount] = useState(0);\n    \n    const increment = () => {\n        setCount(count + 1);\n    };\n    \n    return (\n        <div>\n            <p>Count: {count}</p>\n            <button onClick={increment}>Increment</button>\n        </div>\n    );\n}\n\n/**\n * Utility class for data processing\n */\nclass DataProcessor {\n    constructor() {\n        this.data = [];\n    }\n    \n    /**\n     * Add an item to the data array\n     * @param {any} item - Item to add\n     */\n    addItem(item) {\n        this.data.push(item);\n    }\n    \n    /**\n     * Process all data items\n     * @returns {Array} Processed data\n     */\n    processAll() {\n        return this.data.map(item => item.toString().toUpperCase());\n    }\n}\n\n// Arrow function example\nconst calculateArea = (radius) => {\n    return Math.PI * radius * radius;\n};\n\n// Async function example\nasync function fetchData(url) {\n    try {\n        const response = await fetch(url);\n        return await response.json();\n    } catch (error) {\n        console.error('Error fetching data:', error);\n        return null;\n    }\n}\n\nexport default Counter;\nexport { DataProcessor, calculateArea, fetchData };\n\"\"\"\n    \n    with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:\n        f.write(js_content)\n        test_file = Path(f.name)\n    \n    print(f\"📁 Created test file: {test_file}\")\n    \n    # Test JavaScript parser\n    js_parser = JavaScriptParser()\n    chunks = await js_parser.parse_file(test_file)\n    \n    print(f\"📊 JavaScript parser extracted {len(chunks)} chunks:\")\n    for i, chunk in enumerate(chunks, 1):\n        print(f\"\\n📄 Chunk {i}:\")\n        print(f\"  Type: {chunk.chunk_type}\")\n        print(f\"  Lines: {chunk.start_line}-{chunk.end_line}\")\n        print(f\"  Function: {chunk.function_name}\")\n        print(f\"  Class: {chunk.class_name}\")\n        print(f\"  Docstring: {chunk.docstring}\")\n        print(f\"  Content preview: {chunk.content[:100]}...\")\n    \n    # Clean up\n    test_file.unlink()\n    print(\"\\n✅ JavaScript parser test completed!\")\nFunction: test_javascript_parser\nDocumentation: \"\"Test JavaScript parser functionality.\"\"\nLanguage: python\nFile: test_js_parser.py",
+      "location": "/Users/masa/Projects/managed/mcp-vector-search/tests/test_js_parser.py:11-107"
+    }
+  ]
+}

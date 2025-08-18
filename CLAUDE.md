@@ -29,6 +29,7 @@
 ### 🏗️ Architecture & Structure
 - **[docs/STRUCTURE.md](docs/STRUCTURE.md)** - File organization and module architecture
 - **[docs/DEPLOY.md](docs/DEPLOY.md)** - Deployment and installation instructions
+- **[docs/architecture/REINDEXING_WORKFLOW.md](docs/architecture/REINDEXING_WORKFLOW.md)** - Reindexing implementation and workflow analysis
 
 ### 👨‍💻 Developer Resources
 - **[docs/developer/](docs/developer/)** - Detailed developer documentation
@@ -36,6 +37,13 @@
   - **[API.md](docs/developer/API.md)** - Internal API documentation
   - **[TESTING.md](docs/developer/TESTING.md)** - Testing strategies and practices
   - **[LINTING.md](docs/developer/LINTING.md)** - Code quality and linting setup
+
+### 🚀 Performance & Features
+- **[docs/FEATURES.md](docs/FEATURES.md)** - Comprehensive feature overview and usage guide
+- **[docs/IMPROVEMENTS_SUMMARY.md](docs/IMPROVEMENTS_SUMMARY.md)** - Summary of major improvements and performance gains
+- **[docs/performance/CONNECTION_POOLING.md](docs/performance/CONNECTION_POOLING.md)** - Connection pooling implementation and benchmarks
+- **[examples/connection_pooling_example.py](examples/connection_pooling_example.py)** - Connection pooling usage examples
+- **[examples/semi_automatic_reindexing_demo.py](examples/semi_automatic_reindexing_demo.py)** - Semi-automatic reindexing strategies demo
 
 ### 📦 Release Management
 - **[docs/VERSIONING.md](docs/VERSIONING.md)** - Semantic versioning guidelines
@@ -57,11 +65,16 @@
   - `watch.py` - File watching
   - `status.py` - Project statistics
   - `config.py` - Configuration management
+  - `auto_index.py` - Automatic reindexing management
 
 #### **Core Engine** (`src/mcp_vector_search/core/`)
 - **`indexer.py`** - Code indexing and chunking
 - **`search.py`** - Semantic search implementation
-- **`database.py`** - Vector database abstraction
+- **`database.py`** - Vector database abstraction with connection pooling
+- **`connection_pool.py`** - Database connection pooling for performance
+- **`auto_indexer.py`** - Semi-automatic reindexing strategies
+- **`git_hooks.py`** - Git hooks integration for auto-reindexing
+- **`scheduler.py`** - Scheduled task management for auto-reindexing
 - **`embeddings.py`** - Text embedding generation
 - **`project.py`** - Project management
 - **`watcher.py`** - File system monitoring
@@ -141,6 +154,14 @@ uv run mcp-vector-search     # Test CLI locally
 ./scripts/publish.sh         # Publish to PyPI
 ```
 
+### Versioning & Releasing
+```bash
+make version-show        # Display current version
+make version-patch       # Bump patch version
+make release-minor       # Full release with minor bump
+make publish            # Publish to PyPI
+```
+
 ### Usage
 ```bash
 mcp-vector-search init       # Initialize project
@@ -160,11 +181,16 @@ mcp-vector-search watch      # Start file watching
 - **Platform**: Cross-platform (macOS, Linux, Windows)
 
 ### Current Capabilities
-- ✅ Multi-language code parsing
-- ✅ Semantic vector search
-- ✅ Real-time file watching
-- ✅ CLI interface with rich output
-- ✅ Project-aware configuration
+- ✅ Multi-language code parsing (Python, JavaScript, TypeScript)
+- ✅ Semantic vector search with similarity scoring
+- ✅ Real-time file watching and incremental updates
+- ✅ CLI interface with rich output and syntax highlighting
+- ✅ Project-aware configuration management
+- ✅ **Connection pooling** for 13.6% performance improvement
+- ✅ **Semi-automatic reindexing** with 5 different strategies
+- ✅ **Production-ready features** (error handling, monitoring, graceful degradation)
+- ✅ **Git hooks integration** for development workflows
+- ✅ **Scheduled tasks** for production environments
 
 ### Roadmap
 - 🔄 Enhanced Tree-sitter integration

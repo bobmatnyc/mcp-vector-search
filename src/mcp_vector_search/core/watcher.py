@@ -1,19 +1,18 @@
 """File system watcher for incremental indexing."""
 
 import asyncio
-from pathlib import Path
-from typing import List, Optional, Set, Callable, Awaitable, Union
-from threading import Thread
 import time
+from collections.abc import Awaitable, Callable
 from concurrent.futures import Future
+from pathlib import Path
 
 from loguru import logger
+from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileSystemEvent
 
 from ..config.settings import ProjectConfig
-from .indexer import SemanticIndexer
 from .database import ChromaVectorDatabase
+from .indexer import SemanticIndexer
 
 
 class CodeFileHandler(FileSystemEventHandler):
@@ -21,8 +20,8 @@ class CodeFileHandler(FileSystemEventHandler):
 
     def __init__(
         self,
-        file_extensions: List[str],
-        ignore_patterns: List[str],
+        file_extensions: list[str],
+        ignore_patterns: list[str],
         callback: Callable[[str, str], Awaitable[None]],
         loop: asyncio.AbstractEventLoop,
         debounce_delay: float = 1.0,
@@ -42,23 +41,23 @@ class CodeFileHandler(FileSystemEventHandler):
         self.callback = callback
         self.loop = loop
         self.debounce_delay = debounce_delay
-        self.pending_changes: Set[str] = set()
+        self.pending_changes: set[str] = set()
         self.last_change_time: float = 0
-        self.debounce_task: Optional[Union[asyncio.Task, Future]] = None
+        self.debounce_task: asyncio.Task | Future | None = None
 
     def should_process_file(self, file_path: str) -> bool:
         """Check if file should be processed."""
         path = Path(file_path)
-        
+
         # Check file extension
         if path.suffix not in self.file_extensions:
             return False
-        
+
         # Check ignore patterns
         for pattern in self.ignore_patterns:
             if pattern in str(path):
                 return False
-        
+
         return True
 
     def on_modified(self, event: FileSystemEvent) -> None:
@@ -78,7 +77,7 @@ class CodeFileHandler(FileSystemEventHandler):
 
     def on_moved(self, event: FileSystemEvent) -> None:
         """Handle file move/rename."""
-        if hasattr(event, 'dest_path'):
+        if hasattr(event, "dest_path"):
             # Handle rename/move
             if not event.is_directory:
                 if self.should_process_file(event.src_path):
@@ -96,24 +95,22 @@ class CodeFileHandler(FileSystemEventHandler):
             self.debounce_task.cancel()
 
         # Schedule new debounce task using the stored loop
-        future = asyncio.run_coroutine_threadsafe(
-            self._debounced_process(), self.loop
-        )
+        future = asyncio.run_coroutine_threadsafe(self._debounced_process(), self.loop)
         # Store the future as our task (it has a done() method)
         self.debounce_task = future
 
     async def _debounced_process(self) -> None:
         """Process pending changes after debounce delay."""
         await asyncio.sleep(self.debounce_delay)
-        
+
         # Check if more changes occurred during debounce
         if time.time() - self.last_change_time < self.debounce_delay:
             return
-        
+
         # Process all pending changes
         changes = self.pending_changes.copy()
         self.pending_changes.clear()
-        
+
         for change in changes:
             change_type, file_path = change.split(":", 1)
             try:
@@ -133,7 +130,7 @@ class FileWatcher:
         database: ChromaVectorDatabase,
     ):
         """Initialize file watcher.
-        
+
         Args:
             project_root: Root directory to watch
             config: Project configuration
@@ -144,8 +141,8 @@ class FileWatcher:
         self.config = config
         self.indexer = indexer
         self.database = database
-        self.observer: Optional[Observer] = None
-        self.handler: Optional[CodeFileHandler] = None
+        self.observer: Observer | None = None
+        self.handler: CodeFileHandler | None = None
         self.is_running = False
 
     async def start(self) -> None:
@@ -155,7 +152,7 @@ class FileWatcher:
             return
 
         logger.info(f"Starting file watcher for {self.project_root}")
-        
+
         # Create handler
         loop = asyncio.get_running_loop()
         self.handler = CodeFileHandler(
@@ -168,16 +165,12 @@ class FileWatcher:
 
         # Create observer
         self.observer = Observer()
-        self.observer.schedule(
-            self.handler,
-            str(self.project_root),
-            recursive=True
-        )
+        self.observer.schedule(self.handler, str(self.project_root), recursive=True)
 
         # Start observer in a separate thread
         self.observer.start()
         self.is_running = True
-        
+
         logger.info("File watcher started successfully")
 
     async def stop(self) -> None:
@@ -186,7 +179,7 @@ class FileWatcher:
             return
 
         logger.info("Stopping file watcher")
-        
+
         if self.observer:
             self.observer.stop()
             self.observer.join()
@@ -194,28 +187,37 @@ class FileWatcher:
 
         self.handler = None
         self.is_running = False
-        
+
         logger.info("File watcher stopped")
 
-    def _get_ignore_patterns(self) -> List[str]:
+    def _get_ignore_patterns(self) -> list[str]:
         """Get patterns to ignore during watching."""
         default_patterns = [
-            ".git", ".svn", ".hg",
-            "__pycache__", ".pytest_cache",
-            "node_modules", ".venv", "venv",
-            ".DS_Store", "Thumbs.db",
-            ".idea", ".vscode",
-            "build", "dist", "target",
+            ".git",
+            ".svn",
+            ".hg",
+            "__pycache__",
+            ".pytest_cache",
+            "node_modules",
+            ".venv",
+            "venv",
+            ".DS_Store",
+            "Thumbs.db",
+            ".idea",
+            ".vscode",
+            "build",
+            "dist",
+            "target",
             ".mcp-vector-search",  # Ignore our own index directory
         ]
-        
+
         # Add any custom ignore patterns from config
         # TODO: Add custom ignore patterns to config
         return default_patterns
 
     async def _handle_file_change(self, file_path: str, change_type: str) -> None:
         """Handle a file change event.
-        
+
         Args:
             file_path: Path to the changed file
             change_type: Type of change (created, modified, deleted)
@@ -230,9 +232,9 @@ class FileWatcher:
             elif change_type in ("created", "modified"):
                 # Re-index the file
                 await self._reindex_file(path)
-            
+
             logger.info(f"Processed {change_type} for {path.name}")
-            
+
         except Exception as e:
             logger.error(f"Failed to process {change_type} for {path}: {e}")
 
@@ -256,7 +258,7 @@ class FileWatcher:
 
         # Remove existing chunks first
         await self._remove_file_chunks(file_path)
-        
+
         # Index the file
         chunks_indexed = await self.indexer.index_file(file_path)
         logger.debug(f"Re-indexed {file_path.name}: {chunks_indexed} chunks")
@@ -287,21 +289,21 @@ class WatcherManager:
     ) -> FileWatcher:
         """Start a file watcher for a project."""
         project_key = str(project_root)
-        
+
         if project_key in self.watchers:
             logger.warning(f"Watcher already exists for {project_root}")
             return self.watchers[project_key]
 
         watcher = FileWatcher(project_root, config, indexer, database)
         await watcher.start()
-        
+
         self.watchers[project_key] = watcher
         return watcher
 
     async def stop_watcher(self, project_root: Path) -> None:
         """Stop a file watcher for a project."""
         project_key = str(project_root)
-        
+
         if project_key not in self.watchers:
             logger.warning(f"No watcher found for {project_root}")
             return

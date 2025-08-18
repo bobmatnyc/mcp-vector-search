@@ -13,24 +13,36 @@ MCP Vector Search follows a comprehensive testing strategy to ensure reliability
 tests/
 ├── __init__.py
 ├── conftest.py                     # Pytest configuration & fixtures
+├── test_simple.py                  # Basic smoke tests
 ├── unit/                           # Unit tests (fast, isolated)
 │   ├── __init__.py
-│   ├── test_parsers.py            # Parser unit tests
-│   ├── test_indexer.py            # Indexer unit tests
-│   ├── test_search.py             # Search unit tests
-│   ├── test_database.py           # Database unit tests
-│   └── test_models.py             # Data model tests
+│   ├── core/                       # Core module tests
+│   │   ├── test_search.py         # Search engine tests (✅ IMPLEMENTED)
+│   │   ├── test_indexer.py        # Indexer tests (✅ IMPLEMENTED)
+│   │   ├── test_database.py       # Database tests (✅ IMPLEMENTED)
+│   │   ├── test_connection_pool.py # Connection pool tests (✅ IMPLEMENTED)
+│   │   ├── test_auto_indexer.py   # Auto-indexer tests
+│   │   └── test_factory.py        # Component factory tests
+│   ├── parsers/                    # Parser tests
+│   │   ├── test_python_parser.py
+│   │   ├── test_javascript_parser.py
+│   │   └── test_registry.py
+│   └── cli/                        # CLI tests
+│       ├── test_search_command.py
+│       ├── test_index_command.py
+│       └── test_auto_index_command.py
 ├── integration/                    # Integration tests (slower)
 │   ├── __init__.py
-│   ├── test_cli.py                # CLI integration tests
-│   ├── test_workflow.py           # End-to-end workflows
-│   └── test_file_watching.py      # File watching tests
+│   ├── test_indexing_workflow.py  # Full indexing workflow (✅ IMPLEMENTED)
+│   ├── test_search_workflow.py    # Search integration
+│   ├── test_auto_indexing.py      # Auto-indexing features
+│   └── test_project_management.py # Project management
+├── e2e/                           # End-to-end tests
+│   ├── test_cli_commands.py       # CLI command testing (✅ IMPLEMENTED)
+│   └── test_full_workflow.py      # Complete user workflows
 ├── fixtures/                       # Test data and fixtures
-│   ├── sample_code/               # Sample code files
-│   │   ├── python/
-│   │   ├── javascript/
-│   │   └── typescript/
-│   └── expected_results/          # Expected test outputs
+│   ├── sample_projects/           # Sample project structures
+│   └── test_files/                # Individual test files
 └── performance/                    # Performance tests
     ├── test_indexing_speed.py
     └── test_search_latency.py
@@ -365,6 +377,34 @@ uv run pytest -n auto
 # Run with specific number of workers
 uv run pytest -n 4
 ```
+
+### **Comprehensive Test Runner** (Recommended)
+We provide a comprehensive test runner script that handles all test types:
+
+```bash
+# Run all tests (unit, integration, e2e, performance, linting)
+python scripts/run_tests.py --all
+
+# Run fast tests only (unit + smoke tests) - Great for development
+python scripts/run_tests.py --fast
+
+# Run specific test types
+python scripts/run_tests.py --unit          # Unit tests only
+python scripts/run_tests.py --integration   # Integration tests only
+python scripts/run_tests.py --e2e          # End-to-end tests only
+python scripts/run_tests.py --performance  # Performance tests only
+python scripts/run_tests.py --lint         # Linting checks only
+python scripts/run_tests.py --smoke        # Smoke tests only
+
+# Run tests matching a pattern
+python scripts/run_tests.py --pattern "search"
+```
+
+**Features:**
+- ✅ Comprehensive coverage of all test types
+- ✅ Performance timing and detailed reporting
+- ✅ Graceful handling of missing dependencies
+- ✅ CI/CD ready with proper exit codes
 
 ### Test Categories
 ```bash

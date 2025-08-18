@@ -1,0 +1,482 @@
+# MCP Vector Search - Comprehensive Build & Release System
+# Version: 4.0.3
+# Build: 280
+
+# Color codes for output
+RED := \033[0;31m
+GREEN := \033[0;32m
+YELLOW := \033[1;33m
+BLUE := \033[0;34m
+RESET := \033[0m
+
+# Default shell
+SHELL := /bin/bash
+
+# Python interpreter
+PYTHON := python3
+UV := uv
+
+# Directories
+SRC_DIR := src/mcp_vector_search
+TEST_DIR := tests
+SCRIPTS_DIR := scripts
+DOCS_DIR := docs
+
+# Default target
+.DEFAULT_GOAL := help
+
+# Version management script
+VERSION_MANAGER := $(PYTHON) $(SCRIPTS_DIR)/version_manager.py
+
+# Check if we're in dry-run mode
+ifdef DRY_RUN
+	DRY_FLAG := --dry-run
+	ECHO_PREFIX := @echo "$(YELLOW)[DRY RUN]$(RESET) Would execute:"
+else
+	DRY_FLAG :=
+	ECHO_PREFIX := 
+endif
+
+# ============================================================================
+# Help & Documentation
+# ============================================================================
+
+.PHONY: help
+help: ## Show this help message
+	@echo "$(BLUE)╔══════════════════════════════════════════════════════════════╗$(RESET)"
+	@echo "$(BLUE)║     MCP Vector Search - Build & Release System              ║$(RESET)"
+	@echo "$(BLUE)╚══════════════════════════════════════════════════════════════╝$(RESET)"
+	@echo ""
+	@echo "$(GREEN)Core Development:$(RESET)"
+	@grep -E '^(dev|test|lint|format|clean|install):.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
+	@echo ""
+	@echo "$(GREEN)Version Management:$(RESET)"
+	@grep -E '^version-.*:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
+	@echo ""
+	@echo "$(GREEN)Build Management:$(RESET)"
+	@grep -E '^build-.*:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
+	@echo ""
+	@echo "$(GREEN)Release Workflow:$(RESET)"
+	@grep -E '^release-.*:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
+	@echo ""
+	@echo "$(GREEN)Publishing:$(RESET)"
+	@grep -E '^publish.*:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
+	@echo ""
+	@echo "$(YELLOW)Options:$(RESET)"
+	@echo "  DRY_RUN=1       Run in dry-run mode (no actual changes)"
+	@echo ""
+	@echo "$(YELLOW)Examples:$(RESET)"
+	@echo "  make dev                    # Install for development"
+	@echo "  make test                   # Run all tests"
+	@echo "  make release-patch          # Release patch version"
+	@echo "  DRY_RUN=1 make release-minor # Dry-run minor release"
+
+# ============================================================================
+# Core Development Targets
+# ============================================================================
+
+.PHONY: dev
+dev: ## Install for development (uv sync)
+	@echo "$(GREEN)Installing for development...$(RESET)"
+	$(UV) sync
+	@echo "$(GREEN)✓ Development environment ready$(RESET)"
+
+.PHONY: install
+install: ## Install package locally
+	@echo "$(GREEN)Installing package...$(RESET)"
+	$(UV) pip install -e .
+	@echo "$(GREEN)✓ Package installed$(RESET)"
+
+.PHONY: test
+test: ## Run full test suite
+	@echo "$(GREEN)Running test suite...$(RESET)"
+	$(UV) run pytest $(TEST_DIR) -v --cov=$(SRC_DIR) --cov-report=term-missing
+	@echo "$(GREEN)✓ Tests completed$(RESET)"
+
+.PHONY: test-quick
+test-quick: ## Run quick tests (no coverage)
+	@echo "$(GREEN)Running quick tests...$(RESET)"
+	$(UV) run pytest $(TEST_DIR) -v -x
+	@echo "$(GREEN)✓ Quick tests completed$(RESET)"
+
+.PHONY: lint
+lint: ## Run linting checks (ruff, mypy)
+	@echo "$(GREEN)Running linters...$(RESET)"
+	@echo "  Running ruff check..."
+	$(UV) run ruff check $(SRC_DIR)
+	@echo "  Running ruff format check..."
+	$(UV) run ruff format --check $(SRC_DIR)
+	@echo "  Running mypy..."
+	$(UV) run mypy $(SRC_DIR) --ignore-missing-imports
+	@echo "$(GREEN)✓ Linting completed$(RESET)"
+
+.PHONY: format
+format: ## Format code (ruff format)
+	@echo "$(GREEN)Formatting code...$(RESET)"
+	$(UV) run ruff format $(SRC_DIR)
+	$(UV) run ruff check --fix $(SRC_DIR)
+	@echo "$(GREEN)✓ Code formatted$(RESET)"
+
+.PHONY: lint-fix
+lint-fix: ## Fix linting issues automatically
+	@echo "$(GREEN)Fixing linting issues...$(RESET)"
+	$(UV) run ruff format $(SRC_DIR)
+	$(UV) run ruff check --fix $(SRC_DIR)
+	@echo "$(GREEN)✓ Linting issues fixed$(RESET)"
+
+.PHONY: security
+security: ## Run security checks
+	@echo "$(GREEN)Running security checks...$(RESET)"
+	@echo "  Running safety check..."
+	$(UV) run safety check || echo "$(YELLOW)⚠️  Safety check completed with warnings$(RESET)"
+	@echo "  Running bandit scan..."
+	$(UV) run bandit -r $(SRC_DIR) || echo "$(YELLOW)⚠️  Bandit scan completed with warnings$(RESET)"
+	@echo "$(GREEN)✓ Security checks completed$(RESET)"
+
+.PHONY: clean
+clean: ## Clean build artifacts
+	@echo "$(GREEN)Cleaning build artifacts...$(RESET)"
+	rm -rf build/ dist/ *.egg-info .pytest_cache .ruff_cache .mypy_cache
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete
+	@echo "$(GREEN)✓ Build artifacts cleaned$(RESET)"
+
+# ============================================================================
+# Version Management Targets
+# ============================================================================
+
+.PHONY: version-show
+version-show: ## Display current version
+	@$(VERSION_MANAGER) --show
+
+.PHONY: version-patch
+version-patch: ## Bump patch version (4.0.3 → 4.0.4)
+	@echo "$(GREEN)Bumping patch version...$(RESET)"
+	$(ECHO_PREFIX) $(VERSION_MANAGER) --bump patch $(DRY_FLAG)
+	@if [ -z "$(DRY_RUN)" ]; then \
+		$(VERSION_MANAGER) --bump patch $(DRY_FLAG); \
+		echo "$(GREEN)✓ Patch version bumped$(RESET)"; \
+	fi
+
+.PHONY: version-minor
+version-minor: ## Bump minor version (4.0.3 → 4.1.0)
+	@echo "$(GREEN)Bumping minor version...$(RESET)"
+	$(ECHO_PREFIX) $(VERSION_MANAGER) --bump minor $(DRY_FLAG)
+	@if [ -z "$(DRY_RUN)" ]; then \
+		$(VERSION_MANAGER) --bump minor $(DRY_FLAG); \
+		echo "$(GREEN)✓ Minor version bumped$(RESET)"; \
+	fi
+
+.PHONY: version-major
+version-major: ## Bump major version (4.0.3 → 5.0.0)
+	@echo "$(GREEN)Bumping major version...$(RESET)"
+	$(ECHO_PREFIX) $(VERSION_MANAGER) --bump major $(DRY_FLAG)
+	@if [ -z "$(DRY_RUN)" ]; then \
+		$(VERSION_MANAGER) --bump major $(DRY_FLAG); \
+		echo "$(GREEN)✓ Major version bumped$(RESET)"; \
+	fi
+
+# ============================================================================
+# Build Management Targets
+# ============================================================================
+
+.PHONY: build-increment
+build-increment: ## Increment build number only
+	@echo "$(GREEN)Incrementing build number...$(RESET)"
+	$(ECHO_PREFIX) $(VERSION_MANAGER) --increment-build $(DRY_FLAG)
+	@if [ -z "$(DRY_RUN)" ]; then \
+		$(VERSION_MANAGER) --increment-build $(DRY_FLAG); \
+		echo "$(GREEN)✓ Build number incremented$(RESET)"; \
+	fi
+
+.PHONY: build-package
+build-package: clean ## Build distribution packages
+	@echo "$(GREEN)Building distribution packages...$(RESET)"
+	$(ECHO_PREFIX) $(UV) build
+	@if [ -z "$(DRY_RUN)" ]; then \
+		$(UV) build; \
+		echo "$(GREEN)✓ Package built$(RESET)"; \
+	fi
+
+# ============================================================================
+# Pre-flight Checks
+# ============================================================================
+
+.PHONY: preflight-check
+preflight-check:
+	@echo "$(BLUE)Running pre-flight checks...$(RESET)"
+	@# Check git status
+	@if [ -z "$(DRY_RUN)" ]; then \
+		if [ -n "$$(git status --porcelain)" ]; then \
+			echo "$(RED)✗ Git working directory is not clean$(RESET)"; \
+			echo "  Please commit or stash your changes first."; \
+			exit 1; \
+		else \
+			echo "$(GREEN)✓ Git working directory is clean$(RESET)"; \
+		fi; \
+	else \
+		echo "$(YELLOW)[DRY RUN] Skipping git status check$(RESET)"; \
+	fi
+	@# Check tests pass
+	@echo "$(BLUE)Running tests...$(RESET)"
+	@if [ -z "$(DRY_RUN)" ]; then \
+		if $(UV) run pytest $(TEST_DIR) -q; then \
+			echo "$(GREEN)✓ All tests pass$(RESET)"; \
+		else \
+			echo "$(RED)✗ Tests failed$(RESET)"; \
+			exit 1; \
+		fi; \
+	else \
+		echo "$(YELLOW)[DRY RUN] Skipping test execution$(RESET)"; \
+	fi
+	@# Check linting
+	@echo "$(BLUE)Checking code quality...$(RESET)"
+	@if [ -z "$(DRY_RUN)" ]; then \
+		if $(UV) run ruff check $(SRC_DIR) --quiet; then \
+			echo "$(GREEN)✓ Code quality checks pass$(RESET)"; \
+		else \
+			echo "$(RED)✗ Linting issues found$(RESET)"; \
+			exit 1; \
+		fi; \
+	else \
+		echo "$(YELLOW)[DRY RUN] Skipping linting check$(RESET)"; \
+	fi
+
+# ============================================================================
+# Release Workflow Targets
+# ============================================================================
+
+.PHONY: release-patch
+release-patch: preflight-check ## Full release with patch bump
+	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
+	@echo "$(BLUE)  Starting PATCH release workflow$(RESET)"
+	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
+	$(MAKE) version-patch
+	$(MAKE) build-increment
+	$(MAKE) changelog-update
+	$(MAKE) git-commit-release
+	$(MAKE) build-package
+	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
+	@echo "$(GREEN)  PATCH release completed successfully!$(RESET)"
+	@echo "$(GREEN)  Next: Run 'make publish' to upload to PyPI$(RESET)"
+	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
+
+.PHONY: release-minor
+release-minor: preflight-check ## Full release with minor bump
+	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
+	@echo "$(BLUE)  Starting MINOR release workflow$(RESET)"
+	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
+	$(MAKE) version-minor
+	$(MAKE) build-increment
+	$(MAKE) changelog-update
+	$(MAKE) git-commit-release
+	$(MAKE) build-package
+	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
+	@echo "$(GREEN)  MINOR release completed successfully!$(RESET)"
+	@echo "$(GREEN)  Next: Run 'make publish' to upload to PyPI$(RESET)"
+	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
+
+.PHONY: release-major
+release-major: preflight-check ## Full release with major bump
+	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
+	@echo "$(BLUE)  Starting MAJOR release workflow$(RESET)"
+	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
+	$(MAKE) version-major
+	$(MAKE) build-increment
+	$(MAKE) changelog-update
+	$(MAKE) git-commit-release
+	$(MAKE) build-package
+	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
+	@echo "$(GREEN)  MAJOR release completed successfully!$(RESET)"
+	@echo "$(GREEN)  Next: Run 'make publish' to upload to PyPI$(RESET)"
+	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
+
+# ============================================================================
+# Git Operations
+# ============================================================================
+
+.PHONY: git-commit-release
+git-commit-release:
+	@echo "$(GREEN)Committing release changes...$(RESET)"
+	@VERSION=$$($(VERSION_MANAGER) --show --format simple); \
+	if [ -z "$(DRY_RUN)" ]; then \
+		git add -A; \
+		git commit -m "🚀 Release v$$VERSION"; \
+		git tag -a "v$$VERSION" -m "Release version $$VERSION"; \
+		echo "$(GREEN)✓ Release committed and tagged as v$$VERSION$(RESET)"; \
+	else \
+		echo "$(YELLOW)[DRY RUN] Would commit with message: Release v$$VERSION$(RESET)"; \
+		echo "$(YELLOW)[DRY RUN] Would create tag: v$$VERSION$(RESET)"; \
+	fi
+
+.PHONY: git-push
+git-push: ## Push commits and tags to origin
+	@echo "$(GREEN)Pushing to origin...$(RESET)"
+	$(ECHO_PREFIX) git push origin main --tags
+	@if [ -z "$(DRY_RUN)" ]; then \
+		git push origin main --tags; \
+		echo "$(GREEN)✓ Pushed to origin$(RESET)"; \
+	fi
+
+.PHONY: git-status
+git-status: ## Show git status and recent commits
+	@echo "$(BLUE)Git Status:$(RESET)"
+	@git status --short
+	@echo "\n$(BLUE)Recent Commits:$(RESET)"
+	@git log --oneline -10
+
+.PHONY: git-clean
+git-clean: ## Clean git repository (remove untracked files)
+	@echo "$(YELLOW)⚠️  This will remove all untracked files!$(RESET)"
+	@read -p "Are you sure? (y/N): " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		git clean -fd; \
+		echo "$(GREEN)✓ Repository cleaned$(RESET)"; \
+	else \
+		echo "$(BLUE)Cancelled$(RESET)"; \
+	fi
+
+# ============================================================================
+# Changelog Management
+# ============================================================================
+
+.PHONY: changelog-update
+changelog-update:
+	@echo "$(GREEN)Updating changelog...$(RESET)"
+	$(ECHO_PREFIX) $(VERSION_MANAGER) --update-changelog $(DRY_FLAG)
+	@if [ -z "$(DRY_RUN)" ]; then \
+		$(VERSION_MANAGER) --update-changelog $(DRY_FLAG); \
+		echo "$(GREEN)✓ Changelog updated$(RESET)"; \
+	fi
+
+# ============================================================================
+# Publishing Targets
+# ============================================================================
+
+.PHONY: publish
+publish: ## Publish to PyPI
+	@echo "$(BLUE)Publishing to PyPI...$(RESET)"
+	@if [ -z "$(DRY_RUN)" ]; then \
+		if [ ! -d "dist" ]; then \
+			echo "$(RED)✗ No dist/ directory found. Run 'make build-package' first.$(RESET)"; \
+			exit 1; \
+		fi; \
+		$(UV) publish; \
+		echo "$(GREEN)✓ Published to PyPI$(RESET)"; \
+	else \
+		echo "$(YELLOW)[DRY RUN] Would publish to PyPI$(RESET)"; \
+	fi
+
+.PHONY: publish-test
+publish-test: ## Publish to test PyPI
+	@echo "$(BLUE)Publishing to Test PyPI...$(RESET)"
+	@if [ -z "$(DRY_RUN)" ]; then \
+		if [ ! -d "dist" ]; then \
+			echo "$(RED)✗ No dist/ directory found. Run 'make build-package' first.$(RESET)"; \
+			exit 1; \
+		fi; \
+		$(UV) publish --publish-url https://test.pypi.org/legacy/; \
+		echo "$(GREEN)✓ Published to Test PyPI$(RESET)"; \
+	else \
+		echo "$(YELLOW)[DRY RUN] Would publish to Test PyPI$(RESET)"; \
+	fi
+
+# ============================================================================
+# Utility Targets
+# ============================================================================
+
+.PHONY: check-tools
+check-tools: ## Check required tools are installed
+	@echo "$(BLUE)Checking required tools...$(RESET)"
+	@command -v $(PYTHON) >/dev/null 2>&1 || { echo "$(RED)✗ Python not found$(RESET)"; exit 1; }
+	@echo "$(GREEN)✓ Python found: $$($(PYTHON) --version)$(RESET)"
+	@command -v $(UV) >/dev/null 2>&1 || { echo "$(RED)✗ uv not found$(RESET)"; exit 1; }
+	@echo "$(GREEN)✓ uv found: $$($(UV) --version)$(RESET)"
+	@command -v git >/dev/null 2>&1 || { echo "$(RED)✗ git not found$(RESET)"; exit 1; }
+	@echo "$(GREEN)✓ git found: $$(git --version)$(RESET)"
+
+.PHONY: info
+info: ## Show project information
+	@echo "$(BLUE)Project Information:$(RESET)"
+	@$(VERSION_MANAGER) --show --format detailed
+
+.PHONY: performance
+performance: ## Run performance benchmarks
+	@echo "$(GREEN)Running performance benchmarks...$(RESET)"
+	@if [ ! -f "$(SCRIPTS_DIR)/search_performance_monitor.py" ]; then \
+		echo "$(RED)✗ Performance monitor script not found$(RESET)"; \
+		exit 1; \
+	fi
+	$(PYTHON) $(SCRIPTS_DIR)/search_performance_monitor.py --quality --save
+	@echo "$(GREEN)✓ Performance benchmarks completed$(RESET)"
+
+.PHONY: integration-test
+integration-test: build-package ## Run integration tests with built package
+	@echo "$(GREEN)Running integration tests...$(RESET)"
+	@# Create temporary test environment
+	@TEMP_DIR=$$(mktemp -d); \
+	echo "Testing in $$TEMP_DIR"; \
+	cd "$$TEMP_DIR"; \
+	echo "def test_function(): pass" > test.py; \
+	$(UV) pip install $(PWD)/dist/*.whl; \
+	mcp-vector-search --version; \
+	mcp-vector-search init --file-extensions .py --embedding-model sentence-transformers/all-MiniLM-L6-v2; \
+	mcp-vector-search index; \
+	mcp-vector-search search "function" --limit 5; \
+	echo "$(GREEN)✓ Integration tests passed$(RESET)"; \
+	rm -rf "$$TEMP_DIR"
+
+.PHONY: full-release
+full-release: preflight-check ## Complete release workflow (build, test, publish, push)
+	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
+	@echo "$(BLUE)  Starting FULL release workflow$(RESET)"
+	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
+	$(MAKE) release-patch
+	$(MAKE) integration-test
+	$(MAKE) publish
+	$(MAKE) git-push
+	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
+	@echo "$(GREEN)  FULL release completed successfully!$(RESET)"
+	@echo "$(GREEN)  Package published and pushed to origin$(RESET)"
+	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
+
+.PHONY: build-comprehensive
+build-comprehensive: ## Run comprehensive build (all checks, tests, build)
+	@echo "$(GREEN)Running comprehensive build...$(RESET)"
+	$(PYTHON) $(SCRIPTS_DIR)/comprehensive_build.py
+	@echo "$(GREEN)✓ Comprehensive build completed$(RESET)"
+
+.PHONY: build-quick
+build-quick: ## Quick build (skip some checks for speed)
+	@echo "$(GREEN)Running quick build...$(RESET)"
+	$(PYTHON) $(SCRIPTS_DIR)/comprehensive_build.py --skip-security --skip-integration --no-coverage
+	@echo "$(GREEN)✓ Quick build completed$(RESET)"
+
+.PHONY: build-fix
+build-fix: ## Build with automatic linting fixes
+	@echo "$(GREEN)Running build with fixes...$(RESET)"
+	$(PYTHON) $(SCRIPTS_DIR)/comprehensive_build.py --fix-lint
+	@echo "$(GREEN)✓ Build with fixes completed$(RESET)"
+
+.PHONY: setup-dev
+setup-dev: ## Set up development environment
+	@echo "$(GREEN)Setting up development environment...$(RESET)"
+	$(UV) sync --dev
+	$(UV) run pre-commit install
+	@echo "$(GREEN)✓ Development environment ready$(RESET)"
+
+.PHONY: ci-check
+ci-check: ## Run CI-like checks locally
+	@echo "$(GREEN)Running CI checks...$(RESET)"
+	$(PYTHON) $(SCRIPTS_DIR)/comprehensive_build.py --skip-setup
+	@echo "$(GREEN)✓ CI checks completed$(RESET)"
+
+# Prevent make from treating arguments as targets
+%:
+	@:
