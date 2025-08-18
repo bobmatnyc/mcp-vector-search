@@ -236,10 +236,10 @@ def mock_embedding_function():
         def __init__(self):
             self._name = "test-embedding-function"
         
-        def __call__(self, texts: List[str]) -> List[List[float]]:
+        def __call__(self, input: List[str]) -> List[List[float]]:
             """Generate deterministic mock embeddings."""
             embeddings = []
-            for text in texts:
+            for text in input:
                 # Create a simple hash-based embedding (384-dimensional for all-MiniLM-L6-v2)
                 embedding = [float(hash(text + str(i)) % 100) / 100.0 for i in range(384)]
                 embeddings.append(embedding)
@@ -251,16 +251,16 @@ def mock_embedding_function():
         
         def embed_documents(self, texts: List[str]) -> List[List[float]]:
             """Embed multiple documents."""
-            return self.__call__(texts)
+            return self.__call__(input=texts)
         
         def embed_query(self, text: str) -> List[float]:
             """Embed a single query."""
-            return self.__call__([text])[0]
+            return self.__call__(input=[text])[0]
     
     return MockEmbeddingFunction()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
     """Create a mock vector database for testing."""
     
@@ -288,9 +288,11 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
             # Simple mock search based on text matching
             results = []
             for chunk in self.chunks:
-                # Simple similarity calculation
+                # Simple similarity calculation - normalize content for comparison
                 query_words = set(query.lower().split())
-                content_words = set(chunk.content.lower().split())
+                # Handle multi-line content by replacing newlines with spaces
+                normalized_content = chunk.content.lower().replace('\n', ' ').replace('(', ' ').replace(')', ' ').replace(':', ' ')
+                content_words = set(normalized_content.split())
                 
                 if query_words.intersection(content_words):
                     similarity = len(query_words.intersection(content_words)) / len(query_words.union(content_words))
@@ -321,19 +323,38 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
             return initial_count - len(self.chunks)
         
         async def get_stats(self) -> IndexStats:
-            languages = set(chunk.language for chunk in self.chunks)
-            files = set(chunk.file_path for chunk in self.chunks)
+            # Count languages and file types
+            language_counts = {}
+            file_types = {}
+            files = set()
+            
+            for chunk in self.chunks:
+                files.add(chunk.file_path)
+                # Count languages
+                if chunk.language:
+                    language_counts[chunk.language] = language_counts.get(chunk.language, 0) + 1
+                # Count file types by extension
+                ext = chunk.file_path.suffix
+                if ext:
+                    file_types[ext] = file_types.get(ext, 0) + 1
             
             return IndexStats(
                 total_chunks=len(self.chunks),
                 total_files=len(files),
-                languages=list(languages),
+                languages=language_counts,
+                file_types=file_types,
                 index_size_mb=len(self.chunks) * 0.001,  # Mock size
-                last_updated=None,
+                last_updated="2024-01-01T00:00:00",  # Mock timestamp
+                embedding_model="test-embedding-model",  # Mock model name
             )
         
         async def health_check(self) -> bool:
             return self.initialized
+        
+        async def reset(self) -> None:
+            """Reset the database."""
+            self.chunks = []
+            self.initialized = False
     
     db = MockVectorDatabase()
     yield db
