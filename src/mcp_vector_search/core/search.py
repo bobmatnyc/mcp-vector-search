@@ -73,7 +73,7 @@ class SemanticSearchEngine:
             except Exception as e:
                 logger.warning(f"Auto-reindex check failed: {e}")
 
-        threshold = similarity_threshold or self._get_adaptive_threshold(query)
+        threshold = similarity_threshold if similarity_threshold is not None else self._get_adaptive_threshold(query)
 
         try:
             # Preprocess query

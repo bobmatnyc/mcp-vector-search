@@ -179,7 +179,7 @@ class ProjectManager:
 
         try:
             # Convert to JSON-serializable format
-            config_data = config.dict()
+            config_data = config.model_dump()
             config_data["project_root"] = str(config.project_root)
             config_data["index_path"] = str(config.index_path)
 

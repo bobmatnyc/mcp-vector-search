@@ -155,13 +155,18 @@ version-show: ## Display current version
 	@$(VERSION_MANAGER) --show
 
 .PHONY: version-patch
-version-patch: ## Bump patch version (4.0.3 → 4.0.4)
+version-patch: ## Bump patch version (0.4.0 → 0.4.1)
 	@echo "$(GREEN)Bumping patch version...$(RESET)"
-	$(ECHO_PREFIX) $(VERSION_MANAGER) --bump patch $(DRY_FLAG)
 	@if [ -z "$(DRY_RUN)" ]; then \
-		$(VERSION_MANAGER) --bump patch $(DRY_FLAG); \
+		$(VERSION_MANAGER) --bump patch; \
 		echo "$(GREEN)✓ Patch version bumped$(RESET)"; \
+	else \
+		echo "$(YELLOW)[DRY RUN] Would bump patch version$(RESET)"; \
+		$(VERSION_MANAGER) --bump patch --dry-run; \
 	fi
+
+.PHONY: version-bump-patch
+version-bump-patch: version-patch ## Alias for version-patch
 
 .PHONY: version-minor
 version-minor: ## Bump minor version (4.0.3 → 4.1.0)

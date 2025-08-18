@@ -283,7 +283,8 @@ class ChromaVectorDatabase(VectorDatabase):
                     )
                 ):
                     # Convert distance to similarity (ChromaDB uses cosine distance)
-                    similarity = 1.0 - distance
+                    # ChromaDB cosine distance can be > 1.0, so clamp to [0, 1] range
+                    similarity = max(0.0, 1.0 - distance)
 
                     if similarity >= similarity_threshold:
                         result = SearchResult(
@@ -563,7 +564,8 @@ class PooledChromaVectorDatabase(VectorDatabase):
                         )
                     ):
                         # Convert distance to similarity (ChromaDB uses cosine distance)
-                        similarity = 1.0 - distance
+                        # ChromaDB cosine distance can be > 1.0, so clamp to [0, 1] range
+                        similarity = max(0.0, 1.0 - distance)
 
                         if similarity >= similarity_threshold:
                             result = SearchResult(
