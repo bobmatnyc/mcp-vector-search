@@ -65,6 +65,11 @@ def main(
         "--auto-index",
         help="Automatically start indexing after initialization",
     ),
+    mcp: bool = typer.Option(
+        False,
+        "--mcp",
+        help="Install Claude Code MCP integration after initialization",
+    ),
 ) -> None:
     """Initialize a project for semantic code search.
 
@@ -75,11 +80,13 @@ def main(
     - Detect programming languages in your project
     - Set up default configuration based on your project structure
     - Optionally start indexing your codebase
+    - Optionally install Claude Code MCP integration
 
     Examples:
         mcp-vector-search init
         mcp-vector-search init --extensions .py,.js,.ts --auto-index
         mcp-vector-search init --embedding-model microsoft/unixcoder-base --force
+        mcp-vector-search init --auto-index --mcp  # One-step setup with MCP
     """
     try:
         # Get project root from context or auto-detect
@@ -170,17 +177,70 @@ def main(
         else:
             print_info("Run 'mcp-vector-search index' to index your codebase")
 
+        # Offer to install MCP integration
+        install_mcp = mcp
+        if not install_mcp and confirm_action(
+            "\nInstall Claude Code MCP integration?", default=False
+        ):
+            install_mcp = True
+
+        if install_mcp:
+            console.print("\n[bold]Installing Claude Code MCP integration...[/bold]")
+
+            try:
+                # Import MCP functionality
+                from .mcp import check_claude_code_available, get_claude_command, get_mcp_server_command
+                import subprocess
+
+                # Check if Claude Code is available
+                if not check_claude_code_available():
+                    print_warning("Claude Code not found. Skipping MCP integration.")
+                    print_info("Install Claude Code from: https://claude.ai/download")
+                else:
+                    claude_cmd = get_claude_command()
+                    server_command = get_mcp_server_command(project_root)
+
+                    # Install MCP server
+                    cmd_args = [
+                        claude_cmd, "mcp", "add",
+                        "--scope=local",
+                        "mcp-vector-search",
+                        "--",
+                    ] + server_command.split()
+
+                    result = subprocess.run(
+                        cmd_args,
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+
+                    if result.returncode == 0:
+                        print_success("✅ Claude Code MCP integration installed!")
+                    else:
+                        print_warning(f"MCP integration failed: {result.stderr}")
+                        print_info("You can install it later with: mcp-vector-search mcp install")
+
+            except Exception as e:
+                print_warning(f"MCP integration failed: {e}")
+                print_info("You can install it later with: mcp-vector-search mcp install")
+
         # Show next steps
         console.print("\n[bold green]Next Steps:[/bold green]")
-        console.print(
-            "  1. Run [code]mcp-vector-search index[/code] to index your codebase (if not done)"
-        )
+        if not auto_index:
+            console.print(
+                "  1. Run [code]mcp-vector-search index[/code] to index your codebase"
+            )
         console.print(
             "  2. Run [code]mcp-vector-search search 'your query'[/code] to search your code"
         )
         console.print(
             "  3. Run [code]mcp-vector-search status[/code] to check indexing status"
         )
+        if install_mcp:
+            console.print(
+                "  4. Use the vector search tools in Claude Code! 🎉"
+            )
 
     except ProjectInitializationError as e:
         print_error(f"Initialization failed: {e}")

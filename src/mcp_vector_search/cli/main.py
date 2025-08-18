@@ -12,6 +12,7 @@ from .commands.auto_index import auto_index_app
 from .commands.config import config_app
 from .commands.index import index_app
 from .commands.init import init_app
+from .commands.mcp import mcp_app
 from .commands.search import (
     search_app,
     search_context_cmd,
@@ -43,6 +44,7 @@ app.add_typer(status_app, name="status", help="Show project status and statistic
 app.add_typer(config_app, name="config", help="Manage project configuration")
 app.add_typer(watch_app, name="watch", help="Watch for file changes and update index")
 app.add_typer(auto_index_app, name="auto-index", help="Manage automatic indexing")
+app.add_typer(mcp_app, name="mcp", help="Manage Claude Code MCP integration")
 
 # Add search commands - both new simplified and old nested structure
 app.add_typer(search_app, name="search", help="Search code semantically")
