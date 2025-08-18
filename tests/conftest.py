@@ -340,7 +340,7 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
 
 
 @pytest.fixture
-async def real_embedding_function():
+def real_embedding_function():
     """Create a real embedding function for integration tests."""
     embedding_function, _ = create_embedding_function(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
@@ -468,10 +468,11 @@ def assert_search_results_valid(results: List[SearchResult], min_count: int = 0)
     
     for result in results:
         assert isinstance(result, SearchResult)
-        assert result.chunk is not None
+        assert result.content is not None
         assert 0.0 <= result.similarity_score <= 1.0
-        assert result.chunk.content is not None
-        assert result.chunk.file_path is not None
+        assert result.file_path is not None
+        assert result.start_line >= 0
+        assert result.end_line >= result.start_line
 
 
 def assert_chunks_valid(chunks: List[CodeChunk]):

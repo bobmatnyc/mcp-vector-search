@@ -5,6 +5,33 @@ All notable changes to MCP Vector Search will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2025-08-18
+
+### 🐛 Critical Bug Fixes
+- **BREAKING FIX**: Fixed search functionality returning zero results for all queries
+  - Corrected ChromaDB cosine distance to similarity conversion that was producing negative scores
+  - Fixed adaptive threshold logic ignoring user-specified threshold values (especially 0.0)
+  - Search now properly returns relevant results with accurate similarity percentages
+
+### ✨ Improvements
+- Enhanced debug logging for search operations and threshold calculations
+- Improved similarity score clamping to ensure values stay within [0, 1] range
+- Better CLI output formatting with proper similarity percentage display
+
+### 🧪 Testing & Validation
+- Validated search functionality with real-world codebase (claude-mpm project)
+- Tested multi-language search across Python, JavaScript, and TypeScript files
+- Confirmed performance with 7,723 indexed code chunks from 120 files
+- Added comprehensive debugging documentation and analysis
+
+### 📚 Documentation
+- Added detailed debugging analysis in `docs/debugging/SEARCH_BUG_ANALYSIS.md`
+- Documented ChromaDB distance behavior and similarity calculation methods
+- Enhanced troubleshooting guides for search-related issues
+
+### 🎯 Impact
+This release fixes the core search functionality that was completely broken in v0.4.0, making MCP Vector Search fully functional and production-ready for real-world use cases.
+
 ## [4.0.3] - 2025-01-18
 
 ### Added
