@@ -38,7 +38,7 @@ app = typer.Typer(
 )
 
 # Add subcommands
-app.add_typer(init_app, name="init", help="Initialize project for semantic search")
+app.add_typer(init_app, name="init", help="🚀 Complete project setup with MCP integration")
 app.add_typer(index_app, name="index", help="Index codebase for semantic search")
 app.add_typer(status_app, name="status", help="Show project status and statistics")
 app.add_typer(config_app, name="config", help="Manage project configuration")
@@ -215,6 +215,9 @@ def doctor() -> None:
         console.print(
             "Run [code]pip install mcp-vector-search[/code] to install missing dependencies"
         )
+
+
+
 
 
 if __name__ == "__main__":
