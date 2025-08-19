@@ -9,6 +9,7 @@ from loguru import logger
 
 from ..config.defaults import DEFAULT_IGNORE_PATTERNS
 from ..parsers.registry import get_parser_registry
+from ..utils.gitignore import create_gitignore_parser, GitignoreParser
 from .database import VectorDatabase
 from .exceptions import ParsingError
 from .models import CodeChunk
@@ -46,6 +47,14 @@ class SemanticIndexer:
         self._index_metadata_file = (
             project_root / ".mcp-vector-search" / "index_metadata.json"
         )
+
+        # Initialize gitignore parser
+        try:
+            self.gitignore_parser = create_gitignore_parser(project_root)
+            logger.debug(f"Loaded {len(self.gitignore_parser.patterns)} gitignore patterns")
+        except Exception as e:
+            logger.warning(f"Failed to load gitignore patterns: {e}")
+            self.gitignore_parser = None
 
     async def index_project(
         self,
@@ -356,18 +365,25 @@ class SemanticIndexer:
             True if path should be ignored
         """
         try:
+            # First check gitignore rules if available
+            if self.gitignore_parser and self.gitignore_parser.is_ignored(file_path):
+                logger.debug(f"Path ignored by .gitignore: {file_path}")
+                return True
+
             # Get relative path from project root
             relative_path = file_path.relative_to(self.project_root)
 
-            # Check each part of the path
+            # Check each part of the path against default ignore patterns
             for part in relative_path.parts:
                 if part in self._ignore_patterns:
+                    logger.debug(f"Path ignored by default pattern '{part}': {file_path}")
                     return True
 
             # Check if any parent directory should be ignored
             for parent in relative_path.parents:
                 for part in parent.parts:
                     if part in self._ignore_patterns:
+                        logger.debug(f"Path ignored by parent pattern '{part}': {file_path}")
                         return True
 
             return False

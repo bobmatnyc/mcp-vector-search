@@ -319,7 +319,7 @@ class MCPVectorSearchServer:
             response_lines = [f"Found {len(results)} results for query: '{query}'\n"]
             
             for i, result in enumerate(results, 1):
-                response_lines.append(f"## Result {i} (Score: {result.score:.3f})")
+                response_lines.append(f"## Result {i} (Score: {result.similarity_score:.3f})")
                 response_lines.append(f"**File:** {result.file_path}")
                 if result.function_name:
                     response_lines.append(f"**Function:** {result.function_name}")
@@ -352,9 +352,9 @@ class MCPVectorSearchServer:
                     "file_extensions": config.file_extensions,
                     "embedding_model": config.embedding_model,
                     "languages": config.languages,
-                    "total_chunks": stats.get("total_chunks", 0),
-                    "total_files": stats.get("total_files", 0),
-                    "index_size": stats.get("index_size", "Unknown")
+                    "total_chunks": stats.total_chunks,
+                    "total_files": stats.total_files,
+                    "index_size": f"{stats.index_size_mb:.2f} MB" if hasattr(stats, 'index_size_mb') else "Unknown"
                 }
             else:
                 status_info = {

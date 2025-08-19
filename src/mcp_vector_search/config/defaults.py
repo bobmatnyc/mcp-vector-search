@@ -26,6 +26,8 @@ DEFAULT_FILE_EXTENSIONS = [
     ".sh",  # Shell scripts (fallback parsing)
     ".bash",  # Bash scripts (fallback parsing)
     ".zsh",  # Zsh scripts (fallback parsing)
+    ".json",  # JSON configuration files
+    ".md",  # Markdown documentation
 ]
 
 # Language mappings for parsers
@@ -53,6 +55,8 @@ LANGUAGE_MAPPINGS: dict[str, str] = {
     ".sh": "bash",
     ".bash": "bash",
     ".zsh": "bash",
+    ".json": "json",
+    ".md": "markdown",
 }
 
 # Default embedding models by use case
@@ -73,6 +77,8 @@ DEFAULT_SIMILARITY_THRESHOLDS = {
     "c": 0.3,
     "go": 0.3,
     "rust": 0.3,
+    "json": 0.4,  # JSON files may have more structural similarity
+    "markdown": 0.3,  # Markdown documentation
     "default": 0.3,
 }
 
@@ -86,6 +92,8 @@ DEFAULT_CHUNK_SIZES = {
     "c": 384,
     "go": 512,
     "rust": 512,
+    "json": 256,  # JSON files are often smaller and more structured
+    "markdown": 512,  # Markdown documentation can be chunked normally
     "default": 512,
 }
 

@@ -469,6 +469,146 @@ async def run_init_setup(
             print_info("You can install it later with: mcp-vector-search mcp install")
 
 
+@init_app.command("mcp")
+def init_mcp_integration(
+    ctx: typer.Context,
+    server_name: str = typer.Option(
+        "mcp-vector-search",
+        "--name",
+        help="Name for the MCP server"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force installation even if server already exists"
+    )
+) -> None:
+    """Install/fix Claude Code MCP integration for the current project.
+
+    This command sets up MCP integration by:
+    ✅ Creating project-level .claude.json configuration
+    ✅ Testing server startup and connectivity
+    ✅ Providing troubleshooting information if needed
+
+    Perfect for fixing MCP integration issues or setting up team-shared configuration.
+    """
+    try:
+        # Import MCP functions
+        from .mcp import (
+            check_claude_code_available,
+            create_project_claude_config,
+            get_mcp_server_command,
+        )
+        import subprocess
+        import json
+
+        # Get project root
+        project_root = ctx.obj.get("project_root") or Path.cwd()
+
+        # Check if project is initialized
+        project_manager = ProjectManager(project_root)
+        if not project_manager.is_initialized():
+            print_error("Project not initialized. Run 'mcp-vector-search init' first.")
+            raise typer.Exit(1)
+
+        print_info(f"Setting up MCP integration for project: {project_root}")
+
+        # Check if project-level .claude.json already has the server
+        claude_json_path = project_root / ".claude.json"
+        if claude_json_path.exists() and not force:
+            with open(claude_json_path, 'r') as f:
+                config = json.load(f)
+            if config.get("mcpServers", {}).get(server_name):
+                print_warning(f"MCP server '{server_name}' already exists in project config.")
+                print_info("Use --force to overwrite or try a different --name")
+
+                # Still test the existing configuration
+                print_info("Testing existing configuration...")
+                _test_mcp_server(project_root)
+                return
+
+        # Create project-level configuration
+        create_project_claude_config(project_root, server_name)
+
+        print_success(f"✅ MCP server '{server_name}' installed in project configuration")
+        print_info("📁 Created .claude.json for team sharing - commit this file to your repo")
+
+        # Test the server
+        print_info("Testing server startup...")
+        _test_mcp_server(project_root)
+
+        # Check if Claude Code is available and provide guidance
+        if not check_claude_code_available():
+            print_warning("⚠️  Claude Code not detected on this system")
+            print_info("📥 Install Claude Code from: https://claude.ai/download")
+            print_info("🔄 After installation, restart Claude Code to detect the MCP server")
+        else:
+            print_success("✅ Claude Code detected - server should be available automatically")
+            print_info("🔄 If Claude Code is running, restart it to detect the new server")
+
+        print_info("\n📋 Next steps:")
+        print_info("  1. Restart Claude Code if it's currently running")
+        print_info("  2. Open this project in Claude Code")
+        print_info("  3. The MCP server should appear automatically in the tools list")
+        print_info("  4. Test with: 'Search for functions that handle user authentication'")
+
+    except Exception as e:
+        logger.error(f"MCP integration setup failed: {e}")
+        print_error(f"MCP integration setup failed: {e}")
+        raise typer.Exit(1)
+
+
+def _test_mcp_server(project_root: Path) -> None:
+    """Test MCP server startup and basic functionality."""
+    try:
+        from .mcp import get_mcp_server_command
+        import subprocess
+        import json
+
+        server_command = get_mcp_server_command(project_root)
+        test_process = subprocess.Popen(
+            server_command.split(),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        # Send a simple initialization request
+        init_request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0.0"}
+            }
+        }
+
+        try:
+            stdout, stderr = test_process.communicate(
+                input=json.dumps(init_request) + "\n",
+                timeout=10
+            )
+
+            if test_process.returncode == 0:
+                print_success("✅ Server startup test passed")
+            else:
+                print_warning(f"⚠️  Server test failed with return code {test_process.returncode}")
+                if stderr:
+                    print_info(f"Error output: {stderr}")
+
+        except subprocess.TimeoutExpired:
+            test_process.kill()
+            print_warning("⚠️  Server test timed out (this may be normal)")
+
+    except Exception as e:
+        print_warning(f"⚠️  Server test failed: {e}")
+        print_info("This may be normal - the server should still work with Claude Code")
+
+
 @init_app.command("models")
 def list_embedding_models() -> None:
     """List available embedding models."""

@@ -1,5 +1,11 @@
 """Utility modules for MCP Vector Search."""
 
+from .gitignore import (
+    GitignoreParser,
+    GitignorePattern,
+    create_gitignore_parser,
+    is_path_gitignored,
+)
 from .timing import (
     PerformanceProfiler,
     SearchProfiler,
@@ -13,6 +19,11 @@ from .timing import (
 from .version import get_user_agent, get_version_info, get_version_string
 
 __all__ = [
+    # Gitignore utilities
+    "GitignoreParser",
+    "GitignorePattern",
+    "create_gitignore_parser",
+    "is_path_gitignored",
     # Timing utilities
     "PerformanceProfiler",
     "TimingResult",

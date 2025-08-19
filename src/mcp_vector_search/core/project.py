@@ -13,6 +13,7 @@ from ..config.defaults import (
     get_language_from_extension,
 )
 from ..config.settings import ProjectConfig
+from ..utils.gitignore import create_gitignore_parser
 from .exceptions import (
     ConfigurationError,
     ProjectInitializationError,
@@ -32,6 +33,13 @@ class ProjectManager:
         """
         self.project_root = project_root or self._detect_project_root()
         self._config: ProjectConfig | None = None
+
+        # Initialize gitignore parser
+        try:
+            self.gitignore_parser = create_gitignore_parser(self.project_root)
+        except Exception as e:
+            logger.debug(f"Failed to load gitignore patterns: {e}")
+            self.gitignore_parser = None
 
     def _detect_project_root(self) -> Path:
         """Auto-detect project root directory."""
@@ -289,6 +297,10 @@ class ProjectManager:
         Returns:
             True if path should be ignored
         """
+        # First check gitignore rules if available
+        if self.gitignore_parser and self.gitignore_parser.is_ignored(path):
+            return True
+
         # Check if any parent directory is in ignore patterns
         for part in path.parts:
             if part in DEFAULT_IGNORE_PATTERNS:
