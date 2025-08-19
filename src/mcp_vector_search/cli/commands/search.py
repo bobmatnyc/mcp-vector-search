@@ -60,6 +60,21 @@ def search_main(
         min=0.0,
         max=1.0,
     ),
+    similar: bool = typer.Option(
+        False,
+        "--similar",
+        help="Find code similar to the query (treats query as file path)",
+    ),
+    context: bool = typer.Option(
+        False,
+        "--context",
+        help="Search for code based on contextual description",
+    ),
+    focus: str | None = typer.Option(
+        None,
+        "--focus",
+        help="Focus areas for context search (comma-separated)",
+    ),
     no_content: bool = typer.Option(
         False,
         "--no-content",
@@ -92,26 +107,69 @@ def search_main(
         mcp-vector-search search "database connection" --language python
         mcp-vector-search search "error handling" --files "*.js" --limit 5
         mcp-vector-search search "user validation" --function validate --json
+        mcp-vector-search search "src/auth.py" --similar
+        mcp-vector-search search "implement rate limiting" --context
+        mcp-vector-search search "user authentication" --context --focus security,middleware
     """
     try:
         project_root = ctx.obj.get("project_root") or Path.cwd()
 
-        asyncio.run(
-            run_search(
-                project_root=project_root,
-                query=query,
-                limit=limit,
-                files=files,
-                language=language,
-                function_name=function_name,
-                class_name=class_name,
-                similarity_threshold=similarity_threshold,
-                show_content=not no_content,
-                json_output=json_output,
-                export_format=export_format,
-                export_path=export_path,
+        # Validate mutually exclusive options
+        if similar and context:
+            print_error("Cannot use both --similar and --context flags together")
+            raise typer.Exit(1)
+
+        # Route to appropriate search function
+        if similar:
+            # Similar search - treat query as file path
+            file_path = Path(query)
+            if not file_path.exists():
+                print_error(f"File not found: {query}")
+                raise typer.Exit(1)
+
+            asyncio.run(
+                run_similar_search(
+                    project_root=project_root,
+                    file_path=file_path,
+                    function_name=function_name,
+                    limit=limit,
+                    similarity_threshold=similarity_threshold,
+                    json_output=json_output,
+                )
             )
-        )
+        elif context:
+            # Context search
+            focus_areas = None
+            if focus:
+                focus_areas = [area.strip() for area in focus.split(",")]
+
+            asyncio.run(
+                run_context_search(
+                    project_root=project_root,
+                    description=query,
+                    focus_areas=focus_areas,
+                    limit=limit,
+                    json_output=json_output,
+                )
+            )
+        else:
+            # Default semantic search
+            asyncio.run(
+                run_search(
+                    project_root=project_root,
+                    query=query,
+                    limit=limit,
+                    files=files,
+                    language=language,
+                    function_name=function_name,
+                    class_name=class_name,
+                    similarity_threshold=similarity_threshold,
+                    show_content=not no_content,
+                    json_output=json_output,
+                    export_format=export_format,
+                    export_path=export_path,
+                )
+            )
 
     except Exception as e:
         logger.error(f"Search failed: {e}")
