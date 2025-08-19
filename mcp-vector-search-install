@@ -206,12 +206,16 @@ show_shell_setup() {
     echo "🐚 Shell Integration Setup"
     echo "========================="
     echo
-    echo "Add these functions to your ~/.zshrc or ~/.bashrc:"
+    echo "Add these aliases and functions to your ~/.zshrc or ~/.bashrc:"
     echo
     cat << 'EOF'
-# MCP Vector Search functions
+# MCP Vector Search - Development Build Aliases
+alias mcp-vector-search='cd /Users/masa/Projects/managed/mcp-vector-search && uv run mcp-vector-search'
+alias mcp-vector-search-install='/Users/masa/Projects/managed/mcp-vector-search/mcp-vector-search-install'
+
+# MCP Vector Search - Convenience Functions
 mcp-install() {
-    /Users/masa/Projects/managed/mcp-vector-search/mcp-vector-search-install install "$@"
+    /Users/masa/Projects/managed/mcp-vector-search/mcp-vector-search-install "$@"
 }
 
 mcp-demo() {
@@ -222,13 +226,29 @@ mcp-dev() {
     local dev_path="/Users/masa/Projects/managed/mcp-vector-search"
     cd "$dev_path" && uv run mcp-vector-search "$@"
 }
+
+# Quick project setup function
+mcp-setup() {
+    /Users/masa/Projects/managed/mcp-vector-search/mcp-vector-search-install "$@"
+}
 EOF
     echo
-    echo "Then reload your shell and use:"
-    echo "  mcp-install                    # Install in current directory"
-    echo "  mcp-install ~/my-project       # Install in specific directory"
-    echo "  mcp-demo                       # Run installation demo"
-    echo "  mcp-dev --help                 # Run from dev environment"
+    echo "Then reload your shell with: source ~/.zshrc"
+    echo
+    echo "Available commands:"
+    echo "  mcp-vector-search [args...]     # Run mcp-vector-search from dev build"
+    echo "  mcp-vector-search-install       # Run the installer script"
+    echo "  mcp-install [dir] [options...]  # Install in project (default: current dir)"
+    echo "  mcp-setup [dir] [options...]    # Alias for mcp-install"
+    echo "  mcp-demo                        # Run installation demo"
+    echo "  mcp-dev [args...]               # Run from dev environment"
+    echo
+    echo "Examples:"
+    echo "  mcp-vector-search --help        # Show help"
+    echo "  mcp-vector-search search 'query' # Search current project"
+    echo "  mcp-vector-search status main   # Check project status"
+    echo "  mcp-install                     # Install in current directory"
+    echo "  mcp-install ~/my-project        # Install in specific directory"
     echo
 }
 
