@@ -14,9 +14,11 @@ from mcp.types import (
     CallToolResult,
     ListToolsRequest,
     ListToolsResult,
+    ServerCapabilities,
     TextContent,
     Tool,
 )
+from mcp.server.models import InitializationOptions
 
 from ..core.database import ChromaVectorDatabase
 from ..core.embeddings import create_embedding_function
@@ -86,7 +88,7 @@ class MCPVectorSearchServer:
 
     def get_tools(self) -> List[Tool]:
         """Get available MCP tools."""
-        return [
+        tools = [
             Tool(
                 name="search_code",
                 description="Search for code using semantic similarity",
@@ -115,9 +117,83 @@ class MCPVectorSearchServer:
                             "type": "array",
                             "items": {"type": "string"},
                             "description": "Filter by file extensions (e.g., ['.py', '.js'])"
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "Filter by programming language"
+                        },
+                        "function_name": {
+                            "type": "string",
+                            "description": "Filter by function name"
+                        },
+                        "class_name": {
+                            "type": "string",
+                            "description": "Filter by class name"
+                        },
+                        "files": {
+                            "type": "string",
+                            "description": "Filter by file patterns (e.g., '*.py' or 'src/*.js')"
                         }
                     },
                     "required": ["query"]
+                }
+            ),
+            Tool(
+                name="search_similar",
+                description="Find code similar to a specific file or function",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Path to the file to find similar code for"
+                        },
+                        "function_name": {
+                            "type": "string",
+                            "description": "Optional function name within the file"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50
+                        },
+                        "similarity_threshold": {
+                            "type": "number",
+                            "description": "Minimum similarity threshold (0.0-1.0)",
+                            "default": 0.3,
+                            "minimum": 0.0,
+                            "maximum": 1.0
+                        }
+                    },
+                    "required": ["file_path"]
+                }
+            ),
+            Tool(
+                name="search_context",
+                description="Search for code based on contextual description",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "description": {
+                            "type": "string",
+                            "description": "Contextual description of what you're looking for"
+                        },
+                        "focus_areas": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Areas to focus on (e.g., ['security', 'authentication'])"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50
+                        }
+                    },
+                    "required": ["description"]
                 }
             ),
             Tool(
@@ -151,6 +227,15 @@ class MCPVectorSearchServer:
             )
         ]
 
+        return tools
+
+    def get_capabilities(self) -> ServerCapabilities:
+        """Get server capabilities."""
+        return ServerCapabilities(
+            tools={"listChanged": True},
+            logging={}
+        )
+
     async def call_tool(self, request: CallToolRequest) -> CallToolResult:
         """Handle tool calls."""
         if not self._initialized:
@@ -159,6 +244,10 @@ class MCPVectorSearchServer:
         try:
             if request.params.name == "search_code":
                 return await self._search_code(request.params.arguments)
+            elif request.params.name == "search_similar":
+                return await self._search_similar(request.params.arguments)
+            elif request.params.name == "search_context":
+                return await self._search_context(request.params.arguments)
             elif request.params.name == "get_project_status":
                 return await self._get_project_status(request.params.arguments)
             elif request.params.name == "index_project":
@@ -187,6 +276,10 @@ class MCPVectorSearchServer:
         limit = args.get("limit", 10)
         similarity_threshold = args.get("similarity_threshold", 0.3)
         file_extensions = args.get("file_extensions")
+        language = args.get("language")
+        function_name = args.get("function_name")
+        class_name = args.get("class_name")
+        files = args.get("files")
 
         if not query:
             return CallToolResult(
@@ -201,6 +294,15 @@ class MCPVectorSearchServer:
         filters = {}
         if file_extensions:
             filters["file_extension"] = {"$in": file_extensions}
+        if language:
+            filters["language"] = language
+        if function_name:
+            filters["function_name"] = function_name
+        if class_name:
+            filters["class_name"] = class_name
+        if files:
+            # Convert file pattern to filter (simplified)
+            filters["file_pattern"] = files
 
         # Perform search
         results = await self.search_engine.search(
@@ -328,35 +430,186 @@ class MCPVectorSearchServer:
                 isError=True
             )
 
+    async def _search_similar(self, args: Dict[str, Any]) -> CallToolResult:
+        """Handle search_similar tool call."""
+        file_path = args.get("file_path", "")
+        function_name = args.get("function_name")
+        limit = args.get("limit", 10)
+        similarity_threshold = args.get("similarity_threshold", 0.3)
+
+        if not file_path:
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text="file_path parameter is required"
+                )],
+                isError=True
+            )
+
+        try:
+            from pathlib import Path
+            from ..cli.commands.search import run_similar_search
+
+            # Convert to Path object
+            file_path_obj = Path(file_path)
+            if not file_path_obj.is_absolute():
+                file_path_obj = self.project_root / file_path_obj
+
+            if not file_path_obj.exists():
+                return CallToolResult(
+                    content=[TextContent(
+                        type="text",
+                        text=f"File not found: {file_path}"
+                    )],
+                    isError=True
+                )
+
+            # Run similar search
+            results = await self.search_engine.search_similar(
+                file_path=file_path_obj,
+                function_name=function_name,
+                limit=limit,
+                similarity_threshold=similarity_threshold
+            )
+
+            # Format results
+            if not results:
+                return CallToolResult(
+                    content=[TextContent(
+                        type="text",
+                        text=f"No similar code found for {file_path}"
+                    )]
+                )
+
+            result_text = f"Found {len(results)} similar code snippets for {file_path}:\n\n"
+            for i, result in enumerate(results, 1):
+                result_text += f"{i}. {result.file_path}:{result.line_number}\n"
+                result_text += f"   Similarity: {result.similarity:.3f}\n"
+                result_text += f"   {result.content[:100]}...\n\n"
+
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=result_text
+                )]
+            )
+
+        except Exception as e:
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=f"Similar search failed: {str(e)}"
+                )],
+                isError=True
+            )
+
+    async def _search_context(self, args: Dict[str, Any]) -> CallToolResult:
+        """Handle search_context tool call."""
+        description = args.get("description", "")
+        focus_areas = args.get("focus_areas")
+        limit = args.get("limit", 10)
+
+        if not description:
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text="description parameter is required"
+                )],
+                isError=True
+            )
+
+        try:
+            # Perform context search
+            results = await self.search_engine.search_by_context(
+                context_description=description,
+                focus_areas=focus_areas,
+                limit=limit
+            )
+
+            # Format results
+            if not results:
+                return CallToolResult(
+                    content=[TextContent(
+                        type="text",
+                        text=f"No contextually relevant code found for: {description}"
+                    )]
+                )
+
+            result_text = f"Found {len(results)} contextually relevant code snippets"
+            if focus_areas:
+                result_text += f" (focus: {', '.join(focus_areas)})"
+            result_text += f" for: {description}\n\n"
+
+            for i, result in enumerate(results, 1):
+                result_text += f"{i}. {result.file_path}:{result.line_number}\n"
+                result_text += f"   Similarity: {result.similarity:.3f}\n"
+                result_text += f"   {result.content[:100]}...\n\n"
+
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=result_text
+                )]
+            )
+
+        except Exception as e:
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=f"Context search failed: {str(e)}"
+                )],
+                isError=True
+            )
+
 
 def create_mcp_server(project_root: Optional[Path] = None) -> Server:
     """Create and configure the MCP server."""
     server = Server("mcp-vector-search")
     mcp_server = MCPVectorSearchServer(project_root)
-    
+
     @server.list_tools()
-    async def list_tools(request: ListToolsRequest) -> ListToolsResult:
+    async def handle_list_tools() -> List[Tool]:
         """List available tools."""
-        return ListToolsResult(tools=mcp_server.get_tools())
-    
+        return mcp_server.get_tools()
+
     @server.call_tool()
-    async def call_tool(request: CallToolRequest) -> CallToolResult:
+    async def handle_call_tool(name: str, arguments: dict | None):
         """Handle tool calls."""
-        return await mcp_server.call_tool(request)
-    
+        # Create a mock request object for compatibility
+        from types import SimpleNamespace
+        mock_request = SimpleNamespace()
+        mock_request.params = SimpleNamespace()
+        mock_request.params.name = name
+        mock_request.params.arguments = arguments or {}
+
+        result = await mcp_server.call_tool(mock_request)
+
+        # Return the content from the result
+        return result.content
+
     # Store reference for cleanup
     server._mcp_server = mcp_server
-    
+
     return server
 
 
 async def run_mcp_server(project_root: Optional[Path] = None) -> None:
     """Run the MCP server using stdio transport."""
     server = create_mcp_server(project_root)
-    
+
+    # Create initialization options with proper capabilities
+    init_options = InitializationOptions(
+        server_name="mcp-vector-search",
+        server_version="0.4.0",
+        capabilities=ServerCapabilities(
+            tools={"listChanged": True},
+            logging={}
+        )
+    )
+
     try:
         async with stdio_server() as (read_stream, write_stream):
-            await server.run(read_stream, write_stream, server.create_initialization_options())
+            await server.run(read_stream, write_stream, init_options)
     finally:
         # Cleanup
         if hasattr(server, '_mcp_server'):

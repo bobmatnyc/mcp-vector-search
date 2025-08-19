@@ -54,17 +54,17 @@ mcp-vector-search mcp install [OPTIONS]
 ```
 
 **Options:**
-- `--scope`: Installation scope (`local`, `project`, or `user`) - default: `local`
+- `--scope`: Installation scope (project only - user config not supported) - default: `project`
 - `--name`: Custom name for the MCP server - default: `mcp-vector-search`
 - `--force`: Force installation even if server already exists
 
 **Examples:**
 ```bash
-# Install with default settings
+# Install with default settings (project scope)
 mcp-vector-search mcp install
 
-# Install with custom name and user scope
-mcp-vector-search mcp install --scope user --name my-vector-search
+# Install with custom name
+mcp-vector-search mcp install --name my-vector-search
 
 # Force reinstall
 mcp-vector-search mcp install --force
@@ -239,9 +239,9 @@ If searches return no results:
 
 If you encounter permission issues:
 
-1. Try using `--scope local` instead of `user` or `project`
-2. Check Claude Code permissions
-3. Ensure you have write access to the configuration directory
+1. Check Claude Code permissions
+2. Ensure you have write access to the project directory for .mcp.json creation
+3. Verify the project is properly initialized with `mcp-vector-search init`
 
 ## Configuration
 

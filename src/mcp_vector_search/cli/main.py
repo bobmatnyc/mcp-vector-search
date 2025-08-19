@@ -22,6 +22,7 @@ from .commands.search import (
 )
 from .commands.status import status_app
 from .commands.watch import app as watch_app
+from .didyoumean import create_enhanced_typer, add_common_suggestions
 from .output import print_error, setup_logging
 
 # Install rich traceback handler
@@ -30,8 +31,8 @@ install(show_locals=True)
 # Create console for rich output
 console = Console()
 
-# Create main Typer app
-app = typer.Typer(
+# Create main Typer app with "did you mean" functionality
+app = create_enhanced_typer(
     name="mcp-vector-search",
     help="CLI-first semantic code search with MCP integration",
     add_completion=False,
@@ -203,6 +204,26 @@ def version() -> None:
     )
     console.print("\n[dim]CLI-first semantic code search with MCP integration[/dim]")
     console.print("[dim]Built with ChromaDB, Tree-sitter, and modern Python[/dim]")
+
+
+def handle_command_error(ctx, param, value):
+    """Handle command errors with suggestions."""
+    if ctx.resilient_parsing:
+        return
+
+    # This will be called when a command is not found
+    import click
+    try:
+        return value
+    except click.UsageError as e:
+        if "No such command" in str(e):
+            # Extract the command name from the error
+            import re
+            match = re.search(r"No such command '([^']+)'", str(e))
+            if match:
+                command_name = match.group(1)
+                add_common_suggestions(ctx, command_name)
+        raise
 
 
 @app.command()

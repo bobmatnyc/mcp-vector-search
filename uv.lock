@@ -387,6 +387,18 @@ wheels = [
 ]
 
 [[package]]
+name = "click-didyoumean"
+version = "0.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/30/ce/217289b77c590ea1e7c24242d9ddd6e249e52c795ff10fac2c50062c48cb/click_didyoumean-0.3.1.tar.gz", hash = "sha256:4f82fdff0dbe64ef8ab2279bd6aa3f6a99c3b28c05aa09cbfc07c9d7fbb5a463", size = 3089, upload-time = "2024-03-24T08:22:07.499Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/5b/974430b5ffdb7a4f1941d13d83c64a0395114503cc357c6b9ae4ce5047ed/click_didyoumean-0.3.1-py3-none-any.whl", hash = "sha256:5c4bb6007cfea5f2fd6583a2fb6701a22a41eb98957e63d0fac41c10e7c3117c", size = 3631, upload-time = "2024-03-24T08:22:06.356Z" },
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -1128,6 +1140,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
     { name = "chromadb" },
+    { name = "click-didyoumean" },
     { name = "httpx" },
     { name = "loguru" },
     { name = "mcp" },
@@ -1171,6 +1184,7 @@ docs = [
 requires-dist = [
     { name = "aiofiles", specifier = ">=23.0.0" },
     { name = "chromadb", specifier = ">=0.5.0" },
+    { name = "click-didyoumean", specifier = ">=0.3.0" },
     { name = "httpx", specifier = ">=0.25.0" },
     { name = "loguru", specifier = ">=0.7.0" },
     { name = "mcp", specifier = ">=1.12.4" },
