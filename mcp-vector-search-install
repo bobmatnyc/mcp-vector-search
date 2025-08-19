@@ -209,8 +209,11 @@ show_shell_setup() {
     echo "Add these aliases and functions to your ~/.zshrc or ~/.bashrc:"
     echo
     cat << 'EOF'
-# MCP Vector Search - Development Build Aliases
-alias mcp-vector-search='cd /Users/masa/Projects/managed/mcp-vector-search && uv run mcp-vector-search'
+# MCP Vector Search - Development Build Aliases (mimics PyPI installation)
+mcp-vector-search() {
+    local current_dir="$(pwd)"
+    cd /Users/masa/Projects/managed/mcp-vector-search && uv run mcp-vector-search --project-root "$current_dir" "$@"
+}
 alias mcp-vector-search-install='/Users/masa/Projects/managed/mcp-vector-search/mcp-vector-search-install'
 
 # MCP Vector Search - Convenience Functions
@@ -223,8 +226,9 @@ mcp-demo() {
 }
 
 mcp-dev() {
+    local current_dir="$(pwd)"
     local dev_path="/Users/masa/Projects/managed/mcp-vector-search"
-    cd "$dev_path" && uv run mcp-vector-search "$@"
+    cd "$dev_path" && uv run mcp-vector-search --project-root "$current_dir" "$@"
 }
 
 # Quick project setup function
