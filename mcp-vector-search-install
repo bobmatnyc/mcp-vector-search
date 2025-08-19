@@ -83,16 +83,37 @@ install_mcp_vector_search() {
 
     # Change to development directory and run the enhanced init command
     cd "$DEV_PATH"
-    uv run mcp-vector-search --project-root "$target_dir" init main "$@"
 
-    echo
-    print_success "Setup completed for: $target_dir"
-    echo
-    echo "🔍 Next steps:"
-    echo "   cd $target_dir"
-    echo "   mcp-vector-search search 'your query'"
-    echo "   mcp-vector-search status main"
-    echo
+    if uv run mcp-vector-search --project-root "$target_dir" init main "$@"; then
+        echo
+        print_success "Setup completed for: $target_dir"
+        echo
+        echo "🔍 Next steps:"
+        echo "   cd $target_dir"
+        echo "   mcp-vector-search search 'your query'"
+        echo "   mcp-vector-search status main"
+        echo
+    else
+        exit_code=$?
+        echo
+        if [ $exit_code -eq 1 ]; then
+            print_warning "Project is already initialized!"
+            echo
+            echo "💡 Options:"
+            echo "   • Use --force to re-initialize: $0 --force"
+            echo "   • Check current status: cd $target_dir && mcp-vector-search status main"
+            echo "   • Search your code: cd $target_dir && mcp-vector-search search 'your query'"
+            echo
+        else
+            print_error "Setup failed with exit code: $exit_code"
+            echo
+            echo "💡 Try:"
+            echo "   • Use --force to re-initialize: $0 --force"
+            echo "   • Check the logs for more details"
+            echo
+        fi
+        exit $exit_code
+    fi
 }
 
 run_demo() {
