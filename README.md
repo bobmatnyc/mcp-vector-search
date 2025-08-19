@@ -76,6 +76,21 @@ mcp-vector-search status
 mcp-vector-search watch
 ```
 
+### Smart CLI with "Did You Mean" Suggestions
+
+The CLI includes intelligent command suggestions for typos:
+
+```bash
+# Typos are automatically detected and corrected
+$ mcp-vector-search serach "auth"
+No such command 'serach'. Did you mean 'search'?
+
+$ mcp-vector-search indx
+No such command 'indx'. Did you mean 'index'?
+```
+
+See [docs/CLI_FEATURES.md](docs/CLI_FEATURES.md) for more details.
+
 ## Versioning & Releasing
 
 This project uses semantic versioning with an automated release workflow.

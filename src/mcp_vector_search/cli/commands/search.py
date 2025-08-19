@@ -11,13 +11,14 @@ from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
 from ...core.project import ProjectManager
 from ...core.search import SemanticSearchEngine
+from ..didyoumean import create_enhanced_typer
 from ..output import (
     print_error,
     print_search_results,
 )
 
-# Create search subcommand app (kept for backward compatibility)
-search_app = typer.Typer(help="Search code semantically")
+# Create search subcommand app with "did you mean" functionality (kept for backward compatibility)
+search_app = create_enhanced_typer(help="Search code semantically")
 
 
 def search_main(

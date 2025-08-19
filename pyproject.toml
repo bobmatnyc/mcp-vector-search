@@ -36,6 +36,7 @@ dependencies = [
     "loguru>=0.7.0",
     "httpx>=0.25.0",
     "mcp>=1.12.4",
+    "click-didyoumean>=0.3.0",
 ]
 
 [dependency-groups]
