@@ -19,7 +19,7 @@ class SemanticSearchEngine:
         self,
         database: VectorDatabase,
         project_root: Path,
-        similarity_threshold: float = 0.7,
+        similarity_threshold: float = 0.3,
         auto_indexer: AutoIndexer | None = None,
         enable_auto_reindex: bool = True,
     ) -> None:
@@ -274,7 +274,7 @@ class SemanticSearchEngine:
 
         # 1. Single word queries - lower threshold for broader results
         if len(words) == 1:
-            return max(0.25, base_threshold - 0.15)
+            return max(0.01, base_threshold - 0.29)
 
         # 2. Very specific technical terms - lower threshold
         technical_terms = [
@@ -302,14 +302,19 @@ class SemanticSearchEngine:
             "interpreter",
             "syntax",
             "semantic",
+            "mcp",
+            "gateway",
+            "server",
+            "client",
+            "protocol",
         ]
 
         if any(term in query_lower for term in technical_terms):
-            return max(0.25, base_threshold - 0.1)
+            return max(0.01, base_threshold - 0.29)
 
         # 3. Short queries (2-3 words) - slightly lower threshold
         if len(words) <= 3:
-            return max(0.3, base_threshold - 0.05)
+            return max(0.1, base_threshold - 0.1)
 
         # 4. Long queries (>6 words) - higher threshold for precision
         if len(words) > 6:
@@ -317,7 +322,7 @@ class SemanticSearchEngine:
 
         # 5. Queries with exact identifiers (CamelCase, snake_case)
         if re.search(r"\b[A-Z][a-zA-Z]*\b", query) or "_" in query:
-            return max(0.2, base_threshold - 0.2)
+            return max(0.05, base_threshold - 0.25)
 
         # 6. Common programming patterns
         if any(pattern in query for pattern in ["()", ".", "->", "=>", "::"]):

@@ -67,19 +67,10 @@ def check_claude_code_available() -> bool:
 
 def get_mcp_server_command(project_root: Path) -> str:
     """Get the command to run the MCP server."""
-    # Use the current Python executable and the mcp-vector-search module
+    # Always use the development Python executable and include project root
+    # This ensures the MCP server knows which project to operate on
     python_exe = sys.executable
-
-    # Check if we're running from the wrapper (development mode)
-    # In this case, don't hardcode the project root - let the server auto-detect
-    wrapper_root = "/Users/masa/Projects/managed/mcp-vector-search"
-    if str(project_root) != wrapper_root:
-        # We're installing in a different project - don't pass project root
-        # Let the MCP server auto-detect based on where it's invoked
-        return f"{python_exe} -m mcp_vector_search.mcp.server"
-    else:
-        # We're in the source project itself
-        return f"{python_exe} -m mcp_vector_search.mcp.server {project_root}"
+    return f"{python_exe} -m mcp_vector_search.mcp.server {project_root}"
 
 
 def create_project_claude_config(project_root: Path, server_name: str) -> None:

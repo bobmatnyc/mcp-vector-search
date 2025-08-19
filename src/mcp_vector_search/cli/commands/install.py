@@ -27,6 +27,16 @@ def main(
         None,
         help="Target directory to install in (default: current directory)",
     ),
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory (auto-detected if not specified)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
     extensions: str | None = typer.Option(
         None,
         "--extensions",
@@ -77,8 +87,8 @@ def main(
         mcp-vector-search install --extensions .py,.js,.ts  # Custom file extensions
     """
     try:
-        # Determine target directory
-        target_dir = target_directory or Path.cwd()
+        # Determine target directory - prioritize target_directory, then project_root, then context, then cwd
+        target_dir = target_directory or project_root or ctx.obj.get("project_root") or Path.cwd()
         target_dir = target_dir.resolve()
 
         # Show installation header
@@ -155,7 +165,18 @@ def main(
 
 
 @install_app.command("demo")
-def demo() -> None:
+def demo(
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory (auto-detected if not specified)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+) -> None:
     """Run installation demo with sample project."""
     try:
         import tempfile

@@ -24,6 +24,16 @@ search_app = create_enhanced_typer(help="Search code semantically")
 def search_main(
     ctx: typer.Context,
     query: str = typer.Argument(..., help="Search query"),
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory (auto-detected if not specified)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
     limit: int = typer.Option(
         10,
         "--limit",
@@ -113,7 +123,7 @@ def search_main(
         mcp-vector-search search "user authentication" --context --focus security,middleware
     """
     try:
-        project_root = ctx.obj.get("project_root") or Path.cwd()
+        project_root = project_root or ctx.obj.get("project_root") or Path.cwd()
 
         # Validate mutually exclusive options
         if similar and context:
@@ -308,6 +318,16 @@ def search_similar_cmd(
         dir_okay=False,
         readable=True,
     ),
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory (auto-detected if not specified)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
     function_name: str | None = typer.Option(
         None,
         "--function",
@@ -343,7 +363,7 @@ def search_similar_cmd(
         mcp-vector-search search similar src/utils.py --function validate_email
     """
     try:
-        project_root = ctx.obj.get("project_root") or Path.cwd()
+        project_root = project_root or ctx.obj.get("project_root") or Path.cwd()
 
         asyncio.run(
             run_similar_search(
@@ -414,6 +434,16 @@ async def run_similar_search(
 def search_context_cmd(
     ctx: typer.Context,
     description: str = typer.Argument(..., help="Context description"),
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory (auto-detected if not specified)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
     focus: str | None = typer.Option(
         None,
         "--focus",
@@ -440,7 +470,7 @@ def search_context_cmd(
         mcp-vector-search search context "user authentication" --focus security,middleware
     """
     try:
-        project_root = ctx.obj.get("project_root") or Path.cwd()
+        project_root = project_root or ctx.obj.get("project_root") or Path.cwd()
 
         focus_areas = None
         if focus:
