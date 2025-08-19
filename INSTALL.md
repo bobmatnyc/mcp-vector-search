@@ -18,14 +18,17 @@ The `mcp-vector-search-install` script provides complete one-step setup that:
 
 ### Basic Installation
 ```bash
-# Install in current directory
-./mcp-vector-search-install install
+# Install in current directory (default behavior)
+./mcp-vector-search-install
 
 # Install in specific directory
-./mcp-vector-search-install install ~/my-project
+./mcp-vector-search-install ~/my-project
 
 # Install with options
-./mcp-vector-search-install install ~/project --no-mcp --force
+./mcp-vector-search-install --no-mcp --force
+
+# Explicit install command (same as default)
+./mcp-vector-search-install install
 ```
 
 ### Demo & Testing
@@ -63,17 +66,20 @@ The `mcp-vector-search-install` script provides complete one-step setup that:
 ## 🧪 Complete Examples
 
 ```bash
-# Install in current directory with all features
-./mcp-vector-search-install install
+# Install in current directory with all features (default)
+./mcp-vector-search-install
 
 # Install in specific project
-./mcp-vector-search-install install ~/my-awesome-project
+./mcp-vector-search-install ~/my-awesome-project
 
 # Install without MCP integration
-./mcp-vector-search-install install ~/simple-project --no-mcp
+./mcp-vector-search-install --no-mcp
 
 # Force re-install with custom extensions
-./mcp-vector-search-install install . --force --extensions .py,.js,.ts,.go
+./mcp-vector-search-install --force --extensions .py,.js,.ts,.go
+
+# Install in specific directory with options
+./mcp-vector-search-install ~/simple-project --no-mcp
 
 # Run demo to see it in action
 ./mcp-vector-search-install demo
