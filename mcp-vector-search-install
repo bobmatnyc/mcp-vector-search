@@ -29,12 +29,13 @@ show_help() {
     echo "Single script to install and manage mcp-vector-search in any project."
     echo
     echo "USAGE:"
-    echo "  $0 install [directory] [options...]    Install mcp-vector-search"
+    echo "  $0 [directory] [options...]             Install mcp-vector-search (default)"
+    echo "  $0 install [directory] [options...]     Install mcp-vector-search"
     echo "  $0 demo                                 Run installation demo"
     echo "  $0 shell-setup                         Show shell integration setup"
     echo "  $0 --help, -h                          Show this help"
     echo
-    echo "INSTALL COMMAND:"
+    echo "INSTALL OPTIONS:"
     echo "  directory           Directory to install in (default: current directory)"
     echo
     echo "INSTALL OPTIONS (passed to init main):"
@@ -44,10 +45,10 @@ show_help() {
     echo "  --extensions LIST  Custom file extensions (e.g., .py,.js,.ts)"
     echo
     echo "EXAMPLES:"
-    echo "  $0 install                              # Install in current directory"
-    echo "  $0 install ~/my-project                 # Install in specific directory"
-    echo "  $0 install . --no-mcp                   # Install without MCP integration"
-    echo "  $0 install ~/project --force            # Force re-install"
+    echo "  $0                                      # Install in current directory"
+    echo "  $0 ~/my-project                         # Install in specific directory"
+    echo "  $0 . --no-mcp                           # Install without MCP integration"
+    echo "  $0 ~/project --force                    # Force re-install"
     echo "  $0 demo                                 # Run demo with sample project"
     echo "  $0 shell-setup                         # Show shell integration commands"
     echo
@@ -214,13 +215,27 @@ case "${1:-}" in
     "shell-setup")
         show_shell_setup
         ;;
-    "--help"|"-h"|"help"|"")
+    "--help"|"-h"|"help")
         show_help
         ;;
+    "")
+        # Default behavior: install in current directory
+        install_mcp_vector_search
+        ;;
     *)
-        print_error "Unknown command: $1"
-        echo
-        show_help
-        exit 1
+        # Check if first argument is an option (starts with --)
+        if [[ "$1" == --* ]]; then
+            # Treat as install command with options, use current directory
+            install_mcp_vector_search "$(pwd)" "$@"
+        # Check if first argument looks like a directory path
+        elif [[ -d "$1" ]] || [[ "$1" == "." ]] || [[ "$1" == ~* ]] || [[ "$1" == /* ]]; then
+            # Treat as install command with directory
+            install_mcp_vector_search "$@"
+        else
+            print_error "Unknown command: $1"
+            echo
+            show_help
+            exit 1
+        fi
         ;;
 esac
