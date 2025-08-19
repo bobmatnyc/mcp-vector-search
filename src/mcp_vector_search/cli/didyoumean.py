@@ -170,7 +170,7 @@ def add_common_suggestions(ctx: click.Context, command_name: str) -> None:
         'demo': 'demo',
         'example': 'demo',
         'test': 'mcp test',
-        'check': 'doctor',
+        'check': 'status',
         'doctor': 'doctor',
         'health': 'doctor',
         'version': 'version',

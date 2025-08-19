@@ -632,11 +632,32 @@ class PooledChromaVectorDatabase(VectorDatabase):
                     if "file_path" in metadata:
                         files.add(metadata["file_path"])
 
+                # Count languages and file types
+                language_counts = {}
+                file_type_counts = {}
+
+                for metadata in results["metadatas"]:
+                    # Count languages
+                    lang = metadata.get("language", "unknown")
+                    language_counts[lang] = language_counts.get(lang, 0) + 1
+
+                    # Count file types
+                    file_path = metadata.get("file_path", "")
+                    if file_path:
+                        ext = Path(file_path).suffix or "no_extension"
+                        file_type_counts[ext] = file_type_counts.get(ext, 0) + 1
+
+                # Estimate index size (rough approximation)
+                index_size_mb = count * 0.001  # Rough estimate
+
                 return IndexStats(
                     total_chunks=count,
                     total_files=len(files),
-                    languages=list(languages),
-                    last_updated=None,  # ChromaDB doesn't track this
+                    languages=language_counts,
+                    file_types=file_type_counts,
+                    index_size_mb=index_size_mb,
+                    last_updated="unknown",  # ChromaDB doesn't track this
+                    embedding_model="unknown"  # TODO: Track this in metadata
                 )
 
         except Exception as e:

@@ -8,7 +8,7 @@ MCP_DEV_PATH="/Users/masa/Projects/managed/mcp-vector-search"
 # Main alias - run mcp-vector-search from development build (mimics PyPI installation)
 mcp-vector-search() {
     local current_dir="$(pwd)"
-    cd "$MCP_DEV_PATH" && uv run mcp-vector-search --project-root "$current_dir" "$@"
+    (cd "$MCP_DEV_PATH" && uv run mcp-vector-search --project-root "$current_dir" "$@")
 }
 
 # Convenience functions

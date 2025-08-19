@@ -41,11 +41,12 @@ app = create_enhanced_typer(
 
 # Add install command directly (not as subcommand app)
 from .commands.install import main as install_main, demo as install_demo
+from .commands.status import main as status_main
 app.command("install", help="🚀 Install mcp-vector-search in projects")(install_main)
 app.command("demo", help="🎬 Run installation demo with sample project")(install_demo)
+app.command("status", help="📊 Show project status and statistics")(status_main)
 app.add_typer(init_app, name="init", help="🔧 Initialize project for semantic search")
 app.add_typer(index_app, name="index", help="Index codebase for semantic search")
-app.add_typer(status_app, name="status", help="Show project status and statistics")
 app.add_typer(config_app, name="config", help="Manage project configuration")
 app.add_typer(watch_app, name="watch", help="Watch for file changes and update index")
 app.add_typer(auto_index_app, name="auto-index", help="Manage automatic indexing")
@@ -56,6 +57,7 @@ app.command("search", help="Search code semantically")(search_main)
 
 # Keep old nested structure for backward compatibility
 app.add_typer(search_app, name="search-legacy", help="Legacy search commands", hidden=True)
+app.add_typer(status_app, name="status-legacy", help="Legacy status commands", hidden=True)
 app.command("find", help="Search code semantically (alias for search)")(search_main)
 app.command("search-similar", help="Find code similar to a specific file or function")(
     search_similar_cmd
