@@ -23,6 +23,16 @@ config_app = typer.Typer(help="Manage project configuration")
 @config_app.command()
 def show(
     ctx: typer.Context,
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory (auto-detected if not specified)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -31,7 +41,7 @@ def show(
 ) -> None:
     """Show current project configuration."""
     try:
-        project_root = ctx.obj.get("project_root") or Path.cwd()
+        project_root = project_root or ctx.obj.get("project_root") or Path.cwd()
         project_manager = ProjectManager(project_root)
 
         if not project_manager.is_initialized():
@@ -62,6 +72,16 @@ def set(
     ctx: typer.Context,
     key: str = typer.Argument(..., help="Configuration key to set"),
     value: str = typer.Argument(..., help="Configuration value"),
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory (auto-detected if not specified)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
 ) -> None:
     """Set a configuration value.
 
@@ -71,7 +91,7 @@ def set(
         mcp-vector-search config set cache_embeddings true
     """
     try:
-        project_root = ctx.obj.get("project_root") or Path.cwd()
+        project_root = project_root or ctx.obj.get("project_root") or Path.cwd()
         project_manager = ProjectManager(project_root)
 
         if not project_manager.is_initialized():
@@ -107,10 +127,20 @@ def set(
 def get(
     ctx: typer.Context,
     key: str = typer.Argument(..., help="Configuration key to get"),
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory (auto-detected if not specified)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
 ) -> None:
     """Get a specific configuration value."""
     try:
-        project_root = ctx.obj.get("project_root") or Path.cwd()
+        project_root = project_root or ctx.obj.get("project_root") or Path.cwd()
         project_manager = ProjectManager(project_root)
 
         if not project_manager.is_initialized():
@@ -143,6 +173,16 @@ def reset(
     key: str | None = typer.Argument(
         None, help="Configuration key to reset (resets all if not specified)"
     ),
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory (auto-detected if not specified)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
     confirm: bool = typer.Option(
         False,
         "--yes",
@@ -152,7 +192,7 @@ def reset(
 ) -> None:
     """Reset configuration to defaults."""
     try:
-        project_root = ctx.obj.get("project_root") or Path.cwd()
+        project_root = project_root or ctx.obj.get("project_root") or Path.cwd()
         project_manager = ProjectManager(project_root)
 
         if not project_manager.is_initialized():

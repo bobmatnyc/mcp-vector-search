@@ -7,28 +7,30 @@ MCP_DEV_PATH="/Users/masa/Projects/managed/mcp-vector-search"
 
 # Main alias - run mcp-vector-search from development build (mimics PyPI installation)
 mcp-vector-search() {
-    local current_dir="$(pwd)"
-    (cd "$MCP_DEV_PATH" && uv run mcp-vector-search --project-root "$current_dir" "$@")
+    # Use the development build but run it in the current directory context
+    # This avoids directory switching and operates on the current directory as project root
+    "$MCP_DEV_PATH/.venv/bin/python3" -m mcp_vector_search.cli.main "$@"
 }
 
 # Convenience functions
 mcp-install() {
-    local current_dir="$(pwd)"
-    cd "$MCP_DEV_PATH" && uv run mcp-vector-search install "$current_dir" "$@"
+    # Install in current directory using development build
+    "$MCP_DEV_PATH/.venv/bin/python3" -m mcp_vector_search.cli.main install . "$@"
 }
 
 mcp-demo() {
-    cd "$MCP_DEV_PATH" && uv run mcp-vector-search demo
+    # Run demo from development build
+    "$MCP_DEV_PATH/.venv/bin/python3" -m mcp_vector_search.cli.main demo
 }
 
 mcp-dev() {
-    local current_dir="$(pwd)"
-    cd "$MCP_DEV_PATH" && uv run mcp-vector-search --project-root "$current_dir" "$@"
+    # Development alias - same as main function
+    "$MCP_DEV_PATH/.venv/bin/python3" -m mcp_vector_search.cli.main "$@"
 }
 
 mcp-setup() {
-    local current_dir="$(pwd)"
-    cd "$MCP_DEV_PATH" && uv run mcp-vector-search install "$current_dir" "$@"
+    # Setup alias - same as mcp-install
+    "$MCP_DEV_PATH/.venv/bin/python3" -m mcp_vector_search.cli.main install . "$@"
 }
 
 # Helper function to show available commands
