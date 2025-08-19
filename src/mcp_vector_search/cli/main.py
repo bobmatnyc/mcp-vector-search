@@ -12,6 +12,7 @@ from .commands.auto_index import auto_index_app
 from .commands.config import config_app
 from .commands.index import index_app
 from .commands.init import init_app
+from .commands.install import install_app
 from .commands.mcp import mcp_app
 from .commands.search import (
     search_app,
@@ -37,8 +38,11 @@ app = typer.Typer(
     rich_markup_mode="rich",
 )
 
-# Add subcommands
-app.add_typer(init_app, name="init", help="🚀 Complete project setup with MCP integration")
+# Add install command directly (not as subcommand app)
+from .commands.install import main as install_main, demo as install_demo
+app.command("install", help="🚀 Install mcp-vector-search in projects")(install_main)
+app.command("demo", help="🎬 Run installation demo with sample project")(install_demo)
+app.add_typer(init_app, name="init", help="🔧 Initialize project for semantic search")
 app.add_typer(index_app, name="index", help="Index codebase for semantic search")
 app.add_typer(status_app, name="status", help="Show project status and statistics")
 app.add_typer(config_app, name="config", help="Manage project configuration")

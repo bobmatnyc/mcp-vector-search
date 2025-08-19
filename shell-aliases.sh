@@ -11,16 +11,14 @@ mcp-vector-search() {
     cd "$MCP_DEV_PATH" && uv run mcp-vector-search --project-root "$current_dir" "$@"
 }
 
-# Installer alias
-alias mcp-vector-search-install="$MCP_DEV_PATH/mcp-vector-search-install"
-
 # Convenience functions
 mcp-install() {
-    "$MCP_DEV_PATH/mcp-vector-search-install" "$@"
+    local current_dir="$(pwd)"
+    cd "$MCP_DEV_PATH" && uv run mcp-vector-search install "$current_dir" "$@"
 }
 
 mcp-demo() {
-    "$MCP_DEV_PATH/mcp-vector-search-install" demo
+    cd "$MCP_DEV_PATH" && uv run mcp-vector-search demo
 }
 
 mcp-dev() {
@@ -29,7 +27,8 @@ mcp-dev() {
 }
 
 mcp-setup() {
-    "$MCP_DEV_PATH/mcp-vector-search-install" "$@"
+    local current_dir="$(pwd)"
+    cd "$MCP_DEV_PATH" && uv run mcp-vector-search install "$current_dir" "$@"
 }
 
 # Helper function to show available commands
@@ -39,11 +38,10 @@ mcp-help() {
     echo
     echo "Main Commands:"
     echo "  mcp-vector-search [args...]     # Run mcp-vector-search from dev build"
-    echo "  mcp-vector-search-install       # Run the installer script"
     echo
     echo "Project Setup:"
-    echo "  mcp-install [dir] [options...]  # Install in project (default: current dir)"
-    echo "  mcp-setup [dir] [options...]    # Alias for mcp-install"
+    echo "  mcp-install [options...]        # Install in current directory"
+    echo "  mcp-setup [options...]          # Alias for mcp-install"
     echo "  mcp-demo                        # Run installation demo"
     echo
     echo "Development:"
@@ -55,7 +53,7 @@ mcp-help() {
     echo "  mcp-vector-search search 'query' # Search current project"
     echo "  mcp-vector-search status main   # Check project status"
     echo "  mcp-install                     # Install in current directory"
-    echo "  mcp-install ~/my-project        # Install in specific directory"
+    echo "  mcp-install --no-mcp            # Install without MCP integration"
     echo "  mcp-demo                        # See installation demo"
     echo
 }

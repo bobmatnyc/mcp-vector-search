@@ -1,14 +1,33 @@
 # MCP Vector Search - Installation Guide
 
-Single unified script to install and manage mcp-vector-search in any project.
+Unified CLI to install and manage mcp-vector-search in any project.
 
 ## 🚀 Quick Start
 
-The `mcp-vector-search-install` script provides complete one-step setup that:
+### PyPI Installation (Recommended)
+```bash
+# Install via pip
+pip install mcp-vector-search
 
-- ✅ **Installs** mcp-vector-search in your project (editable from dev source)
-- ✅ **Auto-detects** project languages and file types
+# Install in current directory
+mcp-vector-search install
+
+# Install with options
+mcp-vector-search install --no-mcp --force
+```
+
+### Development Installation
+```bash
+# Clone and use directly
+git clone https://github.com/bobmatnyc/mcp-vector-search.git
+cd mcp-vector-search
+uv run mcp-vector-search install
+```
+
+The `mcp-vector-search install` command provides complete one-step setup that:
+
 - ✅ **Initializes** vector database and configuration
+- ✅ **Auto-detects** project languages and file types
 - ✅ **Indexes** your entire codebase automatically
 - ✅ **Sets up** auto-indexing for file changes
 - ✅ **Installs** Claude Code MCP integration with project-scoped `.mcp.json`
@@ -19,16 +38,16 @@ The `mcp-vector-search-install` script provides complete one-step setup that:
 ### Basic Installation
 ```bash
 # Install in current directory (default behavior)
-./mcp-vector-search-install
+mcp-vector-search install
 
 # Install in specific directory
-./mcp-vector-search-install ~/my-project
+mcp-vector-search install ~/my-project
 
 # Install with options
-./mcp-vector-search-install --no-mcp --force
+mcp-vector-search install --no-mcp --force
 
-# Explicit install command (same as default)
-./mcp-vector-search-install install
+# Install with custom extensions
+mcp-vector-search install --extensions .py,.js,.ts
 ```
 
 ### Demo & Testing
@@ -43,12 +62,16 @@ The `mcp-vector-search-install` script provides complete one-step setup that:
 ./mcp-vector-search-install shell-setup
 ```
 
-### Shell Integration (Recommended)
+### Demo
 ```bash
-# Show shell integration setup
-./mcp-vector-search-install shell-setup
+# Run installation demo with sample project
+mcp-vector-search demo
+```
 
-# Or source the aliases directly
+### Shell Integration (Development)
+For development, you can set up shell aliases:
+```bash
+# Source the aliases directly
 source shell-aliases.sh
 ```
 
@@ -56,14 +79,14 @@ After setting up shell integration, you can use:
 ```bash
 mcp-vector-search --help           # Run from development build
 mcp-install                        # Install in current directory
-mcp-install ~/my-project           # Install in specific directory
 mcp-demo                           # Run installation demo
 ```
 
 ### Help
 ```bash
 # Show all available commands and options
-./mcp-vector-search-install --help
+mcp-vector-search install --help
+mcp-vector-search --help
 ```
 
 ## 🎯 Available Commands
@@ -84,25 +107,22 @@ mcp-demo                           # Run installation demo
 
 ```bash
 # Install in current directory with all features (default)
-./mcp-vector-search-install
+mcp-vector-search install
 
 # Install in specific project
-./mcp-vector-search-install ~/my-awesome-project
+mcp-vector-search install ~/my-awesome-project
 
 # Install without MCP integration
-./mcp-vector-search-install --no-mcp
+mcp-vector-search install --no-mcp
 
 # Force re-install with custom extensions
-./mcp-vector-search-install --force --extensions .py,.js,.ts,.go
+mcp-vector-search install --force --extensions .py,.js,.ts,.go
 
 # Install in specific directory with options
-./mcp-vector-search-install ~/simple-project --no-mcp
+mcp-vector-search install ~/simple-project --no-mcp
 
 # Run demo to see it in action
-./mcp-vector-search-install demo
-
-# Set up convenient shell functions
-./mcp-vector-search-install shell-setup
+mcp-vector-search demo
 ```
 
 ## 🎉 What You Get
