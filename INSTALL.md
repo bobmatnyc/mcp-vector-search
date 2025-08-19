@@ -43,6 +43,23 @@ The `mcp-vector-search-install` script provides complete one-step setup that:
 ./mcp-vector-search-install shell-setup
 ```
 
+### Shell Integration (Recommended)
+```bash
+# Show shell integration setup
+./mcp-vector-search-install shell-setup
+
+# Or source the aliases directly
+source shell-aliases.sh
+```
+
+After setting up shell integration, you can use:
+```bash
+mcp-vector-search --help           # Run from development build
+mcp-install                        # Install in current directory
+mcp-install ~/my-project           # Install in specific directory
+mcp-demo                           # Run installation demo
+```
+
 ### Help
 ```bash
 # Show all available commands and options
