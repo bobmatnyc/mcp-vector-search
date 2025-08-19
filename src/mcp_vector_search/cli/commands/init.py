@@ -166,11 +166,10 @@ def main(
 
         # Check if already initialized
         if project_manager.is_initialized() and not force:
-            print_error("Project is already initialized")
-            print_info(
-                "Use --force to re-initialize or run 'mcp-vector-search status' to see current configuration"
-            )
-            raise typer.Exit(1)
+            print_success("Project is already initialized and ready to use!")
+            print_info("Your project has vector search capabilities enabled.")
+            print_info("Use --force to re-initialize or run 'mcp-vector-search status main' to see current configuration")
+            return  # Exit gracefully without raising an exception
 
         # Parse file extensions
         file_extensions = None

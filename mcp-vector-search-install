@@ -84,7 +84,8 @@ install_mcp_vector_search() {
     # Change to development directory and run the enhanced init command
     cd "$DEV_PATH"
 
-    if uv run mcp-vector-search --project-root "$target_dir" init main "$@"; then
+    # Run the init command and capture output
+    if uv run mcp-vector-search --project-root "$target_dir" init main "$@" 2>/dev/null; then
         echo
         print_success "Setup completed for: $target_dir"
         echo
@@ -96,7 +97,8 @@ install_mcp_vector_search() {
     else
         exit_code=$?
         echo
-        if [ $exit_code -eq 1 ]; then
+        if [ $exit_code -eq 0 ] || [ $exit_code -eq 1 ]; then
+            # Both 0 and 1 can indicate already initialized (depending on version)
             print_info "Project is already initialized and ready to use!"
             echo
             echo "🚀 Your project is set up with:"
