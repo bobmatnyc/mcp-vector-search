@@ -46,9 +46,12 @@ app.add_typer(watch_app, name="watch", help="Watch for file changes and update i
 app.add_typer(auto_index_app, name="auto-index", help="Manage automatic indexing")
 app.add_typer(mcp_app, name="mcp", help="Manage Claude Code MCP integration")
 
-# Add search commands - both new simplified and old nested structure
-app.add_typer(search_app, name="search", help="Search code semantically")
-app.command("find", help="Search code semantically")(search_main)
+# Add search command - simplified syntax as default
+app.command("search", help="Search code semantically")(search_main)
+
+# Keep old nested structure for backward compatibility
+app.add_typer(search_app, name="search-legacy", help="Legacy search commands", hidden=True)
+app.command("find", help="Search code semantically (alias for search)")(search_main)
 app.command("search-similar", help="Find code similar to a specific file or function")(
     search_similar_cmd
 )
