@@ -353,6 +353,122 @@ def check_initialization(ctx: typer.Context) -> None:
         raise typer.Exit(1)
 
 
+async def run_init_setup(
+    project_root: Path,
+    file_extensions: list[str] | None = None,
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+    similarity_threshold: float = 0.5,
+    mcp: bool = True,
+    auto_index: bool = True,
+    auto_indexing: bool = True,
+    force: bool = False,
+) -> None:
+    """Reusable initialization setup function.
+
+    This function contains the core initialization logic that can be used
+    by both the init command and the install command.
+    """
+    from ...config.defaults import DEFAULT_FILE_EXTENSIONS
+    from ...core.project import ProjectManager
+    from ..output import print_project_info
+
+    # Create project manager
+    project_manager = ProjectManager(project_root)
+
+    # Parse file extensions
+    if not file_extensions:
+        file_extensions = DEFAULT_FILE_EXTENSIONS
+
+    # Initialize project
+    project_manager.initialize(
+        file_extensions=file_extensions,
+        embedding_model=embedding_model,
+        similarity_threshold=similarity_threshold,
+        force=force,
+    )
+
+    print_success("Project initialized successfully!")
+
+    # Show project information
+    project_info = project_manager.get_project_info()
+    print_project_info(project_info)
+
+    # Start indexing if requested
+    if auto_index:
+        console.print("\n[bold]🔍 Indexing your codebase...[/bold]")
+
+        # Import and run indexing (avoid circular imports)
+        from .index import run_indexing
+
+        try:
+            await run_indexing(
+                project_root=project_root,
+                force_reindex=False,
+                show_progress=True,
+            )
+            print_success("✅ Indexing completed!")
+        except Exception as e:
+            print_error(f"❌ Indexing failed: {e}")
+            print_info(
+                "You can run 'mcp-vector-search index' later to index your codebase"
+            )
+    else:
+        print_info("💡 Run 'mcp-vector-search index' to index your codebase when ready")
+
+    # Install MCP integration if requested
+    if mcp:
+        console.print("\n[bold]🔗 Installing Claude Code MCP integration...[/bold]")
+
+        try:
+            # Import MCP functionality
+            from .mcp import check_claude_code_available, get_claude_command, get_mcp_server_command
+            import subprocess
+
+            # Check if Claude Code is available
+            if not check_claude_code_available():
+                print_warning("Claude Code not found. Skipping MCP integration.")
+                print_info("Install Claude Code from: https://claude.ai/download")
+            else:
+                claude_cmd = get_claude_command()
+                server_command = get_mcp_server_command(project_root)
+
+                # Install MCP server with project scope for team sharing
+                cmd_args = [
+                    claude_cmd, "mcp", "add",
+                    "--scope=project",  # Use project scope for team sharing
+                    "mcp-vector-search",
+                    "--",
+                ] + server_command.split()
+
+                result = subprocess.run(
+                    cmd_args,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+
+                if result.returncode == 0:
+                    print_success("✅ Claude Code MCP integration installed!")
+                    print_info("📁 Created .mcp.json for team sharing - commit this file to your repo")
+
+                    # Also set up auto-indexing if requested
+                    if auto_indexing:
+                        try:
+                            from .auto_index import _setup_auto_indexing
+                            await _setup_auto_indexing(project_root, "search", 60, 5)
+                            print_success("⚡ Auto-indexing configured for file changes")
+                        except Exception as e:
+                            print_warning(f"Auto-indexing setup failed: {e}")
+                            print_info("You can set it up later with: mcp-vector-search auto-index setup")
+                else:
+                    print_warning(f"MCP integration failed: {result.stderr}")
+                    print_info("You can install it later with: mcp-vector-search mcp install")
+
+        except Exception as e:
+            print_warning(f"MCP integration failed: {e}")
+            print_info("You can install it later with: mcp-vector-search mcp install")
+
+
 @init_app.command("models")
 def list_embedding_models() -> None:
     """List available embedding models."""
