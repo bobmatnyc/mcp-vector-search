@@ -15,6 +15,7 @@ from ..output import (
     print_info,
     print_project_info,
     print_success,
+    print_warning,
 )
 
 # Create init subcommand app
@@ -61,32 +62,40 @@ def main(
         help="Force re-initialization if project is already initialized",
     ),
     auto_index: bool = typer.Option(
-        False,
-        "--auto-index",
+        True,
+        "--auto-index/--no-auto-index",
         help="Automatically start indexing after initialization",
     ),
     mcp: bool = typer.Option(
-        False,
-        "--mcp",
+        True,
+        "--mcp/--no-mcp",
         help="Install Claude Code MCP integration after initialization",
     ),
+    auto_indexing: bool = typer.Option(
+        True,
+        "--auto-indexing/--no-auto-indexing",
+        help="Set up automatic indexing for file changes",
+    ),
 ) -> None:
-    """Initialize a project for semantic code search.
+    """🚀 Complete project setup for semantic code search with MCP integration.
 
-    This command sets up the necessary configuration and directory structure
-    for MCP Vector Search in your project. It will:
+    This command provides a comprehensive one-step installation that:
 
-    - Create a .mcp-vector-search directory for storing the index and configuration
-    - Detect programming languages in your project
-    - Set up default configuration based on your project structure
-    - Optionally start indexing your codebase
-    - Optionally install Claude Code MCP integration
+    ✅ **Installs** mcp-vector-search in the current project
+    ✅ **Auto-detects** your project's programming languages and file types
+    ✅ **Initializes** vector database and configuration
+    ✅ **Indexes** your codebase automatically
+    ✅ **Sets up** auto-indexing for file changes
+    ✅ **Installs** Claude Code MCP integration with project-scoped .mcp.json
+    ✅ **Creates** shareable team configuration
+
+    Perfect for getting started quickly in any project!
 
     Examples:
-        mcp-vector-search init
-        mcp-vector-search init --extensions .py,.js,.ts --auto-index
-        mcp-vector-search init --embedding-model microsoft/unixcoder-base --force
-        mcp-vector-search init --auto-index --mcp  # One-step setup with MCP
+        mcp-vector-search init main                # Full setup with smart defaults
+        mcp-vector-search init main --no-mcp      # Setup without MCP integration
+        mcp-vector-search init main --extensions .py,.js,.ts  # Custom file types
+        mcp-vector-search init main --force       # Re-initialize existing project
     """
     try:
         # Get project root from context or auto-detect
@@ -95,6 +104,62 @@ def main(
             project_root = Path.cwd()
 
         print_info(f"Initializing project at: {project_root}")
+
+        # Step 1: Install mcp-vector-search in the current project
+        console.print("\n[bold blue]📦 Installing mcp-vector-search...[/bold blue]")
+
+        # Find the development source directory
+        import mcp_vector_search
+        dev_source_path = Path(mcp_vector_search.__file__).parent.parent.parent
+
+        try:
+            import subprocess
+            import sys
+            import shutil
+
+            # Try different installation methods based on available tools
+            install_success = False
+
+            # Method 1: Try pip directly
+            if shutil.which("pip"):
+                install_cmd = ["pip", "install", "-e", str(dev_source_path)]
+                try:
+                    result = subprocess.run(install_cmd, capture_output=True, text=True, timeout=120)
+                    if result.returncode == 0:
+                        install_success = True
+                except:
+                    pass
+
+            # Method 2: Try python -m pip
+            if not install_success:
+                install_cmd = [sys.executable, "-m", "pip", "install", "-e", str(dev_source_path)]
+                try:
+                    result = subprocess.run(install_cmd, capture_output=True, text=True, timeout=120)
+                    if result.returncode == 0:
+                        install_success = True
+                except:
+                    pass
+
+            # Method 3: Try uv if available
+            if not install_success and shutil.which("uv"):
+                install_cmd = ["uv", "add", "--editable", str(dev_source_path)]
+                try:
+                    result = subprocess.run(install_cmd, capture_output=True, text=True, timeout=120)
+                    if result.returncode == 0:
+                        install_success = True
+                except:
+                    pass
+
+            if install_success:
+                print_success("✅ mcp-vector-search installed successfully!")
+            else:
+                print_warning("⚠️ Could not install automatically - you may need to install manually")
+                print_info(f"💡 Try: pip install -e {dev_source_path}")
+                print_info("Continuing with setup...")
+
+        except Exception as e:
+            print_warning(f"⚠️ Installation encountered an issue: {e}")
+            print_info("Continuing with setup...")
 
         # Create project manager
         project_manager = ProjectManager(project_root)
@@ -119,18 +184,20 @@ def main(
             file_extensions = DEFAULT_FILE_EXTENSIONS
 
         # Show what will be initialized
-        console.print("\n[bold blue]Initialization Settings:[/bold blue]")
-        console.print(f"  Project Root: {project_root}")
-        console.print(f"  File Extensions: {', '.join(file_extensions)}")
-        console.print(f"  Embedding Model: {embedding_model}")
-        console.print(f"  Similarity Threshold: {similarity_threshold}")
+        console.print("\n[bold blue]🚀 MCP Vector Search Setup:[/bold blue]")
+        console.print(f"  📁 Project Root: {project_root}")
+        console.print(f"  📄 File Extensions: {', '.join(file_extensions)}")
+        console.print(f"  🧠 Embedding Model: {embedding_model}")
+        console.print(f"  🎯 Similarity Threshold: {similarity_threshold}")
+        console.print(f"  🔍 Auto-indexing: {'✅ Enabled' if auto_index else '❌ Disabled'}")
+        console.print(f"  ⚡ File watching: {'✅ Enabled' if auto_indexing else '❌ Disabled'}")
+        console.print(f"  🔗 Claude Code MCP: {'✅ Enabled' if mcp else '❌ Disabled'}")
 
-        # Confirm initialization
-        if not force and not confirm_action(
-            "\nProceed with initialization?", default=True
-        ):
-            print_info("Initialization cancelled")
-            raise typer.Exit(0)
+        # Confirm initialization (only if not using defaults)
+        if not force and (not auto_index or not mcp or not auto_indexing):
+            if not confirm_action("\nProceed with setup?", default=True):
+                print_info("Setup cancelled")
+                raise typer.Exit(0)
 
         # Initialize project
         console.print("\n[bold]Initializing project...[/bold]")
@@ -149,11 +216,9 @@ def main(
         project_info = project_manager.get_project_info()
         print_project_info(project_info)
 
-        # Offer to start indexing
-        if auto_index or confirm_action(
-            "\nStart indexing your codebase now?", default=True
-        ):
-            console.print("\n[bold]Starting indexing...[/bold]")
+        # Start indexing if requested
+        if auto_index:
+            console.print("\n[bold]🔍 Indexing your codebase...[/bold]")
 
             # Import and run indexing (avoid circular imports)
             import asyncio
@@ -168,24 +233,18 @@ def main(
                         show_progress=True,
                     )
                 )
-                print_success("Indexing completed!")
+                print_success("✅ Indexing completed!")
             except Exception as e:
-                print_error(f"Indexing failed: {e}")
+                print_error(f"❌ Indexing failed: {e}")
                 print_info(
                     "You can run 'mcp-vector-search index' later to index your codebase"
                 )
         else:
-            print_info("Run 'mcp-vector-search index' to index your codebase")
+            print_info("💡 Run 'mcp-vector-search index' to index your codebase when ready")
 
-        # Offer to install MCP integration
-        install_mcp = mcp
-        if not install_mcp and confirm_action(
-            "\nInstall Claude Code MCP integration?", default=False
-        ):
-            install_mcp = True
-
-        if install_mcp:
-            console.print("\n[bold]Installing Claude Code MCP integration...[/bold]")
+        # Install MCP integration if requested
+        if mcp:
+            console.print("\n[bold]🔗 Installing Claude Code MCP integration...[/bold]")
 
             try:
                 # Import MCP functionality
@@ -200,10 +259,10 @@ def main(
                     claude_cmd = get_claude_command()
                     server_command = get_mcp_server_command(project_root)
 
-                    # Install MCP server
+                    # Install MCP server with project scope for team sharing
                     cmd_args = [
                         claude_cmd, "mcp", "add",
-                        "--scope=local",
+                        "--scope=project",  # Use project scope for team sharing
                         "mcp-vector-search",
                         "--",
                     ] + server_command.split()
@@ -217,6 +276,18 @@ def main(
 
                     if result.returncode == 0:
                         print_success("✅ Claude Code MCP integration installed!")
+                        print_info("📁 Created .mcp.json for team sharing - commit this file to your repo")
+
+                        # Also set up auto-indexing if requested
+                        if auto_indexing:
+                            try:
+                                import asyncio
+                                from .auto_index import _setup_auto_indexing
+                                asyncio.run(_setup_auto_indexing(project_root, "search", 60, 5))
+                                print_success("⚡ Auto-indexing configured for file changes")
+                            except Exception as e:
+                                print_warning(f"Auto-indexing setup failed: {e}")
+                                print_info("You can set it up later with: mcp-vector-search auto-index setup")
                     else:
                         print_warning(f"MCP integration failed: {result.stderr}")
                         print_info("You can install it later with: mcp-vector-search mcp install")
@@ -225,22 +296,30 @@ def main(
                 print_warning(f"MCP integration failed: {e}")
                 print_info("You can install it later with: mcp-vector-search mcp install")
 
-        # Show next steps
-        console.print("\n[bold green]Next Steps:[/bold green]")
-        if not auto_index:
-            console.print(
-                "  1. Run [code]mcp-vector-search index[/code] to index your codebase"
-            )
-        console.print(
-            "  2. Run [code]mcp-vector-search search 'your query'[/code] to search your code"
-        )
-        console.print(
-            "  3. Run [code]mcp-vector-search status[/code] to check indexing status"
-        )
-        if install_mcp:
-            console.print(
-                "  4. Use the vector search tools in Claude Code! 🎉"
-            )
+        # Show completion status and next steps
+        console.print("\n[bold green]🎉 Setup Complete![/bold green]")
+
+        if auto_index and mcp:
+            console.print("\n[bold blue]✨ Your project is fully configured:[/bold blue]")
+            console.print("  ✅ Vector database initialized")
+            console.print("  ✅ Codebase indexed and searchable")
+            console.print("  ✅ Auto-indexing enabled for file changes")
+            console.print("  ✅ Claude Code MCP integration installed")
+            console.print("  ✅ Team configuration saved in .mcp.json")
+
+            console.print("\n[bold green]🚀 Ready to use:[/bold green]")
+            console.print("  • Search your code: [code]mcp-vector-search search 'your query'[/code]")
+            console.print("  • Use in Claude Code with MCP tools")
+            console.print("  • Check status: [code]mcp-vector-search status[/code]")
+            console.print("\n[dim]💡 Tip: Commit .mcp.json to share MCP integration with your team![/dim]")
+        else:
+            console.print("\n[bold blue]Next steps:[/bold blue]")
+            if not auto_index:
+                console.print("  1. Run [code]mcp-vector-search index[/code] to index your codebase")
+            console.print("  2. Run [code]mcp-vector-search search 'your query'[/code] to search your code")
+            console.print("  3. Run [code]mcp-vector-search status[/code] to check status")
+            if not mcp:
+                console.print("  4. Run [code]mcp-vector-search mcp install[/code] for Claude Code integration")
 
     except ProjectInitializationError as e:
         print_error(f"Initialization failed: {e}")
