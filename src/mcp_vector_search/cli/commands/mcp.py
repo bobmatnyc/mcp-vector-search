@@ -65,68 +65,27 @@ def check_claude_code_available() -> bool:
         return False
 
 
-def get_mcp_server_command(project_root: Path, use_global_python: bool = False) -> str:
+def get_mcp_server_command(project_root: Path) -> str:
     """Get the command to run the MCP server.
     
     Args:
         project_root: Path to the project root directory
-        use_global_python: If True, use the python command from PATH instead of sys.executable
     """
-    # For global installation, we need to use the system Python that has mcp-vector-search installed
-    # For project installation, use the current Python executable
-    if use_global_python:
-        # Try to find python3 or python in PATH
-        python_exe = shutil.which("python3") or shutil.which("python")
-        if not python_exe:
-            # Fallback to sys.executable if no python found in PATH
-            python_exe = sys.executable
-    else:
-        python_exe = sys.executable
-    
+    # Always use the current Python executable for project-scoped installation
+    python_exe = sys.executable
     return f"{python_exe} -m mcp_vector_search.mcp.server {project_root}"
 
 
-def create_global_claude_config(project_root: Path, server_name: str) -> None:
-    """Create or update global ~/.claude.json file."""
-    # Path to global settings
-    home_dir = Path.home()
-    settings_path = home_dir / ".claude.json"
-
-    # Load existing config or create new one
-    if settings_path.exists():
-        with open(settings_path, 'r') as f:
-            config = json.load(f)
-    else:
-        config = {}
-
-    # Ensure mcpServers section exists
-    if "mcpServers" not in config:
-        config["mcpServers"] = {}
-
-    # Get the MCP server command - use global Python
-    server_command = get_mcp_server_command(project_root, use_global_python=True)
-    command_parts = server_command.split()
-
-    # Add the server configuration without "type": "stdio" for global config
-    # Global config uses a simpler format
-    config["mcpServers"][server_name] = {
-        "command": command_parts[0],
-        "args": command_parts[1:],
-        "env": {}
-    }
-
-    # Write the config
-    with open(settings_path, 'w') as f:
-        json.dump(config, f, indent=2)
-
-    print_success(f"Added MCP server to global ~/.claude.json")
-    print_info(f"The server will be available in all Claude Code sessions")
 
 
 def create_project_claude_config(project_root: Path, server_name: str) -> None:
-    """Create or update project-level .mcp.json file."""
-    # Path to .mcp.json in project root
-    settings_path = project_root / ".mcp.json"
+    """Create or update project-level .claude/settings.local.json file."""
+    # Create .claude directory if it doesn't exist
+    claude_dir = project_root / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+    
+    # Path to settings.local.json in .claude directory
+    settings_path = claude_dir / "settings.local.json"
 
     # Load existing config or create new one
     if settings_path.exists():
@@ -155,7 +114,7 @@ def create_project_claude_config(project_root: Path, server_name: str) -> None:
     with open(settings_path, 'w') as f:
         json.dump(config, f, indent=2)
 
-    print_success(f"Created project-level .mcp.json with MCP server configuration")
+    print_success(f"Created project-level .claude/settings.local.json with MCP server configuration")
 
 
 @mcp_app.command("install")
@@ -167,11 +126,6 @@ def install_mcp_integration(
         "--name",
         help="Name for the MCP server"
     ),
-    scope: str = typer.Option(
-        "project",
-        "--scope",
-        help="Installation scope: 'project' (default, creates .mcp.json in current directory) or 'user' (updates ~/.claude.json for all sessions)"
-    ),
     force: bool = typer.Option(
         False,
         "--force",
@@ -179,18 +133,13 @@ def install_mcp_integration(
         help="Force installation even if server already exists"
     )
 ) -> None:
-    """Install MCP integration for Claude Code.
+    """Install MCP integration for Claude Code in the current project.
     
-    The --scope option determines where the server is installed:
-    - 'project' (default): Creates .mcp.json in current directory, only for this project
-    - 'user': Updates ~/.claude.json, available in all Claude sessions
+    Creates .claude/settings.local.json in the current directory to enable semantic code search
+    for this specific project. This tool is designed to index and search
+    project-specific files.
     """
     try:
-        # Validate scope option
-        if scope not in ["user", "project"]:
-            print_error(f"Invalid scope '{scope}'. Must be 'project' or 'user'.")
-            raise typer.Exit(1)
-        
         # Get project root for checking initialization
         project_root = ctx.obj.get("project_root") or Path.cwd()
         
@@ -200,53 +149,31 @@ def install_mcp_integration(
             print_error("Project not initialized. Run 'mcp-vector-search init' first.")
             raise typer.Exit(1)
 
-        # Handle user scope
-        if scope == "user":
-            # Check if server already exists in user config
-            home_dir = Path.home()
-            settings_path = home_dir / ".claude.json"
-            
-            if settings_path.exists() and not force:
-                with open(settings_path, 'r') as f:
-                    config = json.load(f)
-                if config.get("mcpServers", {}).get(server_name):
-                    print_warning(f"MCP server '{server_name}' already exists in user config.")
-                    print_info("Use --force to overwrite")
-                    raise typer.Exit(1)
-            
-            # Create user configuration
-            create_global_claude_config(project_root, server_name)
-            
-            print_info(f"MCP server '{server_name}' installed for user")
-            print_info("The server will be available in all Claude Code sessions")
-            print_info(f"Project root: {project_root}")
-            
-        # Handle project scope
-        else:
-            # Always create config in current working directory
-            config_dir = Path.cwd()
-            
-            # Check if .mcp.json already has the server in current directory
-            settings_path = config_dir / ".mcp.json"
-            if settings_path.exists() and not force:
-                with open(settings_path, 'r') as f:
-                    config = json.load(f)
-                if config.get("mcpServers", {}).get(server_name):
-                    print_warning(f"MCP server '{server_name}' already exists in project config.")
-                    print_info("Use --force to overwrite")
-                    raise typer.Exit(1)
+        # Always create config in current working directory (project scope only)
+        config_dir = Path.cwd()
+        claude_dir = config_dir / ".claude"
+        
+        # Check if .claude/settings.local.json already has the server in current directory
+        settings_path = claude_dir / "settings.local.json"
+        if settings_path.exists() and not force:
+            with open(settings_path, 'r') as f:
+                config = json.load(f)
+            if config.get("mcpServers", {}).get(server_name):
+                print_warning(f"MCP server '{server_name}' already exists in project config.")
+                print_info("Use --force to overwrite")
+                raise typer.Exit(1)
 
-            # Create configuration in current working directory, but server command uses project_root
-            create_project_claude_config(config_dir, server_name)
+        # Create configuration in current working directory, but server command uses project_root
+        create_project_claude_config(config_dir, server_name)
 
-            print_info(f"MCP server '{server_name}' installed in project configuration at {config_dir}")
-            print_info("Claude Code will automatically detect the server when you open this project")
+        print_info(f"MCP server '{server_name}' installed in project configuration at {claude_dir}")
+        print_info("Claude Code will automatically detect the server when you open this project")
 
         # Test the server (using project_root for the server command)
         print_info("Testing server startup...")
 
-        # Use appropriate Python based on scope
-        server_command = get_mcp_server_command(project_root, use_global_python=(scope == "user"))
+        # Get the server command
+        server_command = get_mcp_server_command(project_root)
         test_process = subprocess.Popen(
             server_command.split(),
             stdin=subprocess.PIPE,
@@ -408,11 +335,6 @@ def remove_mcp_integration(
         "--name",
         help="Name of the MCP server to remove"
     ),
-    scope: str = typer.Option(
-        "project",
-        "--scope",
-        help="Removal scope: 'project' (default, from .mcp.json in current directory) or 'user' (from ~/.claude.json)"
-    ),
     confirm: bool = typer.Option(
         False,
         "--yes",
@@ -420,25 +342,15 @@ def remove_mcp_integration(
         help="Skip confirmation prompt"
     )
 ) -> None:
-    """Remove MCP integration from Claude Code.
+    """Remove MCP integration from the current project.
     
-    The --scope option determines where to remove the server from:
-    - 'project' (default): Removes from .mcp.json in current directory
-    - 'user': Removes from ~/.claude.json
+    Removes the server configuration from .claude/settings.local.json in the current directory.
     """
     try:
-        # Validate scope option
-        if scope not in ["user", "project"]:
-            print_error(f"Invalid scope '{scope}'. Must be 'project' or 'user'.")
-            raise typer.Exit(1)
-        
-        # Determine settings path based on scope
-        if scope == "user":
-            settings_path = Path.home() / ".claude.json"
-            config_location = "user configuration"
-        else:
-            settings_path = Path.cwd() / ".mcp.json"
-            config_location = "project configuration"
+        # Always use project scope - .claude/settings.local.json in current directory
+        claude_dir = Path.cwd() / ".claude"
+        settings_path = claude_dir / "settings.local.json"
+        config_location = "project configuration"
         
         # Check if settings file exists
         if not settings_path.exists():
@@ -477,11 +389,7 @@ def remove_mcp_integration(
             json.dump(config, f, indent=2)
         
         print_success(f"✅ MCP server '{server_name}' removed from {config_location}!")
-        
-        if scope == "user":
-            print_info("The server is no longer available in Claude Code sessions")
-        else:
-            print_info("The server is no longer available for this project")
+        print_info("The server is no longer available for this project")
         
     except Exception as e:
         print_error(f"Removal failed: {e}")
@@ -511,41 +419,24 @@ def show_mcp_status(
             status_lines.append("❌ Claude Code: Not available")
             status_lines.append("   Install from: https://claude.ai/download")
         
-        # Check user configuration
-        user_settings_path = Path.home() / ".claude.json"
-        if user_settings_path.exists():
-            with open(user_settings_path, 'r') as f:
-                user_config = json.load(f)
-            
-            if "mcpServers" in user_config and server_name in user_config["mcpServers"]:
-                status_lines.append(f"✅ User Config (~/.claude.json): Server '{server_name}' installed")
-                server_info = user_config["mcpServers"][server_name]
-                if "command" in server_info:
-                    status_lines.append(f"   Command: {server_info['command']}")
-                if "args" in server_info:
-                    status_lines.append(f"   Args: {' '.join(server_info['args'])}")
-            else:
-                status_lines.append(f"❌ User Config (~/.claude.json): Server '{server_name}' not found")
-        else:
-            status_lines.append("❌ User Config (~/.claude.json): Not found")
-        
         # Check project configuration
-        project_settings_path = Path.cwd() / ".mcp.json"
+        claude_dir = Path.cwd() / ".claude"
+        project_settings_path = claude_dir / "settings.local.json"
         if project_settings_path.exists():
             with open(project_settings_path, 'r') as f:
                 project_config = json.load(f)
             
             if "mcpServers" in project_config and server_name in project_config["mcpServers"]:
-                status_lines.append(f"✅ Project Config (.mcp.json): Server '{server_name}' installed")
+                status_lines.append(f"✅ Project Config (.claude/settings.local.json): Server '{server_name}' installed")
                 server_info = project_config["mcpServers"][server_name]
                 if "command" in server_info:
                     status_lines.append(f"   Command: {server_info['command']}")
                 if "args" in server_info:
                     status_lines.append(f"   Args: {' '.join(server_info['args'])}")
             else:
-                status_lines.append(f"❌ Project Config (.mcp.json): Server '{server_name}' not found")
+                status_lines.append(f"❌ Project Config (.claude/settings.local.json): Server '{server_name}' not found")
         else:
-            status_lines.append("❌ Project Config (.mcp.json): Not found")
+            status_lines.append("❌ Project Config (.claude/settings.local.json): Not found")
         
         # Check project status
         project_root = ctx.obj.get("project_root") or Path.cwd()
