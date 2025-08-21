@@ -231,3 +231,7 @@ tramp
 *.tar.gz
 *.rar
 *.7z
+
+# Claude MCP configuration files
+.mcp.json
+.claude.json
