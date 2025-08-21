@@ -232,6 +232,9 @@ tramp
 *.rar
 *.7z
 
-# Claude MCP configuration files
-.mcp.json
-.claude.json
+# Claude configuration
+# The .claude/settings.local.json file contains project-specific MCP configuration
+# and should be committed to the repository for team collaboration
+.claude/cache/
+.claude/tmp/
+# Note: .claude/settings.local.json is NOT ignored - it should be committed
