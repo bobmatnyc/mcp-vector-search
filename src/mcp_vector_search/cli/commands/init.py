@@ -39,7 +39,7 @@ def main(
         None,
         "--extensions",
         "-e",
-        help="Comma-separated list of file extensions to index (e.g., '.py,.js,.ts')",
+        help="Comma-separated list of file extensions to index (e.g., '.py,.js,.ts,.txt,.md')",
     ),
     embedding_model: str = typer.Option(
         DEFAULT_EMBEDDING_MODELS["code"],
@@ -94,7 +94,7 @@ def main(
     Examples:
         mcp-vector-search init main                # Full setup with smart defaults
         mcp-vector-search init main --no-mcp      # Setup without MCP integration
-        mcp-vector-search init main --extensions .py,.js,.ts  # Custom file types
+        mcp-vector-search init main --extensions .py,.js,.ts,.txt  # Custom file types
         mcp-vector-search init main --force       # Re-initialize existing project
     """
     try:
