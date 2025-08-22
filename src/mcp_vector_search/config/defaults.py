@@ -28,6 +28,7 @@ DEFAULT_FILE_EXTENSIONS = [
     ".zsh",  # Zsh scripts (fallback parsing)
     ".json",  # JSON configuration files
     ".md",  # Markdown documentation
+    ".txt",  # Plain text files
 ]
 
 # Language mappings for parsers
@@ -57,6 +58,7 @@ LANGUAGE_MAPPINGS: dict[str, str] = {
     ".zsh": "bash",
     ".json": "json",
     ".md": "markdown",
+    ".txt": "text",
 }
 
 # Default embedding models by use case
@@ -79,6 +81,7 @@ DEFAULT_SIMILARITY_THRESHOLDS = {
     "rust": 0.3,
     "json": 0.4,  # JSON files may have more structural similarity
     "markdown": 0.3,  # Markdown documentation
+    "text": 0.3,  # Plain text files
     "default": 0.3,
 }
 
@@ -94,6 +97,7 @@ DEFAULT_CHUNK_SIZES = {
     "rust": 512,
     "json": 256,  # JSON files are often smaller and more structured
     "markdown": 512,  # Markdown documentation can be chunked normally
+    "text": 384,  # Plain text files with paragraph-based chunking
     "default": 512,
 }
 

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -23,23 +24,38 @@ from mcp.server.models import InitializationOptions
 from ..core.database import ChromaVectorDatabase
 from ..core.embeddings import create_embedding_function
 from ..core.exceptions import ProjectNotFoundError
+from ..core.indexer import SemanticIndexer
 from ..core.project import ProjectManager
 from ..core.search import SemanticSearchEngine
+from ..core.watcher import FileWatcher
 
 
 class MCPVectorSearchServer:
     """MCP server for vector search functionality."""
 
-    def __init__(self, project_root: Optional[Path] = None):
+    def __init__(self, project_root: Optional[Path] = None, enable_file_watching: Optional[bool] = None):
         """Initialize the MCP server.
         
         Args:
             project_root: Project root directory. If None, will auto-detect.
+            enable_file_watching: Enable file watching for automatic reindexing.
+                                  If None, checks MCP_ENABLE_FILE_WATCHING env var (default: True).
         """
         self.project_root = project_root or Path.cwd()
         self.project_manager = ProjectManager(self.project_root)
         self.search_engine: Optional[SemanticSearchEngine] = None
+        self.file_watcher: Optional[FileWatcher] = None
+        self.indexer: Optional[SemanticIndexer] = None
+        self.database: Optional[ChromaVectorDatabase] = None
         self._initialized = False
+        
+        # Determine if file watching should be enabled
+        if enable_file_watching is None:
+            # Check environment variable, default to True
+            env_value = os.getenv("MCP_ENABLE_FILE_WATCHING", "true").lower()
+            self.enable_file_watching = env_value in ("true", "1", "yes", "on")
+        else:
+            self.enable_file_watching = enable_file_watching
 
     async def initialize(self) -> None:
         """Initialize the search engine and database."""
@@ -56,19 +72,41 @@ class MCPVectorSearchServer:
             )
             
             # Setup database
-            database = ChromaVectorDatabase(
+            self.database = ChromaVectorDatabase(
                 persist_directory=config.index_path,
                 embedding_function=embedding_function,
             )
             
             # Initialize database
-            await database.__aenter__()
+            await self.database.__aenter__()
             
             # Setup search engine
             self.search_engine = SemanticSearchEngine(
-                database=database,
+                database=self.database,
                 project_root=self.project_root
             )
+            
+            # Setup indexer for file watching
+            if self.enable_file_watching:
+                self.indexer = SemanticIndexer(
+                    project_root=self.project_root,
+                    config=config,
+                    database=self.database
+                )
+                
+                # Setup file watcher
+                self.file_watcher = FileWatcher(
+                    project_root=self.project_root,
+                    config=config,
+                    indexer=self.indexer,
+                    database=self.database
+                )
+                
+                # Start file watching
+                await self.file_watcher.start()
+                logger.info(f"File watching enabled for automatic reindexing")
+            else:
+                logger.info(f"File watching disabled")
             
             self._initialized = True
             logger.info(f"MCP server initialized for project: {self.project_root}")
@@ -82,9 +120,22 @@ class MCPVectorSearchServer:
 
     async def cleanup(self) -> None:
         """Cleanup resources."""
-        if self.search_engine and hasattr(self.search_engine.database, '__aexit__'):
-            await self.search_engine.database.__aexit__(None, None, None)
+        # Stop file watcher if running
+        if self.file_watcher and self.file_watcher.is_running:
+            logger.info("Stopping file watcher...")
+            await self.file_watcher.stop()
+            self.file_watcher = None
+        
+        # Cleanup database connection
+        if self.database and hasattr(self.database, '__aexit__'):
+            await self.database.__aexit__(None, None, None)
+            self.database = None
+        
+        # Clear references
+        self.search_engine = None
+        self.indexer = None
         self._initialized = False
+        logger.info("MCP server cleanup completed")
 
     def get_tools(self) -> List[Tool]:
         """Get available MCP tools."""
@@ -562,10 +613,16 @@ class MCPVectorSearchServer:
             )
 
 
-def create_mcp_server(project_root: Optional[Path] = None) -> Server:
-    """Create and configure the MCP server."""
+def create_mcp_server(project_root: Optional[Path] = None, enable_file_watching: Optional[bool] = None) -> Server:
+    """Create and configure the MCP server.
+    
+    Args:
+        project_root: Project root directory. If None, will auto-detect.
+        enable_file_watching: Enable file watching for automatic reindexing.
+                              If None, checks MCP_ENABLE_FILE_WATCHING env var (default: True).
+    """
     server = Server("mcp-vector-search")
-    mcp_server = MCPVectorSearchServer(project_root)
+    mcp_server = MCPVectorSearchServer(project_root, enable_file_watching)
 
     @server.list_tools()
     async def handle_list_tools() -> List[Tool]:
@@ -593,9 +650,15 @@ def create_mcp_server(project_root: Optional[Path] = None) -> Server:
     return server
 
 
-async def run_mcp_server(project_root: Optional[Path] = None) -> None:
-    """Run the MCP server using stdio transport."""
-    server = create_mcp_server(project_root)
+async def run_mcp_server(project_root: Optional[Path] = None, enable_file_watching: Optional[bool] = None) -> None:
+    """Run the MCP server using stdio transport.
+    
+    Args:
+        project_root: Project root directory. If None, will auto-detect.
+        enable_file_watching: Enable file watching for automatic reindexing.
+                              If None, checks MCP_ENABLE_FILE_WATCHING env var (default: True).
+    """
+    server = create_mcp_server(project_root, enable_file_watching)
 
     # Create initialization options with proper capabilities
     init_options = InitializationOptions(
@@ -610,13 +673,29 @@ async def run_mcp_server(project_root: Optional[Path] = None) -> None:
     try:
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, init_options)
+    except KeyboardInterrupt:
+        logger.info("Received interrupt signal, shutting down...")
+    except Exception as e:
+        logger.error(f"MCP server error: {e}")
+        raise
     finally:
         # Cleanup
         if hasattr(server, '_mcp_server'):
+            logger.info("Performing server cleanup...")
             await server._mcp_server.cleanup()
 
 
 if __name__ == "__main__":
     # Allow specifying project root as command line argument
     project_root = Path(sys.argv[1]) if len(sys.argv) > 1 else None
-    asyncio.run(run_mcp_server(project_root))
+    
+    # Check for file watching flag in command line args
+    enable_file_watching = None
+    if "--no-watch" in sys.argv:
+        enable_file_watching = False
+        sys.argv.remove("--no-watch")
+    elif "--watch" in sys.argv:
+        enable_file_watching = True
+        sys.argv.remove("--watch")
+    
+    asyncio.run(run_mcp_server(project_root, enable_file_watching))

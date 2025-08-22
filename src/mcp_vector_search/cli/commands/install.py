@@ -41,7 +41,7 @@ def main(
         None,
         "--extensions",
         "-e",
-        help="Comma-separated list of file extensions to index (e.g., '.py,.js,.ts')",
+        help="Comma-separated list of file extensions to index (e.g., '.py,.js,.ts,.txt,.md')",
     ),
     embedding_model: str = typer.Option(
         "sentence-transformers/all-MiniLM-L6-v2",
@@ -84,7 +84,7 @@ def main(
         mcp-vector-search install ~/my-project       # Install in specific directory
         mcp-vector-search install --no-mcp           # Install without MCP integration
         mcp-vector-search install --force            # Force re-installation
-        mcp-vector-search install --extensions .py,.js,.ts  # Custom file extensions
+        mcp-vector-search install --extensions .py,.js,.ts,.txt  # Custom file extensions
     """
     try:
         # Determine target directory - prioritize target_directory, then project_root, then context, then cwd

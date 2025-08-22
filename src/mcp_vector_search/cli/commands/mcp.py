@@ -65,21 +65,29 @@ def check_claude_code_available() -> bool:
         return False
 
 
-def get_mcp_server_command(project_root: Path) -> str:
+def get_mcp_server_command(project_root: Path, enable_file_watching: bool = True) -> str:
     """Get the command to run the MCP server.
     
     Args:
         project_root: Path to the project root directory
+        enable_file_watching: Whether to enable file watching (default: True)
     """
     # Always use the current Python executable for project-scoped installation
     python_exe = sys.executable
-    return f"{python_exe} -m mcp_vector_search.mcp.server {project_root}"
+    watch_flag = "" if enable_file_watching else " --no-watch"
+    return f"{python_exe} -m mcp_vector_search.mcp.server{watch_flag} {project_root}"
 
 
 
 
-def create_project_claude_config(project_root: Path, server_name: str) -> None:
-    """Create or update project-level .claude/settings.local.json file."""
+def create_project_claude_config(project_root: Path, server_name: str, enable_file_watching: bool = True) -> None:
+    """Create or update project-level .claude/settings.local.json file.
+    
+    Args:
+        project_root: Path to the project root directory
+        server_name: Name for the MCP server
+        enable_file_watching: Whether to enable file watching (default: True)
+    """
     # Create .claude directory if it doesn't exist
     claude_dir = project_root / ".claude"
     claude_dir.mkdir(exist_ok=True)
@@ -99,7 +107,7 @@ def create_project_claude_config(project_root: Path, server_name: str) -> None:
         config["mcpServers"] = {}
 
     # Get the MCP server command
-    server_command = get_mcp_server_command(project_root)
+    server_command = get_mcp_server_command(project_root, enable_file_watching)
     command_parts = server_command.split()
 
     # Add the server configuration with required "type": "stdio"
@@ -107,7 +115,9 @@ def create_project_claude_config(project_root: Path, server_name: str) -> None:
         "type": "stdio",
         "command": command_parts[0],
         "args": command_parts[1:],
-        "env": {}
+        "env": {
+            "MCP_ENABLE_FILE_WATCHING": "true" if enable_file_watching else "false"
+        }
     }
 
     # Write the config
@@ -115,6 +125,10 @@ def create_project_claude_config(project_root: Path, server_name: str) -> None:
         json.dump(config, f, indent=2)
 
     print_success(f"Created project-level .claude/settings.local.json with MCP server configuration")
+    if enable_file_watching:
+        print_info("File watching is enabled for automatic reindexing")
+    else:
+        print_info("File watching is disabled")
 
 
 @mcp_app.command("install")
@@ -131,6 +145,11 @@ def install_mcp_integration(
         "--force",
         "-f",
         help="Force installation even if server already exists"
+    ),
+    no_watch: bool = typer.Option(
+        False,
+        "--no-watch",
+        help="Disable file watching for automatic reindexing"
     )
 ) -> None:
     """Install MCP integration for Claude Code in the current project.
@@ -164,7 +183,8 @@ def install_mcp_integration(
                 raise typer.Exit(1)
 
         # Create configuration in current working directory, but server command uses project_root
-        create_project_claude_config(config_dir, server_name)
+        enable_file_watching = not no_watch
+        create_project_claude_config(config_dir, server_name, enable_file_watching)
 
         print_info(f"MCP server '{server_name}' installed in project configuration at {claude_dir}")
         print_info("Claude Code will automatically detect the server when you open this project")
@@ -173,7 +193,7 @@ def install_mcp_integration(
         print_info("Testing server startup...")
 
         # Get the server command
-        server_command = get_mcp_server_command(project_root)
+        server_command = get_mcp_server_command(project_root, enable_file_watching)
         test_process = subprocess.Popen(
             server_command.split(),
             stdin=subprocess.PIPE,
@@ -221,6 +241,11 @@ def install_mcp_integration(
         table.add_row("search_context", "Search for code based on contextual description")
         table.add_row("get_project_status", "Get project indexing status and statistics")
         table.add_row("index_project", "Index or reindex the project codebase")
+        
+        if enable_file_watching:
+            console.print("\n[green]✅ File watching is enabled[/green] - Changes will be automatically indexed")
+        else:
+            console.print("\n[yellow]⚠️  File watching is disabled[/yellow] - Manual reindexing required for changes")
 
         console.print(table)
 
@@ -433,6 +458,12 @@ def show_mcp_status(
                     status_lines.append(f"   Command: {server_info['command']}")
                 if "args" in server_info:
                     status_lines.append(f"   Args: {' '.join(server_info['args'])}")
+                if "env" in server_info:
+                    file_watching = server_info['env'].get('MCP_ENABLE_FILE_WATCHING', 'true')
+                    if file_watching.lower() in ('true', '1', 'yes', 'on'):
+                        status_lines.append("   File Watching: ✅ Enabled")
+                    else:
+                        status_lines.append("   File Watching: ❌ Disabled")
             else:
                 status_lines.append(f"❌ Project Config (.claude/settings.local.json): Server '{server_name}' not found")
         else:
