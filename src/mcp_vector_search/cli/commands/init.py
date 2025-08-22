@@ -22,7 +22,6 @@ from ..output import (
 init_app = typer.Typer(help="Initialize project for semantic search")
 
 
-@init_app.command()
 def main(
     ctx: typer.Context,
     config_file: Path | None = typer.Option(
@@ -92,10 +91,10 @@ def main(
     Perfect for getting started quickly in any project!
 
     Examples:
-        mcp-vector-search init main                # Full setup with smart defaults
-        mcp-vector-search init main --no-mcp      # Setup without MCP integration
-        mcp-vector-search init main --extensions .py,.js,.ts,.txt  # Custom file types
-        mcp-vector-search init main --force       # Re-initialize existing project
+        mcp-vector-search init                # Full setup with smart defaults
+        mcp-vector-search init --no-mcp      # Setup without MCP integration
+        mcp-vector-search init --extensions .py,.js,.ts,.txt  # Custom file types
+        mcp-vector-search init --force       # Re-initialize existing project
     """
     try:
         # Get project root from context or auto-detect
@@ -168,7 +167,7 @@ def main(
         if project_manager.is_initialized() and not force:
             print_success("Project is already initialized and ready to use!")
             print_info("Your project has vector search capabilities enabled.")
-            print_info("Use --force to re-initialize or run 'mcp-vector-search status main' to see current configuration")
+            print_info("Use --force to re-initialize or run 'mcp-vector-search status' to see current configuration")
             return  # Exit gracefully without raising an exception
 
         # Parse file extensions

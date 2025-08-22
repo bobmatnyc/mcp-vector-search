@@ -11,7 +11,13 @@ from .. import __build__, __version__
 from .commands.auto_index import auto_index_app
 from .commands.config import config_app
 from .commands.index import index_app
-from .commands.init import init_app
+from .commands.init import (
+    init_app,
+    main as init_main,
+    check_initialization as init_check,
+    init_mcp_integration,
+    list_embedding_models,
+)
 from .commands.install import install_app
 from .commands.mcp import mcp_app
 from .commands.search import (
@@ -45,7 +51,12 @@ from .commands.status import main as status_main
 app.command("install", help="🚀 Install mcp-vector-search in projects")(install_main)
 app.command("demo", help="🎬 Run installation demo with sample project")(install_demo)
 app.command("status", help="📊 Show project status and statistics")(status_main)
-app.add_typer(init_app, name="init", help="🔧 Initialize project for semantic search")
+# Register init as a direct command
+app.command("init", help="🔧 Initialize project for semantic search")(init_main)
+# Add init subcommands as separate commands
+app.command("init-check", help="Check if project is initialized")(init_check)
+app.command("init-mcp", help="Install/fix Claude Code MCP integration")(init_mcp_integration)
+app.command("init-models", help="List available embedding models")(list_embedding_models)
 app.add_typer(index_app, name="index", help="Index codebase for semantic search")
 app.add_typer(config_app, name="config", help="Manage project configuration")
 app.add_typer(watch_app, name="watch", help="Watch for file changes and update index")
