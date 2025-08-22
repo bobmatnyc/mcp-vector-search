@@ -128,6 +128,18 @@ mcp-vector-search index /path/to/code
 
 # Force re-indexing
 mcp-vector-search index --force
+
+# Reindex entire project
+mcp-vector-search index reindex
+
+# Reindex entire project (explicit)
+mcp-vector-search index reindex --all
+
+# Reindex entire project without confirmation
+mcp-vector-search index reindex --force
+
+# Reindex specific file
+mcp-vector-search index reindex path/to/file.py
 ```
 
 #### `search` - Semantic Search
