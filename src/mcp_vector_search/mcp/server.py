@@ -499,7 +499,6 @@ class MCPVectorSearchServer:
 
         try:
             from pathlib import Path
-            from ..cli.commands.search import run_similar_search
 
             # Convert to Path object
             file_path_obj = Path(file_path)
@@ -532,11 +531,24 @@ class MCPVectorSearchServer:
                     )]
                 )
 
-            result_text = f"Found {len(results)} similar code snippets for {file_path}:\n\n"
+            response_lines = [f"Found {len(results)} similar code snippets for {file_path}\n"]
+            
             for i, result in enumerate(results, 1):
-                result_text += f"{i}. {result.file_path}:{result.line_number}\n"
-                result_text += f"   Similarity: {result.similarity:.3f}\n"
-                result_text += f"   {result.content[:100]}...\n\n"
+                response_lines.append(f"## Result {i} (Score: {result.similarity_score:.3f})")
+                response_lines.append(f"**File:** {result.file_path}")
+                if result.function_name:
+                    response_lines.append(f"**Function:** {result.function_name}")
+                if result.class_name:
+                    response_lines.append(f"**Class:** {result.class_name}")
+                response_lines.append(f"**Lines:** {result.start_line}-{result.end_line}")
+                response_lines.append("**Code:**")
+                response_lines.append("```" + (result.language or ""))
+                # Show more of the content for similar search
+                content_preview = result.content[:500] if len(result.content) > 500 else result.content
+                response_lines.append(content_preview + ("..." if len(result.content) > 500 else ""))
+                response_lines.append("```\n")
+            
+            result_text = "\n".join(response_lines)
 
             return CallToolResult(
                 content=[TextContent(
@@ -586,15 +598,27 @@ class MCPVectorSearchServer:
                     )]
                 )
 
-            result_text = f"Found {len(results)} contextually relevant code snippets"
+            response_lines = [f"Found {len(results)} contextually relevant code snippets"]
             if focus_areas:
-                result_text += f" (focus: {', '.join(focus_areas)})"
-            result_text += f" for: {description}\n\n"
-
+                response_lines[0] += f" (focus: {', '.join(focus_areas)})"
+            response_lines[0] += f" for: {description}\n"
+            
             for i, result in enumerate(results, 1):
-                result_text += f"{i}. {result.file_path}:{result.line_number}\n"
-                result_text += f"   Similarity: {result.similarity:.3f}\n"
-                result_text += f"   {result.content[:100]}...\n\n"
+                response_lines.append(f"## Result {i} (Score: {result.similarity_score:.3f})")
+                response_lines.append(f"**File:** {result.file_path}")
+                if result.function_name:
+                    response_lines.append(f"**Function:** {result.function_name}")
+                if result.class_name:
+                    response_lines.append(f"**Class:** {result.class_name}")
+                response_lines.append(f"**Lines:** {result.start_line}-{result.end_line}")
+                response_lines.append("**Code:**")
+                response_lines.append("```" + (result.language or ""))
+                # Show more of the content for context search
+                content_preview = result.content[:500] if len(result.content) > 500 else result.content
+                response_lines.append(content_preview + ("..." if len(result.content) > 500 else ""))
+                response_lines.append("```\n")
+            
+            result_text = "\n".join(response_lines)
 
             return CallToolResult(
                 content=[TextContent(
