@@ -70,7 +70,7 @@ Repository = "https://github.com/bobmatnyc/mcp-vector-search"
 "Bug Tracker" = "https://github.com/bobmatnyc/mcp-vector-search/issues"
 
 [project.scripts]
-mcp-vector-search = "mcp_vector_search.cli.main:app"
+mcp-vector-search = "mcp_vector_search.cli.main:cli_with_suggestions"
 
 [tool.hatch.version]
 path = "src/mcp_vector_search/__init__.py"

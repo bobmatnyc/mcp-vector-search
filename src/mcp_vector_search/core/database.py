@@ -1,5 +1,6 @@
 """Database abstraction and ChromaDB implementation for MCP Vector Search."""
 
+import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -12,6 +13,7 @@ from .exceptions import (
     DatabaseInitializationError,
     DatabaseNotInitializedError,
     DocumentAdditionError,
+    IndexCorruptionError,
     SearchError,
 )
 from .models import CodeChunk, IndexStats, SearchResult
@@ -95,6 +97,15 @@ class VectorDatabase(ABC):
         """Reset the database (delete all data)."""
         ...
 
+    @abstractmethod
+    async def health_check(self) -> bool:
+        """Check database health and integrity.
+        
+        Returns:
+            True if database is healthy, False otherwise
+        """
+        ...
+
     async def __aenter__(self) -> "VectorDatabase":
         """Async context manager entry."""
         await self.initialize()
@@ -128,12 +139,15 @@ class ChromaVectorDatabase(VectorDatabase):
         self._collection = None
 
     async def initialize(self) -> None:
-        """Initialize ChromaDB client and collection."""
+        """Initialize ChromaDB client and collection with corruption recovery."""
         try:
             import chromadb
 
             # Ensure directory exists
             self.persist_directory.mkdir(parents=True, exist_ok=True)
+            
+            # Check for corruption before initializing
+            await self._detect_and_recover_corruption()
 
             # Create client with new API
             self._client = chromadb.PersistentClient(
@@ -156,10 +170,22 @@ class ChromaVectorDatabase(VectorDatabase):
             logger.debug(f"ChromaDB initialized at {self.persist_directory}")
 
         except Exception as e:
-            logger.error(f"Failed to initialize ChromaDB: {e}")
-            raise DatabaseInitializationError(
-                f"ChromaDB initialization failed: {e}"
-            ) from e
+            # Check if this is a corruption error
+            error_msg = str(e).lower()
+            if any(indicator in error_msg for indicator in [
+                "pickle", "unpickling", "eof", "ran out of input",
+                "hnsw", "index", "deserialize", "corrupt"
+            ]):
+                logger.warning(f"Detected index corruption: {e}")
+                # Try to recover
+                await self._recover_from_corruption()
+                # Retry initialization
+                await self.initialize()
+            else:
+                logger.error(f"Failed to initialize ChromaDB: {e}")
+                raise DatabaseInitializationError(
+                    f"ChromaDB initialization failed: {e}"
+                ) from e
 
     async def remove_file_chunks(self, file_path: str) -> int:
         """Remove all chunks for a specific file.
@@ -437,6 +463,114 @@ class ChromaVectorDatabase(VectorDatabase):
                 where[key] = value
 
         return where
+
+    async def _detect_and_recover_corruption(self) -> None:
+        """Detect and recover from index corruption proactively."""
+        # Check for common corruption indicators in ChromaDB files
+        chroma_db_path = self.persist_directory / "chroma.sqlite3"
+        
+        # If database doesn't exist yet, nothing to check
+        if not chroma_db_path.exists():
+            return
+            
+        # Check for HNSW index files that might be corrupted
+        collection_path = self.persist_directory / "chroma-collections.parquet"
+        index_path = self.persist_directory / "index"
+        
+        if index_path.exists():
+            # Look for pickle files in the index
+            pickle_files = list(index_path.glob("**/*.pkl"))
+            pickle_files.extend(list(index_path.glob("**/*.pickle")))
+            
+            for pickle_file in pickle_files:
+                try:
+                    # Try to read the pickle file to detect corruption
+                    import pickle
+                    with open(pickle_file, 'rb') as f:
+                        pickle.load(f)
+                except (EOFError, pickle.UnpicklingError, Exception) as e:
+                    logger.warning(f"Corrupted index file detected: {pickle_file} - {e}")
+                    await self._recover_from_corruption()
+                    return
+
+    async def _recover_from_corruption(self) -> None:
+        """Recover from index corruption by rebuilding the index."""
+        logger.info("Attempting to recover from index corruption...")
+        
+        # Create backup directory
+        backup_dir = self.persist_directory.parent / f"{self.persist_directory.name}_backup"
+        backup_dir.mkdir(exist_ok=True)
+        
+        # Backup current state (in case we need it)
+        import time
+        timestamp = int(time.time())
+        backup_path = backup_dir / f"backup_{timestamp}"
+        
+        if self.persist_directory.exists():
+            try:
+                shutil.copytree(self.persist_directory, backup_path)
+                logger.info(f"Created backup at {backup_path}")
+            except Exception as e:
+                logger.warning(f"Could not create backup: {e}")
+        
+        # Clear the corrupted index
+        if self.persist_directory.exists():
+            try:
+                shutil.rmtree(self.persist_directory)
+                logger.info(f"Cleared corrupted index at {self.persist_directory}")
+            except Exception as e:
+                logger.error(f"Failed to clear corrupted index: {e}")
+                raise IndexCorruptionError(
+                    f"Could not clear corrupted index: {e}"
+                ) from e
+        
+        # Recreate the directory
+        self.persist_directory.mkdir(parents=True, exist_ok=True)
+        logger.info("Index directory recreated. Please re-index your codebase.")
+
+    async def health_check(self) -> bool:
+        """Check database health and integrity.
+        
+        Returns:
+            True if database is healthy, False otherwise
+        """
+        try:
+            # First check if client is initialized
+            if not self._client or not self._collection:
+                logger.warning("Database not initialized")
+                return False
+            
+            # Try a simple operation to test the connection
+            try:
+                # Attempt to get count - this will fail if index is corrupted
+                count = self._collection.count()
+                logger.debug(f"Health check passed: {count} chunks in database")
+                
+                # Try a minimal query to ensure search works
+                self._collection.query(
+                    query_texts=["test"],
+                    n_results=1,
+                    include=["metadatas"]
+                )
+                
+                return True
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                if any(indicator in error_msg for indicator in [
+                    "pickle", "unpickling", "eof", "ran out of input",
+                    "hnsw", "index", "deserialize", "corrupt"
+                ]):
+                    logger.error(f"Index corruption detected during health check: {e}")
+                    return False
+                else:
+                    # Some other error
+                    logger.warning(f"Health check failed: {e}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"Health check error: {e}")
+            return False
 
 
 class PooledChromaVectorDatabase(VectorDatabase):
@@ -729,7 +863,80 @@ class PooledChromaVectorDatabase(VectorDatabase):
 
     async def health_check(self) -> bool:
         """Perform a health check on the database and connection pool."""
-        return await self._pool.health_check()
+        try:
+            # Check pool health
+            pool_healthy = await self._pool.health_check()
+            if not pool_healthy:
+                return False
+                
+            # Try a simple query to verify database integrity
+            try:
+                async with self._pool.get_connection() as conn:
+                    # Test basic operations
+                    conn.collection.count()
+                    conn.collection.query(
+                        query_texts=["test"],
+                        n_results=1,
+                        include=["metadatas"]
+                    )
+                return True
+            except Exception as e:
+                error_msg = str(e).lower()
+                if any(indicator in error_msg for indicator in [
+                    "pickle", "unpickling", "eof", "ran out of input",
+                    "hnsw", "index", "deserialize", "corrupt"
+                ]):
+                    logger.error(f"Index corruption detected: {e}")
+                    # Attempt recovery
+                    await self._recover_from_corruption()
+                    return False
+                else:
+                    logger.warning(f"Health check failed: {e}")
+                    return False
+        except Exception as e:
+            logger.error(f"Health check error: {e}")
+            return False
+    
+    async def _recover_from_corruption(self) -> None:
+        """Recover from index corruption by rebuilding the index."""
+        logger.info("Attempting to recover from index corruption...")
+        
+        # Close the pool first
+        await self._pool.close()
+        
+        # Create backup directory
+        backup_dir = self.persist_directory.parent / f"{self.persist_directory.name}_backup"
+        backup_dir.mkdir(exist_ok=True)
+        
+        # Backup current state
+        import time
+        timestamp = int(time.time())
+        backup_path = backup_dir / f"backup_{timestamp}"
+        
+        if self.persist_directory.exists():
+            try:
+                shutil.copytree(self.persist_directory, backup_path)
+                logger.info(f"Created backup at {backup_path}")
+            except Exception as e:
+                logger.warning(f"Could not create backup: {e}")
+        
+        # Clear the corrupted index
+        if self.persist_directory.exists():
+            try:
+                shutil.rmtree(self.persist_directory)
+                logger.info(f"Cleared corrupted index at {self.persist_directory}")
+            except Exception as e:
+                logger.error(f"Failed to clear corrupted index: {e}")
+                raise IndexCorruptionError(
+                    f"Could not clear corrupted index: {e}"
+                ) from e
+        
+        # Recreate the directory
+        self.persist_directory.mkdir(parents=True, exist_ok=True)
+        
+        # Reinitialize the pool
+        await self._pool.initialize()
+        logger.info("Index recovered. Please re-index your codebase.")
 
     async def __aenter__(self):
         """Async context manager entry."""

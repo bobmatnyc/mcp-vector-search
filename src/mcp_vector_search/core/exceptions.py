@@ -47,6 +47,12 @@ class SearchError(DatabaseError):
     pass
 
 
+class IndexCorruptionError(DatabaseError):
+    """Index corruption detected."""
+
+    pass
+
+
 class ParsingError(MCPVectorSearchError):
     """Code parsing errors."""
 
