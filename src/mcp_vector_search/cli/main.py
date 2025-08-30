@@ -28,7 +28,9 @@ from .commands.search import (
 )
 from .commands.status import status_app
 from .commands.watch import app as watch_app
+from .commands.reset import reset_app, health_main
 from .didyoumean import create_enhanced_typer, add_common_suggestions
+from .suggestions import get_contextual_suggestions, ContextualSuggestionProvider
 from .output import print_error, setup_logging
 
 # Install rich traceback handler
@@ -45,9 +47,11 @@ app = create_enhanced_typer(
     rich_markup_mode="rich",
 )
 
-# Add install command directly (not as subcommand app)
+# Import command functions for direct registration and aliases
 from .commands.install import main as install_main, demo as install_demo
 from .commands.status import main as status_main
+from .commands.index import main as index_main
+# Note: config doesn't have a main function, it uses subcommands via config_app
 app.command("install", help="🚀 Install mcp-vector-search in projects")(install_main)
 app.command("demo", help="🎬 Run installation demo with sample project")(install_demo)
 app.command("status", help="📊 Show project status and statistics")(status_main)
@@ -62,6 +66,7 @@ app.add_typer(config_app, name="config", help="Manage project configuration")
 app.add_typer(watch_app, name="watch", help="Watch for file changes and update index")
 app.add_typer(auto_index_app, name="auto-index", help="Manage automatic indexing")
 app.add_typer(mcp_app, name="mcp", help="Manage Claude Code MCP integration")
+app.add_typer(reset_app, name="reset", help="Reset and recovery operations")
 
 # Add search command - simplified syntax as default
 app.command("search", help="Search code semantically")(search_main)
@@ -69,13 +74,34 @@ app.command("search", help="Search code semantically")(search_main)
 # Keep old nested structure for backward compatibility
 app.add_typer(search_app, name="search-legacy", help="Legacy search commands", hidden=True)
 app.add_typer(status_app, name="status-legacy", help="Legacy status commands", hidden=True)
+
+# Add command aliases for better user experience
 app.command("find", help="Search code semantically (alias for search)")(search_main)
+app.command("f", help="Search code semantically (short alias)", hidden=True)(search_main)  # Hidden short alias
+app.command("s", help="Search code semantically (short alias)", hidden=True)(search_main)  # Hidden short alias
+app.command("query", help="Search code semantically (alias for search)", hidden=True)(search_main)  # Hidden alias
+
+# Index aliases
+app.command("i", help="Index codebase (short alias)", hidden=True)(index_main)  # Hidden short alias
+app.command("build", help="Index codebase (alias for index)", hidden=True)(index_main)  # Hidden alias
+app.command("scan", help="Index codebase (alias for index)", hidden=True)(index_main)  # Hidden alias
+
+# Status aliases  
+app.command("st", help="Show status (short alias)", hidden=True)(status_main)  # Hidden short alias
+app.command("info", help="Show project information (alias for status)", hidden=True)(status_main)  # Hidden alias
+
+# Config aliases - Since config uses subcommands, these will be handled by the enhanced typer error resolution
+# app.command("c", help="Manage configuration (short alias)", hidden=True)  # Will be handled by typo resolution
+# app.command("cfg", help="Manage configuration (alias for config)", hidden=True)  # Will be handled by typo resolution
+
+# Specialized search commands
 app.command("search-similar", help="Find code similar to a specific file or function")(
     search_similar_cmd
 )
 app.command("search-context", help="Search for code based on contextual description")(
     search_context_cmd
 )
+app.command("health", help="Check index health and optionally repair")(health_main)
 
 
 # Add interactive search command
@@ -208,6 +234,8 @@ def main(
         if project_root:
             logger.info(f"Using project root: {project_root}")
 
+    # Note: Contextual help moved to a separate command to avoid interfering with didyoumean
+
 
 @app.command()
 def version() -> None:
@@ -220,7 +248,7 @@ def version() -> None:
 
 
 def handle_command_error(ctx, param, value):
-    """Handle command errors with suggestions."""
+    """Handle command errors with enhanced suggestions."""
     if ctx.resilient_parsing:
         return
 
@@ -235,8 +263,32 @@ def handle_command_error(ctx, param, value):
             match = re.search(r"No such command '([^']+)'", str(e))
             if match:
                 command_name = match.group(1)
+                
+                # Use both the original suggestions and contextual suggestions
                 add_common_suggestions(ctx, command_name)
+                
+                # Add contextual suggestions based on project state
+                try:
+                    project_root = ctx.obj.get("project_root") if ctx.obj else None
+                    get_contextual_suggestions(project_root, command_name)
+                except Exception:
+                    # If contextual suggestions fail, don't break the error flow
+                    pass
         raise
+
+
+
+
+@app.command()
+def help_contextual() -> None:
+    """Show contextual help and suggestions based on project state."""
+    try:
+        project_root = Path.cwd()
+        console.print(f"[bold blue]mcp-vector-search[/bold blue] version [green]{__version__}[/green]")
+        console.print("[dim]CLI-first semantic code search with MCP integration[/dim]")
+        get_contextual_suggestions(project_root)
+    except Exception as e:
+        console.print("\n[dim]Use [bold]mcp-vector-search --help[/bold] for more information.[/dim]")
 
 
 @app.command()
@@ -261,5 +313,54 @@ def doctor() -> None:
 
 
 
+def cli_with_suggestions():
+    """CLI wrapper that catches errors and provides suggestions."""
+    import sys
+    import click
+    
+    try:
+        # Call the app with standalone_mode=False to get exceptions instead of sys.exit
+        app(standalone_mode=False)
+    except click.UsageError as e:
+        # Check if it's a "No such command" error
+        if "No such command" in str(e):
+            # Extract the command name from the error
+            import re
+            match = re.search(r"No such command '([^']+)'", str(e))
+            if match:
+                command_name = match.group(1)
+                
+                # Show enhanced suggestions
+                from rich.console import Console
+                console = Console(stderr=True)
+                console.print(f"\\n[red]Error:[/red] {e}")
+                
+                # Show enhanced suggestions
+                add_common_suggestions(None, command_name)
+                
+                # Show contextual suggestions too
+                try:
+                    project_root = Path.cwd()
+                    get_contextual_suggestions(project_root, command_name)
+                except Exception:
+                    pass
+                
+                sys.exit(2)  # Exit with error code
+        
+        # For other usage errors, show the default message and exit
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(2)
+    except click.Abort:
+        # User interrupted (Ctrl+C)
+        sys.exit(1)
+    except SystemExit as e:
+        # Re-raise system exits
+        raise
+    except Exception as e:
+        # For other exceptions, show error and exit
+        click.echo(f"Unexpected error: {e}", err=True)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    app()
+    cli_with_suggestions()

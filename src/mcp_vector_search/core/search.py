@@ -66,6 +66,16 @@ class SemanticSearchEngine:
         if not query.strip():
             return []
 
+        # Health check before search
+        try:
+            if hasattr(self.database, 'health_check'):
+                is_healthy = await self.database.health_check()
+                if not is_healthy:
+                    logger.warning("Database health check failed - attempting recovery")
+                    # Health check already attempts recovery, so we can proceed
+        except Exception as e:
+            logger.warning(f"Health check failed: {e}")
+
         # Auto-reindex check before search
         if self.search_triggered_indexer:
             try:
@@ -106,8 +116,20 @@ class SemanticSearchEngine:
             return ranked_results
 
         except Exception as e:
-            logger.error(f"Search failed for query '{query}': {e}")
-            raise SearchError(f"Search failed: {e}") from e
+            error_msg = str(e).lower()
+            # Check for corruption indicators
+            if any(indicator in error_msg for indicator in [
+                "pickle", "unpickling", "eof", "ran out of input",
+                "hnsw", "index", "deserialize", "corrupt"
+            ]):
+                logger.error(f"Index corruption detected during search: {e}")
+                logger.info("The index appears to be corrupted. Please run 'mcp-vector-search reset' to clear the index and then 'mcp-vector-search index' to rebuild it.")
+                raise SearchError(
+                    "Index corruption detected. Please run 'mcp-vector-search reset' followed by 'mcp-vector-search index' to rebuild."
+                ) from e
+            else:
+                logger.error(f"Search failed for query '{query}': {e}")
+                raise SearchError(f"Search failed: {e}") from e
 
     async def search_similar(
         self,

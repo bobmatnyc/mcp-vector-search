@@ -482,6 +482,133 @@ ci-check: ## Run CI-like checks locally
 	$(PYTHON) $(SCRIPTS_DIR)/comprehensive_build.py --skip-setup
 	@echo "$(GREEN)✓ CI checks completed$(RESET)"
 
+# ============================================================================
+# Single-Path Workflows (Claude Code Optimization)
+# ============================================================================
+
+.PHONY: dev-setup
+dev-setup: check-tools ## 🔴 ONE-COMMAND development environment setup
+	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
+	@echo "$(BLUE)  Setting up MCP Vector Search development environment$(RESET)"
+	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
+	$(UV) sync --dev
+	$(UV) pip install -e .
+	$(UV) run pre-commit install
+	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
+	@echo "$(GREEN)  Development environment ready!$(RESET)"
+	@echo "$(GREEN)  Next: make test (run tests)$(RESET)"
+	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
+
+.PHONY: quality
+quality: ## 🔴 Run ALL quality checks (lint, type, security, test)
+	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
+	@echo "$(BLUE)  Running comprehensive quality checks$(RESET)"
+	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
+	$(MAKE) lint
+	$(MAKE) security
+	$(MAKE) test
+	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
+	@echo "$(GREEN)  All quality checks passed!$(RESET)"
+	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
+
+.PHONY: typecheck
+typecheck: ## 🔴 Type checking with mypy
+	@echo "$(GREEN)Running type checking...$(RESET)"
+	$(UV) run mypy $(SRC_DIR) --ignore-missing-imports
+	@echo "$(GREEN)✓ Type checking completed$(RESET)"
+
+.PHONY: build
+build: clean ## 🔴 Build package for distribution
+	@echo "$(GREEN)Building package...$(RESET)"
+	$(UV) build
+	@echo "$(GREEN)✓ Package built successfully$(RESET)"
+
+.PHONY: test-unit
+test-unit: ## 🔴 Run unit tests only
+	@echo "$(GREEN)Running unit tests...$(RESET)"
+	$(UV) run pytest $(TEST_DIR) -v -m "not integration" --cov=$(SRC_DIR) --cov-report=term-missing
+	@echo "$(GREEN)✓ Unit tests completed$(RESET)"
+
+.PHONY: test-integration
+test-integration: ## 🔴 Run integration tests only
+	@echo "$(GREEN)Running integration tests...$(RESET)"
+	$(UV) run pytest $(TEST_DIR) -v -m "integration" 
+	@echo "$(GREEN)✓ Integration tests completed$(RESET)"
+
+.PHONY: test-mcp
+test-mcp: ## 🔴 Test MCP server integration
+	@echo "$(GREEN)Testing MCP server integration...$(RESET)"
+	@echo "Starting MCP server test..."
+	timeout 5s $(UV) run mcp-vector-search mcp || echo "MCP server test completed"
+	@echo "$(GREEN)✓ MCP server integration tested$(RESET)"
+
+.PHONY: verify-setup
+verify-setup: ## 🔴 Verify installation and setup
+	@echo "$(GREEN)Verifying setup...$(RESET)"
+	$(UV) run mcp-vector-search --version
+	$(UV) run python -c "import mcp_vector_search; print('✓ Package imports successfully')"
+	@echo "$(GREEN)✓ Setup verification completed$(RESET)"
+
+.PHONY: version-check
+version-check: ## 🔴 Validate version consistency
+	@echo "$(GREEN)Checking version consistency...$(RESET)"
+	$(VERSION_MANAGER) --validate
+	@echo "$(GREEN)✓ Version consistency validated$(RESET)"
+
+# ============================================================================
+# Debug Commands (Referenced in CLAUDE.md)
+# ============================================================================
+
+.PHONY: debug-search
+debug-search: ## 🟡 Debug search with logging (usage: make debug-search QUERY="term")
+	@echo "$(GREEN)Running debug search...$(RESET)"
+	@if [ -z "$(QUERY)" ]; then echo "$(RED)Usage: make debug-search QUERY='your search term'$(RESET)"; exit 1; fi
+	LOGURU_LEVEL=DEBUG $(UV) run mcp-vector-search search "$(QUERY)" --verbose
+	@echo "$(GREEN)✓ Debug search completed$(RESET)"
+
+.PHONY: debug-mcp
+debug-mcp: ## 🟡 Debug MCP server with logging
+	@echo "$(GREEN)Starting MCP server in debug mode...$(RESET)"
+	LOGURU_LEVEL=DEBUG $(UV) run mcp-vector-search mcp --debug
+
+.PHONY: debug-status
+debug-status: ## 🟡 Debug project health status
+	@echo "$(GREEN)Checking project health...$(RESET)"
+	$(UV) run mcp-vector-search status --verbose --debug
+	@echo "$(GREEN)✓ Project health check completed$(RESET)"
+
+.PHONY: debug-verify
+debug-verify: ## 🟡 Debug installation verification
+	@echo "$(GREEN)Running debug verification...$(RESET)"
+	$(MAKE) check-tools
+	$(MAKE) verify-setup
+	@echo "$(GREEN)✓ Debug verification completed$(RESET)"
+
+# ============================================================================
+# Debugging Support Commands (Referenced in CLAUDE.md)
+# ============================================================================
+
+.PHONY: debug-index-status
+debug-index-status: ## 🟢 Debug index status and health
+	@echo "$(GREEN)Debugging index status...$(RESET)"
+	$(UV) run mcp-vector-search status --verbose
+	@echo "Checking for .mcp-vector-search directory..."
+	ls -la .mcp-vector-search/ 2>/dev/null || echo "No project initialized"
+	@echo "$(GREEN)✓ Index status debug completed$(RESET)"
+
+.PHONY: debug-performance
+debug-performance: ## 🟢 Debug search performance
+	@echo "$(GREEN)Debugging search performance...$(RESET)"
+	$(UV) run python -c "import time; start=time.time(); from mcp_vector_search.core import search; print(f'Import time: {time.time()-start:.3f}s')"
+	@echo "$(GREEN)✓ Performance debug completed$(RESET)"
+
+.PHONY: debug-build
+debug-build: ## 🟢 Debug build failures
+	@echo "$(GREEN)Debugging build process...$(RESET)"
+	$(MAKE) clean
+	$(UV) build --verbose
+	@echo "$(GREEN)✓ Build debug completed$(RESET)"
+
 # Prevent make from treating arguments as targets
 %:
 	@:
