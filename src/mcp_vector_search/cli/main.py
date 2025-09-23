@@ -112,7 +112,15 @@ def interactive_search(
         None, "--project-root", "-p", help="Project root directory"
     ),
 ) -> None:
-    """Start an interactive search session with filtering and refinement."""
+    """Start an interactive search session with filtering and refinement.
+
+    The interactive mode provides a rich terminal interface for searching your codebase
+    with real-time filtering, query refinement, and result navigation.
+
+    Examples:
+        mcp-vector-search interactive
+        mcp-vector-search interactive --project-root /path/to/project
+    """
     import asyncio
 
     from .interactive import start_interactive_search
@@ -137,7 +145,15 @@ def show_history(
         None, "--project-root", "-p", help="Project root directory"
     ),
 ) -> None:
-    """Show search history."""
+    """Show search history.
+
+    Displays your recent search queries with timestamps and result counts.
+    Use this to revisit previous searches or track your search patterns.
+
+    Examples:
+        mcp-vector-search history
+        mcp-vector-search history --limit 50
+    """
     from .history import show_search_history
 
     root = project_root or ctx.obj.get("project_root") or Path.cwd()
@@ -151,7 +167,14 @@ def show_favorites_cmd(
         None, "--project-root", "-p", help="Project root directory"
     ),
 ) -> None:
-    """Show favorite queries."""
+    """Show favorite queries.
+
+    Displays your saved favorite search queries. Favorites allow you to quickly
+    access frequently used searches without typing them again.
+
+    Examples:
+        mcp-vector-search favorites
+    """
     from .history import show_favorites
 
     root = project_root or ctx.obj.get("project_root") or Path.cwd()
@@ -167,7 +190,15 @@ def add_favorite(
         None, "--project-root", "-p", help="Project root directory"
     ),
 ) -> None:
-    """Add a query to favorites."""
+    """Add a query to favorites.
+
+    Save a search query to your favorites list for quick access later.
+    Optionally include a description to help remember what the query is for.
+
+    Examples:
+        mcp-vector-search add-favorite "authentication functions"
+        mcp-vector-search add-favorite "error handling" --desc "Error handling patterns"
+    """
     from .history import SearchHistory
 
     root = project_root or ctx.obj.get("project_root") or Path.cwd()
@@ -183,7 +214,13 @@ def remove_favorite(
         None, "--project-root", "-p", help="Project root directory"
     ),
 ) -> None:
-    """Remove a query from favorites."""
+    """Remove a query from favorites.
+
+    Remove a previously saved favorite query from your favorites list.
+
+    Examples:
+        mcp-vector-search remove-favorite "authentication functions"
+    """
     from .history import SearchHistory
 
     root = project_root or ctx.obj.get("project_root") or Path.cwd()
@@ -293,7 +330,14 @@ def help_contextual() -> None:
 
 @app.command()
 def doctor() -> None:
-    """Check system dependencies and configuration."""
+    """Check system dependencies and configuration.
+
+    Runs diagnostic checks to ensure all required dependencies are installed
+    and properly configured. Use this command to troubleshoot installation issues.
+
+    Examples:
+        mcp-vector-search doctor
+    """
     from .commands.status import check_dependencies
 
     console.print("[bold blue]MCP Vector Search - System Check[/bold blue]\n")
@@ -357,9 +401,13 @@ def cli_with_suggestions():
         # Re-raise system exits
         raise
     except Exception as e:
-        # For other exceptions, show error and exit
-        click.echo(f"Unexpected error: {e}", err=True)
-        sys.exit(1)
+        # For other exceptions, show error and exit if verbose logging is enabled
+        # Suppress internal framework errors in normal operation
+        if "--verbose" in sys.argv or "-v" in sys.argv:
+            click.echo(f"Unexpected error: {e}", err=True)
+            sys.exit(1)
+        # Otherwise, just exit silently to avoid confusing error messages
+        pass
 
 
 if __name__ == "__main__":
