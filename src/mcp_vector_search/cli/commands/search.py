@@ -14,7 +14,9 @@ from ...core.search import SemanticSearchEngine
 from ..didyoumean import create_enhanced_typer
 from ..output import (
     print_error,
+    print_info,
     print_search_results,
+    print_tip,
 )
 
 # Create search subcommand app with "did you mean" functionality (kept for backward compatibility)
@@ -23,7 +25,7 @@ search_app = create_enhanced_typer(help="Search code semantically")
 
 def search_main(
     ctx: typer.Context,
-    query: str = typer.Argument(..., help="Search query"),
+    query: str = typer.Argument(..., help="Search query or file path (for --similar)"),
     project_root: Path | None = typer.Option(
         None,
         "--project-root",
@@ -33,6 +35,7 @@ def search_main(
         file_okay=False,
         dir_okay=True,
         readable=True,
+        rich_help_panel="🔧 Global Options",
     ),
     limit: int = typer.Option(
         10,
@@ -41,27 +44,32 @@ def search_main(
         help="Maximum number of results to return",
         min=1,
         max=100,
+        rich_help_panel="📊 Result Options",
     ),
     files: str | None = typer.Option(
         None,
         "--files",
         "-f",
         help="Filter by file patterns (e.g., '*.py' or 'src/*.js')",
+        rich_help_panel="🔍 Filters",
     ),
     language: str | None = typer.Option(
         None,
         "--language",
-        help="Filter by programming language",
+        help="Filter by programming language (python, javascript, typescript)",
+        rich_help_panel="🔍 Filters",
     ),
     function_name: str | None = typer.Option(
         None,
         "--function",
         help="Filter by function name",
+        rich_help_panel="🔍 Filters",
     ),
     class_name: str | None = typer.Option(
         None,
         "--class",
         help="Filter by class name",
+        rich_help_panel="🔍 Filters",
     ),
     similarity_threshold: float | None = typer.Option(
         None,
@@ -70,57 +78,87 @@ def search_main(
         help="Minimum similarity threshold (0.0 to 1.0)",
         min=0.0,
         max=1.0,
+        rich_help_panel="🎯 Search Options",
     ),
     similar: bool = typer.Option(
         False,
         "--similar",
         help="Find code similar to the query (treats query as file path)",
+        rich_help_panel="🎯 Search Options",
     ),
     context: bool = typer.Option(
         False,
         "--context",
         help="Search for code based on contextual description",
+        rich_help_panel="🎯 Search Options",
     ),
     focus: str | None = typer.Option(
         None,
         "--focus",
         help="Focus areas for context search (comma-separated)",
+        rich_help_panel="🎯 Search Options",
     ),
     no_content: bool = typer.Option(
         False,
         "--no-content",
         help="Don't show code content in results",
+        rich_help_panel="📊 Result Options",
     ),
     json_output: bool = typer.Option(
         False,
         "--json",
         help="Output results in JSON format",
+        rich_help_panel="📊 Result Options",
     ),
     export_format: str | None = typer.Option(
         None,
         "--export",
         help="Export results to file (json, csv, markdown, summary)",
+        rich_help_panel="💾 Export Options",
     ),
     export_path: Path | None = typer.Option(
         None,
         "--export-path",
         help="Custom export file path",
+        rich_help_panel="💾 Export Options",
     ),
 ) -> None:
-    """Search your codebase semantically.
+    """🔍 Search your codebase semantically.
 
-    This command performs semantic search across your indexed codebase,
-    finding code that is conceptually similar to your query even if it
-    doesn't contain the exact keywords.
+    Performs vector similarity search across your indexed code to find relevant
+    functions, classes, and patterns based on semantic meaning, not just keywords.
 
-    Examples:
-        mcp-vector-search search "authentication middleware"
-        mcp-vector-search search "database connection" --language python
-        mcp-vector-search search "error handling" --files "*.js" --limit 5
-        mcp-vector-search search "user validation" --function validate --json
-        mcp-vector-search search "src/auth.py" --similar
-        mcp-vector-search search "implement rate limiting" --context
-        mcp-vector-search search "user authentication" --context --focus security,middleware
+    [bold cyan]Basic Search Examples:[/bold cyan]
+
+    [green]Simple semantic search:[/green]
+        $ mcp-vector-search search "authentication middleware"
+
+    [green]Search with language filter:[/green]
+        $ mcp-vector-search search "database connection" --language python
+
+    [green]Limit results:[/green]
+        $ mcp-vector-search search "error handling" --limit 5
+
+    [bold cyan]Advanced Search:[/bold cyan]
+
+    [green]Filter by file pattern:[/green]
+        $ mcp-vector-search search "validation" --files "src/*.py"
+
+    [green]Find similar code:[/green]
+        $ mcp-vector-search search "src/auth.py" --similar
+
+    [green]Context-based search:[/green]
+        $ mcp-vector-search search "implement rate limiting" --context --focus security
+
+    [bold cyan]Export Results:[/bold cyan]
+
+    [green]Export to JSON:[/green]
+        $ mcp-vector-search search "api endpoints" --export json
+
+    [green]Export to markdown:[/green]
+        $ mcp-vector-search search "utils" --export markdown
+
+    [dim]💡 Tip: Use quotes for multi-word queries. Adjust --threshold for more/fewer results.[/dim]
     """
     try:
         project_root = project_root or ctx.obj.get("project_root") or Path.cwd()
@@ -302,6 +340,23 @@ async def run_search(
                     query=query,
                     show_content=show_content,
                 )
+
+                # Add contextual tips based on results
+                if results:
+                    if len(results) >= limit:
+                        print_tip(
+                            f"More results may be available. Use [cyan]--limit {limit * 2}[/cyan] to see more."
+                        )
+                    if not export_format:
+                        print_tip(
+                            "Export results with [cyan]--export json[/cyan] or [cyan]--export markdown[/cyan]"
+                        )
+                else:
+                    # No results - provide helpful suggestions
+                    print_info("\n[bold]No results found. Try:[/bold]")
+                    print_info("  • Use more general terms in your query")
+                    print_info("  • Lower the similarity threshold with [cyan]--threshold 0.3[/cyan]")
+                    print_info("  • Check if files are indexed with [cyan]mcp-vector-search status[/cyan]")
 
     except Exception as e:
         logger.error(f"Search execution failed: {e}")

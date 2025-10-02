@@ -138,25 +138,46 @@ def install_mcp_integration(
     server_name: str = typer.Option(
         "mcp-vector-search",
         "--name",
-        help="Name for the MCP server"
+        help="Name for the MCP server",
+        rich_help_panel="📁 Configuration",
     ),
     force: bool = typer.Option(
         False,
         "--force",
         "-f",
-        help="Force installation even if server already exists"
+        help="Force installation even if server already exists",
+        rich_help_panel="⚙️  Advanced Options",
     ),
     no_watch: bool = typer.Option(
         False,
         "--no-watch",
-        help="Disable file watching for automatic reindexing"
+        help="Disable file watching for automatic reindexing",
+        rich_help_panel="⚙️  Advanced Options",
     )
 ) -> None:
-    """Install MCP integration for Claude Code in the current project.
-    
-    Creates .claude/settings.local.json in the current directory to enable semantic code search
-    for this specific project. This tool is designed to index and search
-    project-specific files.
+    """🔗 Install MCP integration for Claude Code in the current project.
+
+    Creates .claude/settings.local.json to enable semantic code search in Claude Code.
+    The integration provides AI-powered semantic search tools directly in Claude Code.
+
+    [bold cyan]Basic Examples:[/bold cyan]
+
+    [green]Install with defaults:[/green]
+        $ mcp-vector-search mcp install
+
+    [green]Install with custom server name:[/green]
+        $ mcp-vector-search mcp install --name my-search-server
+
+    [green]Reinstall/update configuration:[/green]
+        $ mcp-vector-search mcp install --force
+
+    [bold cyan]Advanced:[/bold cyan]
+
+    [green]Disable file watching:[/green]
+        $ mcp-vector-search mcp install --no-watch
+
+    [dim]💡 Tip: The .claude/settings.local.json file can be committed to share
+       MCP integration with your team.[/dim]
     """
     try:
         # Get project root for checking initialization
@@ -266,10 +287,25 @@ def test_mcp_integration(
     server_name: str = typer.Option(
         "mcp-vector-search",
         "--name",
-        help="Name of the MCP server to test"
+        help="Name of the MCP server to test",
+        rich_help_panel="📁 Configuration",
     )
 ) -> None:
-    """Test the MCP integration."""
+    """🧪 Test the MCP integration.
+
+    Verifies that the MCP server is properly configured and can start successfully.
+    Use this to diagnose integration issues.
+
+    [bold cyan]Examples:[/bold cyan]
+
+    [green]Test default server:[/green]
+        $ mcp-vector-search mcp test
+
+    [green]Test custom server:[/green]
+        $ mcp-vector-search mcp test --name my-search-server
+
+    [dim]💡 Tip: Run this after installation to verify everything works.[/dim]
+    """
     try:
         # Get project root
         project_root = ctx.obj.get("project_root") or Path.cwd()
@@ -427,10 +463,25 @@ def show_mcp_status(
     server_name: str = typer.Option(
         "mcp-vector-search",
         "--name",
-        help="Name of the MCP server to check"
+        help="Name of the MCP server to check",
+        rich_help_panel="📁 Configuration",
     )
 ) -> None:
-    """Show MCP integration status."""
+    """📊 Show MCP integration status.
+
+    Displays comprehensive status of MCP integration including Claude Code availability,
+    server configuration, and project status.
+
+    [bold cyan]Examples:[/bold cyan]
+
+    [green]Check integration status:[/green]
+        $ mcp-vector-search mcp status
+
+    [green]Check specific server:[/green]
+        $ mcp-vector-search mcp status --name my-search-server
+
+    [dim]💡 Tip: Use this to verify Claude Code can detect the MCP server.[/dim]
+    """
     try:
         # Check if Claude Code is available
         claude_available = check_claude_code_available()

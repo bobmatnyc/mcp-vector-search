@@ -1,5 +1,101 @@
 # CLI Features
 
+## Rich Help System
+
+The mcp-vector-search CLI features an industry-standard help system with progressive disclosure, organized panels, and comprehensive examples.
+
+### Help Panels
+
+Commands are organized into logical groups for easy discovery:
+
+```bash
+# View main help with organized command groups
+$ mcp-vector-search --help
+
+Core Operations:
+  init          Initialize project for semantic search
+  install       Complete setup with MCP configuration
+  index         Index codebase for semantic search
+  search        Search code semantically
+
+Customization:
+  config        Manage project configuration
+  auto-index    Configure automatic reindexing
+
+Advanced:
+  watch         File watching and monitoring
+  mcp           MCP server integration
+  doctor        Diagnose project issues
+```
+
+### Command Examples
+
+Every command includes comprehensive examples in its help text:
+
+```bash
+$ mcp-vector-search install --help
+
+Examples:
+  # Interactive setup with MCP configuration
+  mcp-vector-search install
+
+  # Setup without MCP configuration
+  mcp-vector-search install --no-mcp
+
+  # Setup for specific MCP tool
+  mcp-vector-search install --mcp-tool "Claude Code"
+
+  # Custom file extensions
+  mcp-vector-search install --extensions .py,.js,.ts,.dart
+```
+
+### Next-Step Hints
+
+After operations complete, the CLI provides helpful next-step suggestions:
+
+```bash
+$ mcp-vector-search install
+
+✓ Project initialized successfully!
+✓ MCP configuration updated for Claude Code
+✓ Indexed 234 files (1,523 code chunks)
+
+Next steps:
+  • Search your code: mcp-vector-search search "your query"
+  • View project status: mcp-vector-search status
+  • Configure auto-indexing: mcp-vector-search auto-index setup
+```
+
+### Progressive Disclosure
+
+The help system follows the progressive disclosure pattern:
+- **Basic usage**: Simple, common use cases shown first
+- **Advanced options**: Detailed flags and options available via `--help`
+- **Expert features**: Power-user features documented but not overwhelming
+
+### Visual Hierarchy
+
+Emojis and formatting provide visual cues:
+- ✓ Success indicators
+- ⚠️ Warning messages
+- ❌ Error messages
+- 💡 Helpful tips
+- 📊 Statistics and metrics
+
+### Error Recovery
+
+Error messages include clear recovery instructions:
+
+```bash
+$ mcp-vector-search search "query"
+
+❌ Error: Project not initialized
+
+Recovery:
+  1. Run: mcp-vector-search install
+  2. Or: mcp-vector-search init && mcp-vector-search index
+```
+
 ## "Did You Mean" Command Suggestions
 
 The mcp-vector-search CLI includes intelligent command suggestions to help users when they make typos or use similar commands.

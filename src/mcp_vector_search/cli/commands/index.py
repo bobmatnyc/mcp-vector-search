@@ -17,7 +17,9 @@ from ..output import (
     print_error,
     print_index_stats,
     print_info,
+    print_next_steps,
     print_success,
+    print_tip,
 )
 
 # Create index subcommand app
@@ -32,23 +34,27 @@ def main(
         "--watch",
         "-w",
         help="Watch for file changes and update index incrementally",
+        rich_help_panel="⚙️  Advanced Options",
     ),
     incremental: bool = typer.Option(
         True,
         "--incremental/--full",
         help="Use incremental indexing (skip unchanged files)",
+        rich_help_panel="📊 Indexing Options",
     ),
     extensions: str | None = typer.Option(
         None,
         "--extensions",
         "-e",
         help="Override file extensions to index (comma-separated)",
+        rich_help_panel="📁 Configuration",
     ),
     force: bool = typer.Option(
         False,
         "--force",
         "-f",
         help="Force reindexing of all files",
+        rich_help_panel="📊 Indexing Options",
     ),
     batch_size: int = typer.Option(
         32,
@@ -57,17 +63,37 @@ def main(
         help="Batch size for embedding generation",
         min=1,
         max=128,
+        rich_help_panel="⚡ Performance",
     ),
 ) -> None:
-    """Index your codebase for semantic search.
+    """📑 Index your codebase for semantic search.
 
-    This command parses your code files using Tree-sitter, generates embeddings
-    using the configured model, and stores them in ChromaDB for fast semantic search.
+    Parses code files, generates semantic embeddings, and stores them in ChromaDB.
+    Supports incremental indexing to skip unchanged files for faster updates.
 
-    Examples:
-        mcp-vector-search index
-        mcp-vector-search index --force --extensions .py,.js
-        mcp-vector-search index --watch
+    [bold cyan]Basic Examples:[/bold cyan]
+
+    [green]Index entire project:[/green]
+        $ mcp-vector-search index
+
+    [green]Force full reindex:[/green]
+        $ mcp-vector-search index --force
+
+    [green]Custom file extensions:[/green]
+        $ mcp-vector-search index --extensions .py,.js,.ts,.md
+
+    [bold cyan]Advanced Usage:[/bold cyan]
+
+    [green]Watch mode (experimental):[/green]
+        $ mcp-vector-search index --watch
+
+    [green]Full reindex (no incremental):[/green]
+        $ mcp-vector-search index --full
+
+    [green]Optimize for large projects:[/green]
+        $ mcp-vector-search index --batch-size 64
+
+    [dim]💡 Tip: Use incremental indexing (default) for faster updates on subsequent runs.[/dim]
     """
     try:
         project_root = ctx.obj.get("project_root") or Path.cwd()
@@ -189,6 +215,19 @@ async def _run_batch_indexing(
     # Show statistics
     stats = await indexer.get_indexing_stats()
     print_index_stats(stats)
+
+    # Add next-step hints
+    if indexed_count > 0:
+        steps = [
+            "[cyan]mcp-vector-search search 'your query'[/cyan] - Try semantic search",
+            "[cyan]mcp-vector-search status[/cyan] - View detailed statistics",
+        ]
+        print_next_steps(steps, title="Ready to Search")
+    else:
+        print_info("\n[bold]No files were indexed. Possible reasons:[/bold]")
+        print_info("  • No matching files found for configured extensions")
+        print_info("  • All files already indexed (use --force to reindex)")
+        print_tip("Check configured extensions with [cyan]mcp-vector-search status[/cyan]")
 
 
 async def _run_watch_mode(indexer: SemanticIndexer, show_progress: bool) -> None:
