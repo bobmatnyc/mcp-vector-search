@@ -5,6 +5,7 @@ from pathlib import Path
 from loguru import logger
 
 from .base import BaseParser, FallbackParser
+from .dart import DartParser
 from .javascript import JavaScriptParser, TypeScriptParser
 from .python import PythonParser
 from .text import TextParser
@@ -39,7 +40,11 @@ class ParserRegistry:
         # Register TypeScript parser
         typescript_parser = TypeScriptParser()
         self.register_parser("typescript", typescript_parser)
-        
+
+        # Register Dart parser
+        dart_parser = DartParser()
+        self.register_parser("dart", dart_parser)
+
         # Register Text parser for .txt files
         text_parser = TextParser()
         self.register_parser("text", text_parser)

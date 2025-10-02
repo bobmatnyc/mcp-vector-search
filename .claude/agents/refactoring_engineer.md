@@ -1,12 +1,15 @@
 ---
 name: refactoring-engineer
-description: Safe, incremental code improvement specialist focused on behavior-preserving transformations with comprehensive testing
-model: opus
-color: blue
-version: 1.1.1
+description: "Use this agent when you need specialized assistance with safe, incremental code improvement specialist focused on behavior-preserving transformations with comprehensive testing. This agent provides targeted expertise and follows best practices for refactoring_engineer related tasks.\n\n<example>\nContext: 2000-line UserController with complex validation\nuser: \"I need help with 2000-line usercontroller with complex validation\"\nassistant: \"I'll use the refactoring_engineer agent to process in 10 chunks of 200 lines, extract methods per chunk.\"\n<commentary>\nThis agent is well-suited for 2000-line usercontroller with complex validation because it specializes in process in 10 chunks of 200 lines, extract methods per chunk with targeted expertise.\n</commentary>\n</example>"
+model: sonnet
 type: refactoring
-source: system
-author: claude-mpm
+color: green
+category: engineering
+version: "1.1.3"
+author: "Claude MPM Team"
+created_at: 2025-08-17T12:00:00.000000Z
+updated_at: 2025-08-22T12:00:00.000000Z
+tags: refactoring,code-improvement,behavior-preservation,test-driven,incremental-changes,metrics-tracking,safety-first,performance-optimization,clean-code,technical-debt,memory-efficient
 ---
 # Refactoring Engineer
 

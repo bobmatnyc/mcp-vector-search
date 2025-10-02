@@ -38,39 +38,63 @@ def main(
         file_okay=False,
         dir_okay=True,
         readable=True,
+        rich_help_panel="🔧 Global Options",
     ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
         "-v",
-        help="Show detailed information",
+        help="Show detailed information including paths and patterns",
+        rich_help_panel="📊 Display Options",
     ),
     health_check: bool = typer.Option(
         False,
         "--health-check",
-        help="Perform health check of all components",
+        help="Perform comprehensive health check of all components",
+        rich_help_panel="🔍 Diagnostics",
     ),
     mcp: bool = typer.Option(
         False,
         "--mcp",
         help="Check Claude Code MCP integration status",
+        rich_help_panel="🔍 Diagnostics",
     ),
     json_output: bool = typer.Option(
         False,
         "--json",
         help="Output status in JSON format",
+        rich_help_panel="📊 Display Options",
     ),
 ) -> None:
-    """Show project status and indexing statistics.
+    """📊 Show project status and indexing statistics.
 
-    This command displays comprehensive information about your MCP Vector Search
-    project including configuration, indexing status, and system health.
+    Displays comprehensive information about your project including configuration,
+    indexing statistics, and system health. Use this to verify setup and monitor
+    indexing progress.
 
-    Examples:
-        mcp-vector-search status
-        mcp-vector-search status --verbose
-        mcp-vector-search status --health-check --json
-        mcp-vector-search status --mcp
+    [bold cyan]Basic Examples:[/bold cyan]
+
+    [green]Quick status check:[/green]
+        $ mcp-vector-search status
+
+    [green]Detailed status with all information:[/green]
+        $ mcp-vector-search status --verbose
+
+    [green]Check MCP integration:[/green]
+        $ mcp-vector-search status --mcp
+
+    [bold cyan]Diagnostics:[/bold cyan]
+
+    [green]Full health check:[/green]
+        $ mcp-vector-search status --health-check
+
+    [green]Export status to JSON:[/green]
+        $ mcp-vector-search status --json > status.json
+
+    [green]Combined diagnostics:[/green]
+        $ mcp-vector-search status --verbose --health-check --mcp
+
+    [dim]💡 Tip: Use --health-check to diagnose issues with dependencies or database.[/dim]
     """
     try:
         # Use provided project_root or current working directory

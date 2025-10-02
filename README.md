@@ -15,7 +15,7 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 ### 🚀 **Core Capabilities**
 - **Semantic Search**: Find code by meaning, not just keywords
 - **AST-Aware Parsing**: Understands code structure (functions, classes, methods)
-- **Multi-Language Support**: Python, JavaScript, TypeScript (with extensible architecture)
+- **Multi-Language Support**: Python, JavaScript, TypeScript, Dart/Flutter (with extensible architecture)
 - **Real-time Indexing**: File watching with automatic index updates
 - **Local-First**: Complete privacy with on-device processing
 - **Zero Configuration**: Auto-detects project structure and languages
@@ -51,6 +51,33 @@ git clone https://github.com/bobmatnyc/mcp-vector-search.git
 cd mcp-vector-search
 uv sync && uv pip install -e .
 ```
+
+### Complete Setup with Install Command
+
+The new **enhanced install command** provides a complete one-step setup:
+
+```bash
+# Interactive setup with MCP configuration
+mcp-vector-search install
+
+# Setup without MCP configuration
+mcp-vector-search install --no-mcp
+
+# Setup for specific MCP tool
+mcp-vector-search install --mcp-tool "Claude Code"
+
+# Setup without automatic indexing
+mcp-vector-search install --no-index
+
+# Custom file extensions
+mcp-vector-search install --extensions .py,.js,.ts,.dart
+```
+
+The install command:
+- Initializes your project configuration
+- Detects and configures MCP tools (Claude Code, Cursor, Windsurf, VS Code)
+- Automatically indexes your codebase
+- Provides rich progress indicators and next-step hints
 
 ### Basic Usage
 
@@ -277,9 +304,20 @@ Projects are configured via `.mcp-vector-search/config.json`:
 | Python     | ✅ Full | Functions, classes, methods, docstrings |
 | JavaScript | ✅ Full | Functions, classes, JSDoc, ES6+ syntax |
 | TypeScript | ✅ Full | Interfaces, types, generics, decorators |
+| Dart       | ✅ Full | Functions, classes, widgets, async, dartdoc |
+| Text/Markdown | ✅ Basic | Semantic chunking for documentation |
 | Java       | 🔄 Planned | Classes, methods, annotations |
 | Go         | 🔄 Planned | Functions, structs, interfaces |
 | Rust       | 🔄 Planned | Functions, structs, traits |
+
+#### Dart/Flutter Support
+
+New in this release! The Dart parser provides:
+- **Widget Detection**: StatelessWidget, StatefulWidget recognition
+- **State Classes**: Automatic parsing of `_WidgetNameState` patterns
+- **Async Support**: Future<T> and async function handling
+- **Dartdoc**: Triple-slash comment extraction
+- **Tree-sitter AST**: Fast, accurate parsing with regex fallback
 
 ## 🤝 Contributing
 

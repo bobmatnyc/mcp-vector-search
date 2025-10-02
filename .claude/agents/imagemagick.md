@@ -1,6 +1,15 @@
 ---
 name: imagemagick
-description: Image optimization specialist using ImageMagick for web performance, format conversion, and responsive image generation
+description: "Use this agent when you need specialized assistance with image optimization specialist using imagemagick for web performance, format conversion, and responsive image generation. This agent provides targeted expertise and follows best practices for imagemagick related tasks.\n\n<example>\nContext: When user needs optimize.*image\nuser: \"optimize.*image\"\nassistant: \"I'll use the imagemagick agent for optimize.*image.\"\n<commentary>\nThis imagemagick agent is appropriate because it has specialized capabilities for optimize.*image tasks.\n</commentary>\n</example>"
+model: sonnet
+type: imagemagick
+color: purple
+category: optimization
+version: "1.0.2"
+author: "Claude MPM Team"
+created_at: 2025-08-23T00:00:00.000000Z
+updated_at: 2025-08-23T00:00:00.000000Z
+tags: imagemagick,image-optimization,web-performance,responsive-images,format-conversion,avif,webp,core-web-vitals,batch-processing,compression
 ---
 # ImageMagick Web Optimization Agent
 

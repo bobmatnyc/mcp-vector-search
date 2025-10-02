@@ -258,3 +258,157 @@ def print_json(data: Any, title: str | None = None) -> None:
         console.print(Panel(syntax, title=title, border_style="blue"))
     else:
         console.print(syntax)
+
+
+def print_panel(
+    content: str,
+    title: str | None = None,
+    border_style: str = "blue",
+    padding: tuple[int, int] = (1, 2),
+) -> None:
+    """Print content in a Rich panel.
+
+    Args:
+        content: The content to display in the panel
+        title: Optional title for the panel
+        border_style: Border color/style (default: "blue")
+        padding: Tuple of (vertical, horizontal) padding
+    """
+    console.print(
+        Panel(
+            content,
+            title=title,
+            border_style=border_style,
+            padding=padding,
+        )
+    )
+
+
+def print_next_steps(steps: list[str], title: str = "Next Steps") -> None:
+    """Print next step hints after a command execution.
+
+    Args:
+        steps: List of next step descriptions
+        title: Panel title (default: "Next Steps")
+    """
+    content = "\n".join(f"  {i}. {step}" for i, step in enumerate(steps, 1))
+    print_panel(content, title=f"🚀 {title}", border_style="blue")
+
+
+def print_tip(message: str) -> None:
+    """Print a helpful tip message.
+
+    Args:
+        message: The tip message to display
+    """
+    console.print(f"[dim]💡 Tip: {message}[/dim]")
+
+
+def print_completion_status(
+    title: str,
+    completed_items: list[str],
+    pending_items: list[str] | None = None,
+) -> None:
+    """Print completion status with checkmarks.
+
+    Args:
+        title: Status title
+        completed_items: List of completed items
+        pending_items: Optional list of pending items
+    """
+    content_lines = []
+
+    if completed_items:
+        content_lines.append("[bold green]✨ Completed:[/bold green]")
+        for item in completed_items:
+            content_lines.append(f"  ✅ {item}")
+
+    if pending_items:
+        content_lines.append("\n[bold yellow]📋 Pending:[/bold yellow]")
+        for item in pending_items:
+            content_lines.append(f"  ☐ {item}")
+
+    print_panel("\n".join(content_lines), title=title, border_style="green")
+
+
+def print_setup_progress(
+    completed_steps: list[str],
+    all_steps: list[tuple[str, str]] | None = None,
+) -> None:
+    """Display setup workflow progress.
+
+    Args:
+        completed_steps: List of completed step IDs
+        all_steps: Optional list of (step_id, step_name) tuples
+    """
+    if all_steps is None:
+        all_steps = [
+            ("initialize", "Initialize project"),
+            ("configure", "Configure settings"),
+            ("index", "Index codebase"),
+            ("mcp_setup", "Setup MCP integration"),
+            ("verify", "Verify installation"),
+        ]
+
+    completed = len([s for s, _ in all_steps if s in completed_steps])
+    total = len(all_steps)
+    percentage = (completed / total) * 100
+
+    console.print(f"\n🚀 Setup Progress: {completed}/{total} ({percentage:.0f}%)")
+
+    for step_id, step_name in all_steps:
+        status = "✓" if step_id in completed_steps else "☐"
+        style = "green" if step_id in completed_steps else "dim"
+        console.print(f"  {status} {step_name}", style=style)
+
+
+def print_error_with_recovery(error_message: str, recovery_steps: list[str]) -> None:
+    """Print error message with recovery hints.
+
+    Args:
+        error_message: The error message
+        recovery_steps: List of recovery step descriptions
+    """
+    print_error(error_message)
+
+    console.print("\n[bold]How to fix:[/bold]")
+    for i, step in enumerate(recovery_steps, 1):
+        console.print(f"  {i}. {step}")
+
+    console.print("\n[dim]For more help: mcp-vector-search --help[/dim]")
+
+
+def print_command_examples(
+    command: str,
+    examples: list[tuple[str, str]],
+) -> None:
+    """Print command examples in a formatted table.
+
+    Args:
+        command: Base command name
+        examples: List of (description, example) tuples
+    """
+    table = Table(
+        title=f"Examples: {command}",
+        show_header=True,
+        header_style="bold cyan",
+    )
+    table.add_column("Description", style="white", no_wrap=False)
+    table.add_column("Command", style="green", no_wrap=False)
+
+    for description, example in examples:
+        table.add_row(description, example)
+
+    console.print(table)
+
+
+def print_config_hint(config_type: str, config_path: str) -> None:
+    """Print configuration file location hint.
+
+    Args:
+        config_type: Type of configuration (e.g., "Claude Code", "Project")
+        config_path: Path to the configuration file
+    """
+    console.print(
+        f"[dim]💡 {config_type} config: {config_path}[/dim]"
+    )

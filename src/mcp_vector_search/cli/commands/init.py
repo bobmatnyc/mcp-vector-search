@@ -13,8 +13,11 @@ from ..output import (
     console,
     print_error,
     print_info,
+    print_next_steps,
+    print_panel,
     print_project_info,
     print_success,
+    print_tip,
     print_warning,
 )
 
@@ -33,18 +36,21 @@ def main(
         file_okay=True,
         dir_okay=False,
         readable=True,
+        rich_help_panel="📁 Configuration",
     ),
     extensions: str | None = typer.Option(
         None,
         "--extensions",
         "-e",
         help="Comma-separated list of file extensions to index (e.g., '.py,.js,.ts,.txt,.md')",
+        rich_help_panel="📁 Configuration",
     ),
     embedding_model: str = typer.Option(
         DEFAULT_EMBEDDING_MODELS["code"],
         "--embedding-model",
         "-m",
         help="Embedding model to use for semantic search",
+        rich_help_panel="🧠 Model Settings",
     ),
     similarity_threshold: float = typer.Option(
         0.5,
@@ -53,27 +59,32 @@ def main(
         help="Similarity threshold for search results (0.0 to 1.0)",
         min=0.0,
         max=1.0,
+        rich_help_panel="🧠 Model Settings",
     ),
     force: bool = typer.Option(
         False,
         "--force",
         "-f",
         help="Force re-initialization if project is already initialized",
+        rich_help_panel="⚙️  Advanced Options",
     ),
     auto_index: bool = typer.Option(
         True,
         "--auto-index/--no-auto-index",
         help="Automatically start indexing after initialization",
+        rich_help_panel="🚀 Workflow Options",
     ),
     mcp: bool = typer.Option(
         True,
         "--mcp/--no-mcp",
         help="Install Claude Code MCP integration after initialization",
+        rich_help_panel="🚀 Workflow Options",
     ),
     auto_indexing: bool = typer.Option(
         True,
         "--auto-indexing/--no-auto-indexing",
         help="Set up automatic indexing for file changes",
+        rich_help_panel="🚀 Workflow Options",
     ),
 ) -> None:
     """🚀 Complete project setup for semantic code search with MCP integration.
@@ -90,11 +101,25 @@ def main(
 
     Perfect for getting started quickly in any project!
 
-    Examples:
-        mcp-vector-search init                # Full setup with smart defaults
-        mcp-vector-search init --no-mcp      # Setup without MCP integration
-        mcp-vector-search init --extensions .py,.js,.ts,.txt  # Custom file types
-        mcp-vector-search init --force       # Re-initialize existing project
+    [bold cyan]Examples:[/bold cyan]
+
+    [green]Basic setup (recommended):[/green]
+        $ mcp-vector-search init
+
+    [green]Quick setup without MCP:[/green]
+        $ mcp-vector-search init --no-mcp
+
+    [green]Custom file extensions:[/green]
+        $ mcp-vector-search init --extensions .py,.js,.ts,.txt,.md
+
+    [green]Re-initialize existing project:[/green]
+        $ mcp-vector-search init --force
+
+    [green]Setup without auto-indexing:[/green]
+        $ mcp-vector-search init --no-auto-index
+
+    [dim]💡 Tip: The command creates .mcp-vector-search/ for project config
+       and .claude/settings.local.json for MCP integration.[/dim]
     """
     try:
         # Get project root from context or auto-detect
@@ -295,29 +320,43 @@ def main(
                 print_info("You can install it later with: mcp-vector-search mcp install")
 
         # Show completion status and next steps
-        console.print("\n[bold green]🎉 Setup Complete![/bold green]")
+        print_success("🎉 Setup Complete!")
 
         if auto_index and mcp:
-            console.print("\n[bold blue]✨ Your project is fully configured:[/bold blue]")
-            console.print("  ✅ Vector database initialized")
-            console.print("  ✅ Codebase indexed and searchable")
-            console.print("  ✅ Auto-indexing enabled for file changes")
-            console.print("  ✅ Claude Code MCP integration installed")
-            console.print("  ✅ Team configuration saved in .mcp.json")
+            # Full setup completed
+            completed_items = [
+                "Vector database initialized",
+                "Codebase indexed and searchable",
+                "Auto-indexing enabled for file changes",
+                "Claude Code MCP integration installed",
+                "Team configuration saved in .claude/settings.local.json",
+            ]
+            print_panel(
+                "\n".join(f"  ✅ {item}" for item in completed_items),
+                title="✨ Your Project is Fully Configured",
+                border_style="green",
+            )
 
-            console.print("\n[bold green]🚀 Ready to use:[/bold green]")
-            console.print("  • Search your code: [code]mcp-vector-search search 'your query'[/code]")
-            console.print("  • Use in Claude Code with MCP tools")
-            console.print("  • Check status: [code]mcp-vector-search status[/code]")
-            console.print("\n[dim]💡 Tip: Commit .mcp.json to share MCP integration with your team![/dim]")
+            # Next steps for fully configured project
+            next_steps = [
+                "[cyan]mcp-vector-search search 'your query'[/cyan] - Search your code",
+                "Use MCP tools in Claude Code for AI-powered code search",
+                "[cyan]mcp-vector-search status[/cyan] - Check indexing statistics",
+            ]
+            print_next_steps(next_steps, title="Ready to Use")
+
+            print_tip("Commit .claude/settings.local.json to share MCP integration with your team!")
         else:
-            console.print("\n[bold blue]Next steps:[/bold blue]")
+            # Partial setup - show what's next
+            steps = []
             if not auto_index:
-                console.print("  1. Run [code]mcp-vector-search index[/code] to index your codebase")
-            console.print("  2. Run [code]mcp-vector-search search 'your query'[/code] to search your code")
-            console.print("  3. Run [code]mcp-vector-search status[/code] to check status")
+                steps.append("[cyan]mcp-vector-search index[/cyan] - Index your codebase")
+            steps.append("[cyan]mcp-vector-search search 'your query'[/cyan] - Try semantic search")
+            steps.append("[cyan]mcp-vector-search status[/cyan] - Check project status")
             if not mcp:
-                console.print("  4. Run [code]mcp-vector-search mcp install[/code] for Claude Code integration")
+                steps.append("[cyan]mcp-vector-search mcp install[/cyan] - Add Claude Code integration")
+
+            print_next_steps(steps)
 
     except ProjectInitializationError as e:
         print_error(f"Initialization failed: {e}")

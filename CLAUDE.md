@@ -8,7 +8,67 @@ This file provides comprehensive guidance for Claude Code (claude.ai/code) and C
 
 ## 🔴 Project Overview (CRITICAL)
 
-**MCP Vector Search** is a CLI-first semantic code search tool with MCP (Model Context Protocol) integration. It provides intelligent code search using vector embeddings and AST-aware parsing for Python, JavaScript, and TypeScript.
+**MCP Vector Search** is a CLI-first semantic code search tool with MCP (Model Context Protocol) integration. It provides intelligent code search using vector embeddings and AST-aware parsing for Python, JavaScript, TypeScript, Dart/Flutter, and Markdown.
+
+### 🎉 Recent Major Features (NEW IN v0.5.0)
+
+**1. Dart/Flutter Language Support** 🎯
+- Full AST-aware parsing with tree-sitter
+- Widget detection (StatelessWidget, StatefulWidget)
+- State class recognition (_WidgetNameState patterns)
+- Async/Future<T> support
+- Dartdoc comment extraction
+- Cross-language semantic search with all 5 languages
+
+**2. Enhanced Install Command** 🚀
+- One-step complete project setup
+- Multi-tool MCP detection (Claude Code, Cursor, Windsurf, VS Code)
+- Interactive MCP configuration
+- Automatic indexing (optional)
+- Rich progress indicators
+- Options: `--no-mcp`, `--no-index`, `--mcp-tool`, `--extensions`
+
+**3. Rich Help System** 📚
+- Organized help panels (Core, Customization, Advanced)
+- Comprehensive examples in all commands
+- Next-step hints after operations
+- Error recovery instructions
+- Progressive disclosure pattern
+- Industry-standard UX (git, npm, docker patterns)
+
+### 🟡 Quick Start for Users (RECOMMENDED WORKFLOW)
+
+**New users should use the enhanced install command:**
+
+```bash
+# Interactive setup (recommended)
+mcp-vector-search install
+
+# This single command will:
+# 1. Initialize project configuration
+# 2. Detect and configure MCP tools (Claude Code, Cursor, etc.)
+# 3. Automatically index your codebase
+# 4. Provide next-step hints
+```
+
+**Advanced install options:**
+
+```bash
+# Skip MCP configuration
+mcp-vector-search install --no-mcp
+
+# Skip automatic indexing
+mcp-vector-search install --no-index
+
+# Specify MCP tool directly
+mcp-vector-search install --mcp-tool "Claude Code"
+
+# Custom file extensions
+mcp-vector-search install --extensions .py,.js,.ts,.dart
+
+# Combine options
+mcp-vector-search install --no-index --mcp-tool "Cursor"
+```
 
 ### 🔴 Core Architecture (MUST UNDERSTAND)
 - **Vector Database**: ChromaDB with connection pooling (13.6% performance boost)
@@ -129,7 +189,7 @@ The codebase follows a **layered architecture** with clear separation of concern
 #### 🟡 3. Parser System (`src/mcp_vector_search/parsers/`) - LANGUAGE SUPPORT
 - **Base**: `base.py` - abstract `BaseParser` interface (extend for new languages)
 - **Registry**: `registry.py` - dynamic parser discovery and selection
-- **Language Parsers**: `python.py`, `javascript.py`, `typescript.py`, `text.py`
+- **Language Parsers**: `python.py`, `javascript.py`, `typescript.py`, `dart.py`, `text.py`
 - **Output**: Each parser extracts functions, classes, methods, and semantic chunks
 
 #### 🔴 4. MCP Integration (`src/mcp_vector_search/mcp/`) - CLAUDE INTEGRATION

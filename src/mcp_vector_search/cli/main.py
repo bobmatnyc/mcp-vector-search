@@ -42,7 +42,31 @@ console = Console()
 # Create main Typer app with "did you mean" functionality
 app = create_enhanced_typer(
     name="mcp-vector-search",
-    help="CLI-first semantic code search with MCP integration",
+    help="""
+🔍 [bold]CLI-first semantic code search with MCP integration[/bold]
+
+Semantic search finds code by meaning, not just keywords. Perfect for exploring
+unfamiliar codebases, finding similar patterns, and integrating with AI tools.
+
+[bold cyan]Quick Start:[/bold cyan]
+  1. Initialize: [green]mcp-vector-search init[/green]
+  2. Search code: [green]mcp-vector-search search "your query"[/green]
+  3. Check status: [green]mcp-vector-search status[/green]
+
+[bold cyan]Key Features:[/bold cyan]
+  🤖 MCP Integration: Works with Claude Code, Cursor, and AI tools
+  ⚡ Fast Indexing: Incremental updates with file watching
+  🎯 Semantic Search: Find code by meaning, not just keywords
+  📊 Rich Output: Beautiful terminal formatting with syntax highlighting
+
+[bold cyan]Configuration Files:[/bold cyan]
+  • Project: .mcp-vector-search/config.json
+  • Claude Code: .claude/settings.local.json
+  • Global cache: ~/.cache/mcp-vector-search/
+
+[dim]For detailed help on any command: [cyan]mcp-vector-search COMMAND --help[/cyan][/dim]
+[dim]Documentation: [cyan]https://github.com/yourusername/mcp-vector-search[/cyan][/dim]
+    """,
     add_completion=False,
     rich_markup_mode="rich",
 )
@@ -232,10 +256,24 @@ def remove_favorite(
 def main(
     ctx: typer.Context,
     version: bool = typer.Option(
-        False, "--version", "-v", help="Show version and exit"
+        False,
+        "--version",
+        "-v",
+        help="Show version and exit",
+        rich_help_panel="ℹ️  Information",
     ),
-    verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
-    quiet: bool = typer.Option(False, "--quiet", help="Suppress non-error output"),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Enable verbose logging",
+        rich_help_panel="🔧 Global Options",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        help="Suppress non-error output",
+        rich_help_panel="🔧 Global Options",
+    ),
     project_root: Path | None = typer.Option(
         None,
         "--project-root",
@@ -245,6 +283,7 @@ def main(
         file_okay=False,
         dir_okay=True,
         readable=True,
+        rich_help_panel="🔧 Global Options",
     ),
 ) -> None:
     """MCP Vector Search - CLI-first semantic code search with MCP integration.

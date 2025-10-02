@@ -5,16 +5,61 @@ All notable changes to MCP Vector Search will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Dart Language Support**: Full Dart/Flutter parser implementation
+  - Widget detection (StatelessWidget, StatefulWidget)
+  - State class parsing (_WidgetNameState pattern)
+  - Async function support (Future<T> async)
+  - Dartdoc comment extraction (///)
+  - Tree-sitter AST parsing with regex fallback
+  - Supported extensions: `.dart`
+  - 20+ code chunks extracted from comprehensive test files
+  - Cross-language semantic search across all 5 languages
+
+- **Enhanced Install Command**: Complete project setup workflow
+  - Multi-tool MCP detection (Claude Code, Cursor, Windsurf, VS Code)
+  - Interactive MCP configuration with tool selection
+  - Rich progress indicators and status updates
+  - Automatic indexing after setup (optional)
+  - New options:
+    - `--no-mcp`: Skip MCP configuration
+    - `--no-index`: Skip automatic indexing
+    - `--extensions`: Customize file extensions
+    - `--mcp-tool`: Specify MCP tool directly
+
+### Enhanced
+- **Rich Help System**: Industry-standard CLI help patterns
+  - Help panels organized by purpose (Core Operations, Customization, Advanced)
+  - Comprehensive examples in all command help text
+  - Next-step hints after operations complete
+  - Error messages with clear recovery instructions
+  - Progressive disclosure pattern (basic → advanced)
+  - Emoji indicators for visual hierarchy
+  - Follows patterns from git, npm, docker CLIs
+
+- **Language Support**: Now supports 5 languages
+  - Python, JavaScript, TypeScript (existing)
+  - Dart/Flutter (new)
+  - Text/Markdown (fallback)
+
+### Technical Details
+- Zero new dependencies (uses existing tree-sitter-language-pack)
+- Type safety: 100% mypy compliance maintained
+- Test coverage maintained across all new features
+- Backward compatible: No breaking changes
+
 ## [0.4.14] - 2025-09-23
 
 ### Added
-- 
+- Initial release structure
 
 ### Changed
-- 
+- Version bump preparation
 
 ### Fixed
-- 
+- Build system improvements
 
 ## [0.4.1] - 2025-08-18
 

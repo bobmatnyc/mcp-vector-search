@@ -1,17 +1,22 @@
 """Install command for MCP Vector Search CLI."""
 
 import asyncio
+import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 import typer
 from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.table import Table
 
 from ...core.project import ProjectManager
-from ..output import print_error, print_info, print_success, print_warning
+from ..output import confirm_action, print_error, print_info, print_success, print_warning
 
 # Create console for rich output
 console = Console()
@@ -20,28 +25,302 @@ console = Console()
 install_app = typer.Typer(help="Install mcp-vector-search in projects")
 
 
-@install_app.command()
+# ============================================================================
+# MCP Multi-Tool Integration Helpers
+# ============================================================================
+
+
+def detect_ai_tools() -> dict[str, Path]:
+    """Detect installed AI coding tools by checking config file existence.
+
+    Returns:
+        Dictionary mapping tool names to their config file paths.
+        Only includes tools with existing configuration files.
+    """
+    HOME = Path.home()
+
+    CONFIG_LOCATIONS = {
+        "claude-code": HOME / ".claude.json",
+        "claude-desktop": HOME / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
+        "cursor": HOME / ".cursor" / "mcp.json",
+        "windsurf": HOME / ".codeium" / "windsurf" / "mcp_config.json",
+        "vscode": HOME / ".vscode" / "mcp.json",
+    }
+
+    # Return only tools with existing config files
+    detected_tools = {}
+    for tool_name, config_path in CONFIG_LOCATIONS.items():
+        if config_path.exists():
+            detected_tools[tool_name] = config_path
+
+    return detected_tools
+
+
+def get_mcp_server_config(project_root: Path, enable_watch: bool = True) -> dict:
+    """Generate MCP server configuration dict.
+
+    Args:
+        project_root: Path to the project root directory
+        enable_watch: Whether to enable file watching (default: True)
+
+    Returns:
+        Dictionary containing MCP server configuration.
+    """
+    # Use uv run for better compatibility across environments
+    return {
+        "command": "uv",
+        "args": ["run", "mcp-vector-search", "mcp"],
+        "cwd": str(project_root.absolute()),
+        "env": {
+            "MCP_ENABLE_FILE_WATCHING": "true" if enable_watch else "false"
+        }
+    }
+
+
+def configure_mcp_for_tool(
+    tool_name: str,
+    config_path: Path,
+    project_root: Path,
+    server_name: str = "mcp-vector-search",
+    enable_watch: bool = True,
+) -> bool:
+    """Add MCP server configuration to a tool's config file.
+
+    Args:
+        tool_name: Name of the AI tool (e.g., "claude-code", "cursor")
+        config_path: Path to the tool's configuration file
+        project_root: Path to the project root directory
+        server_name: Name for the MCP server entry
+        enable_watch: Whether to enable file watching
+
+    Returns:
+        True if configuration was successful, False otherwise.
+    """
+    try:
+        # Create backup of existing config
+        backup_path = config_path.with_suffix(config_path.suffix + ".backup")
+
+        # Load existing config or create new one
+        if config_path.exists():
+            shutil.copy2(config_path, backup_path)
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+        else:
+            # Create parent directory if it doesn't exist
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config = {}
+
+        # Ensure mcpServers section exists
+        if "mcpServers" not in config:
+            config["mcpServers"] = {}
+
+        # Get the MCP server configuration
+        server_config = get_mcp_server_config(project_root, enable_watch)
+
+        # Add server configuration (tool-specific format adjustments)
+        if tool_name == "claude-desktop":
+            # Claude Desktop uses a slightly different format
+            config["mcpServers"][server_name] = server_config
+        elif tool_name == "claude-code":
+            # Claude Code requires "type": "stdio"
+            server_config["type"] = "stdio"
+            config["mcpServers"][server_name] = server_config
+        else:
+            # Other tools use standard format
+            config["mcpServers"][server_name] = server_config
+
+        # Write the updated config
+        with open(config_path, 'w') as f:
+            json.dump(config, f, indent=2)
+
+        print_success(f"  ✅ Configured {tool_name} at {config_path}")
+        return True
+
+    except Exception as e:
+        print_error(f"  ❌ Failed to configure {tool_name}: {e}")
+        # Restore backup if it exists
+        if backup_path.exists():
+            shutil.copy2(backup_path, config_path)
+        return False
+
+
+def setup_mcp_integration(
+    project_root: Path,
+    mcp_tool: Optional[str] = None,
+    enable_watch: bool = True,
+    interactive: bool = True,
+) -> dict[str, bool]:
+    """Setup MCP integration for one or more AI tools.
+
+    Args:
+        project_root: Path to the project root directory
+        mcp_tool: Specific tool to configure (None for interactive selection)
+        enable_watch: Whether to enable file watching
+        interactive: Whether to prompt user for tool selection
+
+    Returns:
+        Dictionary mapping tool names to success status.
+    """
+    detected_tools = detect_ai_tools()
+
+    if not detected_tools:
+        print_warning("No AI coding tools detected on this system.")
+        print_info("Supported tools: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code")
+        print_info("Install one of these tools and try again.")
+        return {}
+
+    # Determine which tools to configure
+    tools_to_configure = {}
+
+    if mcp_tool:
+        # Specific tool requested
+        if mcp_tool in detected_tools:
+            tools_to_configure[mcp_tool] = detected_tools[mcp_tool]
+        else:
+            print_error(f"Tool '{mcp_tool}' not found or not installed.")
+            print_info(f"Detected tools: {', '.join(detected_tools.keys())}")
+            return {}
+    elif interactive and len(detected_tools) > 1:
+        # Multiple tools detected, prompt user
+        console.print("\n[bold blue]🔍 Detected AI coding tools:[/bold blue]")
+        for i, tool_name in enumerate(detected_tools.keys(), 1):
+            console.print(f"  {i}. {tool_name}")
+
+        console.print("\n[bold]Configure MCP integration for:[/bold]")
+        console.print("  [1] All detected tools")
+        console.print("  [2] Choose specific tool(s)")
+        console.print("  [3] Skip MCP setup")
+
+        choice = typer.prompt("\nSelect option", type=int, default=1)
+
+        if choice == 1:
+            # Configure all tools
+            tools_to_configure = detected_tools
+        elif choice == 2:
+            # Let user choose specific tools
+            console.print("\n[bold]Select tools to configure (comma-separated numbers):[/bold]")
+            tool_list = list(detected_tools.keys())
+            for i, tool_name in enumerate(tool_list, 1):
+                console.print(f"  {i}. {tool_name}")
+
+            selections = typer.prompt("Tool numbers").strip()
+            for num_str in selections.split(','):
+                try:
+                    idx = int(num_str.strip()) - 1
+                    if 0 <= idx < len(tool_list):
+                        tool_name = tool_list[idx]
+                        tools_to_configure[tool_name] = detected_tools[tool_name]
+                except ValueError:
+                    print_warning(f"Invalid selection: {num_str}")
+        else:
+            # Skip MCP setup
+            print_info("Skipping MCP setup")
+            return {}
+    else:
+        # Single tool or non-interactive mode - configure all
+        tools_to_configure = detected_tools
+
+    # Configure selected tools
+    results = {}
+
+    if tools_to_configure:
+        console.print("\n[bold blue]🔗 Configuring MCP integration...[/bold blue]")
+
+        for tool_name, config_path in tools_to_configure.items():
+            results[tool_name] = configure_mcp_for_tool(
+                tool_name=tool_name,
+                config_path=config_path,
+                project_root=project_root,
+                server_name="mcp-vector-search",
+                enable_watch=enable_watch,
+            )
+
+    return results
+
+
+def print_next_steps(
+    project_root: Path,
+    indexed: bool,
+    mcp_results: dict[str, bool],
+) -> None:
+    """Print helpful next steps after installation.
+
+    Args:
+        project_root: Path to the project root
+        indexed: Whether the codebase was indexed
+        mcp_results: Results of MCP integration (tool_name -> success)
+    """
+    console.print("\n[bold green]🎉 Installation Complete![/bold green]")
+
+    # Show what was completed
+    console.print("\n[bold blue]✨ Setup Summary:[/bold blue]")
+    console.print("  ✅ Vector database initialized")
+    if indexed:
+        console.print("  ✅ Codebase indexed and searchable")
+    else:
+        console.print("  ⏭️  Indexing skipped (use --no-index flag)")
+
+    if mcp_results:
+        successful_tools = [tool for tool, success in mcp_results.items() if success]
+        if successful_tools:
+            console.print(f"  ✅ MCP integration configured for: {', '.join(successful_tools)}")
+
+    # Next steps
+    console.print("\n[bold green]🚀 Ready to use:[/bold green]")
+    console.print(f"  • Search your code: [code]mcp-vector-search search 'your query'[/code]")
+    console.print(f"  • Check status: [code]mcp-vector-search status[/code]")
+
+    if mcp_results:
+        console.print("\n[bold blue]🤖 Using MCP Integration:[/bold blue]")
+        if "claude-code" in mcp_results and mcp_results["claude-code"]:
+            console.print("  • Open Claude Code in this project directory")
+            console.print("  • Use: 'Search my code for authentication functions'")
+        if "cursor" in mcp_results and mcp_results["cursor"]:
+            console.print("  • Open Cursor in this project directory")
+            console.print("  • MCP tools should be available automatically")
+        if "claude-desktop" in mcp_results and mcp_results["claude-desktop"]:
+            console.print("  • Restart Claude Desktop")
+            console.print("  • The mcp-vector-search server will be available")
+
+    console.print("\n[dim]💡 Tip: Run 'mcp-vector-search --help' for more commands[/dim]")
+
+
+# ============================================================================
+# Main Install Command
+# ============================================================================
+
+
 def main(
     ctx: typer.Context,
-    target_directory: Path = typer.Argument(
-        None,
-        help="Target directory to install in (default: current directory)",
-    ),
-    project_root: Path | None = typer.Option(
-        None,
-        "--project-root",
-        "-p",
-        help="Project root directory (auto-detected if not specified)",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        readable=True,
+    project_path: Path = typer.Argument(
+        ...,
+        help="Project directory to initialize and index",
     ),
     extensions: str | None = typer.Option(
         None,
         "--extensions",
         "-e",
-        help="Comma-separated list of file extensions to index (e.g., '.py,.js,.ts,.txt,.md')",
+        help="Comma-separated file extensions (e.g., .py,.js,.ts,.dart)",
+    ),
+    no_index: bool = typer.Option(
+        False,
+        "--no-index",
+        help="Skip initial indexing",
+    ),
+    no_mcp: bool = typer.Option(
+        False,
+        "--no-mcp",
+        help="Skip MCP integration setup",
+    ),
+    mcp_tool: Optional[str] = typer.Option(
+        None,
+        "--mcp-tool",
+        help="Specific AI tool for MCP integration (claude-code, cursor, etc.)",
+    ),
+    no_watch: bool = typer.Option(
+        False,
+        "--no-watch",
+        help="Disable file watching for MCP integration",
     ),
     embedding_model: str = typer.Option(
         "sentence-transformers/all-MiniLM-L6-v2",
@@ -57,16 +336,6 @@ def main(
         min=0.0,
         max=1.0,
     ),
-    no_mcp: bool = typer.Option(
-        False,
-        "--no-mcp",
-        help="Skip MCP integration setup",
-    ),
-    no_auto_index: bool = typer.Option(
-        False,
-        "--no-auto-index",
-        help="Skip automatic indexing after setup",
-    ),
     force: bool = typer.Option(
         False,
         "--force",
@@ -74,47 +343,55 @@ def main(
         help="Force re-installation if project is already initialized",
     ),
 ) -> None:
-    """Install mcp-vector-search in a project directory.
+    """Install mcp-vector-search with complete setup including MCP integration.
 
-    This command sets up mcp-vector-search in the specified directory (or current directory)
-    with full initialization, indexing, and optional MCP integration.
+    This command provides a comprehensive one-step installation that:
+
+    ✅ Initializes mcp-vector-search in the project directory
+    ✅ Auto-detects programming languages and file types
+    ✅ Indexes the codebase for semantic search
+    ✅ Configures MCP integration for multiple AI tools
+    ✅ Sets up file watching for automatic updates
+
+    Perfect for getting started quickly with semantic code search!
 
     Examples:
-        mcp-vector-search install                    # Install in current directory
-        mcp-vector-search install ~/my-project       # Install in specific directory
-        mcp-vector-search install --no-mcp           # Install without MCP integration
-        mcp-vector-search install --force            # Force re-installation
-        mcp-vector-search install --extensions .py,.js,.ts,.txt  # Custom file extensions
+        mcp-vector-search install .                          # Install in current directory
+        mcp-vector-search install ~/my-project               # Install in specific directory
+        mcp-vector-search install . --no-mcp                 # Skip MCP integration
+        mcp-vector-search install . --mcp-tool claude-code   # Configure specific tool
+        mcp-vector-search install . --extensions .py,.js,.ts # Custom file types
+        mcp-vector-search install . --force                  # Force re-initialization
     """
     try:
-        # Determine target directory - prioritize target_directory, then project_root, then context, then cwd
-        target_dir = target_directory or project_root or ctx.obj.get("project_root") or Path.cwd()
-        target_dir = target_dir.resolve()
+        # Resolve project path
+        project_root = project_path.resolve()
 
         # Show installation header
         console.print(Panel.fit(
-            f"[bold blue]🚀 MCP Vector Search - Project Installation[/bold blue]\n\n"
-            f"📁 Target project: [cyan]{target_dir}[/cyan]\n"
-            f"🔧 Installing with full setup and configuration",
+            f"[bold blue]🚀 MCP Vector Search - Complete Installation[/bold blue]\n\n"
+            f"📁 Project: [cyan]{project_root}[/cyan]\n"
+            f"🔧 Setting up with full initialization and MCP integration",
             border_style="blue"
         ))
 
-        # Check if target directory exists
-        if not target_dir.exists():
-            print_error(f"Target directory does not exist: {target_dir}")
+        # Check if project directory exists
+        if not project_root.exists():
+            print_error(f"Project directory does not exist: {project_root}")
             raise typer.Exit(1)
 
         # Check if already initialized
-        project_manager = ProjectManager(target_dir)
+        project_manager = ProjectManager(project_root)
         if project_manager.is_initialized() and not force:
-            print_success("Project is already initialized and ready to use!")
-            print_info("Your project has vector search capabilities enabled.")
-            print_info(f"Use --force to re-initialize or run 'mcp-vector-search --project-root {target_dir} status main' to see current configuration")
-            
-            console.print("\n[bold green]🔍 Ready to use:[/bold green]")
-            console.print(f"  • Search your code: [code]cd {target_dir} && mcp-vector-search search 'your query'[/code]")
-            console.print(f"  • Check status: [code]cd {target_dir} && mcp-vector-search status main[/code]")
-            console.print("  • Use [code]--force[/code] to re-initialize if needed")
+            print_success("✅ Project is already initialized!")
+            print_info("Vector search capabilities are enabled.")
+            print_info("Use --force to re-initialize if needed.")
+
+            # Show MCP configuration option
+            if not no_mcp:
+                console.print("\n[bold blue]💡 MCP Integration:[/bold blue]")
+                console.print("  Run install again with --force to reconfigure MCP integration")
+
             return
 
         # Parse file extensions
@@ -126,41 +403,116 @@ def main(
                 ext if ext.startswith(".") else f".{ext}" for ext in file_extensions
             ]
 
-        # Run initialization
-        print_info("Initializing project...")
-        
-        # Import init functionality
-        from .init import run_init_setup
+        # ========================================================================
+        # STEP 1: Initialize Project
+        # ========================================================================
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("📁 Initializing project...", total=None)
 
-        asyncio.run(
-            run_init_setup(
-                project_root=target_dir,
+            # Initialize the project
+            project_manager.initialize(
                 file_extensions=file_extensions,
                 embedding_model=embedding_model,
                 similarity_threshold=similarity_threshold,
-                mcp=not no_mcp,
-                auto_index=not no_auto_index,
                 force=force,
             )
-        )
 
-        # Show completion message
-        console.print(Panel.fit(
-            f"[bold green]🎉 Installation Complete![/bold green]\n\n"
-            f"✅ Project initialized at [cyan]{target_dir}[/cyan]\n"
-            f"✅ Vector database configured\n"
-            f"✅ {'Codebase indexed' if not no_auto_index else 'Ready for indexing'}\n"
-            f"✅ {'MCP integration enabled' if not no_mcp else 'MCP integration skipped'}\n\n"
-            f"[bold blue]🔍 Next steps:[/bold blue]\n"
-            f"  • [code]cd {target_dir}[/code]\n"
-            f"  • [code]mcp-vector-search search 'your query'[/code]\n"
-            f"  • [code]mcp-vector-search status main[/code]",
-            border_style="green"
-        ))
+            progress.update(task, completed=True)
+            print_success("✅ Project initialized successfully")
+
+        # ========================================================================
+        # STEP 2: Index Codebase (unless --no-index)
+        # ========================================================================
+        indexed = False
+        if not no_index:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+            ) as progress:
+                task = progress.add_task("🔍 Indexing codebase...", total=None)
+
+                # Import and run indexing
+                from .index import run_indexing
+
+                try:
+                    asyncio.run(
+                        run_indexing(
+                            project_root=project_root,
+                            force_reindex=False,
+                            show_progress=False,  # We handle progress here
+                        )
+                    )
+                    indexed = True
+                    progress.update(task, completed=True)
+                    print_success("✅ Codebase indexed successfully")
+                except Exception as e:
+                    print_error(f"❌ Indexing failed: {e}")
+                    print_info("You can run 'mcp-vector-search index' later")
+        else:
+            print_info("⏭️  Indexing skipped (--no-index)")
+
+        # ========================================================================
+        # STEP 3: Configure MCP Integration (unless --no-mcp)
+        # ========================================================================
+        mcp_results = {}
+        if not no_mcp:
+            enable_watch = not no_watch
+            mcp_results = setup_mcp_integration(
+                project_root=project_root,
+                mcp_tool=mcp_tool,
+                enable_watch=enable_watch,
+                interactive=True,  # Allow interactive tool selection
+            )
+
+            if not mcp_results:
+                print_info("⏭️  MCP integration skipped")
+        else:
+            print_info("⏭️  MCP integration skipped (--no-mcp)")
+
+        # ========================================================================
+        # STEP 4: Verification
+        # ========================================================================
+        console.print("\n[bold blue]✅ Verifying installation...[/bold blue]")
+
+        # Check project initialized
+        if project_manager.is_initialized():
+            print_success("  ✅ Project configuration created")
+
+        # Check index created
+        if indexed:
+            print_success("  ✅ Index created and populated")
+
+        # Check MCP configured
+        if mcp_results:
+            successful_tools = [tool for tool, success in mcp_results.items() if success]
+            if successful_tools:
+                print_success(f"  ✅ MCP configured for: {', '.join(successful_tools)}")
+
+        # ========================================================================
+        # STEP 5: Print Next Steps
+        # ========================================================================
+        print_next_steps(
+            project_root=project_root,
+            indexed=indexed,
+            mcp_results=mcp_results,
+        )
 
     except Exception as e:
         logger.error(f"Installation failed: {e}")
-        print_error(f"Installation failed: {e}")
+        print_error(f"❌ Installation failed: {e}")
+
+        # Provide recovery instructions
+        console.print("\n[bold]Recovery steps:[/bold]")
+        console.print("  1. Check that the project directory exists and is writable")
+        console.print("  2. Ensure required dependencies are installed: [code]pip install mcp-vector-search[/code]")
+        console.print("  3. Try running with --force to override existing configuration")
+        console.print("  4. Check logs with --verbose flag for more details")
+
         raise typer.Exit(1)
 
 
