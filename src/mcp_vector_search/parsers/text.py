@@ -7,7 +7,7 @@ from .base import BaseParser
 
 
 class TextParser(BaseParser):
-    """Parser for plain text files (.txt)."""
+    """Parser for plain text and markdown files (.txt, .md, .markdown)."""
 
     def __init__(self) -> None:
         """Initialize text parser."""
@@ -182,4 +182,4 @@ class TextParser(BaseParser):
         Returns:
             List of supported extensions
         """
-        return [".txt"]
+        return [".txt", ".md", ".markdown"]

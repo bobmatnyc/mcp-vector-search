@@ -15,7 +15,7 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 ### 🚀 **Core Capabilities**
 - **Semantic Search**: Find code by meaning, not just keywords
 - **AST-Aware Parsing**: Understands code structure (functions, classes, methods)
-- **Multi-Language Support**: Python, JavaScript, TypeScript, Dart/Flutter, PHP, Ruby (with extensible architecture)
+- **Multi-Language Support**: 8 languages - Python, JavaScript, TypeScript, Dart/Flutter, PHP, Ruby, HTML, and Markdown/Text (with extensible architecture)
 - **Real-time Indexing**: File watching with automatic index updates
 - **Local-First**: Complete privacy with on-device processing
 - **Zero Configuration**: Auto-detects project structure and languages
@@ -299,20 +299,34 @@ Projects are configured via `.mcp-vector-search/config.json`:
 
 ### Supported Languages
 
+MCP Vector Search supports **8 programming languages** with full semantic search capabilities:
+
+| Language   | Extensions | Status | Features |
+|------------|------------|--------|----------|
+| Python     | `.py`, `.pyw` | ✅ Full | Functions, classes, methods, docstrings |
+| JavaScript | `.js`, `.jsx`, `.mjs` | ✅ Full | Functions, classes, JSDoc, ES6+ syntax |
+| TypeScript | `.ts`, `.tsx` | ✅ Full | Interfaces, types, generics, decorators |
+| Dart       | `.dart` | ✅ Full | Functions, classes, widgets, async, dartdoc |
+| PHP        | `.php`, `.phtml` | ✅ Full | Classes, methods, traits, PHPDoc, Laravel patterns |
+| Ruby       | `.rb`, `.rake`, `.gemspec` | ✅ Full | Modules, classes, methods, RDoc, Rails patterns |
+| HTML       | `.html`, `.htm` | ✅ Full | Semantic content extraction, heading hierarchy, text chunking |
+| Text/Markdown | `.txt`, `.md`, `.markdown` | ✅ Basic | Semantic chunking for documentation |
+
+**Planned Languages:**
 | Language   | Status | Features |
 |------------|--------|----------|
-| Python     | ✅ Full | Functions, classes, methods, docstrings |
-| JavaScript | ✅ Full | Functions, classes, JSDoc, ES6+ syntax |
-| TypeScript | ✅ Full | Interfaces, types, generics, decorators |
-| Dart       | ✅ Full | Functions, classes, widgets, async, dartdoc |
-| PHP        | ✅ Full | Classes, methods, traits, PHPDoc, Laravel patterns |
-| Ruby       | ✅ Full | Modules, classes, methods, RDoc, Rails patterns |
-| Text/Markdown | ✅ Basic | Semantic chunking for documentation |
 | Java       | 🔄 Planned | Classes, methods, annotations |
 | Go         | 🔄 Planned | Functions, structs, interfaces |
 | Rust       | 🔄 Planned | Functions, structs, traits |
 
 #### New Language Support
+
+**HTML Support** (Unreleased):
+- **Semantic Extraction**: Content from h1-h6, p, section, article, main, aside, nav, header, footer
+- **Intelligent Chunking**: Based on heading hierarchy (h1-h6)
+- **Context Preservation**: Maintains class and id attributes for searchability
+- **Script/Style Filtering**: Ignores non-content elements
+- **Use Cases**: Static sites, documentation, web templates, HTML fragments
 
 **Dart/Flutter Support** (v0.4.15):
 - **Widget Detection**: StatelessWidget, StatefulWidget recognition

@@ -8,11 +8,20 @@ This file provides comprehensive guidance for Claude Code (claude.ai/code) and C
 
 ## 🔴 Project Overview (CRITICAL)
 
-**MCP Vector Search** is a CLI-first semantic code search tool with MCP (Model Context Protocol) integration. It provides intelligent code search using vector embeddings and AST-aware parsing for **7 languages**: Python, JavaScript, TypeScript, Dart/Flutter, PHP, Ruby, and Markdown.
+**MCP Vector Search** is a CLI-first semantic code search tool with MCP (Model Context Protocol) integration. It provides intelligent code search using vector embeddings and AST-aware parsing for **8 languages**: Python, JavaScript, TypeScript, Dart/Flutter, PHP, Ruby, HTML, and Markdown/Text.
 
-### 🎉 Recent Major Features (NEW IN v0.5.0)
+### 🎉 Recent Major Features
 
-**1. PHP Language Support** 🐘
+**NEW (Unreleased): HTML Language Support** 🌐
+- Semantic content extraction from HTML documents
+- Intelligent chunking based on heading hierarchy (h1-h6)
+- Extracts text from semantic tags (section, article, main, aside, nav, header, footer, p)
+- Preserves class and id attributes for context
+- Ignores script and style tags
+- Perfect for static sites, documentation, web templates
+- Supported extensions: `.html`, `.htm`
+
+**v0.5.0: PHP Language Support** 🐘
 - Full AST-aware parsing with tree-sitter
 - Class, interface, and trait detection
 - Method extraction (public, private, protected, static)
@@ -20,7 +29,7 @@ This file provides comprehensive guidance for Claude Code (claude.ai/code) and C
 - PHPDoc comment extraction
 - Laravel framework patterns (Controllers, Models, Eloquent)
 
-**2. Ruby Language Support** 💎
+**v0.5.0: Ruby Language Support** 💎
 - Full AST-aware parsing with tree-sitter
 - Module and class detection with namespace support (::)
 - Instance and class method extraction
@@ -29,15 +38,15 @@ This file provides comprehensive guidance for Claude Code (claude.ai/code) and C
 - RDoc comment extraction
 - Rails framework patterns (ActiveRecord, Controllers)
 
-**3. Dart/Flutter Language Support** 🎯 (v0.4.15)
+**v0.4.15: Dart/Flutter Language Support** 🎯
 - Full AST-aware parsing with tree-sitter
 - Widget detection (StatelessWidget, StatefulWidget)
 - State class recognition (_WidgetNameState patterns)
 - Async/Future<T> support
 - Dartdoc comment extraction
-- Cross-language semantic search with all 7 languages
+- Cross-language semantic search with all supported languages
 
-**4. Enhanced Install Command** 🚀 (v0.4.15)
+**v0.4.15: Enhanced Install Command** 🚀
 - One-step complete project setup
 - Multi-tool MCP detection (Claude Code, Cursor, Windsurf, VS Code)
 - Interactive MCP configuration
@@ -45,7 +54,7 @@ This file provides comprehensive guidance for Claude Code (claude.ai/code) and C
 - Rich progress indicators
 - Options: `--no-mcp`, `--no-index`, `--mcp-tool`, `--extensions`
 
-**5. Rich Help System** 📚 (v0.4.15)
+**v0.4.15: Rich Help System** 📚
 - Organized help panels (Core, Customization, Advanced)
 - Comprehensive examples in all commands
 - Next-step hints after operations
@@ -206,9 +215,9 @@ The codebase follows a **layered architecture** with clear separation of concern
 #### 🟡 3. Parser System (`src/mcp_vector_search/parsers/`) - LANGUAGE SUPPORT
 - **Base**: `base.py` - abstract `BaseParser` interface (extend for new languages)
 - **Registry**: `registry.py` - dynamic parser discovery and selection
-- **Language Parsers**: `python.py`, `javascript.py`, `typescript.py`, `dart.py`, `php.py`, `ruby.py`, `text.py`
+- **Language Parsers**: `python.py`, `javascript.py`, `typescript.py`, `dart.py`, `php.py`, `ruby.py`, `html.py`, `text.py`
 - **Output**: Each parser extracts functions, classes, methods, and semantic chunks
-- **Total Languages**: 7 (Python, JavaScript, TypeScript, Dart, PHP, Ruby, Markdown)
+- **Total Languages**: 8 (Python, JavaScript, TypeScript, Dart, PHP, Ruby, HTML, Text/Markdown)
 
 #### 🔴 4. MCP Integration (`src/mcp_vector_search/mcp/`) - CLAUDE INTEGRATION
 - **Server**: `server.py` - Model Context Protocol server implementation
@@ -472,7 +481,7 @@ mcp-vector-search auto-index check --dry-run --verbose
 
 ### 🟡 Known Issues (Being Addressed)
 - **Tree-sitter**: Integration needs improvement (using regex fallback)
-- **Language Support**: Currently 7 languages (Python, JS, TS, Dart, PHP, Ruby, Markdown)
+- **Language Support**: Currently 8 languages (Python, JS, TS, Dart, PHP, Ruby, HTML, Text/Markdown)
 - **Binary Files**: No support for notebooks, images, compiled files
 
 ### 🟢 Future Improvements
