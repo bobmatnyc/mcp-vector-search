@@ -3,7 +3,9 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from ..config.constants import DEFAULT_CHUNK_SIZE
 from ..core.models import CodeChunk
+from . import utils
 
 
 class BaseParser(ABC):
@@ -109,7 +111,7 @@ class BaseParser(ABC):
         Returns:
             List of lines
         """
-        return content.splitlines(keepends=True)
+        return utils.split_into_lines(content)
 
     def _get_line_range(self, lines: list[str], start_line: int, end_line: int) -> str:
         """Extract a range of lines from content.
@@ -122,11 +124,7 @@ class BaseParser(ABC):
         Returns:
             Content for the specified line range
         """
-        # Convert to 0-based indexing
-        start_idx = max(0, start_line - 1)
-        end_idx = min(len(lines), end_line)
-
-        return "".join(lines[start_idx:end_idx])
+        return utils.get_line_range(lines, start_line, end_line)
 
 
 class FallbackParser(BaseParser):
@@ -155,7 +153,7 @@ class FallbackParser(BaseParser):
         chunks = []
 
         # Simple chunking: split into chunks of ~50 lines
-        chunk_size = 50
+        chunk_size = DEFAULT_CHUNK_SIZE
         for i in range(0, len(lines), chunk_size):
             start_line = i + 1
             end_line = min(i + chunk_size, len(lines))

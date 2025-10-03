@@ -184,8 +184,9 @@ class SearchHistory:
 
             self._save_favorites(favorites)
 
-        except Exception:
+        except Exception as e:
             # Don't show error for this non-critical operation
+            logger.debug(f"Failed to update history ranking: {e}")
             pass
 
     def _load_history(self) -> list[dict[str, Any]]:
@@ -196,7 +197,8 @@ class SearchHistory:
         try:
             with open(self.history_file, encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to load history file: {e}")
             return []
 
     def _save_history(self, history: list[dict[str, Any]]) -> None:
@@ -212,7 +214,8 @@ class SearchHistory:
         try:
             with open(self.favorites_file, encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to load favorites file: {e}")
             return []
 
     def _save_favorites(self, favorites: list[dict[str, Any]]) -> None:

@@ -377,8 +377,9 @@ def handle_command_error(ctx, param, value):
                 try:
                     project_root = ctx.obj.get("project_root") if ctx.obj else None
                     get_contextual_suggestions(project_root, command_name)
-                except Exception:
+                except Exception as e:
                     # If contextual suggestions fail, don't break the error flow
+                    logger.debug(f"Failed to get contextual suggestions: {e}")
                     pass
         raise
 
@@ -393,7 +394,8 @@ def help_contextual() -> None:
         )
         console.print("[dim]CLI-first semantic code search with MCP integration[/dim]")
         get_contextual_suggestions(project_root)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to show contextual help: {e}")
         console.print(
             "\n[dim]Use [bold]mcp-vector-search --help[/bold] for more information.[/dim]"
         )
@@ -457,7 +459,8 @@ def cli_with_suggestions():
                 try:
                     project_root = Path.cwd()
                     get_contextual_suggestions(project_root, command_name)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Failed to get contextual suggestions for error handling: {e}")
                     pass
 
                 sys.exit(2)  # Exit with error code

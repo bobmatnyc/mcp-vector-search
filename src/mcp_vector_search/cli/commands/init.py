@@ -5,6 +5,7 @@ from pathlib import Path
 import typer
 from loguru import logger
 
+from ...config.constants import SUBPROCESS_INSTALL_TIMEOUT, SUBPROCESS_MCP_TIMEOUT, SUBPROCESS_TEST_TIMEOUT
 from ...config.defaults import DEFAULT_EMBEDDING_MODELS, DEFAULT_FILE_EXTENSIONS
 from ...core.exceptions import ProjectInitializationError
 from ...core.project import ProjectManager
@@ -150,11 +151,12 @@ def main(
                 install_cmd = ["pip", "install", "-e", str(dev_source_path)]
                 try:
                     result = subprocess.run(
-                        install_cmd, capture_output=True, text=True, timeout=120
+                        install_cmd, capture_output=True, text=True, timeout=SUBPROCESS_INSTALL_TIMEOUT
                     )
                     if result.returncode == 0:
                         install_success = True
-                except:
+                except (subprocess.TimeoutExpired, OSError, ValueError) as e:
+                    logger.debug(f"pip install method failed: {e}")
                     pass
 
             # Method 2: Try python -m pip
@@ -169,11 +171,12 @@ def main(
                 ]
                 try:
                     result = subprocess.run(
-                        install_cmd, capture_output=True, text=True, timeout=120
+                        install_cmd, capture_output=True, text=True, timeout=SUBPROCESS_INSTALL_TIMEOUT
                     )
                     if result.returncode == 0:
                         install_success = True
-                except:
+                except (subprocess.TimeoutExpired, OSError, ValueError) as e:
+                    logger.debug(f"python -m pip install method failed: {e}")
                     pass
 
             # Method 3: Try uv if available
@@ -181,11 +184,12 @@ def main(
                 install_cmd = ["uv", "add", "--editable", str(dev_source_path)]
                 try:
                     result = subprocess.run(
-                        install_cmd, capture_output=True, text=True, timeout=120
+                        install_cmd, capture_output=True, text=True, timeout=SUBPROCESS_INSTALL_TIMEOUT
                     )
                     if result.returncode == 0:
                         install_success = True
-                except:
+                except (subprocess.TimeoutExpired, OSError, ValueError) as e:
+                    logger.debug(f"uv add method failed: {e}")
                     pass
 
             if install_success:
@@ -502,7 +506,7 @@ async def run_init_setup(
                 ] + server_command.split()
 
                 result = subprocess.run(
-                    cmd_args, capture_output=True, text=True, timeout=30
+                    cmd_args, capture_output=True, text=True, timeout=SUBPROCESS_MCP_TIMEOUT
                 )
 
                 if result.returncode == 0:
@@ -663,7 +667,7 @@ def _test_mcp_server(project_root: Path) -> None:
 
         try:
             stdout, stderr = test_process.communicate(
-                input=json.dumps(init_request) + "\n", timeout=10
+                input=json.dumps(init_request) + "\n", timeout=SUBPROCESS_TEST_TIMEOUT
             )
 
             if test_process.returncode == 0:

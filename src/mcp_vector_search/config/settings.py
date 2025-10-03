@@ -37,6 +37,10 @@ class ProjectConfig(BaseSettings):
     max_cache_size: int = Field(
         default=1000, gt=0, description="Maximum number of cached embeddings"
     )
+    auto_reindex_on_upgrade: bool = Field(
+        default=True,
+        description="Automatically reindex when tool version is upgraded (minor/major versions)",
+    )
 
     @field_validator("project_root", "index_path", mode="before")
     @classmethod

@@ -108,6 +108,8 @@ DEFAULT_IGNORE_PATTERNS = [
     ".hg",
     "__pycache__",
     ".pytest_cache",
+    ".mypy_cache",  # mypy type checking cache
+    ".ruff_cache",  # ruff linter cache
     "node_modules",
     ".venv",
     "venv",
@@ -120,6 +122,8 @@ DEFAULT_IGNORE_PATTERNS = [
     "*.egg-info",
     ".DS_Store",
     "Thumbs.db",
+    ".claude-mpm",  # Claude MPM directory
+    ".mcp-vector-search",  # Our own index directory
 ]
 
 # File patterns to ignore

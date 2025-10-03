@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from ..config.constants import TEXT_CHUNK_SIZE
 from ..core.models import CodeChunk
 from .base import BaseParser
 
@@ -66,7 +67,7 @@ class TextParser(BaseParser):
         else:
             # Fall back to line-based chunking for non-paragraph text
             # Use smaller chunks for text files (30 lines instead of 50)
-            chunk_size = 30
+            chunk_size = TEXT_CHUNK_SIZE
             for i in range(0, len(lines), chunk_size):
                 start_line = i + 1
                 end_line = min(i + chunk_size, len(lines))

@@ -7,6 +7,7 @@ from loguru import logger
 
 from ..core.models import CodeChunk
 from .base import BaseParser
+from .utils import extract_docstring, find_block_end, get_line_range, split_into_lines
 
 
 class PythonParser(BaseParser):
