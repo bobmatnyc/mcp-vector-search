@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2025-10-02
+
 ### Added
 - **PHP Language Support**: Full PHP parser implementation
   - Class, interface, and trait detection
