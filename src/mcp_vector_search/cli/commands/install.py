@@ -6,17 +6,20 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.table import Table
 
 from ...core.project import ProjectManager
-from ..output import confirm_action, print_error, print_info, print_success, print_warning
+from ..output import (
+    print_error,
+    print_info,
+    print_success,
+    print_warning,
+)
 
 # Create console for rich output
 console = Console()
@@ -35,13 +38,16 @@ def detect_ai_tools() -> dict[str, Path]:
 
     Returns:
         Dictionary mapping tool names to their config file paths.
-        Only includes tools with existing configuration files.
+        For Claude Code, returns a placeholder path since it uses project-scoped .mcp.json
     """
     HOME = Path.home()
 
     CONFIG_LOCATIONS = {
-        "claude-code": HOME / ".claude.json",
-        "claude-desktop": HOME / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
+        "claude-desktop": HOME
+        / "Library"
+        / "Application Support"
+        / "Claude"
+        / "claude_desktop_config.json",
         "cursor": HOME / ".cursor" / "mcp.json",
         "windsurf": HOME / ".codeium" / "windsurf" / "mcp_config.json",
         "vscode": HOME / ".vscode" / "mcp.json",
@@ -53,28 +59,43 @@ def detect_ai_tools() -> dict[str, Path]:
         if config_path.exists():
             detected_tools[tool_name] = config_path
 
+    # Always include Claude Code as an option (it uses project-scoped .mcp.json)
+    detected_tools["claude-code"] = Path(
+        ".mcp.json"
+    )  # Placeholder - will be project-scoped
+
     return detected_tools
 
 
-def get_mcp_server_config(project_root: Path, enable_watch: bool = True) -> dict:
+def get_mcp_server_config(
+    project_root: Path, enable_watch: bool = True, tool_name: str = ""
+) -> dict:
     """Generate MCP server configuration dict.
 
     Args:
         project_root: Path to the project root directory
         enable_watch: Whether to enable file watching (default: True)
+        tool_name: Name of the tool (for tool-specific config adjustments)
 
     Returns:
         Dictionary containing MCP server configuration.
     """
-    # Use uv run for better compatibility across environments
-    return {
+    # Base configuration
+    config = {
         "command": "uv",
         "args": ["run", "mcp-vector-search", "mcp"],
-        "cwd": str(project_root.absolute()),
-        "env": {
-            "MCP_ENABLE_FILE_WATCHING": "true" if enable_watch else "false"
-        }
+        "env": {"MCP_ENABLE_FILE_WATCHING": "true" if enable_watch else "false"},
     }
+
+    # Add "type": "stdio" for Claude Code and other tools that require it
+    if tool_name in ("claude-code", "cursor", "windsurf", "vscode"):
+        config["type"] = "stdio"
+
+    # Add cwd only for tools that support it (not Claude Code)
+    if tool_name not in ("claude-code",):
+        config["cwd"] = str(project_root.absolute())
+
+    return config
 
 
 def configure_mcp_for_tool(
@@ -97,13 +118,18 @@ def configure_mcp_for_tool(
         True if configuration was successful, False otherwise.
     """
     try:
+        # For Claude Code, we create .mcp.json in project root instead of ~/.claude.json
+        if tool_name == "claude-code":
+            # Override config_path to project-scoped .mcp.json
+            config_path = project_root / ".mcp.json"
+
         # Create backup of existing config
         backup_path = config_path.with_suffix(config_path.suffix + ".backup")
 
         # Load existing config or create new one
         if config_path.exists():
             shutil.copy2(config_path, backup_path)
-            with open(config_path, 'r') as f:
+            with open(config_path) as f:
                 config = json.load(f)
         else:
             # Create parent directory if it doesn't exist
@@ -114,23 +140,14 @@ def configure_mcp_for_tool(
         if "mcpServers" not in config:
             config["mcpServers"] = {}
 
-        # Get the MCP server configuration
-        server_config = get_mcp_server_config(project_root, enable_watch)
+        # Get the MCP server configuration with tool-specific settings
+        server_config = get_mcp_server_config(project_root, enable_watch, tool_name)
 
-        # Add server configuration (tool-specific format adjustments)
-        if tool_name == "claude-desktop":
-            # Claude Desktop uses a slightly different format
-            config["mcpServers"][server_name] = server_config
-        elif tool_name == "claude-code":
-            # Claude Code requires "type": "stdio"
-            server_config["type"] = "stdio"
-            config["mcpServers"][server_name] = server_config
-        else:
-            # Other tools use standard format
-            config["mcpServers"][server_name] = server_config
+        # Add server configuration
+        config["mcpServers"][server_name] = server_config
 
         # Write the updated config
-        with open(config_path, 'w') as f:
+        with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
 
         print_success(f"  ✅ Configured {tool_name} at {config_path}")
@@ -146,7 +163,7 @@ def configure_mcp_for_tool(
 
 def setup_mcp_integration(
     project_root: Path,
-    mcp_tool: Optional[str] = None,
+    mcp_tool: str | None = None,
     enable_watch: bool = True,
     interactive: bool = True,
 ) -> dict[str, bool]:
@@ -165,7 +182,9 @@ def setup_mcp_integration(
 
     if not detected_tools:
         print_warning("No AI coding tools detected on this system.")
-        print_info("Supported tools: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code")
+        print_info(
+            "Supported tools: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code"
+        )
         print_info("Install one of these tools and try again.")
         return {}
 
@@ -198,13 +217,15 @@ def setup_mcp_integration(
             tools_to_configure = detected_tools
         elif choice == 2:
             # Let user choose specific tools
-            console.print("\n[bold]Select tools to configure (comma-separated numbers):[/bold]")
+            console.print(
+                "\n[bold]Select tools to configure (comma-separated numbers):[/bold]"
+            )
             tool_list = list(detected_tools.keys())
             for i, tool_name in enumerate(tool_list, 1):
                 console.print(f"  {i}. {tool_name}")
 
             selections = typer.prompt("Tool numbers").strip()
-            for num_str in selections.split(','):
+            for num_str in selections.split(","):
                 try:
                     idx = int(num_str.strip()) - 1
                     if 0 <= idx < len(tool_list):
@@ -263,12 +284,16 @@ def print_next_steps(
     if mcp_results:
         successful_tools = [tool for tool, success in mcp_results.items() if success]
         if successful_tools:
-            console.print(f"  ✅ MCP integration configured for: {', '.join(successful_tools)}")
+            console.print(
+                f"  ✅ MCP integration configured for: {', '.join(successful_tools)}"
+            )
 
     # Next steps
     console.print("\n[bold green]🚀 Ready to use:[/bold green]")
-    console.print(f"  • Search your code: [code]mcp-vector-search search 'your query'[/code]")
-    console.print(f"  • Check status: [code]mcp-vector-search status[/code]")
+    console.print(
+        "  • Search your code: [code]mcp-vector-search search 'your query'[/code]"
+    )
+    console.print("  • Check status: [code]mcp-vector-search status[/code]")
 
     if mcp_results:
         console.print("\n[bold blue]🤖 Using MCP Integration:[/bold blue]")
@@ -282,7 +307,9 @@ def print_next_steps(
             console.print("  • Restart Claude Desktop")
             console.print("  • The mcp-vector-search server will be available")
 
-    console.print("\n[dim]💡 Tip: Run 'mcp-vector-search --help' for more commands[/dim]")
+    console.print(
+        "\n[dim]💡 Tip: Run 'mcp-vector-search --help' for more commands[/dim]"
+    )
 
 
 # ============================================================================
@@ -312,7 +339,7 @@ def main(
         "--no-mcp",
         help="Skip MCP integration setup",
     ),
-    mcp_tool: Optional[str] = typer.Option(
+    mcp_tool: str | None = typer.Option(
         None,
         "--mcp-tool",
         help="Specific AI tool for MCP integration (claude-code, cursor, etc.)",
@@ -368,12 +395,14 @@ def main(
         project_root = project_path.resolve()
 
         # Show installation header
-        console.print(Panel.fit(
-            f"[bold blue]🚀 MCP Vector Search - Complete Installation[/bold blue]\n\n"
-            f"📁 Project: [cyan]{project_root}[/cyan]\n"
-            f"🔧 Setting up with full initialization and MCP integration",
-            border_style="blue"
-        ))
+        console.print(
+            Panel.fit(
+                f"[bold blue]🚀 MCP Vector Search - Complete Installation[/bold blue]\n\n"
+                f"📁 Project: [cyan]{project_root}[/cyan]\n"
+                f"🔧 Setting up with full initialization and MCP integration",
+                border_style="blue",
+            )
+        )
 
         # Check if project directory exists
         if not project_root.exists():
@@ -390,7 +419,9 @@ def main(
             # Show MCP configuration option
             if not no_mcp:
                 console.print("\n[bold blue]💡 MCP Integration:[/bold blue]")
-                console.print("  Run install again with --force to reconfigure MCP integration")
+                console.print(
+                    "  Run install again with --force to reconfigure MCP integration"
+                )
 
             return
 
@@ -489,7 +520,9 @@ def main(
 
         # Check MCP configured
         if mcp_results:
-            successful_tools = [tool for tool, success in mcp_results.items() if success]
+            successful_tools = [
+                tool for tool, success in mcp_results.items() if success
+            ]
             if successful_tools:
                 print_success(f"  ✅ MCP configured for: {', '.join(successful_tools)}")
 
@@ -509,8 +542,12 @@ def main(
         # Provide recovery instructions
         console.print("\n[bold]Recovery steps:[/bold]")
         console.print("  1. Check that the project directory exists and is writable")
-        console.print("  2. Ensure required dependencies are installed: [code]pip install mcp-vector-search[/code]")
-        console.print("  3. Try running with --force to override existing configuration")
+        console.print(
+            "  2. Ensure required dependencies are installed: [code]pip install mcp-vector-search[/code]"
+        )
+        console.print(
+            "  3. Try running with --force to override existing configuration"
+        )
         console.print("  4. Check logs with --verbose flag for more details")
 
         raise typer.Exit(1)
@@ -532,15 +569,14 @@ def demo(
     """Run installation demo with sample project."""
     try:
         import tempfile
-        import shutil
-        
+
         print_info("🎬 Running mcp-vector-search installation demo...")
-        
+
         # Create temporary demo directory
         with tempfile.TemporaryDirectory(prefix="mcp-demo-") as temp_dir:
             demo_dir = Path(temp_dir) / "demo-project"
             demo_dir.mkdir()
-            
+
             # Create sample files
             (demo_dir / "main.py").write_text("""
 def main():
@@ -565,7 +601,7 @@ class UserService:
 if __name__ == "__main__":
     main()
 """)
-            
+
             (demo_dir / "utils.py").write_text("""
 import json
 from typing import Dict, Any
@@ -584,48 +620,72 @@ def hash_password(password: str) -> str:
     import hashlib
     return hashlib.sha256(password.encode()).hexdigest()
 """)
-            
-            console.print(f"\n[bold blue]📁 Created demo project at:[/bold blue] {demo_dir}")
-            
+
+            console.print(
+                f"\n[bold blue]📁 Created demo project at:[/bold blue] {demo_dir}"
+            )
+
             # Run installation
             print_info("Installing mcp-vector-search in demo project...")
-            
+
             # Use subprocess to run the install command
-            result = subprocess.run([
-                sys.executable, "-m", "mcp_vector_search.cli.main",
-                "--project-root", str(demo_dir),
-                "install", str(demo_dir),
-                "--extensions", ".py",
-                "--no-mcp"  # Skip MCP for demo
-            ], capture_output=True, text=True)
-            
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "mcp_vector_search.cli.main",
+                    "--project-root",
+                    str(demo_dir),
+                    "install",
+                    str(demo_dir),
+                    "--extensions",
+                    ".py",
+                    "--no-mcp",  # Skip MCP for demo
+                ],
+                capture_output=True,
+                text=True,
+            )
+
             if result.returncode == 0:
                 print_success("✅ Demo installation completed!")
-                
+
                 # Run a sample search
                 print_info("Running sample search: 'user authentication'...")
-                
-                search_result = subprocess.run([
-                    sys.executable, "-m", "mcp_vector_search.cli.main",
-                    "--project-root", str(demo_dir),
-                    "search", "user authentication",
-                    "--limit", "3"
-                ], capture_output=True, text=True)
-                
+
+                search_result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "mcp_vector_search.cli.main",
+                        "--project-root",
+                        str(demo_dir),
+                        "search",
+                        "user authentication",
+                        "--limit",
+                        "3",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+
                 if search_result.returncode == 0:
-                    console.print("\n[bold green]🔍 Sample search results:[/bold green]")
+                    console.print(
+                        "\n[bold green]🔍 Sample search results:[/bold green]"
+                    )
                     console.print(search_result.stdout)
                 else:
                     print_warning("Search demo failed, but installation was successful")
-                
-                console.print(f"\n[bold blue]🎉 Demo completed![/bold blue]")
+
+                console.print("\n[bold blue]🎉 Demo completed![/bold blue]")
                 console.print(f"Demo project was created at: [cyan]{demo_dir}[/cyan]")
-                console.print("The temporary directory will be cleaned up automatically.")
-                
+                console.print(
+                    "The temporary directory will be cleaned up automatically."
+                )
+
             else:
                 print_error(f"Demo installation failed: {result.stderr}")
                 raise typer.Exit(1)
-                
+
     except Exception as e:
         logger.error(f"Demo failed: {e}")
         print_error(f"Demo failed: {e}")

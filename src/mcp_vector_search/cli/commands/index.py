@@ -227,7 +227,9 @@ async def _run_batch_indexing(
         print_info("\n[bold]No files were indexed. Possible reasons:[/bold]")
         print_info("  • No matching files found for configured extensions")
         print_info("  • All files already indexed (use --force to reindex)")
-        print_tip("Check configured extensions with [cyan]mcp-vector-search status[/cyan]")
+        print_tip(
+            "Check configured extensions with [cyan]mcp-vector-search status[/cyan]"
+        )
 
 
 async def _run_watch_mode(indexer: SemanticIndexer, show_progress: bool) -> None:
@@ -267,12 +269,12 @@ def reindex_file(
     ),
 ) -> None:
     """Reindex files in the project.
-    
+
     Can reindex a specific file or the entire project:
     - Without arguments: reindexes entire project (with confirmation)
     - With file path: reindexes specific file
     - With --all flag: explicitly reindexes entire project
-    
+
     Examples:
         mcp-vector-search index reindex                     # Reindex entire project
         mcp-vector-search index reindex --all               # Explicitly reindex entire project
@@ -286,7 +288,7 @@ def reindex_file(
         if file_path is not None and all:
             print_error("Cannot specify both a file path and --all flag")
             raise typer.Exit(1)
-        
+
         if file_path is not None:
             # Reindex specific file
             asyncio.run(_reindex_single_file(project_root, file_path))
@@ -294,14 +296,13 @@ def reindex_file(
             # Reindex entire project
             if not force and not all:
                 from ..output import confirm_action
-                
+
                 if not confirm_action(
-                    "This will reindex the entire project. Continue?", 
-                    default=False
+                    "This will reindex the entire project. Continue?", default=False
                 ):
                     print_info("Reindex operation cancelled")
                     raise typer.Exit(0)
-            
+
             # Use the full project reindexing
             asyncio.run(_reindex_entire_project(project_root))
 
@@ -317,21 +318,21 @@ def reindex_file(
 async def _reindex_entire_project(project_root: Path) -> None:
     """Reindex the entire project."""
     print_info("Starting full project reindex...")
-    
+
     # Load project configuration
     project_manager = ProjectManager(project_root)
-    
+
     if not project_manager.is_initialized():
         raise ProjectNotFoundError(
             f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
         )
-    
+
     config = project_manager.load_config()
-    
+
     print_info(f"Project: {project_root}")
     print_info(f"File extensions: {', '.join(config.file_extensions)}")
     print_info(f"Embedding model: {config.embedding_model}")
-    
+
     # Setup embedding function and cache
     cache_dir = (
         get_default_cache_path(project_root) if config.cache_embeddings else None
@@ -341,44 +342,44 @@ async def _reindex_entire_project(project_root: Path) -> None:
         cache_dir=cache_dir,
         cache_size=config.max_cache_size,
     )
-    
+
     # Setup database
     database = ChromaVectorDatabase(
         persist_directory=config.index_path,
         embedding_function=embedding_function,
     )
-    
+
     # Setup indexer
     indexer = SemanticIndexer(
         database=database,
         project_root=project_root,
         file_extensions=config.file_extensions,
     )
-    
+
     try:
         async with database:
             # First, clean the existing index
             print_info("Clearing existing index...")
             await database.reset()
-            
+
             # Then reindex everything with progress
             with create_progress() as progress:
                 task = progress.add_task("Reindexing files...", total=None)
-                
+
                 # Force reindex all files
                 indexed_count = await indexer.index_project(
                     force_reindex=True,  # Force reindexing
                     show_progress=False,  # We handle progress here
                 )
-                
+
                 progress.update(task, completed=indexed_count, total=indexed_count)
-            
+
             print_success(f"Successfully reindexed {indexed_count} files")
-            
+
             # Show statistics
             stats = await indexer.get_indexing_stats()
             print_index_stats(stats)
-            
+
     except Exception as e:
         logger.error(f"Full reindex error: {e}")
         raise
@@ -393,12 +394,12 @@ async def _reindex_single_file(project_root: Path, file_path: Path) -> None:
     # Make file path absolute if it's not already
     if not file_path.is_absolute():
         file_path = file_path.resolve()
-    
+
     # Check if file exists
     if not file_path.exists():
         print_error(f"File not found: {file_path}")
         return
-    
+
     # Check if file is within project root
     try:
         file_path.relative_to(project_root)
@@ -434,7 +435,9 @@ async def _reindex_single_file(project_root: Path, file_path: Path) -> None:
             print_error(f"Failed to reindex: {file_path}")
             # Check if file extension is in the list of indexable extensions
             if file_path.suffix not in config.file_extensions:
-                print_info(f"Note: {file_path.suffix} is not in the configured file extensions: {', '.join(config.file_extensions)}")
+                print_info(
+                    f"Note: {file_path.suffix} is not in the configured file extensions: {', '.join(config.file_extensions)}"
+                )
 
 
 @index_app.command("clean")

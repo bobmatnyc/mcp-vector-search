@@ -9,7 +9,7 @@ from loguru import logger
 
 from ..config.defaults import DEFAULT_IGNORE_PATTERNS
 from ..parsers.registry import get_parser_registry
-from ..utils.gitignore import create_gitignore_parser, GitignoreParser
+from ..utils.gitignore import create_gitignore_parser
 from .database import VectorDatabase
 from .exceptions import ParsingError
 from .models import CodeChunk
@@ -51,7 +51,9 @@ class SemanticIndexer:
         # Initialize gitignore parser
         try:
             self.gitignore_parser = create_gitignore_parser(project_root)
-            logger.debug(f"Loaded {len(self.gitignore_parser.patterns)} gitignore patterns")
+            logger.debug(
+                f"Loaded {len(self.gitignore_parser.patterns)} gitignore patterns"
+            )
         except Exception as e:
             logger.warning(f"Failed to load gitignore patterns: {e}")
             self.gitignore_parser = None
@@ -376,14 +378,18 @@ class SemanticIndexer:
             # Check each part of the path against default ignore patterns
             for part in relative_path.parts:
                 if part in self._ignore_patterns:
-                    logger.debug(f"Path ignored by default pattern '{part}': {file_path}")
+                    logger.debug(
+                        f"Path ignored by default pattern '{part}': {file_path}"
+                    )
                     return True
 
             # Check if any parent directory should be ignored
             for parent in relative_path.parents:
                 for part in parent.parts:
                     if part in self._ignore_patterns:
-                        logger.debug(f"Path ignored by parent pattern '{part}': {file_path}")
+                        logger.debug(
+                            f"Path ignored by parent pattern '{part}': {file_path}"
+                        )
                         return True
 
             return False

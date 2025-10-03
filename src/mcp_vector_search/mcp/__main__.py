@@ -11,7 +11,7 @@ def main():
     """Main entry point for the MCP server."""
     # Allow specifying project root as command line argument
     project_root = Path(sys.argv[1]) if len(sys.argv) > 1 else None
-    
+
     try:
         asyncio.run(run_mcp_server(project_root))
     except KeyboardInterrupt:

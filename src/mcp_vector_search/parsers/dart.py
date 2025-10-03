@@ -377,7 +377,9 @@ class DartParser(BaseParser):
                     chunks.append(build_method)
 
         # Find regular classes (not already captured as widgets)
-        widget_class_names = {match.group(1) for match in widget_pattern.finditer(content)}
+        widget_class_names = {
+            match.group(1) for match in widget_pattern.finditer(content)
+        }
         for match in class_pattern.finditer(content):
             class_name = match.group(1)
 
@@ -507,7 +509,7 @@ class DartParser(BaseParser):
             return None
 
         # Calculate line number within class
-        lines_before = class_content[:match.start()].count("\n")
+        lines_before = class_content[: match.start()].count("\n")
         start_line = class_start_line + lines_before
 
         # Find end of build method
@@ -573,9 +575,7 @@ class DartParser(BaseParser):
 
         return len(lines)
 
-    def _extract_dartdoc_regex(
-        self, lines: list[str], start_line: int
-    ) -> str | None:
+    def _extract_dartdoc_regex(self, lines: list[str], start_line: int) -> str | None:
         """Extract dartdoc using regex patterns."""
         # Look for /// comments before the definition
         dartdoc_lines = []

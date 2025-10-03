@@ -7,7 +7,9 @@ from loguru import logger
 from .base import BaseParser, FallbackParser
 from .dart import DartParser
 from .javascript import JavaScriptParser, TypeScriptParser
+from .php import PHPParser
 from .python import PythonParser
+from .ruby import RubyParser
 from .text import TextParser
 
 
@@ -44,6 +46,14 @@ class ParserRegistry:
         # Register Dart parser
         dart_parser = DartParser()
         self.register_parser("dart", dart_parser)
+
+        # Register PHP parser
+        php_parser = PHPParser()
+        self.register_parser("php", php_parser)
+
+        # Register Ruby parser
+        ruby_parser = RubyParser()
+        self.register_parser("ruby", ruby_parser)
 
         # Register Text parser for .txt files
         text_parser = TextParser()

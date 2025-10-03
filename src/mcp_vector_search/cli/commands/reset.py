@@ -45,23 +45,23 @@ def reset_index(
     ),
 ) -> None:
     """Reset the vector search index (clear corrupted data).
-    
+
     This command will:
     - Create a backup of the current index (unless --no-backup)
     - Clear the entire vector database
     - Preserve your configuration settings
-    
+
     After reset, run 'mcp-vector-search index' to rebuild.
     """
     root = project_root or Path.cwd()
-    
+
     try:
         # Check if project is initialized
         project_manager = ProjectManager(root)
         if not project_manager.is_initialized():
             print_error("Project not initialized. Run 'mcp-vector-search init' first.")
             raise typer.Exit(1)
-        
+
         # Get confirmation unless forced
         if not force:
             console.print(
@@ -77,28 +77,29 @@ def reset_index(
                     border_style="red",
                 )
             )
-            
+
             if not Confirm.ask("\nDo you want to proceed?", default=False):
                 console.print("[yellow]Reset cancelled[/yellow]")
                 raise typer.Exit(0)
-        
+
         # Get the database directory
         config = project_manager.load_config()
         db_path = root / ".mcp_vector_search" / "db"
-        
+
         if not db_path.exists():
             print_warning("No index found. Nothing to reset.")
             raise typer.Exit(0)
-        
+
         # Create backup if requested
         if backup:
             backup_dir = root / ".mcp_vector_search" / "backups"
             backup_dir.mkdir(exist_ok=True)
-            
+
             import time
+
             timestamp = int(time.time())
             backup_path = backup_dir / f"db_backup_{timestamp}"
-            
+
             try:
                 shutil.copytree(db_path, backup_path)
                 print_success(f"Created backup at: {backup_path.relative_to(root)}")
@@ -108,7 +109,7 @@ def reset_index(
                     if not Confirm.ask("Continue without backup?", default=False):
                         console.print("[yellow]Reset cancelled[/yellow]")
                         raise typer.Exit(0)
-        
+
         # Clear the index
         console.print("[cyan]Clearing index...[/cyan]")
         try:
@@ -118,7 +119,7 @@ def reset_index(
         except Exception as e:
             print_error(f"Failed to clear index: {e}")
             raise typer.Exit(1)
-        
+
         # Show next steps
         console.print(
             Panel(
@@ -130,7 +131,7 @@ def reset_index(
                 border_style="green",
             )
         )
-        
+
     except (DatabaseError, IndexCorruptionError) as e:
         print_error(f"Reset failed: {e}")
         raise typer.Exit(1)
@@ -156,12 +157,12 @@ def reset_all(
     ),
 ) -> None:
     """Reset everything (index and configuration).
-    
+
     This will completely remove all MCP Vector Search data,
     requiring re-initialization with 'mcp-vector-search init'.
     """
     root = project_root or Path.cwd()
-    
+
     # Get confirmation unless forced
     if not force:
         console.print(
@@ -177,28 +178,28 @@ def reset_all(
                 border_style="red",
             )
         )
-        
+
         if not Confirm.ask("\nAre you absolutely sure?", default=False):
             console.print("[yellow]Reset cancelled[/yellow]")
             raise typer.Exit(0)
-        
+
         # Double confirmation for destructive action
         if not Confirm.ask("Type 'yes' to confirm complete reset", default=False):
             console.print("[yellow]Reset cancelled[/yellow]")
             raise typer.Exit(0)
-    
+
     # Remove entire .mcp_vector_search directory
     mcp_dir = root / ".mcp_vector_search"
-    
+
     if not mcp_dir.exists():
         print_warning("No MCP Vector Search data found. Nothing to reset.")
         raise typer.Exit(0)
-    
+
     console.print("[cyan]Removing all MCP Vector Search data...[/cyan]")
     try:
         shutil.rmtree(mcp_dir)
         print_success("All data removed successfully!")
-        
+
         console.print(
             Panel(
                 "[green]✅ Complete reset done![/green]\n\n"
@@ -229,7 +230,7 @@ async def check_health(
     ),
 ) -> None:
     """Check the health of the search index.
-    
+
     This command will:
     - Verify database connectivity
     - Check for index corruption
@@ -237,49 +238,47 @@ async def check_health(
     - Optionally attempt repairs with --fix
     """
     root = project_root or Path.cwd()
-    
+
     try:
         # Check if project is initialized
         project_manager = ProjectManager(root)
         if not project_manager.is_initialized():
             print_error("Project not initialized. Run 'mcp-vector-search init' first.")
             raise typer.Exit(1)
-        
+
         console.print("[cyan]Performing health check...[/cyan]\n")
-        
+
         # Initialize database
+        from ...config.defaults import get_default_cache_path
         from ...core.database import ChromaVectorDatabase
         from ...core.embeddings import create_embedding_function
-        from ...config.defaults import get_default_cache_path
-        
+
         config = project_manager.load_config()
         db_path = root / ".mcp_vector_search" / "db"
-        
+
         # Setup embedding function and cache
-        cache_dir = (
-            get_default_cache_path(root) if config.cache_embeddings else None
-        )
+        cache_dir = get_default_cache_path(root) if config.cache_embeddings else None
         embedding_function, _ = create_embedding_function(
             model_name=config.embedding_model,
             cache_dir=cache_dir,
             cache_size=config.max_cache_size,
         )
-        
+
         # Create database instance
         db = ChromaVectorDatabase(
             persist_directory=db_path,
             embedding_function=embedding_function,
         )
-        
+
         # Initialize and check health
         try:
             await db.initialize()
             is_healthy = await db.health_check()
-            
+
             if is_healthy:
                 # Get stats for additional info
                 stats = await db.get_stats()
-                
+
                 console.print(
                     Panel(
                         f"[green]✅ Index is healthy![/green]\n\n"
@@ -304,14 +303,14 @@ async def check_health(
                         border_style="red",
                     )
                 )
-                
+
                 if fix:
                     console.print("\n[cyan]Attempting to repair index...[/cyan]")
                     # The health check already attempts recovery
                     # Try to reinitialize
                     await db.close()
                     await db.initialize()
-                    
+
                     # Check again
                     is_healthy = await db.health_check()
                     if is_healthy:
@@ -328,7 +327,7 @@ async def check_health(
                         "or 'mcp-vector-search reset index' to clear and rebuild."
                     )
                     raise typer.Exit(1)
-                    
+
         except IndexCorruptionError as e:
             console.print(
                 Panel(
@@ -342,10 +341,10 @@ async def check_health(
                 )
             )
             raise typer.Exit(1)
-            
+
         finally:
             await db.close()
-            
+
     except Exception as e:
         logger.error(f"Health check error: {e}")
         print_error(f"Health check failed: {e}")
@@ -374,6 +373,7 @@ def reset_main(ctx: typer.Context) -> None:
 
 # Export for backwards compatibility
 main = reset_main
+
 
 # Make health check synchronous for CLI
 def health_main(

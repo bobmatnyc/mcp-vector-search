@@ -68,7 +68,7 @@ class SemanticSearchEngine:
 
         # Health check before search
         try:
-            if hasattr(self.database, 'health_check'):
+            if hasattr(self.database, "health_check"):
                 is_healthy = await self.database.health_check()
                 if not is_healthy:
                     logger.warning("Database health check failed - attempting recovery")
@@ -118,12 +118,23 @@ class SemanticSearchEngine:
         except Exception as e:
             error_msg = str(e).lower()
             # Check for corruption indicators
-            if any(indicator in error_msg for indicator in [
-                "pickle", "unpickling", "eof", "ran out of input",
-                "hnsw", "index", "deserialize", "corrupt"
-            ]):
+            if any(
+                indicator in error_msg
+                for indicator in [
+                    "pickle",
+                    "unpickling",
+                    "eof",
+                    "ran out of input",
+                    "hnsw",
+                    "index",
+                    "deserialize",
+                    "corrupt",
+                ]
+            ):
                 logger.error(f"Index corruption detected during search: {e}")
-                logger.info("The index appears to be corrupted. Please run 'mcp-vector-search reset' to clear the index and then 'mcp-vector-search index' to rebuild it.")
+                logger.info(
+                    "The index appears to be corrupted. Please run 'mcp-vector-search reset' to clear the index and then 'mcp-vector-search index' to rebuild it."
+                )
                 raise SearchError(
                     "Index corruption detected. Please run 'mcp-vector-search reset' followed by 'mcp-vector-search index' to rebuild."
                 ) from e

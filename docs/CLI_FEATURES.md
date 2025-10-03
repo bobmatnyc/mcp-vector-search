@@ -1,5 +1,62 @@
 # CLI Features
 
+## Supported Languages
+
+MCP Vector Search now supports **7 programming languages** with full semantic search capabilities:
+
+| Language   | Extensions | Features |
+|------------|------------|----------|
+| Python     | `.py` | Functions, classes, methods, docstrings |
+| JavaScript | `.js`, `.jsx`, `.mjs` | Functions, classes, JSDoc, ES6+ syntax |
+| TypeScript | `.ts`, `.tsx` | Interfaces, types, generics, decorators |
+| Dart       | `.dart` | Functions, classes, widgets, async, dartdoc |
+| PHP        | `.php`, `.phtml` | Classes, methods, traits, PHPDoc, Laravel patterns |
+| Ruby       | `.rb`, `.rake`, `.gemspec` | Modules, classes, methods, RDoc, Rails patterns |
+| Markdown   | `.md`, `.txt` | Semantic chunking for documentation |
+
+### Framework Support
+
+- **Laravel (PHP)**: Controllers, Models, Eloquent patterns
+- **Rails (Ruby)**: ActiveRecord, Controllers, RESTful patterns
+- **Flutter (Dart)**: Widgets, State management
+
+### Search Examples by Language
+
+```bash
+# PHP - Laravel Controller
+mcp-vector-search search "user authentication controller"
+
+# Ruby - Rails Model
+mcp-vector-search search "activerecord validation"
+
+# Dart - Flutter Widget
+mcp-vector-search search "stateful widget with state management"
+
+# Python - Django View
+mcp-vector-search search "django view with authentication"
+
+# JavaScript - React Component
+mcp-vector-search search "react component with hooks"
+
+# TypeScript - Generic Interface
+mcp-vector-search search "generic type interface"
+```
+
+### Cross-Language Search
+
+Search across all languages simultaneously:
+
+```bash
+# Find authentication logic in any language
+mcp-vector-search search "user authentication"
+
+# Find database models in any framework
+mcp-vector-search search "database model with relationships"
+
+# Find API endpoints in any language
+mcp-vector-search search "REST API endpoint"
+```
+
 ## Rich Help System
 
 The mcp-vector-search CLI features an industry-standard help system with progressive disclosure, organized panels, and comprehensive examples.

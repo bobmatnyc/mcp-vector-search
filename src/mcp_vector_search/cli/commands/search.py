@@ -355,8 +355,12 @@ async def run_search(
                     # No results - provide helpful suggestions
                     print_info("\n[bold]No results found. Try:[/bold]")
                     print_info("  • Use more general terms in your query")
-                    print_info("  • Lower the similarity threshold with [cyan]--threshold 0.3[/cyan]")
-                    print_info("  • Check if files are indexed with [cyan]mcp-vector-search status[/cyan]")
+                    print_info(
+                        "  • Lower the similarity threshold with [cyan]--threshold 0.3[/cyan]"
+                    )
+                    print_info(
+                        "  • Check if files are indexed with [cyan]mcp-vector-search status[/cyan]"
+                    )
 
     except Exception as e:
         logger.error(f"Search execution failed: {e}")

@@ -15,7 +15,7 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 ### 🚀 **Core Capabilities**
 - **Semantic Search**: Find code by meaning, not just keywords
 - **AST-Aware Parsing**: Understands code structure (functions, classes, methods)
-- **Multi-Language Support**: Python, JavaScript, TypeScript, Dart/Flutter (with extensible architecture)
+- **Multi-Language Support**: Python, JavaScript, TypeScript, Dart/Flutter, PHP, Ruby (with extensible architecture)
 - **Real-time Indexing**: File watching with automatic index updates
 - **Local-First**: Complete privacy with on-device processing
 - **Zero Configuration**: Auto-detects project structure and languages
@@ -305,19 +305,38 @@ Projects are configured via `.mcp-vector-search/config.json`:
 | JavaScript | ✅ Full | Functions, classes, JSDoc, ES6+ syntax |
 | TypeScript | ✅ Full | Interfaces, types, generics, decorators |
 | Dart       | ✅ Full | Functions, classes, widgets, async, dartdoc |
+| PHP        | ✅ Full | Classes, methods, traits, PHPDoc, Laravel patterns |
+| Ruby       | ✅ Full | Modules, classes, methods, RDoc, Rails patterns |
 | Text/Markdown | ✅ Basic | Semantic chunking for documentation |
 | Java       | 🔄 Planned | Classes, methods, annotations |
 | Go         | 🔄 Planned | Functions, structs, interfaces |
 | Rust       | 🔄 Planned | Functions, structs, traits |
 
-#### Dart/Flutter Support
+#### New Language Support
 
-New in this release! The Dart parser provides:
+**Dart/Flutter Support** (v0.4.15):
 - **Widget Detection**: StatelessWidget, StatefulWidget recognition
 - **State Classes**: Automatic parsing of `_WidgetNameState` patterns
 - **Async Support**: Future<T> and async function handling
 - **Dartdoc**: Triple-slash comment extraction
 - **Tree-sitter AST**: Fast, accurate parsing with regex fallback
+
+**PHP Support** (v0.5.0):
+- **Class Detection**: Classes, interfaces, traits
+- **Method Extraction**: Public, private, protected, static methods
+- **Magic Methods**: __construct, __get, __set, __call, etc.
+- **PHPDoc**: Full comment extraction
+- **Laravel Patterns**: Controllers, Models, Eloquent support
+- **Tree-sitter AST**: Fast parsing with regex fallback
+
+**Ruby Support** (v0.5.0):
+- **Module/Class Detection**: Full namespace support (::)
+- **Method Extraction**: Instance and class methods
+- **Special Syntax**: Method names with ?, ! support
+- **Attribute Macros**: attr_accessor, attr_reader, attr_writer
+- **RDoc**: Comment extraction (# and =begin...=end)
+- **Rails Patterns**: ActiveRecord, Controllers support
+- **Tree-sitter AST**: Fast parsing with regex fallback
 
 ## 🤝 Contributing
 

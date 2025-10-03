@@ -1,25 +1,22 @@
 """MCP server implementation for MCP Vector Search."""
 
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from loguru import logger
 from mcp.server import Server
+from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import (
     CallToolRequest,
     CallToolResult,
-    ListToolsRequest,
-    ListToolsResult,
     ServerCapabilities,
     TextContent,
     Tool,
 )
-from mcp.server.models import InitializationOptions
 
 from ..core.database import ChromaVectorDatabase
 from ..core.embeddings import create_embedding_function
@@ -33,9 +30,13 @@ from ..core.watcher import FileWatcher
 class MCPVectorSearchServer:
     """MCP server for vector search functionality."""
 
-    def __init__(self, project_root: Optional[Path] = None, enable_file_watching: Optional[bool] = None):
+    def __init__(
+        self,
+        project_root: Path | None = None,
+        enable_file_watching: bool | None = None,
+    ):
         """Initialize the MCP server.
-        
+
         Args:
             project_root: Project root directory. If None, will auto-detect.
             enable_file_watching: Enable file watching for automatic reindexing.
@@ -43,12 +44,12 @@ class MCPVectorSearchServer:
         """
         self.project_root = project_root or Path.cwd()
         self.project_manager = ProjectManager(self.project_root)
-        self.search_engine: Optional[SemanticSearchEngine] = None
-        self.file_watcher: Optional[FileWatcher] = None
-        self.indexer: Optional[SemanticIndexer] = None
-        self.database: Optional[ChromaVectorDatabase] = None
+        self.search_engine: SemanticSearchEngine | None = None
+        self.file_watcher: FileWatcher | None = None
+        self.indexer: SemanticIndexer | None = None
+        self.database: ChromaVectorDatabase | None = None
         self._initialized = False
-        
+
         # Determine if file watching should be enabled
         if enable_file_watching is None:
             # Check environment variable, default to True
@@ -65,52 +66,51 @@ class MCPVectorSearchServer:
         try:
             # Load project configuration
             config = self.project_manager.load_config()
-            
+
             # Setup embedding function
             embedding_function, _ = create_embedding_function(
                 model_name=config.embedding_model
             )
-            
+
             # Setup database
             self.database = ChromaVectorDatabase(
                 persist_directory=config.index_path,
                 embedding_function=embedding_function,
             )
-            
+
             # Initialize database
             await self.database.__aenter__()
-            
+
             # Setup search engine
             self.search_engine = SemanticSearchEngine(
-                database=self.database,
-                project_root=self.project_root
+                database=self.database, project_root=self.project_root
             )
-            
+
             # Setup indexer for file watching
             if self.enable_file_watching:
                 self.indexer = SemanticIndexer(
                     database=self.database,
                     project_root=self.project_root,
-                    file_extensions=config.file_extensions
+                    file_extensions=config.file_extensions,
                 )
-                
+
                 # Setup file watcher
                 self.file_watcher = FileWatcher(
                     project_root=self.project_root,
                     config=config,
                     indexer=self.indexer,
-                    database=self.database
+                    database=self.database,
                 )
-                
+
                 # Start file watching
                 await self.file_watcher.start()
-                logger.info(f"File watching enabled for automatic reindexing")
+                logger.info("File watching enabled for automatic reindexing")
             else:
-                logger.info(f"File watching disabled")
-            
+                logger.info("File watching disabled")
+
             self._initialized = True
             logger.info(f"MCP server initialized for project: {self.project_root}")
-            
+
         except ProjectNotFoundError:
             logger.error(f"Project not initialized at {self.project_root}")
             raise
@@ -125,19 +125,19 @@ class MCPVectorSearchServer:
             logger.info("Stopping file watcher...")
             await self.file_watcher.stop()
             self.file_watcher = None
-        
+
         # Cleanup database connection
-        if self.database and hasattr(self.database, '__aexit__'):
+        if self.database and hasattr(self.database, "__aexit__"):
             await self.database.__aexit__(None, None, None)
             self.database = None
-        
+
         # Clear references
         self.search_engine = None
         self.indexer = None
         self._initialized = False
         logger.info("MCP server cleanup completed")
 
-    def get_tools(self) -> List[Tool]:
+    def get_tools(self) -> list[Tool]:
         """Get available MCP tools."""
         tools = [
             Tool(
@@ -148,46 +148,46 @@ class MCPVectorSearchServer:
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "The search query to find relevant code"
+                            "description": "The search query to find relevant code",
                         },
                         "limit": {
                             "type": "integer",
                             "description": "Maximum number of results to return",
                             "default": 10,
                             "minimum": 1,
-                            "maximum": 50
+                            "maximum": 50,
                         },
                         "similarity_threshold": {
                             "type": "number",
                             "description": "Minimum similarity threshold (0.0-1.0)",
                             "default": 0.3,
                             "minimum": 0.0,
-                            "maximum": 1.0
+                            "maximum": 1.0,
                         },
                         "file_extensions": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Filter by file extensions (e.g., ['.py', '.js'])"
+                            "description": "Filter by file extensions (e.g., ['.py', '.js'])",
                         },
                         "language": {
                             "type": "string",
-                            "description": "Filter by programming language"
+                            "description": "Filter by programming language",
                         },
                         "function_name": {
                             "type": "string",
-                            "description": "Filter by function name"
+                            "description": "Filter by function name",
                         },
                         "class_name": {
                             "type": "string",
-                            "description": "Filter by class name"
+                            "description": "Filter by class name",
                         },
                         "files": {
                             "type": "string",
-                            "description": "Filter by file patterns (e.g., '*.py' or 'src/*.js')"
-                        }
+                            "description": "Filter by file patterns (e.g., '*.py' or 'src/*.js')",
+                        },
                     },
-                    "required": ["query"]
-                }
+                    "required": ["query"],
+                },
             ),
             Tool(
                 name="search_similar",
@@ -197,29 +197,29 @@ class MCPVectorSearchServer:
                     "properties": {
                         "file_path": {
                             "type": "string",
-                            "description": "Path to the file to find similar code for"
+                            "description": "Path to the file to find similar code for",
                         },
                         "function_name": {
                             "type": "string",
-                            "description": "Optional function name within the file"
+                            "description": "Optional function name within the file",
                         },
                         "limit": {
                             "type": "integer",
                             "description": "Maximum number of results to return",
                             "default": 10,
                             "minimum": 1,
-                            "maximum": 50
+                            "maximum": 50,
                         },
                         "similarity_threshold": {
                             "type": "number",
                             "description": "Minimum similarity threshold (0.0-1.0)",
                             "default": 0.3,
                             "minimum": 0.0,
-                            "maximum": 1.0
-                        }
+                            "maximum": 1.0,
+                        },
                     },
-                    "required": ["file_path"]
-                }
+                    "required": ["file_path"],
+                },
             ),
             Tool(
                 name="search_context",
@@ -229,32 +229,28 @@ class MCPVectorSearchServer:
                     "properties": {
                         "description": {
                             "type": "string",
-                            "description": "Contextual description of what you're looking for"
+                            "description": "Contextual description of what you're looking for",
                         },
                         "focus_areas": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Areas to focus on (e.g., ['security', 'authentication'])"
+                            "description": "Areas to focus on (e.g., ['security', 'authentication'])",
                         },
                         "limit": {
                             "type": "integer",
                             "description": "Maximum number of results to return",
                             "default": 10,
                             "minimum": 1,
-                            "maximum": 50
-                        }
+                            "maximum": 50,
+                        },
                     },
-                    "required": ["description"]
-                }
+                    "required": ["description"],
+                },
             ),
             Tool(
                 name="get_project_status",
                 description="Get project indexing status and statistics",
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
+                inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             Tool(
                 name="index_project",
@@ -265,27 +261,24 @@ class MCPVectorSearchServer:
                         "force": {
                             "type": "boolean",
                             "description": "Force reindexing even if index exists",
-                            "default": False
+                            "default": False,
                         },
                         "file_extensions": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "File extensions to index (e.g., ['.py', '.js'])"
-                        }
+                            "description": "File extensions to index (e.g., ['.py', '.js'])",
+                        },
                     },
-                    "required": []
-                }
-            )
+                    "required": [],
+                },
+            ),
         ]
 
         return tools
 
     def get_capabilities(self) -> ServerCapabilities:
         """Get server capabilities."""
-        return ServerCapabilities(
-            tools={"listChanged": True},
-            logging={}
-        )
+        return ServerCapabilities(tools={"listChanged": True}, logging={})
 
     async def call_tool(self, request: CallToolRequest) -> CallToolResult:
         """Handle tool calls."""
@@ -305,23 +298,23 @@ class MCPVectorSearchServer:
                 return await self._index_project(request.params.arguments)
             else:
                 return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text=f"Unknown tool: {request.params.name}"
-                    )],
-                    isError=True
+                    content=[
+                        TextContent(
+                            type="text", text=f"Unknown tool: {request.params.name}"
+                        )
+                    ],
+                    isError=True,
                 )
         except Exception as e:
             logger.error(f"Tool call failed: {e}")
             return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Tool execution failed: {str(e)}"
-                )],
-                isError=True
+                content=[
+                    TextContent(type="text", text=f"Tool execution failed: {str(e)}")
+                ],
+                isError=True,
             )
 
-    async def _search_code(self, args: Dict[str, Any]) -> CallToolResult:
+    async def _search_code(self, args: dict[str, Any]) -> CallToolResult:
         """Handle search_code tool call."""
         query = args.get("query", "")
         limit = args.get("limit", 10)
@@ -334,11 +327,8 @@ class MCPVectorSearchServer:
 
         if not query:
             return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text="Query parameter is required"
-                )],
-                isError=True
+                content=[TextContent(type="text", text="Query parameter is required")],
+                isError=True,
             )
 
         # Build filters
@@ -360,7 +350,7 @@ class MCPVectorSearchServer:
             query=query,
             limit=limit,
             similarity_threshold=similarity_threshold,
-            filters=filters
+            filters=filters,
         )
 
         # Format results
@@ -368,35 +358,37 @@ class MCPVectorSearchServer:
             response_text = f"No results found for query: '{query}'"
         else:
             response_lines = [f"Found {len(results)} results for query: '{query}'\n"]
-            
+
             for i, result in enumerate(results, 1):
-                response_lines.append(f"## Result {i} (Score: {result.similarity_score:.3f})")
+                response_lines.append(
+                    f"## Result {i} (Score: {result.similarity_score:.3f})"
+                )
                 response_lines.append(f"**File:** {result.file_path}")
                 if result.function_name:
                     response_lines.append(f"**Function:** {result.function_name}")
                 if result.class_name:
                     response_lines.append(f"**Class:** {result.class_name}")
-                response_lines.append(f"**Lines:** {result.start_line}-{result.end_line}")
+                response_lines.append(
+                    f"**Lines:** {result.start_line}-{result.end_line}"
+                )
                 response_lines.append("**Code:**")
                 response_lines.append("```" + (result.language or ""))
                 response_lines.append(result.content)
                 response_lines.append("```\n")
-            
+
             response_text = "\n".join(response_lines)
 
-        return CallToolResult(
-            content=[TextContent(type="text", text=response_text)]
-        )
+        return CallToolResult(content=[TextContent(type="text", text=response_text)])
 
-    async def _get_project_status(self, args: Dict[str, Any]) -> CallToolResult:
+    async def _get_project_status(self, args: dict[str, Any]) -> CallToolResult:
         """Handle get_project_status tool call."""
         try:
             config = self.project_manager.load_config()
-            
+
             # Get database stats
             if self.search_engine:
                 stats = await self.search_engine.database.get_stats()
-                
+
                 status_info = {
                     "project_root": str(config.project_root),
                     "index_path": str(config.index_path),
@@ -405,7 +397,9 @@ class MCPVectorSearchServer:
                     "languages": config.languages,
                     "total_chunks": stats.total_chunks,
                     "total_files": stats.total_files,
-                    "index_size": f"{stats.index_size_mb:.2f} MB" if hasattr(stats, 'index_size_mb') else "Unknown"
+                    "index_size": f"{stats.index_size_mb:.2f} MB"
+                    if hasattr(stats, "index_size_mb")
+                    else "Unknown",
                 }
             else:
                 status_info = {
@@ -414,74 +408,76 @@ class MCPVectorSearchServer:
                     "file_extensions": config.file_extensions,
                     "embedding_model": config.embedding_model,
                     "languages": config.languages,
-                    "status": "Not indexed"
+                    "status": "Not indexed",
                 }
-            
-            response_text = f"# Project Status\n\n"
+
+            response_text = "# Project Status\n\n"
             response_text += f"**Project Root:** {status_info['project_root']}\n"
             response_text += f"**Index Path:** {status_info['index_path']}\n"
-            response_text += f"**File Extensions:** {', '.join(status_info['file_extensions'])}\n"
+            response_text += (
+                f"**File Extensions:** {', '.join(status_info['file_extensions'])}\n"
+            )
             response_text += f"**Embedding Model:** {status_info['embedding_model']}\n"
             response_text += f"**Languages:** {', '.join(status_info['languages'])}\n"
-            
+
             if "total_chunks" in status_info:
                 response_text += f"**Total Chunks:** {status_info['total_chunks']}\n"
                 response_text += f"**Total Files:** {status_info['total_files']}\n"
                 response_text += f"**Index Size:** {status_info['index_size']}\n"
             else:
                 response_text += f"**Status:** {status_info['status']}\n"
-            
+
             return CallToolResult(
                 content=[TextContent(type="text", text=response_text)]
             )
-            
+
         except ProjectNotFoundError:
             return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Project not initialized at {self.project_root}. Run 'mcp-vector-search init' first."
-                )],
-                isError=True
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Project not initialized at {self.project_root}. Run 'mcp-vector-search init' first.",
+                    )
+                ],
+                isError=True,
             )
 
-    async def _index_project(self, args: Dict[str, Any]) -> CallToolResult:
+    async def _index_project(self, args: dict[str, Any]) -> CallToolResult:
         """Handle index_project tool call."""
         force = args.get("force", False)
         file_extensions = args.get("file_extensions")
-        
+
         try:
             # Import indexing functionality
             from ..cli.commands.index import run_indexing
-            
+
             # Run indexing
             await run_indexing(
                 project_root=self.project_root,
                 force_reindex=force,
                 extensions=file_extensions,
-                show_progress=False  # Disable progress for MCP
+                show_progress=False,  # Disable progress for MCP
             )
-            
+
             # Reinitialize search engine after indexing
             await self.cleanup()
             await self.initialize()
-            
+
             return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text="Project indexing completed successfully!"
-                )]
-            )
-            
-        except Exception as e:
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Indexing failed: {str(e)}"
-                )],
-                isError=True
+                content=[
+                    TextContent(
+                        type="text", text="Project indexing completed successfully!"
+                    )
+                ]
             )
 
-    async def _search_similar(self, args: Dict[str, Any]) -> CallToolResult:
+        except Exception as e:
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Indexing failed: {str(e)}")],
+                isError=True,
+            )
+
+    async def _search_similar(self, args: dict[str, Any]) -> CallToolResult:
         """Handle search_similar tool call."""
         file_path = args.get("file_path", "")
         function_name = args.get("function_name")
@@ -490,11 +486,10 @@ class MCPVectorSearchServer:
 
         if not file_path:
             return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text="file_path parameter is required"
-                )],
-                isError=True
+                content=[
+                    TextContent(type="text", text="file_path parameter is required")
+                ],
+                isError=True,
             )
 
         try:
@@ -507,11 +502,10 @@ class MCPVectorSearchServer:
 
             if not file_path_obj.exists():
                 return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text=f"File not found: {file_path}"
-                    )],
-                    isError=True
+                    content=[
+                        TextContent(type="text", text=f"File not found: {file_path}")
+                    ],
+                    isError=True,
                 )
 
             # Run similar search
@@ -519,54 +513,61 @@ class MCPVectorSearchServer:
                 file_path=file_path_obj,
                 function_name=function_name,
                 limit=limit,
-                similarity_threshold=similarity_threshold
+                similarity_threshold=similarity_threshold,
             )
 
             # Format results
             if not results:
                 return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text=f"No similar code found for {file_path}"
-                    )]
+                    content=[
+                        TextContent(
+                            type="text", text=f"No similar code found for {file_path}"
+                        )
+                    ]
                 )
 
-            response_lines = [f"Found {len(results)} similar code snippets for {file_path}\n"]
-            
+            response_lines = [
+                f"Found {len(results)} similar code snippets for {file_path}\n"
+            ]
+
             for i, result in enumerate(results, 1):
-                response_lines.append(f"## Result {i} (Score: {result.similarity_score:.3f})")
+                response_lines.append(
+                    f"## Result {i} (Score: {result.similarity_score:.3f})"
+                )
                 response_lines.append(f"**File:** {result.file_path}")
                 if result.function_name:
                     response_lines.append(f"**Function:** {result.function_name}")
                 if result.class_name:
                     response_lines.append(f"**Class:** {result.class_name}")
-                response_lines.append(f"**Lines:** {result.start_line}-{result.end_line}")
+                response_lines.append(
+                    f"**Lines:** {result.start_line}-{result.end_line}"
+                )
                 response_lines.append("**Code:**")
                 response_lines.append("```" + (result.language or ""))
                 # Show more of the content for similar search
-                content_preview = result.content[:500] if len(result.content) > 500 else result.content
-                response_lines.append(content_preview + ("..." if len(result.content) > 500 else ""))
+                content_preview = (
+                    result.content[:500]
+                    if len(result.content) > 500
+                    else result.content
+                )
+                response_lines.append(
+                    content_preview + ("..." if len(result.content) > 500 else "")
+                )
                 response_lines.append("```\n")
-            
+
             result_text = "\n".join(response_lines)
 
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=result_text
-                )]
-            )
+            return CallToolResult(content=[TextContent(type="text", text=result_text)])
 
         except Exception as e:
             return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Similar search failed: {str(e)}"
-                )],
-                isError=True
+                content=[
+                    TextContent(type="text", text=f"Similar search failed: {str(e)}")
+                ],
+                isError=True,
             )
 
-    async def _search_context(self, args: Dict[str, Any]) -> CallToolResult:
+    async def _search_context(self, args: dict[str, Any]) -> CallToolResult:
         """Handle search_context tool call."""
         description = args.get("description", "")
         focus_areas = args.get("focus_areas")
@@ -574,72 +575,79 @@ class MCPVectorSearchServer:
 
         if not description:
             return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text="description parameter is required"
-                )],
-                isError=True
+                content=[
+                    TextContent(type="text", text="description parameter is required")
+                ],
+                isError=True,
             )
 
         try:
             # Perform context search
             results = await self.search_engine.search_by_context(
-                context_description=description,
-                focus_areas=focus_areas,
-                limit=limit
+                context_description=description, focus_areas=focus_areas, limit=limit
             )
 
             # Format results
             if not results:
                 return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text=f"No contextually relevant code found for: {description}"
-                    )]
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=f"No contextually relevant code found for: {description}",
+                        )
+                    ]
                 )
 
-            response_lines = [f"Found {len(results)} contextually relevant code snippets"]
+            response_lines = [
+                f"Found {len(results)} contextually relevant code snippets"
+            ]
             if focus_areas:
                 response_lines[0] += f" (focus: {', '.join(focus_areas)})"
             response_lines[0] += f" for: {description}\n"
-            
+
             for i, result in enumerate(results, 1):
-                response_lines.append(f"## Result {i} (Score: {result.similarity_score:.3f})")
+                response_lines.append(
+                    f"## Result {i} (Score: {result.similarity_score:.3f})"
+                )
                 response_lines.append(f"**File:** {result.file_path}")
                 if result.function_name:
                     response_lines.append(f"**Function:** {result.function_name}")
                 if result.class_name:
                     response_lines.append(f"**Class:** {result.class_name}")
-                response_lines.append(f"**Lines:** {result.start_line}-{result.end_line}")
+                response_lines.append(
+                    f"**Lines:** {result.start_line}-{result.end_line}"
+                )
                 response_lines.append("**Code:**")
                 response_lines.append("```" + (result.language or ""))
                 # Show more of the content for context search
-                content_preview = result.content[:500] if len(result.content) > 500 else result.content
-                response_lines.append(content_preview + ("..." if len(result.content) > 500 else ""))
+                content_preview = (
+                    result.content[:500]
+                    if len(result.content) > 500
+                    else result.content
+                )
+                response_lines.append(
+                    content_preview + ("..." if len(result.content) > 500 else "")
+                )
                 response_lines.append("```\n")
-            
+
             result_text = "\n".join(response_lines)
 
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=result_text
-                )]
-            )
+            return CallToolResult(content=[TextContent(type="text", text=result_text)])
 
         except Exception as e:
             return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Context search failed: {str(e)}"
-                )],
-                isError=True
+                content=[
+                    TextContent(type="text", text=f"Context search failed: {str(e)}")
+                ],
+                isError=True,
             )
 
 
-def create_mcp_server(project_root: Optional[Path] = None, enable_file_watching: Optional[bool] = None) -> Server:
+def create_mcp_server(
+    project_root: Path | None = None, enable_file_watching: bool | None = None
+) -> Server:
     """Create and configure the MCP server.
-    
+
     Args:
         project_root: Project root directory. If None, will auto-detect.
         enable_file_watching: Enable file watching for automatic reindexing.
@@ -649,7 +657,7 @@ def create_mcp_server(project_root: Optional[Path] = None, enable_file_watching:
     mcp_server = MCPVectorSearchServer(project_root, enable_file_watching)
 
     @server.list_tools()
-    async def handle_list_tools() -> List[Tool]:
+    async def handle_list_tools() -> list[Tool]:
         """List available tools."""
         return mcp_server.get_tools()
 
@@ -658,6 +666,7 @@ def create_mcp_server(project_root: Optional[Path] = None, enable_file_watching:
         """Handle tool calls."""
         # Create a mock request object for compatibility
         from types import SimpleNamespace
+
         mock_request = SimpleNamespace()
         mock_request.params = SimpleNamespace()
         mock_request.params.name = name
@@ -674,9 +683,11 @@ def create_mcp_server(project_root: Optional[Path] = None, enable_file_watching:
     return server
 
 
-async def run_mcp_server(project_root: Optional[Path] = None, enable_file_watching: Optional[bool] = None) -> None:
+async def run_mcp_server(
+    project_root: Path | None = None, enable_file_watching: bool | None = None
+) -> None:
     """Run the MCP server using stdio transport.
-    
+
     Args:
         project_root: Project root directory. If None, will auto-detect.
         enable_file_watching: Enable file watching for automatic reindexing.
@@ -688,10 +699,7 @@ async def run_mcp_server(project_root: Optional[Path] = None, enable_file_watchi
     init_options = InitializationOptions(
         server_name="mcp-vector-search",
         server_version="0.4.0",
-        capabilities=ServerCapabilities(
-            tools={"listChanged": True},
-            logging={}
-        )
+        capabilities=ServerCapabilities(tools={"listChanged": True}, logging={}),
     )
 
     try:
@@ -704,7 +712,7 @@ async def run_mcp_server(project_root: Optional[Path] = None, enable_file_watchi
         raise
     finally:
         # Cleanup
-        if hasattr(server, '_mcp_server'):
+        if hasattr(server, "_mcp_server"):
             logger.info("Performing server cleanup...")
             await server._mcp_server.cleanup()
 
@@ -712,7 +720,7 @@ async def run_mcp_server(project_root: Optional[Path] = None, enable_file_watchi
 if __name__ == "__main__":
     # Allow specifying project root as command line argument
     project_root = Path(sys.argv[1]) if len(sys.argv) > 1 else None
-    
+
     # Check for file watching flag in command line args
     enable_file_watching = None
     if "--no-watch" in sys.argv:
@@ -721,5 +729,5 @@ if __name__ == "__main__":
     elif "--watch" in sys.argv:
         enable_file_watching = True
         sys.argv.remove("--watch")
-    
+
     asyncio.run(run_mcp_server(project_root, enable_file_watching))

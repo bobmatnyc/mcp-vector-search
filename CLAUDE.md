@@ -8,19 +8,36 @@ This file provides comprehensive guidance for Claude Code (claude.ai/code) and C
 
 ## 🔴 Project Overview (CRITICAL)
 
-**MCP Vector Search** is a CLI-first semantic code search tool with MCP (Model Context Protocol) integration. It provides intelligent code search using vector embeddings and AST-aware parsing for Python, JavaScript, TypeScript, Dart/Flutter, and Markdown.
+**MCP Vector Search** is a CLI-first semantic code search tool with MCP (Model Context Protocol) integration. It provides intelligent code search using vector embeddings and AST-aware parsing for **7 languages**: Python, JavaScript, TypeScript, Dart/Flutter, PHP, Ruby, and Markdown.
 
 ### 🎉 Recent Major Features (NEW IN v0.5.0)
 
-**1. Dart/Flutter Language Support** 🎯
+**1. PHP Language Support** 🐘
+- Full AST-aware parsing with tree-sitter
+- Class, interface, and trait detection
+- Method extraction (public, private, protected, static)
+- Magic methods (__construct, __get, __set, etc.)
+- PHPDoc comment extraction
+- Laravel framework patterns (Controllers, Models, Eloquent)
+
+**2. Ruby Language Support** 💎
+- Full AST-aware parsing with tree-sitter
+- Module and class detection with namespace support (::)
+- Instance and class method extraction
+- Special method names (?, !)
+- Attribute macros (attr_accessor, attr_reader, attr_writer)
+- RDoc comment extraction
+- Rails framework patterns (ActiveRecord, Controllers)
+
+**3. Dart/Flutter Language Support** 🎯 (v0.4.15)
 - Full AST-aware parsing with tree-sitter
 - Widget detection (StatelessWidget, StatefulWidget)
 - State class recognition (_WidgetNameState patterns)
 - Async/Future<T> support
 - Dartdoc comment extraction
-- Cross-language semantic search with all 5 languages
+- Cross-language semantic search with all 7 languages
 
-**2. Enhanced Install Command** 🚀
+**4. Enhanced Install Command** 🚀 (v0.4.15)
 - One-step complete project setup
 - Multi-tool MCP detection (Claude Code, Cursor, Windsurf, VS Code)
 - Interactive MCP configuration
@@ -28,7 +45,7 @@ This file provides comprehensive guidance for Claude Code (claude.ai/code) and C
 - Rich progress indicators
 - Options: `--no-mcp`, `--no-index`, `--mcp-tool`, `--extensions`
 
-**3. Rich Help System** 📚
+**5. Rich Help System** 📚 (v0.4.15)
 - Organized help panels (Core, Customization, Advanced)
 - Comprehensive examples in all commands
 - Next-step hints after operations
@@ -189,8 +206,9 @@ The codebase follows a **layered architecture** with clear separation of concern
 #### 🟡 3. Parser System (`src/mcp_vector_search/parsers/`) - LANGUAGE SUPPORT
 - **Base**: `base.py` - abstract `BaseParser` interface (extend for new languages)
 - **Registry**: `registry.py` - dynamic parser discovery and selection
-- **Language Parsers**: `python.py`, `javascript.py`, `typescript.py`, `dart.py`, `text.py`
+- **Language Parsers**: `python.py`, `javascript.py`, `typescript.py`, `dart.py`, `php.py`, `ruby.py`, `text.py`
 - **Output**: Each parser extracts functions, classes, methods, and semantic chunks
+- **Total Languages**: 7 (Python, JavaScript, TypeScript, Dart, PHP, Ruby, Markdown)
 
 #### 🔴 4. MCP Integration (`src/mcp_vector_search/mcp/`) - CLAUDE INTEGRATION
 - **Server**: `server.py` - Model Context Protocol server implementation
@@ -454,7 +472,7 @@ mcp-vector-search auto-index check --dry-run --verbose
 
 ### 🟡 Known Issues (Being Addressed)
 - **Tree-sitter**: Integration needs improvement (using regex fallback)
-- **Language Support**: Currently Python, JavaScript, TypeScript only
+- **Language Support**: Currently 7 languages (Python, JS, TS, Dart, PHP, Ruby, Markdown)
 - **Binary Files**: No support for notebooks, images, compiled files
 
 ### 🟢 Future Improvements
