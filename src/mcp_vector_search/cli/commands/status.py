@@ -9,6 +9,7 @@ from typing import Any
 import typer
 from loguru import logger
 
+from ... import __version__
 from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
@@ -165,6 +166,10 @@ async def show_status(
             index_stats = await indexer.get_indexing_stats()
             db_stats = await database.get_stats()
 
+        # Get version information
+        index_version = indexer.get_index_version()
+        needs_reindex = indexer.needs_reindex_for_version()
+
         # Compile status data
         status_data = {
             "project": {
@@ -181,6 +186,7 @@ async def show_status(
                 "max_chunk_size": config.max_chunk_size,
                 "cache_embeddings": config.cache_embeddings,
                 "watch_files": config.watch_files,
+                "auto_reindex_on_upgrade": config.auto_reindex_on_upgrade,
             },
             "index": {
                 "total_files": index_stats.get("total_indexable_files", 0),
@@ -189,6 +195,9 @@ async def show_status(
                 "languages": index_stats.get("languages", {}),
                 "index_size_mb": db_stats.index_size_mb,
                 "last_updated": db_stats.last_updated,
+                "index_version": index_version,
+                "current_version": __version__,
+                "needs_reindex": needs_reindex,
             },
         }
 
@@ -267,11 +276,33 @@ def _display_status(
     console.print(f"  Total Chunks: {index_data['total_chunks']}")
     console.print(f"  Index Size: {index_data['index_size_mb']:.2f} MB")
 
+    # Version information
+    index_version = index_data.get("index_version")
+    current_version = index_data.get("current_version", __version__)
+    needs_reindex = index_data.get("needs_reindex", False)
+
+    if index_version:
+        if needs_reindex:
+            console.print(
+                f"  Version: [yellow]{index_version}[/yellow] (current: {current_version}) [yellow]⚠️  Reindex recommended[/yellow]"
+            )
+        else:
+            console.print(f"  Version: [green]{index_version}[/green] (up to date)")
+    else:
+        console.print(
+            f"  Version: [yellow]Not tracked[/yellow] (current: {current_version}) [yellow]⚠️  Reindex recommended[/yellow]"
+        )
+
     if index_data["languages"]:
         console.print("  Language Distribution:")
         for lang, count in index_data["languages"].items():
             console.print(f"    {lang}: {count} chunks")
     console.print()
+
+    # Show reindex recommendation if needed
+    if needs_reindex:
+        console.print("[yellow]💡 Tip: Run 'mcp-vector-search index' to reindex with the latest improvements[/yellow]")
+        console.print()
 
     # Health check results
     if "health" in status_data:

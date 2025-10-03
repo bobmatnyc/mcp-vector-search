@@ -6,7 +6,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> ⚠️ **Alpha Release (v0.0.3)**: This is an early-stage project under active development. Expect breaking changes and rough edges. Feedback and contributions are welcome!
+> ⚠️ **Alpha Release (v0.6.0)**: This is an early-stage project under active development. Expect breaking changes and rough edges. Feedback and contributions are welcome!
 
 A modern, fast, and intelligent code search tool that understands your codebase through semantic analysis and AST parsing. Built with Python, powered by ChromaDB, and designed for developer productivity.
 
@@ -17,6 +17,7 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 - **AST-Aware Parsing**: Understands code structure (functions, classes, methods)
 - **Multi-Language Support**: 8 languages - Python, JavaScript, TypeScript, Dart/Flutter, PHP, Ruby, HTML, and Markdown/Text (with extensible architecture)
 - **Real-time Indexing**: File watching with automatic index updates
+- **Automatic Version Tracking**: Smart reindexing on tool upgrades
 - **Local-First**: Complete privacy with on-device processing
 - **Zero Configuration**: Auto-detects project structure and languages
 

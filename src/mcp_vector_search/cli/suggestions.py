@@ -73,8 +73,9 @@ class ContextualSuggestionProvider:
             # For now, we'll assume false
             state["has_recent_changes"] = False
 
-        except Exception:
+        except Exception as e:
             # If we can't determine state, provide conservative defaults
+            logger.debug(f"Failed to determine project state for suggestions: {e}")
             pass
 
         return state

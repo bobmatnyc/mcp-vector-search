@@ -3,10 +3,13 @@
 import asyncio
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
+from packaging import version
 
+from .. import __version__
 from ..config.defaults import DEFAULT_IGNORE_PATTERNS
 from ..parsers.registry import get_parser_registry
 from ..utils.gitignore import create_gitignore_parser
@@ -40,9 +43,15 @@ class SemanticIndexer:
         self.file_extensions = {ext.lower() for ext in file_extensions}
         self.parser_registry = get_parser_registry()
         self._ignore_patterns = set(DEFAULT_IGNORE_PATTERNS)
-        self.max_workers = max_workers or min(
-            4, (asyncio.get_event_loop().get_debug() and 1) or 4
-        )
+
+        # Safely get event loop for max_workers
+        try:
+            loop = asyncio.get_event_loop()
+            self.max_workers = max_workers or min(4, (loop.get_debug() and 1) or 4)
+        except RuntimeError:
+            # No event loop in current thread
+            self.max_workers = max_workers or 4
+
         self.batch_size = batch_size
         self._index_metadata_file = (
             project_root / ".mcp-vector-search" / "index_metadata.json"
@@ -182,7 +191,13 @@ class SemanticIndexer:
 
         try:
             with open(self._index_metadata_file) as f:
-                return json.load(f)
+                data = json.load(f)
+                # Handle legacy format (just file_mtimes dict) and new format
+                if "file_mtimes" in data:
+                    return data["file_mtimes"]
+                else:
+                    # Legacy format - just return as-is
+                    return data
         except Exception as e:
             logger.warning(f"Failed to load index metadata: {e}")
             return {}
@@ -197,8 +212,15 @@ class SemanticIndexer:
             # Ensure directory exists
             self._index_metadata_file.parent.mkdir(parents=True, exist_ok=True)
 
+            # New metadata format with version tracking
+            data = {
+                "index_version": __version__,
+                "indexed_at": datetime.now(timezone.utc).isoformat(),
+                "file_mtimes": metadata,
+            }
+
             with open(self._index_metadata_file, "w") as f:
-                json.dump(metadata, f, indent=2)
+                json.dump(data, f, indent=2)
         except Exception as e:
             logger.warning(f"Failed to save index metadata: {e}")
 
@@ -446,6 +468,59 @@ class SemanticIndexer:
             Set of ignore patterns
         """
         return self._ignore_patterns.copy()
+
+    def get_index_version(self) -> str | None:
+        """Get the version of the tool that created the current index.
+
+        Returns:
+            Version string or None if not available
+        """
+        if not self._index_metadata_file.exists():
+            return None
+
+        try:
+            with open(self._index_metadata_file) as f:
+                data = json.load(f)
+                return data.get("index_version")
+        except Exception as e:
+            logger.warning(f"Failed to read index version: {e}")
+            return None
+
+    def needs_reindex_for_version(self) -> bool:
+        """Check if reindex is needed due to version upgrade.
+
+        Returns:
+            True if reindex is needed for version compatibility
+        """
+        index_version = self.get_index_version()
+
+        if not index_version:
+            # No version recorded - this is either a new index or legacy format
+            # Reindex to establish version tracking
+            return True
+
+        try:
+            current = version.parse(__version__)
+            indexed = version.parse(index_version)
+
+            # Reindex on major or minor version change
+            # Patch versions (0.5.1 -> 0.5.2) don't require reindex
+            needs_reindex = (
+                current.major != indexed.major or current.minor != indexed.minor
+            )
+
+            if needs_reindex:
+                logger.info(
+                    f"Version upgrade detected: {index_version} -> {__version__} "
+                    f"(reindex recommended)"
+                )
+
+            return needs_reindex
+
+        except Exception as e:
+            logger.warning(f"Failed to compare versions: {e}")
+            # If we can't parse versions, be safe and reindex
+            return True
 
     async def get_indexing_stats(self) -> dict:
         """Get statistics about the indexing process.

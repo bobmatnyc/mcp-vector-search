@@ -1,11 +1,15 @@
 """Semantic search engine for MCP Vector Search."""
 
 import re
+import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
+import aiofiles
 from loguru import logger
 
+from ..config.constants import DEFAULT_CACHE_SIZE
 from .auto_indexer import AutoIndexer, SearchTriggeredIndexer
 from .database import VectorDatabase
 from .exceptions import SearchError
@@ -14,6 +18,55 @@ from .models import SearchResult
 
 class SemanticSearchEngine:
     """Semantic search engine for code search."""
+
+    # Query expansion constants (class-level for performance)
+    _QUERY_EXPANSIONS = {
+        # Common abbreviations
+        "auth": "authentication authorize login",
+        "db": "database data storage",
+        "api": "application programming interface endpoint",
+        "ui": "user interface frontend view",
+        "util": "utility helper function",
+        "config": "configuration settings options",
+        "async": "asynchronous await promise",
+        "sync": "synchronous blocking",
+        "func": "function method",
+        "var": "variable",
+        "param": "parameter argument",
+        "init": "initialize setup create",
+        "parse": "parsing parser analyze",
+        "validate": "validation check verify",
+        "handle": "handler process manage",
+        "error": "exception failure bug",
+        "test": "testing unittest spec",
+        "mock": "mocking stub fake",
+        "log": "logging logger debug",
+        # Programming concepts
+        "class": "class object type",
+        "method": "method function procedure",
+        "property": "property attribute field",
+        "import": "import require include",
+        "export": "export module public",
+        "return": "return yield output",
+        "loop": "loop iterate for while",
+        "condition": "condition if else branch",
+        "array": "array list collection",
+        "string": "string text character",
+        "number": "number integer float",
+        "boolean": "boolean true false",
+    }
+
+    # Reranking boost constants (class-level for performance)
+    _BOOST_EXACT_IDENTIFIER = 0.15
+    _BOOST_PARTIAL_IDENTIFIER = 0.05
+    _BOOST_FILE_NAME_EXACT = 0.08
+    _BOOST_FILE_NAME_PARTIAL = 0.03
+    _BOOST_FUNCTION_CHUNK = 0.05
+    _BOOST_CLASS_CHUNK = 0.03
+    _BOOST_SOURCE_FILE = 0.02
+    _BOOST_SHALLOW_PATH = 0.02
+    _PENALTY_TEST_FILE = -0.02
+    _PENALTY_DEEP_PATH = -0.01
 
     def __init__(
         self,
@@ -43,6 +96,16 @@ class SemanticSearchEngine:
         if auto_indexer and enable_auto_reindex:
             self.search_triggered_indexer = SearchTriggeredIndexer(auto_indexer)
 
+        # File content cache for performance (proper LRU with OrderedDict)
+        self._file_cache: OrderedDict[Path, list[str]] = OrderedDict()
+        self._cache_maxsize = DEFAULT_CACHE_SIZE
+        self._cache_hits = 0
+        self._cache_misses = 0
+
+        # Health check throttling (only check every 60 seconds)
+        self._last_health_check: float = 0.0
+        self._health_check_interval: float = 60.0
+
     async def search(
         self,
         query: str,
@@ -66,15 +129,19 @@ class SemanticSearchEngine:
         if not query.strip():
             return []
 
-        # Health check before search
-        try:
-            if hasattr(self.database, "health_check"):
-                is_healthy = await self.database.health_check()
-                if not is_healthy:
-                    logger.warning("Database health check failed - attempting recovery")
-                    # Health check already attempts recovery, so we can proceed
-        except Exception as e:
-            logger.warning(f"Health check failed: {e}")
+        # Throttled health check before search (only every 60 seconds)
+        current_time = time.time()
+        if current_time - self._last_health_check >= self._health_check_interval:
+            try:
+                if hasattr(self.database, "health_check"):
+                    is_healthy = await self.database.health_check()
+                    if not is_healthy:
+                        logger.warning("Database health check failed - attempting recovery")
+                        # Health check already attempts recovery, so we can proceed
+                    self._last_health_check = current_time
+            except Exception as e:
+                logger.warning(f"Health check failed: {e}")
+                self._last_health_check = current_time
 
         # Auto-reindex check before search
         if self.search_triggered_indexer:
@@ -161,9 +228,9 @@ class SemanticSearchEngine:
             List of similar code results
         """
         try:
-            # Read the reference file
-            with open(file_path, encoding="utf-8") as f:
-                content = f.read()
+            # Read the reference file using async I/O
+            async with aiofiles.open(file_path, encoding="utf-8") as f:
+                content = await f.read()
 
             # If function name is specified, try to extract just that function
             if function_name:
@@ -227,48 +294,7 @@ class SemanticSearchEngine:
         # Remove extra whitespace
         query = re.sub(r"\s+", " ", query.strip())
 
-        # Expand common programming abbreviations and synonyms
-        expansions = {
-            "auth": "authentication authorize login",
-            "db": "database data storage",
-            "api": "application programming interface endpoint",
-            "ui": "user interface frontend view",
-            "util": "utility helper function",
-            "config": "configuration settings options",
-            "async": "asynchronous await promise",
-            "sync": "synchronous blocking",
-            "func": "function method",
-            "var": "variable",
-            "param": "parameter argument",
-            "init": "initialize setup create",
-            "parse": "parsing parser analyze",
-            "validate": "validation check verify",
-            "handle": "handler process manage",
-            "error": "exception failure bug",
-            "test": "testing unittest spec",
-            "mock": "mocking stub fake",
-            "log": "logging logger debug",
-        }
-
-        # Add programming language keywords and concepts
-        programming_concepts = {
-            "class": "class object type",
-            "method": "method function procedure",
-            "property": "property attribute field",
-            "import": "import require include",
-            "export": "export module public",
-            "return": "return yield output",
-            "loop": "loop iterate for while",
-            "condition": "condition if else branch",
-            "array": "array list collection",
-            "string": "string text character",
-            "number": "number integer float",
-            "boolean": "boolean true false",
-        }
-
-        # Merge all expansions
-        all_expansions = {**expansions, **programming_concepts}
-
+        # Use class-level query expansions (no dict creation overhead)
         words = query.lower().split()
         expanded_words = []
 
@@ -277,8 +303,8 @@ class SemanticSearchEngine:
             expanded_words.append(word)
 
             # Add expansions if available
-            if word in all_expansions:
-                expanded_words.extend(all_expansions[word].split())
+            if word in self._QUERY_EXPANSIONS:
+                expanded_words.extend(self._QUERY_EXPANSIONS[word].split())
 
         # Remove duplicates while preserving order
         seen = set()
@@ -363,6 +389,49 @@ class SemanticSearchEngine:
 
         return base_threshold
 
+    async def _read_file_lines_cached(self, file_path: Path) -> list[str]:
+        """Read file lines with proper LRU caching for performance.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            List of file lines
+
+        Raises:
+            FileNotFoundError: If file doesn't exist
+        """
+        # Check cache - move to end if found (most recently used)
+        if file_path in self._file_cache:
+            self._cache_hits += 1
+            # Move to end (most recently used)
+            self._file_cache.move_to_end(file_path)
+            return self._file_cache[file_path]
+
+        self._cache_misses += 1
+
+        # Read file asynchronously
+        try:
+            async with aiofiles.open(file_path, encoding="utf-8") as f:
+                content = await f.read()
+                lines = content.splitlines(keepends=True)
+
+            # Proper LRU: if cache is full, remove least recently used (first item)
+            if len(self._file_cache) >= self._cache_maxsize:
+                # Remove least recently used entry (first item in OrderedDict)
+                self._file_cache.popitem(last=False)
+
+            # Add to cache (will be at end, most recently used)
+            self._file_cache[file_path] = lines
+            return lines
+
+        except FileNotFoundError:
+            # Cache the miss to avoid repeated failed attempts
+            if len(self._file_cache) >= self._cache_maxsize:
+                self._file_cache.popitem(last=False)
+            self._file_cache[file_path] = []
+            raise
+
     async def _enhance_result(
         self, result: SearchResult, include_context: bool
     ) -> SearchResult:
@@ -379,9 +448,11 @@ class SemanticSearchEngine:
             return result
 
         try:
-            # Read the source file to get context
-            with open(result.file_path, encoding="utf-8") as f:
-                lines = f.readlines()
+            # Read the source file using cached method
+            lines = await self._read_file_lines_cached(result.file_path)
+
+            if not lines:  # File not found or empty
+                return result
 
             # Get context lines before and after
             context_size = 3
@@ -417,8 +488,12 @@ class SemanticSearchEngine:
         if not results:
             return results
 
+        # Pre-compute lowercased strings once (avoid repeated .lower() calls)
         query_lower = query.lower()
         query_words = set(query_lower.split())
+
+        # Pre-compute file extensions for source files
+        source_exts = frozenset([".py", ".js", ".ts", ".java", ".cpp", ".c", ".go", ".rs"])
 
         for result in results:
             # Start with base similarity score
@@ -428,56 +503,48 @@ class SemanticSearchEngine:
             if result.function_name:
                 func_name_lower = result.function_name.lower()
                 if query_lower in func_name_lower:
-                    score += 0.15  # Strong boost for function name match
+                    score += self._BOOST_EXACT_IDENTIFIER
                 # Partial word matches
-                for word in query_words:
-                    if word in func_name_lower:
-                        score += 0.05
+                score += sum(self._BOOST_PARTIAL_IDENTIFIER for word in query_words if word in func_name_lower)
 
             if result.class_name:
                 class_name_lower = result.class_name.lower()
                 if query_lower in class_name_lower:
-                    score += 0.15  # Strong boost for class name match
+                    score += self._BOOST_EXACT_IDENTIFIER
                 # Partial word matches
-                for word in query_words:
-                    if word in class_name_lower:
-                        score += 0.05
+                score += sum(self._BOOST_PARTIAL_IDENTIFIER for word in query_words if word in class_name_lower)
 
             # Factor 2: File name relevance
             file_name_lower = result.file_path.name.lower()
             if query_lower in file_name_lower:
-                score += 0.08
-            for word in query_words:
-                if word in file_name_lower:
-                    score += 0.03
+                score += self._BOOST_FILE_NAME_EXACT
+            score += sum(self._BOOST_FILE_NAME_PARTIAL for word in query_words if word in file_name_lower)
 
             # Factor 3: Content density (how many query words appear)
             content_lower = result.content.lower()
             word_matches = sum(1 for word in query_words if word in content_lower)
             if word_matches > 0:
-                density_boost = (word_matches / len(query_words)) * 0.1
-                score += density_boost
+                score += (word_matches / len(query_words)) * 0.1
 
-            # Factor 4: Code structure preferences
-            # Boost functions over general code blocks
+            # Factor 4: Code structure preferences (combined conditions)
             if result.chunk_type == "function":
-                score += 0.05
+                score += self._BOOST_FUNCTION_CHUNK
             elif result.chunk_type == "class":
-                score += 0.03
+                score += self._BOOST_CLASS_CHUNK
 
-            # Factor 5: File type preferences (prefer source files over tests/docs)
+            # Factor 5: File type preferences (prefer source files over tests)
             file_ext = result.file_path.suffix.lower()
-            if file_ext in [".py", ".js", ".ts", ".java", ".cpp", ".c", ".go", ".rs"]:
-                score += 0.02
-            elif "test" in result.file_path.name.lower():
-                score -= 0.02  # Slightly penalize test files unless specifically searching for tests
+            if file_ext in source_exts:
+                score += self._BOOST_SOURCE_FILE
+            if "test" in file_name_lower:  # Already computed
+                score += self._PENALTY_TEST_FILE
 
-            # Factor 6: Recency bias (prefer shorter file paths - often more core files)
+            # Factor 6: Path depth preference
             path_depth = len(result.file_path.parts)
             if path_depth <= 3:
-                score += 0.02
+                score += self._BOOST_SHALLOW_PATH
             elif path_depth > 5:
-                score -= 0.01
+                score += self._PENALTY_DEEP_PATH
 
             # Ensure score doesn't exceed 1.0
             result.similarity_score = min(1.0, score)
@@ -696,12 +763,12 @@ class SemanticSearchEngine:
         Returns:
             Enhanced search results
         """
-        # Read context from files
+        # Read context from files using async I/O
         context_content = []
         for file_path in context_files:
             try:
-                with open(file_path, encoding="utf-8") as f:
-                    content = f.read()
+                async with aiofiles.open(file_path, encoding="utf-8") as f:
+                    content = await f.read()
                     context_content.append(content)
             except Exception as e:
                 logger.warning(f"Failed to read context file {file_path}: {e}")
@@ -843,3 +910,29 @@ class SemanticSearchEngine:
         except Exception as e:
             logger.error(f"Failed to get search stats: {e}")
             return {"error": str(e)}
+
+    def clear_cache(self) -> None:
+        """Clear the file read cache."""
+        self._file_cache.clear()
+        self._cache_hits = 0
+        self._cache_misses = 0
+        logger.debug("File read cache cleared")
+
+    def get_cache_info(self) -> dict[str, Any]:
+        """Get cache statistics.
+
+        Returns:
+            Dictionary with cache statistics including hits, misses, size, and hit rate
+        """
+        total_requests = self._cache_hits + self._cache_misses
+        hit_rate = (
+            self._cache_hits / total_requests if total_requests > 0 else 0.0
+        )
+
+        return {
+            "hits": self._cache_hits,
+            "misses": self._cache_misses,
+            "size": len(self._file_cache),
+            "maxsize": self._cache_maxsize,
+            "hit_rate": f"{hit_rate:.2%}",
+        }

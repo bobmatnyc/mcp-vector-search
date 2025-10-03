@@ -9,6 +9,7 @@ from loguru import logger
 from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
+from ...core.indexer import SemanticIndexer
 from ...core.project import ProjectManager
 from ...core.search import SemanticSearchEngine
 from ..didyoumean import create_enhanced_typer
@@ -257,6 +258,47 @@ async def run_search(
         persist_directory=config.index_path,
         embedding_function=embedding_function,
     )
+
+    # Create indexer for version check
+    indexer = SemanticIndexer(
+        database=database,
+        project_root=project_root,
+        file_extensions=config.file_extensions,
+    )
+
+    # Check if reindex is needed due to version upgrade
+    if config.auto_reindex_on_upgrade and indexer.needs_reindex_for_version():
+        from ..output import console
+
+        index_version = indexer.get_index_version()
+        from ... import __version__
+
+        if index_version:
+            console.print(
+                f"[yellow]⚠️  Index created with version {index_version} (current: {__version__})[/yellow]"
+            )
+        else:
+            console.print(
+                "[yellow]⚠️  Index version not found (legacy format detected)[/yellow]"
+            )
+
+        console.print(
+            "[yellow]   Reindexing to take advantage of improvements...[/yellow]"
+        )
+
+        # Auto-reindex with progress
+        try:
+            indexed_count = await indexer.index_project(
+                force_reindex=True, show_progress=False
+            )
+            console.print(
+                f"[green]✓ Index updated to version {__version__} ({indexed_count} files reindexed)[/green]\n"
+            )
+        except Exception as e:
+            console.print(f"[red]✗ Reindexing failed: {e}[/red]")
+            console.print(
+                "[yellow]  Continuing with existing index (may have outdated patterns)[/yellow]\n"
+            )
 
     search_engine = SemanticSearchEngine(
         database=database,
