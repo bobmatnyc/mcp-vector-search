@@ -83,7 +83,7 @@ def reset_index(
                 raise typer.Exit(0)
 
         # Get the database directory
-        config = project_manager.load_config()
+        project_manager.load_config()
         db_path = root / ".mcp_vector_search" / "db"
 
         if not db_path.exists():

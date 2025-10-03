@@ -4,9 +4,8 @@ This module contains common functionality used across multiple parsers
 to reduce code duplication and improve maintainability.
 """
 
-import re
 from pathlib import Path
-from typing import Pattern
+from re import Pattern
 
 from ..config.constants import DEFAULT_CHUNK_SIZE
 from ..core.models import CodeChunk
@@ -76,9 +75,7 @@ def find_block_end(lines: list[str], start_line: int, indent_char: str = " ") ->
 
 
 def create_simple_chunks(
-    content: str,
-    file_path: Path,
-    chunk_size: int = DEFAULT_CHUNK_SIZE
+    content: str, file_path: Path, chunk_size: int = DEFAULT_CHUNK_SIZE
 ) -> list[CodeChunk]:
     """Create simple line-based chunks from content.
 
@@ -109,7 +106,7 @@ def create_simple_chunks(
                 end_line=end_line,
                 file_path=str(file_path),
                 chunk_type="block",
-                metadata={"source": "simple_chunking"}
+                metadata={"source": "simple_chunking"},
             )
             chunks.append(chunk)
 
@@ -136,7 +133,7 @@ def extract_docstring(lines: list[str], start_line: int) -> str | None:
 
     # Check for Python-style docstring
     triple_double = '"""'
-    triple_single = '\'\'\''
+    triple_single = "'''"
     for quote in [triple_double, triple_single]:
         if quote in lines[start_idx]:
             # Multi-line docstring
@@ -147,7 +144,7 @@ def extract_docstring(lines: list[str], start_line: int) -> str | None:
                 if quote in line:
                     if in_docstring:
                         # End of docstring
-                        docstring_lines.append(line[:line.index(quote) + 3])
+                        docstring_lines.append(line[: line.index(quote) + 3])
                         break
                     else:
                         # Start of docstring
@@ -194,9 +191,7 @@ def extract_docstring(lines: list[str], start_line: int) -> str | None:
 
 
 def extract_imports_with_pattern(
-    content: str,
-    pattern: Pattern[str],
-    chunk_type: str = "import"
+    content: str, pattern: Pattern[str], chunk_type: str = "import"
 ) -> list[str]:
     """Extract import/require/use statements using a regex pattern.
 
@@ -216,10 +211,7 @@ def extract_imports_with_pattern(
 
 
 def find_code_blocks_with_patterns(
-    content: str,
-    lines: list[str],
-    patterns: dict[str, Pattern[str]],
-    file_path: Path
+    content: str, lines: list[str], patterns: dict[str, Pattern[str]], file_path: Path
 ) -> list[CodeChunk]:
     """Find code blocks (functions, classes, etc.) using regex patterns.
 
@@ -265,8 +257,8 @@ def find_code_blocks_with_patterns(
                     metadata={
                         "name": name,
                         "docstring": docstring,
-                        "source": "regex_fallback"
-                    }
+                        "source": "regex_fallback",
+                    },
                 )
                 chunks.append(chunk)
 

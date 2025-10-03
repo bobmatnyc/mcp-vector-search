@@ -67,9 +67,9 @@ class ComponentFactory:
         if use_pooling:
             # Set default pool parameters if not provided
             pool_defaults = {
-                'max_connections': 10,
-                'min_connections': 2,
-                'max_idle_time': 300.0,
+                "max_connections": 10,
+                "min_connections": 2,
+                "max_idle_time": 300.0,
             }
             pool_defaults.update(pool_kwargs)
 

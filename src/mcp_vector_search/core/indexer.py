@@ -3,7 +3,7 @@
 import asyncio
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from loguru import logger
@@ -215,7 +215,7 @@ class SemanticIndexer:
             # New metadata format with version tracking
             data = {
                 "index_version": __version__,
-                "indexed_at": datetime.now(timezone.utc).isoformat(),
+                "indexed_at": datetime.now(UTC).isoformat(),
                 "file_mtimes": metadata,
             }
 

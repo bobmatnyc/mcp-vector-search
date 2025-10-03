@@ -136,7 +136,9 @@ class SemanticSearchEngine:
                 if hasattr(self.database, "health_check"):
                     is_healthy = await self.database.health_check()
                     if not is_healthy:
-                        logger.warning("Database health check failed - attempting recovery")
+                        logger.warning(
+                            "Database health check failed - attempting recovery"
+                        )
                         # Health check already attempts recovery, so we can proceed
                     self._last_health_check = current_time
             except Exception as e:
@@ -493,7 +495,9 @@ class SemanticSearchEngine:
         query_words = set(query_lower.split())
 
         # Pre-compute file extensions for source files
-        source_exts = frozenset([".py", ".js", ".ts", ".java", ".cpp", ".c", ".go", ".rs"])
+        source_exts = frozenset(
+            [".py", ".js", ".ts", ".java", ".cpp", ".c", ".go", ".rs"]
+        )
 
         for result in results:
             # Start with base similarity score
@@ -505,20 +509,32 @@ class SemanticSearchEngine:
                 if query_lower in func_name_lower:
                     score += self._BOOST_EXACT_IDENTIFIER
                 # Partial word matches
-                score += sum(self._BOOST_PARTIAL_IDENTIFIER for word in query_words if word in func_name_lower)
+                score += sum(
+                    self._BOOST_PARTIAL_IDENTIFIER
+                    for word in query_words
+                    if word in func_name_lower
+                )
 
             if result.class_name:
                 class_name_lower = result.class_name.lower()
                 if query_lower in class_name_lower:
                     score += self._BOOST_EXACT_IDENTIFIER
                 # Partial word matches
-                score += sum(self._BOOST_PARTIAL_IDENTIFIER for word in query_words if word in class_name_lower)
+                score += sum(
+                    self._BOOST_PARTIAL_IDENTIFIER
+                    for word in query_words
+                    if word in class_name_lower
+                )
 
             # Factor 2: File name relevance
             file_name_lower = result.file_path.name.lower()
             if query_lower in file_name_lower:
                 score += self._BOOST_FILE_NAME_EXACT
-            score += sum(self._BOOST_FILE_NAME_PARTIAL for word in query_words if word in file_name_lower)
+            score += sum(
+                self._BOOST_FILE_NAME_PARTIAL
+                for word in query_words
+                if word in file_name_lower
+            )
 
             # Factor 3: Content density (how many query words appear)
             content_lower = result.content.lower()
@@ -925,9 +941,7 @@ class SemanticSearchEngine:
             Dictionary with cache statistics including hits, misses, size, and hit rate
         """
         total_requests = self._cache_hits + self._cache_misses
-        hit_rate = (
-            self._cache_hits / total_requests if total_requests > 0 else 0.0
-        )
+        hit_rate = self._cache_hits / total_requests if total_requests > 0 else 0.0
 
         return {
             "hits": self._cache_hits,
