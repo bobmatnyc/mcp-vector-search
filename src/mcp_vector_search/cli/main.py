@@ -74,10 +74,10 @@ unfamiliar codebases, finding similar patterns, and integrating with AI tools.
 )
 
 # Import command functions for direct registration and aliases
-from .commands.index import main as index_main
-from .commands.install import demo as install_demo
-from .commands.install import main as install_main
-from .commands.status import main as status_main
+from .commands.index import main as index_main  # noqa: E402
+from .commands.install import demo as install_demo  # noqa: E402
+from .commands.install import main as install_main  # noqa: E402
+from .commands.status import main as status_main  # noqa: E402
 
 # Note: config doesn't have a main function, it uses subcommands via config_app
 app.command("install", help="🚀 Install mcp-vector-search in projects")(install_main)
@@ -460,7 +460,9 @@ def cli_with_suggestions():
                     project_root = Path.cwd()
                     get_contextual_suggestions(project_root, command_name)
                 except Exception as e:
-                    logger.debug(f"Failed to get contextual suggestions for error handling: {e}")
+                    logger.debug(
+                        f"Failed to get contextual suggestions for error handling: {e}"
+                    )
                     pass
 
                 sys.exit(2)  # Exit with error code

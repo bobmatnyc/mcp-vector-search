@@ -40,22 +40,22 @@ def detect_ai_tools() -> dict[str, Path]:
         Dictionary mapping tool names to their config file paths.
         For Claude Code, returns a placeholder path since it uses project-scoped .mcp.json
     """
-    HOME = Path.home()
+    home = Path.home()
 
-    CONFIG_LOCATIONS = {
-        "claude-desktop": HOME
+    config_locations = {
+        "claude-desktop": home
         / "Library"
         / "Application Support"
         / "Claude"
         / "claude_desktop_config.json",
-        "cursor": HOME / ".cursor" / "mcp.json",
-        "windsurf": HOME / ".codeium" / "windsurf" / "mcp_config.json",
-        "vscode": HOME / ".vscode" / "mcp.json",
+        "cursor": home / ".cursor" / "mcp.json",
+        "windsurf": home / ".codeium" / "windsurf" / "mcp_config.json",
+        "vscode": home / ".vscode" / "mcp.json",
     }
 
     # Return only tools with existing config files
     detected_tools = {}
-    for tool_name, config_path in CONFIG_LOCATIONS.items():
+    for tool_name, config_path in config_locations.items():
         if config_path.exists():
             detected_tools[tool_name] = config_path
 
@@ -587,12 +587,12 @@ def main():
 
 class UserService:
     '''Service for managing users.'''
-    
+
     def create_user(self, name: str, email: str):
         '''Create a new user with the given name and email.'''
         print(f"Creating user: {name} ({email})")
         return {"name": name, "email": email}
-    
+
     def authenticate_user(self, email: str, password: str):
         '''Authenticate user with email and password.'''
         # Simple authentication logic

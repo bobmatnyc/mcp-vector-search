@@ -123,7 +123,7 @@ class GitignoreParser:
             with open(gitignore_path, encoding="utf-8", errors="ignore") as f:
                 lines = f.readlines()
 
-            for line_num, line in enumerate(lines, 1):
+            for _line_num, line in enumerate(lines, 1):
                 line = line.strip()
 
                 # Skip empty lines and comments

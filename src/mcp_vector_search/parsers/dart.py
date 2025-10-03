@@ -510,14 +510,14 @@ class DartParser(BaseParser):
 
         # Calculate line number within class
         lines_before = class_content[: match.start()].count("\n")
-        start_line = class_start_line + lines_before
+        class_start_line + lines_before
 
         # Find end of build method
         class_lines = class_content.splitlines(keepends=True)
         build_start_idx = lines_before
 
         # Simple heuristic: find matching braces
-        end_line = self._find_method_end(class_lines, build_start_idx)
+        self._find_method_end(class_lines, build_start_idx)
 
         return None  # Simplified - build method is already in class chunk
 

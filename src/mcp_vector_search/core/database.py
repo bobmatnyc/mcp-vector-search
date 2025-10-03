@@ -483,7 +483,7 @@ class ChromaVectorDatabase(VectorDatabase):
             return
 
         # Check for HNSW index files that might be corrupted
-        collection_path = self.persist_directory / "chroma-collections.parquet"
+        self.persist_directory / "chroma-collections.parquet"
         index_path = self.persist_directory / "index"
 
         if index_path.exists():

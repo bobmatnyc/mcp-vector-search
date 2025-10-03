@@ -5,7 +5,11 @@ from pathlib import Path
 import typer
 from loguru import logger
 
-from ...config.constants import SUBPROCESS_INSTALL_TIMEOUT, SUBPROCESS_MCP_TIMEOUT, SUBPROCESS_TEST_TIMEOUT
+from ...config.constants import (
+    SUBPROCESS_INSTALL_TIMEOUT,
+    SUBPROCESS_MCP_TIMEOUT,
+    SUBPROCESS_TEST_TIMEOUT,
+)
 from ...config.defaults import DEFAULT_EMBEDDING_MODELS, DEFAULT_FILE_EXTENSIONS
 from ...core.exceptions import ProjectInitializationError
 from ...core.project import ProjectManager
@@ -151,7 +155,10 @@ def main(
                 install_cmd = ["pip", "install", "-e", str(dev_source_path)]
                 try:
                     result = subprocess.run(
-                        install_cmd, capture_output=True, text=True, timeout=SUBPROCESS_INSTALL_TIMEOUT
+                        install_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=SUBPROCESS_INSTALL_TIMEOUT,
                     )
                     if result.returncode == 0:
                         install_success = True
@@ -171,7 +178,10 @@ def main(
                 ]
                 try:
                     result = subprocess.run(
-                        install_cmd, capture_output=True, text=True, timeout=SUBPROCESS_INSTALL_TIMEOUT
+                        install_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=SUBPROCESS_INSTALL_TIMEOUT,
                     )
                     if result.returncode == 0:
                         install_success = True
@@ -184,7 +194,10 @@ def main(
                 install_cmd = ["uv", "add", "--editable", str(dev_source_path)]
                 try:
                     result = subprocess.run(
-                        install_cmd, capture_output=True, text=True, timeout=SUBPROCESS_INSTALL_TIMEOUT
+                        install_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=SUBPROCESS_INSTALL_TIMEOUT,
                     )
                     if result.returncode == 0:
                         install_success = True
@@ -506,7 +519,10 @@ async def run_init_setup(
                 ] + server_command.split()
 
                 result = subprocess.run(
-                    cmd_args, capture_output=True, text=True, timeout=SUBPROCESS_MCP_TIMEOUT
+                    cmd_args,
+                    capture_output=True,
+                    text=True,
+                    timeout=SUBPROCESS_MCP_TIMEOUT,
                 )
 
                 if result.returncode == 0:

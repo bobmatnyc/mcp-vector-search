@@ -301,7 +301,9 @@ def _display_status(
 
     # Show reindex recommendation if needed
     if needs_reindex:
-        console.print("[yellow]💡 Tip: Run 'mcp-vector-search index' to reindex with the latest improvements[/yellow]")
+        console.print(
+            "[yellow]💡 Tip: Run 'mcp-vector-search index' to reindex with the latest improvements[/yellow]"
+        )
         console.print()
 
     # Health check results
