@@ -231,7 +231,9 @@ async def show_status(
         raise
 
 
-def _display_status(status_data: dict[str, Any], verbose: bool, mcp: bool = False) -> None:
+def _display_status(
+    status_data: dict[str, Any], verbose: bool, mcp: bool = False
+) -> None:
     """Display status in human-readable format."""
     project_data = status_data["project"]
     config_data = status_data["configuration"]
@@ -311,7 +313,9 @@ def _display_status(status_data: dict[str, Any], verbose: bool, mcp: bool = Fals
         elif server_status == "not_installed":
             console.print(f"[red]✗[/red] MCP Server '{server_name}': Not installed")
         else:
-            console.print(f"[yellow]⚠[/yellow] MCP Server '{server_name}': {server_status}")
+            console.print(
+                f"[yellow]⚠[/yellow] MCP Server '{server_name}': {server_status}"
+            )
 
         if mcp_data.get("project_config"):
             console.print("[green]✓[/green] Project Configuration: Found")
@@ -394,7 +398,9 @@ async def perform_health_check(project_root: Path, config) -> dict[str, Any]:
     return health_status
 
 
-async def check_mcp_integration(project_root: Path, server_name: str = "mcp-vector-search") -> dict[str, Any]:
+async def check_mcp_integration(
+    project_root: Path, server_name: str = "mcp-vector-search"
+) -> dict[str, Any]:
     """Check MCP integration status."""
     mcp_status = {
         "claude_available": False,
@@ -420,14 +426,16 @@ async def check_mcp_integration(project_root: Path, server_name: str = "mcp-vect
                     [claude_cmd, "mcp", "get", server_name],
                     capture_output=True,
                     text=True,
-                    timeout=10
+                    timeout=10,
                 )
 
                 if result.returncode == 0:
                     mcp_status["server_status"] = "installed"
                 else:
                     mcp_status["server_status"] = "not_installed"
-                    mcp_status["issues"].append(f"MCP server '{server_name}' not found in Claude Code")
+                    mcp_status["issues"].append(
+                        f"MCP server '{server_name}' not found in Claude Code"
+                    )
 
             except subprocess.TimeoutExpired:
                 mcp_status["server_status"] = "timeout"
@@ -442,12 +450,14 @@ async def check_mcp_integration(project_root: Path, server_name: str = "mcp-vect
         claude_json_path = project_root / ".claude.json"
         if claude_json_path.exists():
             try:
-                with open(claude_json_path, 'r') as f:
+                with open(claude_json_path) as f:
                     config = json.load(f)
                 if config.get("mcpServers", {}).get(server_name):
                     mcp_status["project_config"] = True
                 else:
-                    mcp_status["issues"].append(f"MCP server '{server_name}' not found in project .claude.json")
+                    mcp_status["issues"].append(
+                        f"MCP server '{server_name}' not found in project .claude.json"
+                    )
             except Exception as e:
                 mcp_status["issues"].append(f"Error reading project .claude.json: {e}")
         else:

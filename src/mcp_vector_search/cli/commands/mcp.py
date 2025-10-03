@@ -6,11 +6,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
-import click
-from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -26,24 +23,24 @@ mcp_app = create_enhanced_typer(help="Manage Claude Code MCP integration")
 console = Console()
 
 
-def get_claude_command() -> Optional[str]:
+def get_claude_command() -> str | None:
     """Get the Claude Code command path."""
     # Check if claude command is available
     claude_cmd = shutil.which("claude")
     if claude_cmd:
         return "claude"
-    
+
     # Check common installation paths
     possible_paths = [
         "/usr/local/bin/claude",
         "/opt/homebrew/bin/claude",
         os.path.expanduser("~/.local/bin/claude"),
     ]
-    
+
     for path in possible_paths:
         if os.path.exists(path) and os.access(path, os.X_OK):
             return path
-    
+
     return None
 
 
@@ -52,22 +49,21 @@ def check_claude_code_available() -> bool:
     claude_cmd = get_claude_command()
     if not claude_cmd:
         return False
-    
+
     try:
         result = subprocess.run(
-            [claude_cmd, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10
+            [claude_cmd, "--version"], capture_output=True, text=True, timeout=10
         )
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
 
 
-def get_mcp_server_command(project_root: Path, enable_file_watching: bool = True) -> str:
+def get_mcp_server_command(
+    project_root: Path, enable_file_watching: bool = True
+) -> str:
     """Get the command to run the MCP server.
-    
+
     Args:
         project_root: Path to the project root directory
         enable_file_watching: Whether to enable file watching (default: True)
@@ -78,26 +74,22 @@ def get_mcp_server_command(project_root: Path, enable_file_watching: bool = True
     return f"{python_exe} -m mcp_vector_search.mcp.server{watch_flag} {project_root}"
 
 
+def create_project_claude_config(
+    project_root: Path, server_name: str, enable_file_watching: bool = True
+) -> None:
+    """Create or update project-level .mcp.json file.
 
-
-def create_project_claude_config(project_root: Path, server_name: str, enable_file_watching: bool = True) -> None:
-    """Create or update project-level .claude/settings.local.json file.
-    
     Args:
         project_root: Path to the project root directory
         server_name: Name for the MCP server
         enable_file_watching: Whether to enable file watching (default: True)
     """
-    # Create .claude directory if it doesn't exist
-    claude_dir = project_root / ".claude"
-    claude_dir.mkdir(exist_ok=True)
-    
-    # Path to settings.local.json in .claude directory
-    settings_path = claude_dir / "settings.local.json"
+    # Path to .mcp.json in project root (recommended by Claude Code)
+    mcp_config_path = project_root / ".mcp.json"
 
     # Load existing config or create new one
-    if settings_path.exists():
-        with open(settings_path, 'r') as f:
+    if mcp_config_path.exists():
+        with open(mcp_config_path) as f:
             config = json.load(f)
     else:
         config = {}
@@ -106,25 +98,21 @@ def create_project_claude_config(project_root: Path, server_name: str, enable_fi
     if "mcpServers" not in config:
         config["mcpServers"] = {}
 
-    # Get the MCP server command
-    server_command = get_mcp_server_command(project_root, enable_file_watching)
-    command_parts = server_command.split()
-
-    # Add the server configuration with required "type": "stdio"
+    # Use uv for better compatibility, with proper args structure
     config["mcpServers"][server_name] = {
         "type": "stdio",
-        "command": command_parts[0],
-        "args": command_parts[1:],
+        "command": "uv",
+        "args": ["run", "mcp-vector-search", "mcp"],
         "env": {
             "MCP_ENABLE_FILE_WATCHING": "true" if enable_file_watching else "false"
-        }
+        },
     }
 
     # Write the config
-    with open(settings_path, 'w') as f:
+    with open(mcp_config_path, "w") as f:
         json.dump(config, f, indent=2)
 
-    print_success(f"Created project-level .claude/settings.local.json with MCP server configuration")
+    print_success("Created project-level .mcp.json with MCP server configuration")
     if enable_file_watching:
         print_info("File watching is enabled for automatic reindexing")
     else:
@@ -153,11 +141,11 @@ def install_mcp_integration(
         "--no-watch",
         help="Disable file watching for automatic reindexing",
         rich_help_panel="⚙️  Advanced Options",
-    )
+    ),
 ) -> None:
     """🔗 Install MCP integration for Claude Code in the current project.
 
-    Creates .claude/settings.local.json to enable semantic code search in Claude Code.
+    Creates .mcp.json to enable semantic code search in Claude Code.
     The integration provides AI-powered semantic search tools directly in Claude Code.
 
     [bold cyan]Basic Examples:[/bold cyan]
@@ -176,39 +164,37 @@ def install_mcp_integration(
     [green]Disable file watching:[/green]
         $ mcp-vector-search mcp install --no-watch
 
-    [dim]💡 Tip: The .claude/settings.local.json file can be committed to share
+    [dim]💡 Tip: The .mcp.json file can be committed to share
        MCP integration with your team.[/dim]
     """
     try:
         # Get project root for checking initialization
         project_root = ctx.obj.get("project_root") or Path.cwd()
-        
+
         # Check if project is initialized
         project_manager = ProjectManager(project_root)
         if not project_manager.is_initialized():
             print_error("Project not initialized. Run 'mcp-vector-search init' first.")
             raise typer.Exit(1)
 
-        # Always create config in current working directory (project scope only)
-        config_dir = Path.cwd()
-        claude_dir = config_dir / ".claude"
-        
-        # Check if .claude/settings.local.json already has the server in current directory
-        settings_path = claude_dir / "settings.local.json"
-        if settings_path.exists() and not force:
-            with open(settings_path, 'r') as f:
+        # Check if .mcp.json already has the server configuration
+        mcp_config_path = project_root / ".mcp.json"
+        if mcp_config_path.exists() and not force:
+            with open(mcp_config_path) as f:
                 config = json.load(f)
             if config.get("mcpServers", {}).get(server_name):
-                print_warning(f"MCP server '{server_name}' already exists in project config.")
+                print_warning(f"MCP server '{server_name}' already exists in .mcp.json")
                 print_info("Use --force to overwrite")
                 raise typer.Exit(1)
 
-        # Create configuration in current working directory, but server command uses project_root
+        # Create configuration in project root
         enable_file_watching = not no_watch
-        create_project_claude_config(config_dir, server_name, enable_file_watching)
+        create_project_claude_config(project_root, server_name, enable_file_watching)
 
-        print_info(f"MCP server '{server_name}' installed in project configuration at {claude_dir}")
-        print_info("Claude Code will automatically detect the server when you open this project")
+        print_info(f"MCP server '{server_name}' installed in {mcp_config_path}")
+        print_info(
+            "Claude Code will automatically detect the server when you open this project"
+        )
 
         # Test the server (using project_root for the server command)
         print_info("Testing server startup...")
@@ -220,7 +206,7 @@ def install_mcp_integration(
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
         )
 
         # Send a simple initialization request
@@ -231,8 +217,8 @@ def install_mcp_integration(
             "params": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "test", "version": "1.0.0"}
-            }
+                "clientInfo": {"name": "test", "version": "1.0.0"},
+            },
         }
 
         try:
@@ -258,15 +244,25 @@ def install_mcp_integration(
         table.add_column("Description", style="white")
 
         table.add_row("search_code", "Search for code using semantic similarity")
-        table.add_row("search_similar", "Find code similar to a specific file or function")
-        table.add_row("search_context", "Search for code based on contextual description")
-        table.add_row("get_project_status", "Get project indexing status and statistics")
+        table.add_row(
+            "search_similar", "Find code similar to a specific file or function"
+        )
+        table.add_row(
+            "search_context", "Search for code based on contextual description"
+        )
+        table.add_row(
+            "get_project_status", "Get project indexing status and statistics"
+        )
         table.add_row("index_project", "Index or reindex the project codebase")
-        
+
         if enable_file_watching:
-            console.print("\n[green]✅ File watching is enabled[/green] - Changes will be automatically indexed")
+            console.print(
+                "\n[green]✅ File watching is enabled[/green] - Changes will be automatically indexed"
+            )
         else:
-            console.print("\n[yellow]⚠️  File watching is disabled[/yellow] - Manual reindexing required for changes")
+            console.print(
+                "\n[yellow]⚠️  File watching is disabled[/yellow] - Manual reindexing required for changes"
+            )
 
         console.print(table)
 
@@ -289,7 +285,7 @@ def test_mcp_integration(
         "--name",
         help="Name of the MCP server to test",
         rich_help_panel="📁 Configuration",
-    )
+    ),
 ) -> None:
     """🧪 Test the MCP integration.
 
@@ -309,44 +305,46 @@ def test_mcp_integration(
     try:
         # Get project root
         project_root = ctx.obj.get("project_root") or Path.cwd()
-        
+
         # Check if Claude Code is available
         if not check_claude_code_available():
             print_error("Claude Code not found. Please install Claude Code first.")
             raise typer.Exit(1)
-        
+
         claude_cmd = get_claude_command()
-        
+
         # Check if server exists
         print_info(f"Testing MCP server '{server_name}'...")
-        
+
         try:
             result = subprocess.run(
                 [claude_cmd, "mcp", "get", server_name],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
             )
-            
+
             if result.returncode != 0:
                 print_error(f"MCP server '{server_name}' not found.")
-                print_info("Run 'mcp-vector-search mcp install' or 'mcp-vector-search mcp init' first")
+                print_info(
+                    "Run 'mcp-vector-search mcp install' or 'mcp-vector-search mcp init' first"
+                )
                 raise typer.Exit(1)
-            
+
             print_success(f"✅ MCP server '{server_name}' is configured")
-            
+
             # Test if we can run the server directly
             print_info("Testing server startup...")
-            
+
             server_command = get_mcp_server_command(project_root)
             test_process = subprocess.Popen(
                 server_command.split(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
             )
-            
+
             # Send a simple initialization request
             init_request = {
                 "jsonrpc": "2.0",
@@ -355,34 +353,36 @@ def test_mcp_integration(
                 "params": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
-                    "clientInfo": {"name": "test", "version": "1.0.0"}
-                }
+                    "clientInfo": {"name": "test", "version": "1.0.0"},
+                },
             }
-            
+
             try:
                 test_process.stdin.write(json.dumps(init_request) + "\n")
                 test_process.stdin.flush()
-                
+
                 # Wait for response with timeout
                 test_process.wait(timeout=5)
-                
+
                 if test_process.returncode == 0:
                     print_success("✅ MCP server starts successfully")
                 else:
                     stderr_output = test_process.stderr.read()
-                    print_warning(f"⚠️  Server startup test inconclusive: {stderr_output}")
-                
+                    print_warning(
+                        f"⚠️  Server startup test inconclusive: {stderr_output}"
+                    )
+
             except subprocess.TimeoutExpired:
                 test_process.terminate()
                 print_success("✅ MCP server is responsive")
-            
+
             print_success("🎉 MCP integration test completed!")
             print_info("You can now use the vector search tools in Claude Code.")
-            
+
         except subprocess.TimeoutExpired:
             print_error("Timeout testing MCP server")
             raise typer.Exit(1)
-        
+
     except Exception as e:
         print_error(f"Test failed: {e}")
         raise typer.Exit(1)
@@ -392,66 +392,58 @@ def test_mcp_integration(
 def remove_mcp_integration(
     ctx: typer.Context,
     server_name: str = typer.Option(
-        "mcp-vector-search",
-        "--name",
-        help="Name of the MCP server to remove"
+        "mcp-vector-search", "--name", help="Name of the MCP server to remove"
     ),
-    confirm: bool = typer.Option(
-        False,
-        "--yes",
-        "-y",
-        help="Skip confirmation prompt"
-    )
+    confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Remove MCP integration from the current project.
-    
-    Removes the server configuration from .claude/settings.local.json in the current directory.
+
+    Removes the server configuration from .mcp.json in the project root.
     """
     try:
-        # Always use project scope - .claude/settings.local.json in current directory
-        claude_dir = Path.cwd() / ".claude"
-        settings_path = claude_dir / "settings.local.json"
-        config_location = "project configuration"
-        
-        # Check if settings file exists
-        if not settings_path.exists():
-            print_warning(f"No {config_location} found at {settings_path}")
+        # Get project root
+        project_root = ctx.obj.get("project_root") or Path.cwd()
+        mcp_config_path = project_root / ".mcp.json"
+
+        # Check if .mcp.json exists
+        if not mcp_config_path.exists():
+            print_warning(f"No .mcp.json found at {mcp_config_path}")
             return
-        
+
         # Load configuration
-        with open(settings_path, 'r') as f:
+        with open(mcp_config_path) as f:
             config = json.load(f)
-        
+
         # Check if server exists in configuration
         if "mcpServers" not in config or server_name not in config["mcpServers"]:
-            print_warning(f"MCP server '{server_name}' not found in {config_location}.")
+            print_warning(f"MCP server '{server_name}' not found in .mcp.json")
             return
-        
+
         # Confirm removal
         if not confirm:
             confirmed = typer.confirm(
-                f"Remove MCP server '{server_name}' from {config_location}?"
+                f"Remove MCP server '{server_name}' from .mcp.json?"
             )
             if not confirmed:
                 print_info("Removal cancelled.")
                 return
-        
+
         # Remove the MCP server from configuration
-        print_info(f"Removing MCP server '{server_name}' from {config_location}...")
-        
+        print_info(f"Removing MCP server '{server_name}' from .mcp.json...")
+
         del config["mcpServers"][server_name]
-        
+
         # Clean up empty mcpServers section
         if not config["mcpServers"]:
             del config["mcpServers"]
-        
+
         # Write updated configuration
-        with open(settings_path, 'w') as f:
+        with open(mcp_config_path, "w") as f:
             json.dump(config, f, indent=2)
-        
-        print_success(f"✅ MCP server '{server_name}' removed from {config_location}!")
+
+        print_success(f"✅ MCP server '{server_name}' removed from .mcp.json!")
         print_info("The server is no longer available for this project")
-        
+
     except Exception as e:
         print_error(f"Removal failed: {e}")
         raise typer.Exit(1)
@@ -465,7 +457,7 @@ def show_mcp_status(
         "--name",
         help="Name of the MCP server to check",
         rich_help_panel="📁 Configuration",
-    )
+    ),
 ) -> None:
     """📊 Show MCP integration status.
 
@@ -485,58 +477,65 @@ def show_mcp_status(
     try:
         # Check if Claude Code is available
         claude_available = check_claude_code_available()
-        
+
         # Create status panel
         status_lines = []
-        
+
         if claude_available:
             status_lines.append("✅ Claude Code: Available")
         else:
             status_lines.append("❌ Claude Code: Not available")
             status_lines.append("   Install from: https://claude.ai/download")
-        
+
         # Check project configuration
-        claude_dir = Path.cwd() / ".claude"
-        project_settings_path = claude_dir / "settings.local.json"
-        if project_settings_path.exists():
-            with open(project_settings_path, 'r') as f:
+        project_root = ctx.obj.get("project_root") or Path.cwd()
+        mcp_config_path = project_root / ".mcp.json"
+        if mcp_config_path.exists():
+            with open(mcp_config_path) as f:
                 project_config = json.load(f)
-            
-            if "mcpServers" in project_config and server_name in project_config["mcpServers"]:
-                status_lines.append(f"✅ Project Config (.claude/settings.local.json): Server '{server_name}' installed")
+
+            if (
+                "mcpServers" in project_config
+                and server_name in project_config["mcpServers"]
+            ):
+                status_lines.append(
+                    f"✅ Project Config (.mcp.json): Server '{server_name}' installed"
+                )
                 server_info = project_config["mcpServers"][server_name]
                 if "command" in server_info:
                     status_lines.append(f"   Command: {server_info['command']}")
                 if "args" in server_info:
                     status_lines.append(f"   Args: {' '.join(server_info['args'])}")
                 if "env" in server_info:
-                    file_watching = server_info['env'].get('MCP_ENABLE_FILE_WATCHING', 'true')
-                    if file_watching.lower() in ('true', '1', 'yes', 'on'):
+                    file_watching = server_info["env"].get(
+                        "MCP_ENABLE_FILE_WATCHING", "true"
+                    )
+                    if file_watching.lower() in ("true", "1", "yes", "on"):
                         status_lines.append("   File Watching: ✅ Enabled")
                     else:
                         status_lines.append("   File Watching: ❌ Disabled")
             else:
-                status_lines.append(f"❌ Project Config (.claude/settings.local.json): Server '{server_name}' not found")
+                status_lines.append(
+                    f"❌ Project Config (.mcp.json): Server '{server_name}' not found"
+                )
         else:
-            status_lines.append("❌ Project Config (.claude/settings.local.json): Not found")
-        
+            status_lines.append("❌ Project Config (.mcp.json): Not found")
+
         # Check project status
         project_root = ctx.obj.get("project_root") or Path.cwd()
         project_manager = ProjectManager(project_root)
-        
+
         if project_manager.is_initialized():
             status_lines.append(f"✅ Project: Initialized at {project_root}")
         else:
             status_lines.append(f"❌ Project: Not initialized at {project_root}")
-        
+
         # Display status
         panel = Panel(
-            "\n".join(status_lines),
-            title="MCP Integration Status",
-            border_style="blue"
+            "\n".join(status_lines), title="MCP Integration Status", border_style="blue"
         )
         console.print(panel)
-        
+
     except Exception as e:
         print_error(f"Status check failed: {e}")
         raise typer.Exit(1)

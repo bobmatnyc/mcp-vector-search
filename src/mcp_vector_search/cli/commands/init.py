@@ -119,7 +119,7 @@ def main(
         $ mcp-vector-search init --no-auto-index
 
     [dim]💡 Tip: The command creates .mcp-vector-search/ for project config
-       and .claude/settings.local.json for MCP integration.[/dim]
+       and .mcp.json for MCP integration.[/dim]
     """
     try:
         # Get project root from context or auto-detect
@@ -134,12 +134,13 @@ def main(
 
         # Find the development source directory
         import mcp_vector_search
+
         dev_source_path = Path(mcp_vector_search.__file__).parent.parent.parent
 
         try:
+            import shutil
             import subprocess
             import sys
-            import shutil
 
             # Try different installation methods based on available tools
             install_success = False
@@ -148,7 +149,9 @@ def main(
             if shutil.which("pip"):
                 install_cmd = ["pip", "install", "-e", str(dev_source_path)]
                 try:
-                    result = subprocess.run(install_cmd, capture_output=True, text=True, timeout=120)
+                    result = subprocess.run(
+                        install_cmd, capture_output=True, text=True, timeout=120
+                    )
                     if result.returncode == 0:
                         install_success = True
                 except:
@@ -156,9 +159,18 @@ def main(
 
             # Method 2: Try python -m pip
             if not install_success:
-                install_cmd = [sys.executable, "-m", "pip", "install", "-e", str(dev_source_path)]
+                install_cmd = [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "-e",
+                    str(dev_source_path),
+                ]
                 try:
-                    result = subprocess.run(install_cmd, capture_output=True, text=True, timeout=120)
+                    result = subprocess.run(
+                        install_cmd, capture_output=True, text=True, timeout=120
+                    )
                     if result.returncode == 0:
                         install_success = True
                 except:
@@ -168,7 +180,9 @@ def main(
             if not install_success and shutil.which("uv"):
                 install_cmd = ["uv", "add", "--editable", str(dev_source_path)]
                 try:
-                    result = subprocess.run(install_cmd, capture_output=True, text=True, timeout=120)
+                    result = subprocess.run(
+                        install_cmd, capture_output=True, text=True, timeout=120
+                    )
                     if result.returncode == 0:
                         install_success = True
                 except:
@@ -177,7 +191,9 @@ def main(
             if install_success:
                 print_success("✅ mcp-vector-search installed successfully!")
             else:
-                print_warning("⚠️ Could not install automatically - you may need to install manually")
+                print_warning(
+                    "⚠️ Could not install automatically - you may need to install manually"
+                )
                 print_info(f"💡 Try: pip install -e {dev_source_path}")
                 print_info("Continuing with setup...")
 
@@ -192,7 +208,9 @@ def main(
         if project_manager.is_initialized() and not force:
             print_success("Project is already initialized and ready to use!")
             print_info("Your project has vector search capabilities enabled.")
-            print_info("Use --force to re-initialize or run 'mcp-vector-search status' to see current configuration")
+            print_info(
+                "Use --force to re-initialize or run 'mcp-vector-search status' to see current configuration"
+            )
             return  # Exit gracefully without raising an exception
 
         # Parse file extensions
@@ -212,8 +230,12 @@ def main(
         console.print(f"  📄 File Extensions: {', '.join(file_extensions)}")
         console.print(f"  🧠 Embedding Model: {embedding_model}")
         console.print(f"  🎯 Similarity Threshold: {similarity_threshold}")
-        console.print(f"  🔍 Auto-indexing: {'✅ Enabled' if auto_index else '❌ Disabled'}")
-        console.print(f"  ⚡ File watching: {'✅ Enabled' if auto_indexing else '❌ Disabled'}")
+        console.print(
+            f"  🔍 Auto-indexing: {'✅ Enabled' if auto_index else '❌ Disabled'}"
+        )
+        console.print(
+            f"  ⚡ File watching: {'✅ Enabled' if auto_indexing else '❌ Disabled'}"
+        )
         console.print(f"  🔗 Claude Code MCP: {'✅ Enabled' if mcp else '❌ Disabled'}")
 
         # Confirm initialization (only if not using defaults)
@@ -263,7 +285,9 @@ def main(
                     "You can run 'mcp-vector-search index' later to index your codebase"
                 )
         else:
-            print_info("💡 Run 'mcp-vector-search index' to index your codebase when ready")
+            print_info(
+                "💡 Run 'mcp-vector-search index' to index your codebase when ready"
+            )
 
         # Install MCP integration if requested
         if mcp:
@@ -271,53 +295,39 @@ def main(
 
             try:
                 # Import MCP functionality
-                from .mcp import check_claude_code_available, get_claude_command, get_mcp_server_command
-                import subprocess
+                from .mcp import create_project_claude_config
 
-                # Check if Claude Code is available
-                if not check_claude_code_available():
-                    print_warning("Claude Code not found. Skipping MCP integration.")
-                    print_info("Install Claude Code from: https://claude.ai/download")
-                else:
-                    claude_cmd = get_claude_command()
-                    server_command = get_mcp_server_command(project_root)
+                # Create .mcp.json in project root with proper configuration
+                create_project_claude_config(
+                    project_root,
+                    "mcp-vector-search",
+                    enable_file_watching=auto_indexing,
+                )
+                print_success("✅ Claude Code MCP integration installed!")
+                print_info(
+                    "📁 Created .mcp.json for team sharing - commit this file to your repo"
+                )
 
-                    # Install MCP server with project scope for team sharing
-                    cmd_args = [
-                        claude_cmd, "mcp", "add",
-                        "--scope=project",  # Use project scope for team sharing
-                        "mcp-vector-search",
-                        "--",
-                    ] + server_command.split()
+                # Also set up auto-indexing if requested
+                if auto_indexing:
+                    try:
+                        import asyncio
 
-                    result = subprocess.run(
-                        cmd_args,
-                        capture_output=True,
-                        text=True,
-                        timeout=30
-                    )
+                        from .auto_index import _setup_auto_indexing
 
-                    if result.returncode == 0:
-                        print_success("✅ Claude Code MCP integration installed!")
-                        print_info("📁 Created .mcp.json for team sharing - commit this file to your repo")
-
-                        # Also set up auto-indexing if requested
-                        if auto_indexing:
-                            try:
-                                import asyncio
-                                from .auto_index import _setup_auto_indexing
-                                asyncio.run(_setup_auto_indexing(project_root, "search", 60, 5))
-                                print_success("⚡ Auto-indexing configured for file changes")
-                            except Exception as e:
-                                print_warning(f"Auto-indexing setup failed: {e}")
-                                print_info("You can set it up later with: mcp-vector-search auto-index setup")
-                    else:
-                        print_warning(f"MCP integration failed: {result.stderr}")
-                        print_info("You can install it later with: mcp-vector-search mcp install")
+                        asyncio.run(_setup_auto_indexing(project_root, "search", 60, 5))
+                        print_success("⚡ Auto-indexing configured for file changes")
+                    except Exception as e:
+                        print_warning(f"Auto-indexing setup failed: {e}")
+                        print_info(
+                            "You can set it up later with: mcp-vector-search auto-index setup"
+                        )
 
             except Exception as e:
                 print_warning(f"MCP integration failed: {e}")
-                print_info("You can install it later with: mcp-vector-search mcp install")
+                print_info(
+                    "You can install it later with: mcp-vector-search mcp install"
+                )
 
         # Show completion status and next steps
         print_success("🎉 Setup Complete!")
@@ -329,7 +339,7 @@ def main(
                 "Codebase indexed and searchable",
                 "Auto-indexing enabled for file changes",
                 "Claude Code MCP integration installed",
-                "Team configuration saved in .claude/settings.local.json",
+                "Team configuration saved in .mcp.json",
             ]
             print_panel(
                 "\n".join(f"  ✅ {item}" for item in completed_items),
@@ -345,16 +355,22 @@ def main(
             ]
             print_next_steps(next_steps, title="Ready to Use")
 
-            print_tip("Commit .claude/settings.local.json to share MCP integration with your team!")
+            print_tip("Commit .mcp.json to share MCP integration with your team!")
         else:
             # Partial setup - show what's next
             steps = []
             if not auto_index:
-                steps.append("[cyan]mcp-vector-search index[/cyan] - Index your codebase")
-            steps.append("[cyan]mcp-vector-search search 'your query'[/cyan] - Try semantic search")
+                steps.append(
+                    "[cyan]mcp-vector-search index[/cyan] - Index your codebase"
+                )
+            steps.append(
+                "[cyan]mcp-vector-search search 'your query'[/cyan] - Try semantic search"
+            )
             steps.append("[cyan]mcp-vector-search status[/cyan] - Check project status")
             if not mcp:
-                steps.append("[cyan]mcp-vector-search mcp install[/cyan] - Add Claude Code integration")
+                steps.append(
+                    "[cyan]mcp-vector-search mcp install[/cyan] - Add Claude Code integration"
+                )
 
             print_next_steps(steps)
 
@@ -459,8 +475,13 @@ async def run_init_setup(
 
         try:
             # Import MCP functionality
-            from .mcp import check_claude_code_available, get_claude_command, get_mcp_server_command
             import subprocess
+
+            from .mcp import (
+                check_claude_code_available,
+                get_claude_command,
+                get_mcp_server_command,
+            )
 
             # Check if Claude Code is available
             if not check_claude_code_available():
@@ -472,35 +493,43 @@ async def run_init_setup(
 
                 # Install MCP server with project scope for team sharing
                 cmd_args = [
-                    claude_cmd, "mcp", "add",
+                    claude_cmd,
+                    "mcp",
+                    "add",
                     "--scope=project",  # Use project scope for team sharing
                     "mcp-vector-search",
                     "--",
                 ] + server_command.split()
 
                 result = subprocess.run(
-                    cmd_args,
-                    capture_output=True,
-                    text=True,
-                    timeout=30
+                    cmd_args, capture_output=True, text=True, timeout=30
                 )
 
                 if result.returncode == 0:
                     print_success("✅ Claude Code MCP integration installed!")
-                    print_info("📁 Created .mcp.json for team sharing - commit this file to your repo")
+                    print_info(
+                        "📁 Created .mcp.json for team sharing - commit this file to your repo"
+                    )
 
                     # Also set up auto-indexing if requested
                     if auto_indexing:
                         try:
                             from .auto_index import _setup_auto_indexing
+
                             await _setup_auto_indexing(project_root, "search", 60, 5)
-                            print_success("⚡ Auto-indexing configured for file changes")
+                            print_success(
+                                "⚡ Auto-indexing configured for file changes"
+                            )
                         except Exception as e:
                             print_warning(f"Auto-indexing setup failed: {e}")
-                            print_info("You can set it up later with: mcp-vector-search auto-index setup")
+                            print_info(
+                                "You can set it up later with: mcp-vector-search auto-index setup"
+                            )
                 else:
                     print_warning(f"MCP integration failed: {result.stderr}")
-                    print_info("You can install it later with: mcp-vector-search mcp install")
+                    print_info(
+                        "You can install it later with: mcp-vector-search mcp install"
+                    )
 
         except Exception as e:
             print_warning(f"MCP integration failed: {e}")
@@ -511,16 +540,11 @@ async def run_init_setup(
 def init_mcp_integration(
     ctx: typer.Context,
     server_name: str = typer.Option(
-        "mcp-vector-search",
-        "--name",
-        help="Name for the MCP server"
+        "mcp-vector-search", "--name", help="Name for the MCP server"
     ),
     force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Force installation even if server already exists"
-    )
+        False, "--force", "-f", help="Force installation even if server already exists"
+    ),
 ) -> None:
     """Install/fix Claude Code MCP integration for the current project.
 
@@ -533,13 +557,12 @@ def init_mcp_integration(
     """
     try:
         # Import MCP functions
+        import json
+
         from .mcp import (
             check_claude_code_available,
             create_project_claude_config,
-            get_mcp_server_command,
         )
-        import subprocess
-        import json
 
         # Get project root
         project_root = ctx.obj.get("project_root") or Path.cwd()
@@ -552,13 +575,13 @@ def init_mcp_integration(
 
         print_info(f"Setting up MCP integration for project: {project_root}")
 
-        # Check if project-level .claude.json already has the server
-        claude_json_path = project_root / ".claude.json"
-        if claude_json_path.exists() and not force:
-            with open(claude_json_path, 'r') as f:
+        # Check if project-level .mcp.json already has the server
+        mcp_config_path = project_root / ".mcp.json"
+        if mcp_config_path.exists() and not force:
+            with open(mcp_config_path) as f:
                 config = json.load(f)
             if config.get("mcpServers", {}).get(server_name):
-                print_warning(f"MCP server '{server_name}' already exists in project config.")
+                print_warning(f"MCP server '{server_name}' already exists in .mcp.json")
                 print_info("Use --force to overwrite or try a different --name")
 
                 # Still test the existing configuration
@@ -569,8 +592,12 @@ def init_mcp_integration(
         # Create project-level configuration
         create_project_claude_config(project_root, server_name)
 
-        print_success(f"✅ MCP server '{server_name}' installed in project configuration")
-        print_info("📁 Created .claude.json for team sharing - commit this file to your repo")
+        print_success(
+            f"✅ MCP server '{server_name}' installed in project configuration"
+        )
+        print_info(
+            "📁 Created .mcp.json for team sharing - commit this file to your repo"
+        )
 
         # Test the server
         print_info("Testing server startup...")
@@ -580,16 +607,24 @@ def init_mcp_integration(
         if not check_claude_code_available():
             print_warning("⚠️  Claude Code not detected on this system")
             print_info("📥 Install Claude Code from: https://claude.ai/download")
-            print_info("🔄 After installation, restart Claude Code to detect the MCP server")
+            print_info(
+                "🔄 After installation, restart Claude Code to detect the MCP server"
+            )
         else:
-            print_success("✅ Claude Code detected - server should be available automatically")
-            print_info("🔄 If Claude Code is running, restart it to detect the new server")
+            print_success(
+                "✅ Claude Code detected - server should be available automatically"
+            )
+            print_info(
+                "🔄 If Claude Code is running, restart it to detect the new server"
+            )
 
         print_info("\n📋 Next steps:")
         print_info("  1. Restart Claude Code if it's currently running")
         print_info("  2. Open this project in Claude Code")
         print_info("  3. The MCP server should appear automatically in the tools list")
-        print_info("  4. Test with: 'Search for functions that handle user authentication'")
+        print_info(
+            "  4. Test with: 'Search for functions that handle user authentication'"
+        )
 
     except Exception as e:
         logger.error(f"MCP integration setup failed: {e}")
@@ -600,9 +635,10 @@ def init_mcp_integration(
 def _test_mcp_server(project_root: Path) -> None:
     """Test MCP server startup and basic functionality."""
     try:
-        from .mcp import get_mcp_server_command
-        import subprocess
         import json
+        import subprocess
+
+        from .mcp import get_mcp_server_command
 
         server_command = get_mcp_server_command(project_root)
         test_process = subprocess.Popen(
@@ -610,7 +646,7 @@ def _test_mcp_server(project_root: Path) -> None:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
         )
 
         # Send a simple initialization request
@@ -621,20 +657,21 @@ def _test_mcp_server(project_root: Path) -> None:
             "params": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "test", "version": "1.0.0"}
-            }
+                "clientInfo": {"name": "test", "version": "1.0.0"},
+            },
         }
 
         try:
             stdout, stderr = test_process.communicate(
-                input=json.dumps(init_request) + "\n",
-                timeout=10
+                input=json.dumps(init_request) + "\n", timeout=10
             )
 
             if test_process.returncode == 0:
                 print_success("✅ Server startup test passed")
             else:
-                print_warning(f"⚠️  Server test failed with return code {test_process.returncode}")
+                print_warning(
+                    f"⚠️  Server test failed with return code {test_process.returncode}"
+                )
                 if stderr:
                     print_info(f"Error output: {stderr}")
 

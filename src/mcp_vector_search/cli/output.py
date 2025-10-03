@@ -409,6 +409,4 @@ def print_config_hint(config_type: str, config_path: str) -> None:
         config_type: Type of configuration (e.g., "Claude Code", "Project")
         config_path: Path to the configuration file
     """
-    console.print(
-        f"[dim]💡 {config_type} config: {config_path}[/dim]"
-    )
+    console.print(f"[dim]💡 {config_type} config: {config_path}[/dim]")
