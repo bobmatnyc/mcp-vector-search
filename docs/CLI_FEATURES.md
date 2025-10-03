@@ -2,17 +2,18 @@
 
 ## Supported Languages
 
-MCP Vector Search now supports **7 programming languages** with full semantic search capabilities:
+MCP Vector Search now supports **8 programming languages** with full semantic search capabilities:
 
 | Language   | Extensions | Features |
 |------------|------------|----------|
-| Python     | `.py` | Functions, classes, methods, docstrings |
+| Python     | `.py`, `.pyw` | Functions, classes, methods, docstrings |
 | JavaScript | `.js`, `.jsx`, `.mjs` | Functions, classes, JSDoc, ES6+ syntax |
 | TypeScript | `.ts`, `.tsx` | Interfaces, types, generics, decorators |
 | Dart       | `.dart` | Functions, classes, widgets, async, dartdoc |
 | PHP        | `.php`, `.phtml` | Classes, methods, traits, PHPDoc, Laravel patterns |
 | Ruby       | `.rb`, `.rake`, `.gemspec` | Modules, classes, methods, RDoc, Rails patterns |
-| Markdown   | `.md`, `.txt` | Semantic chunking for documentation |
+| HTML       | `.html`, `.htm` | Semantic content extraction, heading hierarchy, text chunking |
+| Text/Markdown | `.txt`, `.md`, `.markdown` | Semantic chunking for documentation |
 
 ### Framework Support
 
@@ -23,6 +24,11 @@ MCP Vector Search now supports **7 programming languages** with full semantic se
 ### Search Examples by Language
 
 ```bash
+# HTML - Static Site Content
+mcp-vector-search search "contact form section"
+mcp-vector-search search "navigation menu structure"
+mcp-vector-search search "pricing table layout"
+
 # PHP - Laravel Controller
 mcp-vector-search search "user authentication controller"
 

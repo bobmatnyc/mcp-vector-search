@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **HTML Language Support**: Full HTML parser implementation
+  - Semantic content extraction from HTML tags
+  - Intelligent chunking based on heading hierarchy
+  - Ignores script and style tag content
+  - Extracts text from h1-h6, p, section, article, main, aside, nav, header, footer
+  - Preserves class and id attributes for context
+  - Supported extensions: `.html`, `.htm`
+
+### Enhanced
+- **Text Parser**: Now supports markdown files (`.md`, `.markdown`) in addition to `.txt`
+- **Language Count**: Now supports **8 languages** (up from 7):
+  - Python, JavaScript, TypeScript (existing)
+  - Dart, PHP, Ruby (v0.5.0)
+  - **HTML** (new)
+  - Text/Markdown (enhanced)
+
 ## [0.5.0] - 2025-10-02
 
 ### Added
@@ -33,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Configuration Format**: Added required `"type": "stdio"` field for Claude Code compatibility
 
 ### Enhanced
-- **Language Support**: Now supports **7 languages** total
+- **Language Support**: Now supports **7 languages** total (8 as of next release)
   - Python, JavaScript, TypeScript (existing)
   - Dart/Flutter (v0.4.15)
   - **PHP** (new)

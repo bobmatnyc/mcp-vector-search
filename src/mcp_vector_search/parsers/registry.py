@@ -6,6 +6,7 @@ from loguru import logger
 
 from .base import BaseParser, FallbackParser
 from .dart import DartParser
+from .html import HTMLParser
 from .javascript import JavaScriptParser, TypeScriptParser
 from .php import PHPParser
 from .python import PythonParser
@@ -58,6 +59,10 @@ class ParserRegistry:
         # Register Text parser for .txt files
         text_parser = TextParser()
         self.register_parser("text", text_parser)
+
+        # Register HTML parser for .html files
+        html_parser = HTMLParser()
+        self.register_parser("html", html_parser)
 
     def register_parser(self, language: str, parser: BaseParser) -> None:
         """Register a parser for a specific language.
