@@ -64,11 +64,11 @@ This file provides comprehensive guidance for Claude Code (claude.ai/code) and C
 
 ### 🟡 Quick Start for Users (RECOMMENDED WORKFLOW)
 
-**New users should use the enhanced install command:**
+**New users should use the init command:**
 
 ```bash
 # Interactive setup (recommended)
-mcp-vector-search install
+mcp-vector-search init
 
 # This single command will:
 # 1. Initialize project configuration
@@ -77,24 +77,23 @@ mcp-vector-search install
 # 4. Provide next-step hints
 ```
 
-**Advanced install options:**
+**Advanced init options:**
 
 ```bash
 # Skip MCP configuration
-mcp-vector-search install --no-mcp
+mcp-vector-search init --no-mcp
 
 # Skip automatic indexing
-mcp-vector-search install --no-index
-
-# Specify MCP tool directly
-mcp-vector-search install --mcp-tool "Claude Code"
+mcp-vector-search init --no-auto-index
 
 # Custom file extensions
-mcp-vector-search install --extensions .py,.js,.ts,.dart
+mcp-vector-search init --extensions .py,.js,.ts,.dart
 
 # Combine options
-mcp-vector-search install --no-index --mcp-tool "Cursor"
+mcp-vector-search init --no-auto-index --no-mcp
 ```
+
+**Deprecated commands:** The `install` command has been replaced by `init`. Use `mcp-vector-search init` instead.
 
 ### 🔴 Core Architecture (MUST UNDERSTAND)
 - **Vector Database**: ChromaDB with connection pooling (13.6% performance boost)
@@ -120,75 +119,72 @@ make publish       # Publish to PyPI
 make quality       # Run all quality checks (lint, type, test, security)
 ```
 
-## 🔴 Essential Development Commands (CRITICAL - LEARN THESE FIRST)
+## 🔴 Essential Commands (CRITICAL - LEARN THESE FIRST)
 
-### 🔴 Development Setup (REQUIRED)
+### 🔴 Main Commands (ALL USERS MUST KNOW)
 ```bash
-# ONE-COMMAND SETUP (Use this FIRST)
-make dev-setup     # Sets up entire development environment
-
-# Alternative manual setup
-uv sync            # Install dependencies
-uv pip install -e . # Editable install
-
-# Verify installation
-make verify-setup  # Check all tools and dependencies
+# Core Workflow
+mcp-vector-search init          # Initialize project
+mcp-vector-search doctor        # Check system health
+mcp-vector-search status        # Show project status
+mcp-vector-search search "query" # Search code
+mcp-vector-search index         # Index codebase
+mcp-vector-search mcp           # MCP integration
+mcp-vector-search config        # Configuration
+mcp-vector-search help          # Get help
+mcp-vector-search version       # Show version
 ```
 
-### 🔴 Testing (CRITICAL)
+### 🔴 Search Commands (PRIMARY USER INTERFACE)
 ```bash
-# PRIMARY TESTING COMMANDS (use these)
-make test          # Run ALL tests with coverage (MAIN COMMAND)
-make test-quick    # Fast tests without coverage
-make test-unit     # Unit tests only
-make test-integration # Integration tests only
+# Basic Search
+mcp-vector-search search "authentication"           # Semantic search
+mcp-vector-search search "auth" --language python   # Filter by language
+mcp-vector-search search "error" --files "src/*.py" # Filter by files
 
-# Specific testing (when needed)
-make test-file FILE=test_indexer.py    # Single test file
-make test-pattern PATTERN="search"      # Pattern matching
-make test-debug    # Tests with debugging output
+# Advanced Search
+mcp-vector-search search "file.py" --similar        # Find similar code
+mcp-vector-search search "impl rate limit" --context # Context search
+
+# Search Subcommands
+mcp-vector-search search interactive   # Interactive mode
+mcp-vector-search search history       # View search history
+mcp-vector-search search favorites list # Manage favorites
 ```
 
-### 🔴 Code Quality (REQUIRED BEFORE COMMITS)
+### 🔴 Index Commands (CODE INDEXING)
 ```bash
-# PRIMARY QUALITY COMMANDS (use these)
-make quality       # Run ALL quality checks (lint, type, security)
-make lint-fix      # Format and auto-fix all issues (MAIN COMMAND)
-make typecheck     # Type checking with mypy
-make security      # Security and safety checks
+# Indexing
+mcp-vector-search index              # Index all files
+mcp-vector-search index --incremental # Smart incremental index
 
-# Individual tools (for specific issues)
-make format        # Code formatting only
-make lint          # Linting without fixes
+# Index Subcommands
+mcp-vector-search index watch        # Watch for changes
+mcp-vector-search index auto setup   # Setup auto-indexing
+mcp-vector-search index health       # Check index health
 ```
 
-### 🔴 Building & Releasing (CRITICAL WORKFLOWS)
+### 🔴 Configuration Commands
 ```bash
-# PRIMARY RELEASE COMMANDS (single-path workflows)
-make release-patch # Complete patch release (0.4.0 → 0.4.1)
-make release-minor # Complete minor release (0.4.0 → 0.5.0) 
-make release-major # Complete major release (0.4.0 → 1.0.0)
-make publish       # Publish to PyPI (after release)
-
-# Version management
-make version-show  # Display current version
-make version-check # Validate version consistency
-
-# Build operations
-make build         # Build package for distribution
-make clean         # Clean all build artifacts
+# Config Management
+mcp-vector-search config show        # Show current config
+mcp-vector-search config set key val # Set config value
+mcp-vector-search config models      # List embedding models
+mcp-vector-search config reset       # Reset to defaults
 ```
 
-### 🟡 Local Testing (HIGH PRIORITY)
+### 🟡 Development Commands (FOR CONTRIBUTORS)
 ```bash
-# PRIMARY TESTING WORKFLOWS
-make test-deployment    # Test local deployment
-make test-integration   # Test on sample projects
-make test-mcp          # Test MCP server integration
+# Development Setup
+make dev-setup     # One-command environment setup
+make test          # Run all tests with coverage
+make lint-fix      # Format and fix all issues
+make quality       # All quality checks
 
-# Manual testing (when needed)
-./scripts/deploy-test.sh
-cd ~/other-project && mcp-vector-search init && mcp-vector-search index
+# Release Workflow
+make release-patch # Patch release (0.4.0 → 0.4.1)
+make release-minor # Minor release (0.4.0 → 0.5.0)
+make publish       # Publish to PyPI
 ```
 
 ## 🟡 High-Level Architecture (HIGH PRIORITY - UNDERSTAND FOR DEVELOPMENT)
@@ -512,8 +508,34 @@ mcp-vector-search auto-index check --dry-run --verbose
 - Use semantic search commands in Claude Desktop after setup
 - Maintain real-time indexing for best Claude experience
 
+## ⚪ Deprecated Commands (OPTIONAL AWARENESS)
+
+**The following commands are deprecated and will show migration warnings:**
+
+| Old Command | New Command | Reason |
+|-------------|-------------|---------|
+| `install` | `init` | Renamed for clarity |
+| `demo` | `init --help` | Removed |
+| `find` | `search` | Simplified |
+| `search-similar` | `search --similar` | Moved to option |
+| `search-context` | `search --context` | Moved to option |
+| `interactive` | `search interactive` | Moved to subcommand |
+| `history` | `search history` | Moved to subcommand |
+| `favorites` | `search favorites` | Moved to subcommand |
+| `add-favorite` | `search favorites add` | Nested subcommand |
+| `remove-favorite` | `search favorites remove` | Nested subcommand |
+| `health` | `index health` | Moved to subcommand |
+| `watch` | `index watch` | Moved to subcommand |
+| `auto-index` | `index auto` | Moved to subcommand |
+| `reset` | `mcp reset` or `config reset` | Split by function |
+| `init-check` | `init check` | Nested subcommand |
+| `init-mcp` | `mcp install` | Reorganized |
+| `init-models` | `config models` | Reorganized |
+
+**All deprecated commands display helpful migration messages when used.**
+
 ---
 
-**🏆 This CLAUDE.md is optimized for Claude Code and Claude MPM integration.**  
-**📚 Use the priority system (🔴🟡🟢⚪) to focus on what matters most.**  
+**🏆 This CLAUDE.md is optimized for Claude Code and Claude MPM integration.**
+**📚 Use the priority system (🔴🟡🟢⚪) to focus on what matters most.**
 **🔍 Quick reference: `make help` shows all available commands.**

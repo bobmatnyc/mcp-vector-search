@@ -347,5 +347,35 @@ def _show_available_keys() -> None:
     )
 
 
+# ============================================================================
+# CONFIG SUBCOMMANDS
+# ============================================================================
+
+
+@config_app.command("models")
+def list_embedding_models() -> None:
+    """📚 List available embedding models.
+
+    Shows all available embedding models that can be used for semantic search.
+    You can also use any model from Hugging Face that's compatible with sentence-transformers.
+
+    Examples:
+        mcp-vector-search config models
+    """
+    from ...config.defaults import DEFAULT_EMBEDDING_MODELS
+
+    console.print("[bold blue]Available Embedding Models:[/bold blue]\n")
+
+    for category, model in DEFAULT_EMBEDDING_MODELS.items():
+        console.print(f"[cyan]{category.title()}:[/cyan] {model}")
+
+    console.print(
+        "\n[dim]You can also use any model from Hugging Face that's compatible with sentence-transformers[/dim]"
+    )
+    console.print(
+        "[dim]Set model: [cyan]mcp-vector-search config set embedding_model MODEL_NAME[/cyan][/dim]"
+    )
+
+
 if __name__ == "__main__":
     config_app()

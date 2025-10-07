@@ -20,13 +20,24 @@ from ..output import (
     print_tip,
 )
 
-# Create search subcommand app with "did you mean" functionality (kept for backward compatibility)
-search_app = create_enhanced_typer(help="Search code semantically")
+# Create search subcommand app with "did you mean" functionality
+search_app = create_enhanced_typer(
+    help="🔍 Search code semantically",
+    invoke_without_command=True,
+)
 
 
+# Define search_main as the callback for the search command
+# This makes `mcp-vector-search search "query"` work as main search
+# and `mcp-vector-search search SUBCOMMAND` work for subcommands
+
+
+@search_app.callback(invoke_without_command=True)
 def search_main(
     ctx: typer.Context,
-    query: str = typer.Argument(..., help="Search query or file path (for --similar)"),
+    query: str | None = typer.Argument(
+        None, help="Search query or file path (for --similar)"
+    ),
     project_root: Path | None = typer.Option(
         None,
         "--project-root",
@@ -161,6 +172,15 @@ def search_main(
 
     [dim]💡 Tip: Use quotes for multi-word queries. Adjust --threshold for more/fewer results.[/dim]
     """
+    # If no query provided and no subcommand invoked, exit (show help)
+    if query is None:
+        if ctx.invoked_subcommand is None:
+            # No query and no subcommand - show help
+            raise typer.Exit()
+        else:
+            # A subcommand was invoked - let it handle the request
+            return
+
     try:
         project_root = project_root or ctx.obj.get("project_root") or Path.cwd()
 
@@ -640,10 +660,113 @@ async def run_context_search(
             )
 
 
-# Add commands to search_app for backward compatibility
+# ============================================================================
+# SEARCH SUBCOMMANDS
+# ============================================================================
+
+
+@search_app.command("interactive")
+def interactive_search(
+    ctx: typer.Context,
+    project_root: Path | None = typer.Option(
+        None, "--project-root", "-p", help="Project root directory"
+    ),
+) -> None:
+    """🎯 Start an interactive search session.
+
+    Provides a rich terminal interface for searching your codebase with real-time
+    filtering, query refinement, and result navigation.
+
+    Examples:
+        mcp-vector-search search interactive
+        mcp-vector-search search interactive --project-root /path/to/project
+    """
+    import asyncio
+
+    from ..interactive import start_interactive_search
+    from ..output import console
+
+    root = project_root or ctx.obj.get("project_root") or Path.cwd()
+
+    try:
+        asyncio.run(start_interactive_search(root))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interactive search cancelled[/yellow]")
+    except Exception as e:
+        print_error(f"Interactive search failed: {e}")
+        raise typer.Exit(1)
+
+
+@search_app.command("history")
+def show_history(
+    ctx: typer.Context,
+    limit: int = typer.Option(20, "--limit", "-l", help="Number of entries to show"),
+    project_root: Path | None = typer.Option(
+        None, "--project-root", "-p", help="Project root directory"
+    ),
+) -> None:
+    """📜 Show search history.
+
+    Displays your recent search queries with timestamps and result counts.
+    Use this to revisit previous searches or track your search patterns.
+
+    Examples:
+        mcp-vector-search search history
+        mcp-vector-search search history --limit 50
+    """
+    from ..history import show_search_history
+
+    root = project_root or ctx.obj.get("project_root") or Path.cwd()
+    show_search_history(root, limit)
+
+
+@search_app.command("favorites")
+def show_favorites_cmd(
+    ctx: typer.Context,
+    action: str | None = typer.Argument(None, help="Action: list, add, remove"),
+    query: str | None = typer.Argument(None, help="Query to add/remove"),
+    description: str | None = typer.Option(
+        None, "--desc", help="Description for favorite"
+    ),
+    project_root: Path | None = typer.Option(
+        None, "--project-root", "-p", help="Project root directory"
+    ),
+) -> None:
+    """⭐ Manage favorite queries.
+
+    List, add, or remove favorite search queries for quick access.
+
+    Examples:
+        mcp-vector-search search favorites                # List all favorites
+        mcp-vector-search search favorites list           # List all favorites
+        mcp-vector-search search favorites add "auth"     # Add favorite
+        mcp-vector-search search favorites remove "auth"  # Remove favorite
+    """
+    from ..history import SearchHistory, show_favorites
+
+    root = project_root or ctx.obj.get("project_root") or Path.cwd()
+    history_manager = SearchHistory(root)
+
+    # Default to list if no action provided
+    if not action or action == "list":
+        show_favorites(root)
+    elif action == "add":
+        if not query:
+            print_error("Query is required for 'add' action")
+            raise typer.Exit(1)
+        history_manager.add_favorite(query, description)
+    elif action == "remove":
+        if not query:
+            print_error("Query is required for 'remove' action")
+            raise typer.Exit(1)
+        history_manager.remove_favorite(query)
+    else:
+        print_error(f"Unknown action: {action}. Use: list, add, or remove")
+        raise typer.Exit(1)
+
+
+# Add main command to search_app (allows: mcp-vector-search search main "query")
 search_app.command("main")(search_main)
-search_app.command("similar")(search_similar_cmd)
-search_app.command("context")(search_context_cmd)
 
 
 if __name__ == "__main__":

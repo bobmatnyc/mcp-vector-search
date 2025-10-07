@@ -495,5 +495,87 @@ async def _clean_index(project_root: Path) -> None:
         print_success("Index cleaned successfully")
 
 
+# ============================================================================
+# INDEX SUBCOMMANDS
+# ============================================================================
+
+
+@index_app.command("watch")
+def watch_cmd(
+    project_root: Path = typer.Argument(
+        Path.cwd(),
+        help="Project root directory to watch",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+) -> None:
+    """👀 Watch for file changes and auto-update index.
+
+    Monitors your project directory for file changes and automatically updates
+    the search index when files are modified, added, or deleted.
+
+    Examples:
+        mcp-vector-search index watch
+        mcp-vector-search index watch /path/to/project
+    """
+    from .watch import app as watch_app
+
+    # Import and run watch command
+    watch_app()
+
+
+@index_app.command("auto")
+def auto_cmd() -> None:
+    """🔄 Manage automatic indexing.
+
+    Configure automatic indexing strategies like git hooks and scheduled tasks.
+    This command provides subcommands for setup, status, and checking.
+
+    Examples:
+        mcp-vector-search index auto setup
+        mcp-vector-search index auto status
+        mcp-vector-search index auto check
+    """
+    from .auto_index import auto_index_app
+
+    # This will show help for the auto subcommands
+    auto_index_app()
+
+
+@index_app.command("health")
+def health_cmd(
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+    repair: bool = typer.Option(
+        False,
+        "--repair",
+        help="Attempt to repair index issues",
+    ),
+) -> None:
+    """🩺 Check index health and optionally repair.
+
+    Validates the search index integrity and provides diagnostic information.
+    Can attempt to repair common issues automatically.
+
+    Examples:
+        mcp-vector-search index health
+        mcp-vector-search index health --repair
+    """
+    from .reset import health_main
+
+    # Call the health function from reset.py
+    health_main(project_root=project_root, repair=repair)
+
+
 if __name__ == "__main__":
     index_app()
