@@ -22,11 +22,14 @@ from ..output import (
     print_tip,
 )
 
-# Create index subcommand app
-index_app = typer.Typer(help="Index codebase for semantic search")
+# Create index subcommand app with callback for direct usage
+index_app = typer.Typer(
+    help="Index codebase for semantic search",
+    invoke_without_command=True,
+)
 
 
-@index_app.command()
+@index_app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
     watch: bool = typer.Option(
@@ -95,8 +98,12 @@ def main(
 
     [dim]💡 Tip: Use incremental indexing (default) for faster updates on subsequent runs.[/dim]
     """
+    # If a subcommand was invoked, don't run the indexing logic
+    if ctx.invoked_subcommand is not None:
+        return
+
     try:
-        project_root = ctx.obj.get("project_root") or Path.cwd()
+        project_root = (ctx.obj.get("project_root") if ctx.obj else None) or Path.cwd()
 
         # Run async indexing
         asyncio.run(
