@@ -232,51 +232,36 @@ tramp
 *.rar
 *.7z
 
-# Claude configuration
-# The .claude/settings.local.json file contains project-specific MCP configuration
-# and should be committed to the repository for team collaboration
-.claude/cache/
-.claude/tmp/
-# Note: .claude/settings.local.json is NOT ignored - it should be committed
+# Claude configuration directories (completely ignored)
+.claude/
+.claude-mpm/
 
-# Added by Claude MPM /mpm-init
+# Additional development directories
+.aitrackdown/
+.benchmarks/
+.venv-mcp/
+.kuzu-memory/
+.conda/
+.npm/
+.yarn/
+.secrets/
+.settings/
+
+# Additional file patterns
 *.cab
-*.cache
 *.cert
 *.crt
 *.key
+*.pem
 *.lnk
 *.mpm.tmp
 *.msi
 *.msm
 *.msp
-*.old
-*.pem
-*.pytest_cache
-*.sql
-.claude-mpm/*.log
-.claude-mpm/cache/
-.claude-mpm/logs/
-.claude-mpm/sessions/
-.claude-mpm/tmp/
-.claude/sessions/
-.conda/
 .env.*
-.kuzu-memory/
-.npm
-.project
-.pydevproject
-.secrets/
-.settings/
-.yarn/
-_build/
+credentials/
+kuzu-memories/
 backup/
 backups/
 conda-env/
-credentials/
-kuzu-memories/
-pip-wheel-metadata/
-site/
-temp/
-tmp/
 virtualenv/

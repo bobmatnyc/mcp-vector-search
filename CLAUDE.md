@@ -539,3 +539,96 @@ mcp-vector-search auto-index check --dry-run --verbose
 **🏆 This CLAUDE.md is optimized for Claude Code and Claude MPM integration.**
 **📚 Use the priority system (🔴🟡🟢⚪) to focus on what matters most.**
 **🔍 Quick reference: `make help` shows all available commands.**
+
+---
+
+## 📊 Recent Activity (Last 30 Days)
+
+**Last Updated**: 2025-10-08
+
+### 🔴 Recent Releases
+
+**v0.7.0 (Oct 7, 2025)** - CLI Command Hierarchy Refactor
+- Major CLI restructuring for improved user experience
+- Command reorganization with better discoverability
+- Enhanced command grouping and navigation
+
+**v0.6.0/v0.6.1 (Oct 3-7, 2025)** - Search & Auto-Indexing Improvements
+- Automatic version-based reindexing system
+- Search performance optimizations
+- Code formatting improvements
+
+**v0.5.1 (Oct 3, 2025)** - HTML Language Support
+- New HTML parser with semantic content extraction
+- Heading-based chunking (h1-h6 hierarchy)
+- Integration with existing 7-language parser system
+
+**v0.5.0 (Oct 2, 2025)** - PHP & Ruby Language Support
+- Full AST-aware PHP parsing (Laravel patterns, magic methods)
+- Full AST-aware Ruby parsing (Rails patterns, modules)
+- Extended parser registry to 8 languages total
+
+### 🟡 Development Focus Areas (Last 30 Days)
+
+**Top Modified Files** (15+ changes):
+1. **CLI Layer** - Major refactoring and UX improvements
+   - `src/mcp_vector_search/cli/main.py` (540 lines changed)
+   - Command hierarchy restructuring
+   - Better error handling and suggestions
+
+2. **Core Search Engine** - Performance & ranking improvements
+   - `src/mcp_vector_search/core/search.py` (283 lines changed)
+   - Enhanced search algorithms
+   - Version-based reindexing integration
+
+3. **Indexer System** - Auto-reindexing capabilities
+   - `src/mcp_vector_search/core/indexer.py` (85 lines changed)
+   - Version tracking and smart updates
+   - Incremental indexing optimizations
+
+4. **Parser System** - New language support
+   - New: `src/mcp_vector_search/parsers/html.py` (413 lines)
+   - Updated: `registry.py`, `dart.py`, `text.py`
+   - Parser utilities for HTML semantic extraction
+
+5. **Configuration** - Enhanced project settings
+   - `src/mcp_vector_search/config/constants.py` (new constants)
+   - Version management integration
+   - Default configuration updates
+
+### 🟢 Key Architectural Changes
+
+**CLI Command Structure** (v0.7.0)
+- Moved from flat command structure to hierarchical organization
+- Improved command discoverability with subcommands
+- Better alignment with industry-standard CLI patterns (git, npm)
+
+**Auto-Indexing System** (v0.6.0)
+- Version-based reindexing triggers
+- Automatic detection of index staleness
+- Search-time index freshness checks
+
+**Parser Extensibility** (v0.5.0-0.5.1)
+- Added 3 new languages in 2 releases (PHP, Ruby, HTML)
+- Parser utilities for semantic content extraction
+- Registry pattern proving highly extensible
+
+### 📈 Activity Statistics
+
+- **Total Commits**: 15 commits in last 30 days
+- **Primary Contributor**: Robert (Masa) Matsuoka (100%)
+- **Version Progression**: v0.4.14 → v0.7.0 (3 minor releases)
+- **Files Changed**: ~38 files modified
+- **Lines Changed**: ~2,811 insertions, ~590 deletions
+- **Release Frequency**: ~1 release every 2-3 days
+
+### 🎯 Current Version Status
+
+- **Latest Release**: v0.7.0 (Oct 7, 2025)
+- **Active Branch**: main
+- **Development Status**: Active development with frequent releases
+- **Focus**: CLI UX, parser expansion, search optimization
+
+---
+
+**Last Activity Update**: 2025-10-08 via Claude MPM `/mpm-init update`
