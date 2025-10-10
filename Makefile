@@ -28,6 +28,10 @@ DOCS_DIR := docs
 # Version management script
 VERSION_MANAGER := $(PYTHON) $(SCRIPTS_DIR)/version_manager.py
 
+# Changeset and documentation scripts
+CHANGESET_MANAGER := $(PYTHON) $(SCRIPTS_DIR)/changeset.py
+DOCS_UPDATER := $(PYTHON) $(SCRIPTS_DIR)/update_docs.py
+
 # Check if we're in dry-run mode
 ifdef DRY_RUN
 	DRY_FLAG := --dry-run
@@ -53,6 +57,14 @@ help: ## Show this help message
 	@echo ""
 	@echo "$(GREEN)Version Management:$(RESET)"
 	@grep -E '^version-.*:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
+	@echo ""
+	@echo "$(GREEN)Changeset Management:$(RESET)"
+	@grep -E '^changeset-.*:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
+	@echo ""
+	@echo "$(GREEN)Documentation:$(RESET)"
+	@grep -E '^docs-.*:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(GREEN)Build Management:$(RESET)"
@@ -187,6 +199,74 @@ version-major: ## Bump major version (4.0.3 → 5.0.0)
 	fi
 
 # ============================================================================
+# Changeset Management Targets
+# ============================================================================
+
+.PHONY: changeset-add
+changeset-add: ## Add a new changeset (usage: TYPE=patch DESC="description")
+	@if [ -z "$(TYPE)" ] || [ -z "$(DESC)" ]; then \
+		echo "$(RED)Error:$(RESET) TYPE and DESC are required"; \
+		echo "$(BLUE)Usage:$(RESET) make changeset-add TYPE=patch DESC=\"fix: resolve bug\""; \
+		echo "$(BLUE)Types:$(RESET) patch, minor, major"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Adding changeset...$(RESET)"
+	$(CHANGESET_MANAGER) add --type $(TYPE) --description "$(DESC)"
+
+.PHONY: changeset-view
+changeset-view: ## View pending changesets
+	@echo "$(BLUE)Pending Changesets:$(RESET)"
+	@$(CHANGESET_MANAGER) list
+
+.PHONY: changeset-list
+changeset-list: changeset-view ## Alias for changeset-view
+
+.PHONY: changeset-consume
+changeset-consume: ## Consume changesets for release (usage: VERSION=0.7.2)
+	@if [ -z "$(VERSION)" ]; then \
+		VERSION=$$($(VERSION_MANAGER) --show --format simple); \
+		echo "$(BLUE)Using current version: $$VERSION$(RESET)"; \
+	else \
+		echo "$(BLUE)Using specified version: $(VERSION)$(RESET)"; \
+	fi; \
+	if [ -z "$(DRY_RUN)" ]; then \
+		$(CHANGESET_MANAGER) consume --version $$VERSION; \
+	else \
+		$(CHANGESET_MANAGER) consume --version $$VERSION --dry-run; \
+	fi
+
+.PHONY: changeset-validate
+changeset-validate: ## Validate changeset files
+	@echo "$(GREEN)Validating changesets...$(RESET)"
+	@$(CHANGESET_MANAGER) validate
+
+# ============================================================================
+# Documentation Update Targets
+# ============================================================================
+
+.PHONY: docs-update
+docs-update: ## Update documentation with current version
+	@VERSION=$$($(VERSION_MANAGER) --show --format simple); \
+	echo "$(GREEN)Updating documentation to v$$VERSION...$(RESET)"; \
+	if [ -z "$(DRY_RUN)" ]; then \
+		$(DOCS_UPDATER) --version $$VERSION --type $(if $(TYPE),$(TYPE),patch); \
+	else \
+		$(DOCS_UPDATER) --version $$VERSION --type $(if $(TYPE),$(TYPE),patch) --dry-run; \
+	fi
+
+.PHONY: docs-update-readme
+docs-update-readme: ## Update README.md version badge only
+	@VERSION=$$($(VERSION_MANAGER) --show --format simple); \
+	echo "$(GREEN)Updating README.md to v$$VERSION...$(RESET)"; \
+	$(DOCS_UPDATER) --version $$VERSION --readme-only $(if $(DRY_RUN),--dry-run,)
+
+.PHONY: docs-update-claude
+docs-update-claude: ## Update CLAUDE.md Recent Activity only
+	@VERSION=$$($(VERSION_MANAGER) --show --format simple); \
+	echo "$(GREEN)Updating CLAUDE.md to v$$VERSION...$(RESET)"; \
+	$(DOCS_UPDATER) --version $$VERSION --claude-only --type $(if $(TYPE),$(TYPE),patch) $(if $(DRY_RUN),--dry-run,)
+
+# ============================================================================
 # Build Management Targets
 # ============================================================================
 
@@ -263,7 +343,9 @@ release-patch: preflight-check ## Full release with patch bump
 	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
 	$(MAKE) version-patch
 	$(MAKE) build-increment
-	$(MAKE) changelog-update
+	@VERSION=$$($(VERSION_MANAGER) --show --format simple); \
+	$(MAKE) changeset-consume VERSION=$$VERSION
+	$(MAKE) docs-update TYPE=patch
 	$(MAKE) git-commit-release
 	$(MAKE) build-package
 	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
@@ -278,7 +360,9 @@ release-minor: preflight-check ## Full release with minor bump
 	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
 	$(MAKE) version-minor
 	$(MAKE) build-increment
-	$(MAKE) changelog-update
+	@VERSION=$$($(VERSION_MANAGER) --show --format simple); \
+	$(MAKE) changeset-consume VERSION=$$VERSION
+	$(MAKE) docs-update TYPE=minor
 	$(MAKE) git-commit-release
 	$(MAKE) build-package
 	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
@@ -293,7 +377,9 @@ release-major: preflight-check ## Full release with major bump
 	@echo "$(BLUE)═══════════════════════════════════════════════════════$(RESET)"
 	$(MAKE) version-major
 	$(MAKE) build-increment
-	$(MAKE) changelog-update
+	@VERSION=$$($(VERSION_MANAGER) --show --format simple); \
+	$(MAKE) changeset-consume VERSION=$$VERSION
+	$(MAKE) docs-update TYPE=major
 	$(MAKE) git-commit-release
 	$(MAKE) build-package
 	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"

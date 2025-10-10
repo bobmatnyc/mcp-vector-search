@@ -171,10 +171,10 @@ jobs:
           mkdir -p /tmp/test-project
           cd /tmp/test-project
           echo "def hello(): pass" > test.py
-          
+
           # Initialize and run benchmarks
-          uv run mcp-vector-search init --file-extensions .py --embedding-model sentence-transformers/all-MiniLM-L6-v2
-          python3 ${{ github.workspace }}/scripts/search_performance_monitor.py --save
+          uv run mcp-vector-search init --extensions .py --embedding-model sentence-transformers/all-MiniLM-L6-v2 --no-mcp --no-auto-indexing
+          uv run python3 ${{ github.workspace }}/scripts/search_performance_monitor.py --save
       
       - name: Upload performance results
         uses: actions/upload-artifact@v4
@@ -234,18 +234,18 @@ jobs:
         run: |
           # Install from wheel
           uv pip install dist/*.whl
-          
+
           # Test CLI is available
           mcp-vector-search --version
-          
+
           # Test basic functionality
           mkdir -p /tmp/integration-test
           cd /tmp/integration-test
           echo "def test(): pass" > test.py
-          
+
           # Initialize project
-          mcp-vector-search init --file-extensions .py --embedding-model sentence-transformers/all-MiniLM-L6-v2
-          
+          mcp-vector-search init --extensions .py --embedding-model sentence-transformers/all-MiniLM-L6-v2 --no-mcp --no-auto-indexing
+
           # Index and search
           mcp-vector-search index
           mcp-vector-search search "function" --limit 5
