@@ -519,94 +519,6 @@ mcp-vector-search auto-index check --dry-run --verbose
 - Use semantic search commands in Claude Desktop after setup
 - Maintain real-time indexing for best Claude experience
 
-### 🔴 Claude MPM Memory System (CRITICAL FOR LEARNING)
-
-This project uses **Claude MPM** (Multi-Project Memory) with **Kuzu Memory** for persistent learning.
-
-#### 🔴 Memory Structure (MUST UNDERSTAND)
-```
-.claude-mpm/                           # Local state (git-ignored)
-├── config.json                        # MPM configuration
-├── memories/                          # Agent-specific memories
-│   ├── agentic_coder_optimizer_memories.md
-│   ├── documentation_memories.md
-│   ├── engineer_memories.md
-│   ├── ops_memories.md
-│   ├── qa_memories.md
-│   ├── research_memories.md
-│   └── version_control_memories.md
-├── logs/                             # Operation logs
-│   └── system/                       # System logs (JSONL)
-└── mcp_auto_config_preference.json   # MCP preferences
-```
-
-#### 🔴 Memory Categories (PROJECT-SPECIFIC ONLY)
-**Store memories in these categories:**
-
-1. **Project Architecture** - Architectural patterns, design decisions
-   - Parser registry extensibility pattern
-   - Connection pooling implementation
-   - Semi-automatic reindexing strategy
-
-2. **Implementation Guidelines** - Code standards, patterns
-   - Single-path command principle
-   - File organization rules (see PROJECT_ORGANIZATION.md)
-   - Error handling patterns
-
-3. **Current Technical Context** - Active development context
-   - Recent refactoring decisions
-   - Performance optimization learnings
-   - Integration challenges and solutions
-
-#### 🟡 Memory Usage Patterns
-**When to update memories:**
-- After significant architectural decisions
-- When learning project-specific patterns
-- After debugging complex issues
-- When discovering optimization opportunities
-
-**When NOT to update memories:**
-- Generic programming knowledge (Python basics, etc.)
-- Already documented information (CLAUDE.md, docs/)
-- Temporary debugging context
-
-#### 🟡 Memory Update Format
-Include in response JSON:
-```json
-{
-  "memory-update": {
-    "Project Architecture": ["Key architectural insight"],
-    "Implementation Guidelines": ["Important coding pattern"],
-    "Current Technical Context": ["Recent technical discovery"]
-  }
-}
-```
-
-Or use simplified format:
-```json
-{
-  "remember": ["Learning 1", "Learning 2"]
-}
-```
-
-#### 🟢 Kuzu Memory Integration
-**Auto-configured via config.json:**
-- **Provider**: kuzu-memory (graph-based semantic memory)
-- **Auto-enhance**: Enabled (pre-response context injection)
-- **Async-learning**: Enabled (post-response learning)
-- **Similarity threshold**: 0.7
-- **Temporal decay**: Enabled
-
-**Memory hooks:**
-- **Pre-response**: `/Users/masa/.local/pipx/venvs/kuzu-memory/bin/kuzu-memory enhance`
-- **Post-response**: `/Users/masa/.local/pipx/venvs/kuzu-memory/bin/kuzu-memory learn --quiet`
-
-#### 🔴 Critical Memory Rules
-1. **Project-specific only** - No generic knowledge
-2. **Not duplicating docs** - Only insights not in CLAUDE.md/docs/
-3. **Actionable insights** - Must be useful for future tasks
-4. **Agent-appropriate** - Store in correct agent memory file
-
 ## ⚪ Deprecated Commands (OPTIONAL AWARENESS)
 
 **The following commands are deprecated and will show migration warnings:**
@@ -643,16 +555,14 @@ Or use simplified format:
 
 ## 📊 Recent Activity (Last 30 Days)
 
-**Last Updated**: 2025-10-09
+**Last Updated**: 2025-10-08
 
 ### 🔴 Recent Releases
 
-**v0.7.0 (Oct 7-9, 2025)** - CLI Command Hierarchy Refactor + Project Organization
+**v0.7.0 (Oct 7, 2025)** - CLI Command Hierarchy Refactor
 - Major CLI restructuring for improved user experience
 - Command reorganization with better discoverability
 - Enhanced command grouping and navigation
-- **NEW**: Project organization cleanup (.claude, .claude-mpm directories removed from git)
-- **NEW**: PROJECT_ORGANIZATION.md standard created
 
 **v0.6.0/v0.6.1 (Oct 3-7, 2025)** - Search & Auto-Indexing Improvements
 - Automatic version-based reindexing system
@@ -697,19 +607,7 @@ Or use simplified format:
    - Version management integration
    - Default configuration updates
 
-6. **Project Organization** - Structure cleanup (Oct 9, 2025)
-   - Created `docs/reference/PROJECT_ORGANIZATION.md` standard
-   - Removed `.claude/` and `.claude-mpm/` from git tracking
-   - Updated `.gitignore` for Claude MPM state
-   - CLAUDE.md linked to organization standard
-
 ### 🟢 Key Architectural Changes
-
-**Project Organization** (Oct 9, 2025)
-- Established strict file organization standards
-- `.claude/` and `.claude-mpm/` are now git-ignored (local state only)
-- All docs follow categorized structure in `docs/`
-- Clean root directory with only essential files
 
 **CLI Command Structure** (v0.7.0)
 - Moved from flat command structure to hierarchical organization
@@ -728,11 +626,11 @@ Or use simplified format:
 
 ### 📈 Activity Statistics
 
-- **Total Commits**: 16 commits in last 30 days
+- **Total Commits**: 15 commits in last 30 days
 - **Primary Contributor**: Robert (Masa) Matsuoka (100%)
 - **Version Progression**: v0.4.14 → v0.7.0 (3 minor releases)
-- **Files Changed**: ~40 files modified
-- **Lines Changed**: ~2,900 insertions, ~650 deletions
+- **Files Changed**: ~38 files modified
+- **Lines Changed**: ~2,811 insertions, ~590 deletions
 - **Release Frequency**: ~1 release every 2-3 days
 
 ### 🎯 Current Version Status
@@ -740,8 +638,8 @@ Or use simplified format:
 - **Latest Release**: v0.7.0 (Oct 7, 2025)
 - **Active Branch**: main
 - **Development Status**: Active development with frequent releases
-- **Focus**: CLI UX, parser expansion, search optimization, project organization
+- **Focus**: CLI UX, parser expansion, search optimization
 
 ---
 
-**Last Activity Update**: 2025-10-09 via Claude MPM `/mpm-init update`
+**Last Activity Update**: 2025-10-08 via Claude MPM `/mpm-init update`
