@@ -241,6 +241,7 @@ tramp
 .benchmarks/
 .venv-mcp/
 .kuzu-memory/
+.kuzu-memory-backups/
 .conda/
 .npm/
 .yarn/
