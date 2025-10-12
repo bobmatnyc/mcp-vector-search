@@ -27,9 +27,14 @@ from ..output import (
 )
 
 # Create init subcommand app
-init_app = typer.Typer(help="Initialize project for semantic search")
+init_app = typer.Typer(
+    help="Initialize project for semantic search",
+    invoke_without_command=True,
+    no_args_is_help=False,
+)
 
 
+@init_app.callback()
 def main(
     ctx: typer.Context,
     config_file: Path | None = typer.Option(
@@ -126,6 +131,10 @@ def main(
     [dim]💡 Tip: The command creates .mcp-vector-search/ for project config
        and .mcp.json for MCP integration.[/dim]
     """
+    # Only run main logic if no subcommand was invoked
+    if ctx.invoked_subcommand is not None:
+        return
+
     try:
         # Get project root from context or auto-detect
         project_root = ctx.obj.get("project_root")

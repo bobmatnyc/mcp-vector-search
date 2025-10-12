@@ -63,8 +63,8 @@ from .commands.status import main as status_main  # noqa: E402
 # ============================================================================
 
 # 1. INIT - Initialize project
-app.command("init", help="🔧 Initialize project for semantic search")(init_main)
-app.add_typer(init_app, name="init", hidden=True)  # Subcommands under init
+# Use Typer group for init to support both direct call and subcommands
+app.add_typer(init_app, name="init", help="🔧 Initialize project for semantic search")
 
 # 2. DOCTOR - System health check
 # (defined below inline)
