@@ -266,3 +266,24 @@ backup/
 backups/
 conda-env/
 virtualenv/
+
+# Added by Claude MPM /mpm-init
+*.cache
+*.old
+*.pytest_cache
+*.sql
+.claude-mpm/*.log
+.claude-mpm/cache/
+.claude-mpm/logs/
+.claude-mpm/sessions/
+.claude-mpm/tmp/
+.claude/cache/
+.claude/sessions/
+.npm
+.project
+.pydevproject
+_build/
+pip-wheel-metadata/
+site/
+temp/
+tmp/
