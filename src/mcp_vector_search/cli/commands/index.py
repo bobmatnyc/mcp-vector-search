@@ -217,10 +217,15 @@ async def _run_batch_indexing(
             show_progress=show_progress,
         )
 
-    print_success(f"Indexed {indexed_count} files")
-
     # Show statistics
     stats = await indexer.get_indexing_stats()
+
+    # Display success message with chunk count for clarity
+    total_chunks = stats.get("total_chunks", 0)
+    print_success(
+        f"Processed {indexed_count} files ({total_chunks} searchable chunks created)"
+    )
+
     print_index_stats(stats)
 
     # Add next-step hints
@@ -381,10 +386,15 @@ async def _reindex_entire_project(project_root: Path) -> None:
 
                 progress.update(task, completed=indexed_count, total=indexed_count)
 
-            print_success(f"Successfully reindexed {indexed_count} files")
-
             # Show statistics
             stats = await indexer.get_indexing_stats()
+
+            # Display success message with chunk count for clarity
+            total_chunks = stats.get("total_chunks", 0)
+            print_success(
+                f"Processed {indexed_count} files ({total_chunks} searchable chunks created)"
+            )
+
             print_index_stats(stats)
 
     except Exception as e:

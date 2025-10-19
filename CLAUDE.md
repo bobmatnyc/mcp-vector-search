@@ -75,7 +75,20 @@ This file provides comprehensive guidance for Claude Code (claude.ai/code) and C
 
 ### 🟡 Quick Start for Users (RECOMMENDED WORKFLOW)
 
-**New users should use the init command:**
+**First-time users should try the demo:**
+
+```bash
+# Run interactive demo (recommended for first-time users)
+mcp-vector-search demo
+
+# This demo will:
+# 1. Create a sample project
+# 2. Initialize and index it
+# 3. Run sample semantic searches
+# 4. Show you what to expect
+```
+
+**Then initialize your own project:**
 
 ```bash
 # Interactive setup (recommended)
@@ -136,6 +149,7 @@ make quality       # Run all quality checks (lint, type, test, security)
 ```bash
 # Core Workflow
 mcp-vector-search init          # Initialize project
+mcp-vector-search demo          # Run interactive demo
 mcp-vector-search doctor        # Check system health
 mcp-vector-search status        # Show project status
 mcp-vector-search search "query" # Search code
@@ -614,7 +628,6 @@ Or use simplified format:
 | Old Command | New Command | Reason |
 |-------------|-------------|---------|
 | `install` | `init` | Renamed for clarity |
-| `demo` | `init --help` | Removed |
 | `find` | `search` | Simplified |
 | `search-similar` | `search --similar` | Moved to option |
 | `search-context` | `search --context` | Moved to option |

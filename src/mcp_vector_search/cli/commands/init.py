@@ -6,7 +6,6 @@ import typer
 from loguru import logger
 
 from ...config.constants import (
-    SUBPROCESS_INSTALL_TIMEOUT,
     SUBPROCESS_MCP_TIMEOUT,
     SUBPROCESS_TEST_TIMEOUT,
 )

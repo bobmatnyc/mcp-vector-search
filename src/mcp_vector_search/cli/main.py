@@ -34,6 +34,7 @@ unfamiliar codebases, finding similar patterns, and integrating with AI tools.
 
 [bold cyan]Main Commands:[/bold cyan]
   init      🔧 Initialize project
+  demo      🎬 Run interactive demo
   doctor    🩺 Check system health
   status    📊 Show project status
   search    🔍 Search code semantically
@@ -51,9 +52,9 @@ unfamiliar codebases, finding similar patterns, and integrating with AI tools.
 
 # Import command modules
 from .commands.config import config_app  # noqa: E402
+from .commands.demo import demo_app  # noqa: E402
 from .commands.index import index_app  # noqa: E402
 from .commands.init import init_app  # noqa: E402
-from .commands.init import main as init_main  # noqa: E402
 from .commands.mcp import mcp_app  # noqa: E402
 from .commands.search import search_app, search_main  # noqa: E402, F401
 from .commands.status import main as status_main  # noqa: E402
@@ -66,29 +67,32 @@ from .commands.status import main as status_main  # noqa: E402
 # Use Typer group for init to support both direct call and subcommands
 app.add_typer(init_app, name="init", help="🔧 Initialize project for semantic search")
 
-# 2. DOCTOR - System health check
+# 2. DEMO - Interactive demo
+app.add_typer(demo_app, name="demo", help="🎬 Run interactive demo with sample project")
+
+# 3. DOCTOR - System health check
 # (defined below inline)
 
-# 3. STATUS - Project status
+# 4. STATUS - Project status
 app.command("status", help="📊 Show project status and statistics")(status_main)
 
-# 4. SEARCH - Search code
+# 5. SEARCH - Search code
 # Register search as both a command and a typer group
 app.add_typer(search_app, name="search", help="🔍 Search code semantically")
 
-# 5. INDEX - Index codebase
+# 6. INDEX - Index codebase
 app.add_typer(index_app, name="index", help="📇 Index codebase for semantic search")
 
-# 6. MCP - MCP integration
+# 7. MCP - MCP integration
 app.add_typer(mcp_app, name="mcp", help="🤖 Manage Claude Code MCP integration")
 
-# 7. CONFIG - Configuration
+# 8. CONFIG - Configuration
 app.add_typer(config_app, name="config", help="⚙️  Manage project configuration")
 
-# 8. HELP - Enhanced help
+# 9. HELP - Enhanced help
 # (defined below inline)
 
-# 9. VERSION - Version info
+# 10. VERSION - Version info
 # (defined below inline)
 
 
@@ -118,15 +122,6 @@ def deprecated_install():
     _deprecated_command("install", "init")()
 
 
-# Deprecated: demo -> removed
-@app.command("demo", hidden=True)
-def deprecated_demo():
-    """[DEPRECATED] Command removed."""
-    print_warning(
-        "⚠️  The 'demo' command has been removed.\n"
-        "   Use [cyan]mcp-vector-search init --help[/cyan] for setup instructions."
-    )
-    raise typer.Exit(1)
 
 
 # Deprecated: find -> search

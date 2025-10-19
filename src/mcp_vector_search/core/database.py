@@ -377,39 +377,36 @@ class ChromaVectorDatabase(VectorDatabase):
             # Get total count
             count = self._collection.count()
 
-            # Get sample for language distribution
-            sample_results = self._collection.get(
-                limit=min(1000, count) if count > 0 else 0,
-                include=["metadatas"],
-            )
+            # Get ALL metadata to analyze (not just a sample)
+            # Only fetch metadata, not embeddings, for performance
+            results = self._collection.get(include=["metadatas"])
 
-            languages = {}
-            file_types = {}
+            # Count unique files from all chunks
+            files = {m.get("file_path", "") for m in results.get("metadatas", [])}
 
-            if sample_results["metadatas"]:
-                for metadata in sample_results["metadatas"]:
-                    # Count languages
-                    lang = metadata.get("language", "unknown")
-                    languages[lang] = languages.get(lang, 0) + 1
+            # Count languages and file types
+            language_counts = {}
+            file_type_counts = {}
 
-                    # Count file types
-                    file_path = metadata.get("file_path", "")
+            for metadata in results.get("metadatas", []):
+                # Count languages
+                lang = metadata.get("language", "unknown")
+                language_counts[lang] = language_counts.get(lang, 0) + 1
+
+                # Count file types
+                file_path = metadata.get("file_path", "")
+                if file_path:
                     ext = Path(file_path).suffix or "no_extension"
-                    file_types[ext] = file_types.get(ext, 0) + 1
+                    file_type_counts[ext] = file_type_counts.get(ext, 0) + 1
 
             # Estimate index size (rough approximation)
             index_size_mb = count * 0.001  # Rough estimate
 
             return IndexStats(
-                total_files=len(
-                    {
-                        m.get("file_path", "")
-                        for m in sample_results.get("metadatas", [])
-                    }
-                ),
+                total_files=len(files),
                 total_chunks=count,
-                languages=languages,
-                file_types=file_types,
+                languages=language_counts,
+                file_types=file_type_counts,
                 index_size_mb=index_size_mb,
                 last_updated="unknown",  # TODO: Track this
                 embedding_model="unknown",  # TODO: Track this
