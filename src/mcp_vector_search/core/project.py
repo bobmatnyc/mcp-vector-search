@@ -281,24 +281,27 @@ class ProjectManager:
                 continue
 
             # Skip ignored patterns
-            if self._should_ignore_path(path):
+            # PERFORMANCE: Pass is_directory=False since we already checked is_file()
+            if self._should_ignore_path(path, is_directory=False):
                 continue
 
             files.append(path)
 
         return files
 
-    def _should_ignore_path(self, path: Path) -> bool:
+    def _should_ignore_path(self, path: Path, is_directory: bool | None = None) -> bool:
         """Check if a path should be ignored.
 
         Args:
             path: Path to check
+            is_directory: Optional hint if path is a directory (avoids filesystem check)
 
         Returns:
             True if path should be ignored
         """
         # First check gitignore rules if available
-        if self.gitignore_parser and self.gitignore_parser.is_ignored(path):
+        # PERFORMANCE: Pass is_directory hint to avoid redundant stat() calls
+        if self.gitignore_parser and self.gitignore_parser.is_ignored(path, is_directory=is_directory):
             return True
 
         # Check if any parent directory is in ignore patterns

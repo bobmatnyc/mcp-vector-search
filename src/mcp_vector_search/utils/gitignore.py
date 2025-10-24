@@ -145,16 +145,25 @@ class GitignoreParser:
         except Exception as e:
             logger.warning(f"Failed to parse {gitignore_path}: {e}")
 
-    def is_ignored(self, path: Path) -> bool:
+    def is_ignored(self, path: Path, is_directory: bool | None = None) -> bool:
         """Check if a path should be ignored according to .gitignore rules.
 
         Args:
             path: Path to check (can be absolute or relative to project root)
+            is_directory: Optional hint if path is a directory.
+                         If None, will check filesystem (slower).
+                         If provided, skips filesystem check (faster).
 
         Returns:
             True if the path should be ignored
         """
         try:
+            # SHORT-CIRCUIT: If no patterns, nothing is ignored
+            # This prevents 200k+ unnecessary filesystem stat() calls on projects
+            # without .gitignore files
+            if not self.patterns:
+                return False
+
             # Convert to relative path from project root
             if path.is_absolute():
                 relative_path = path.relative_to(self.project_root)
@@ -162,7 +171,12 @@ class GitignoreParser:
                 relative_path = path
 
             path_str = str(relative_path).replace("\\", "/")
-            is_directory = path.is_dir() if path.exists() else False
+
+            # Only check if directory when needed and not provided as hint
+            # PERFORMANCE: Passing is_directory hint from caller (e.g., os.walk)
+            # avoids hundreds of thousands of stat() calls on large repositories
+            if is_directory is None:
+                is_directory = path.is_dir() if path.exists() else False
 
             # Apply patterns in order, with later patterns overriding earlier ones
             ignored = False
@@ -209,15 +223,16 @@ def create_gitignore_parser(project_root: Path) -> GitignoreParser:
     return GitignoreParser(project_root)
 
 
-def is_path_gitignored(path: Path, project_root: Path) -> bool:
+def is_path_gitignored(path: Path, project_root: Path, is_directory: bool | None = None) -> bool:
     """Quick function to check if a path is gitignored.
 
     Args:
         path: Path to check
         project_root: Root directory of the project
+        is_directory: Optional hint if path is a directory (avoids filesystem check)
 
     Returns:
         True if the path should be ignored
     """
     parser = create_gitignore_parser(project_root)
-    return parser.is_ignored(path)
+    return parser.is_ignored(path, is_directory=is_directory)

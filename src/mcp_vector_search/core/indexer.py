@@ -383,12 +383,14 @@ class SemanticIndexer:
 
             # Filter out ignored directories IN-PLACE to prevent os.walk from traversing them
             # This is much more efficient than checking every file in ignored directories
-            dirs[:] = [d for d in dirs if not self._should_ignore_path(root_path / d)]
+            # PERFORMANCE: Pass is_directory=True hint to skip filesystem stat() calls
+            dirs[:] = [d for d in dirs if not self._should_ignore_path(root_path / d, is_directory=True)]
 
             # Check each file in the current directory
+            # PERFORMANCE: skip_file_check=True because os.walk guarantees these are files
             for filename in files:
                 file_path = root_path / filename
-                if self._should_index_file(file_path):
+                if self._should_index_file(file_path, skip_file_check=True):
                     indexable_files.append(file_path)
 
         return indexable_files
@@ -428,25 +430,29 @@ class SemanticIndexer:
 
         return self._indexable_files_cache
 
-    def _should_index_file(self, file_path: Path) -> bool:
+    def _should_index_file(self, file_path: Path, skip_file_check: bool = False) -> bool:
         """Check if a file should be indexed.
 
         Args:
             file_path: Path to check
+            skip_file_check: Skip is_file() check if caller knows it's a file (optimization)
 
         Returns:
             True if file should be indexed
         """
-        # Must be a file
-        if not file_path.is_file():
-            return False
-
-        # Check file extension
+        # PERFORMANCE: Check file extension FIRST (cheapest operation, no I/O)
+        # This eliminates most files without any filesystem calls
         if file_path.suffix.lower() not in self.file_extensions:
             return False
 
+        # PERFORMANCE: Only check is_file() if not coming from os.walk
+        # os.walk already guarantees files, so we skip this expensive check
+        if not skip_file_check and not file_path.is_file():
+            return False
+
         # Check if path should be ignored
-        if self._should_ignore_path(file_path):
+        # PERFORMANCE: Pass is_directory=False to skip stat() call (we know it's a file)
+        if self._should_ignore_path(file_path, is_directory=False):
             return False
 
         # Check file size (skip very large files)
@@ -460,18 +466,20 @@ class SemanticIndexer:
 
         return True
 
-    def _should_ignore_path(self, file_path: Path) -> bool:
+    def _should_ignore_path(self, file_path: Path, is_directory: bool | None = None) -> bool:
         """Check if a path should be ignored.
 
         Args:
             file_path: Path to check
+            is_directory: Optional hint if path is a directory (avoids filesystem check)
 
         Returns:
             True if path should be ignored
         """
         try:
             # First check gitignore rules if available
-            if self.gitignore_parser and self.gitignore_parser.is_ignored(file_path):
+            # PERFORMANCE: Pass is_directory hint to avoid redundant stat() calls
+            if self.gitignore_parser and self.gitignore_parser.is_ignored(file_path, is_directory=is_directory):
                 logger.debug(f"Path ignored by .gitignore: {file_path}")
                 return True
 
