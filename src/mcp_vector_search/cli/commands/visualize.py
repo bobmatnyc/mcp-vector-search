@@ -428,34 +428,79 @@ def _create_visualization_html(html_file: Path) -> None:
         const g = svg.append("g");
         const tooltip = d3.select("#tooltip");
         let simulation;
+        let allNodes = [];
+        let allLinks = [];
+        let visibleNodes = new Set();
+        let collapsedNodes = new Set();
 
         function visualizeGraph(data) {
             g.selectAll("*").remove();
 
-            simulation = d3.forceSimulation(data.nodes)
-                .force("link", d3.forceLink(data.links).id(d => d.id).distance(100))
+            allNodes = data.nodes;
+            allLinks = data.links;
+
+            // Find root nodes (nodes without parents or depth 0/1)
+            const rootNodes = allNodes.filter(n =>
+                !n.parent_id || n.depth === 0 || n.depth === 1 || n.type === 'module'
+            );
+
+            // Start with only root nodes visible
+            visibleNodes = new Set(rootNodes.map(n => n.id));
+            collapsedNodes = new Set(rootNodes.map(n => n.id));
+
+            renderGraph();
+        }
+
+        function renderGraph() {
+            const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
+            const visibleLinks = allLinks.filter(l =>
+                visibleNodes.has(l.source.id || l.source) &&
+                visibleNodes.has(l.target.id || l.target)
+            );
+
+            simulation = d3.forceSimulation(visibleNodesList)
+                .force("link", d3.forceLink(visibleLinks).id(d => d.id).distance(100))
                 .force("charge", d3.forceManyBody().strength(-400))
                 .force("center", d3.forceCenter(width / 2, height / 2))
                 .force("collision", d3.forceCollide().radius(40));
 
+            g.selectAll("*").remove();
+
             const link = g.append("g")
                 .selectAll("line")
-                .data(data.links)
+                .data(visibleLinks)
                 .join("line")
                 .attr("class", "link");
 
             const node = g.append("g")
                 .selectAll("g")
-                .data(data.nodes)
+                .data(visibleNodesList)
                 .join("g")
                 .attr("class", d => `node ${d.type}`)
                 .call(drag(simulation))
+                .on("click", toggleNode)
                 .on("mouseover", showTooltip)
                 .on("mouseout", hideTooltip);
 
+            // Add circles with expand indicator
             node.append("circle")
-                .attr("r", d => d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12);
+                .attr("r", d => d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12)
+                .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
+                .attr("stroke-width", d => hasChildren(d) ? 2 : 0);
 
+            // Add expand/collapse indicator
+            node.filter(d => hasChildren(d))
+                .append("text")
+                .attr("class", "expand-indicator")
+                .attr("text-anchor", "middle")
+                .attr("dy", 5)
+                .style("font-size", "16px")
+                .style("font-weight", "bold")
+                .style("fill", "#ffffff")
+                .style("pointer-events", "none")
+                .text(d => collapsedNodes.has(d.id) ? "+" : "−");
+
+            // Add labels
             node.append("text")
                 .text(d => d.name)
                 .attr("dy", 30);
@@ -470,7 +515,61 @@ def _create_visualization_html(html_file: Path) -> None:
                 node.attr("transform", d => `translate(${d.x},${d.y})`);
             });
 
-            updateStats(data);
+            updateStats({nodes: visibleNodesList, links: visibleLinks, metadata: {total_files: allNodes.length}});
+        }
+
+        function hasChildren(node) {
+            return allLinks.some(l => (l.source.id || l.source) === node.id);
+        }
+
+        function toggleNode(event, d) {
+            event.stopPropagation();
+
+            if (!hasChildren(d)) return;
+
+            if (collapsedNodes.has(d.id)) {
+                // Expand: show children
+                expandNode(d);
+            } else {
+                // Collapse: hide children
+                collapseNode(d);
+            }
+
+            renderGraph();
+        }
+
+        function expandNode(node) {
+            collapsedNodes.delete(node.id);
+
+            // Find direct children
+            const children = allLinks
+                .filter(l => (l.source.id || l.source) === node.id)
+                .map(l => allNodes.find(n => n.id === (l.target.id || l.target)))
+                .filter(n => n);
+
+            children.forEach(child => {
+                visibleNodes.add(child.id);
+                collapsedNodes.add(child.id); // Children start collapsed
+            });
+        }
+
+        function collapseNode(node) {
+            collapsedNodes.add(node.id);
+
+            // Hide all descendants recursively
+            function hideDescendants(parentId) {
+                const children = allLinks
+                    .filter(l => (l.source.id || l.source) === parentId)
+                    .map(l => l.target.id || l.target);
+
+                children.forEach(childId => {
+                    visibleNodes.delete(childId);
+                    collapsedNodes.delete(childId);
+                    hideDescendants(childId);
+                });
+            }
+
+            hideDescendants(node.id);
         }
 
         function showTooltip(event, d) {
