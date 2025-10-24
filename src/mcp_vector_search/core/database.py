@@ -273,6 +273,19 @@ class ChromaVectorDatabase(VectorDatabase):
                     "class_name": chunk.class_name or "",
                     "docstring": chunk.docstring or "",
                     "complexity_score": chunk.complexity_score,
+                    # Hierarchy fields
+                    "chunk_id": chunk.chunk_id or "",
+                    "parent_chunk_id": chunk.parent_chunk_id or "",
+                    "child_chunk_ids": chunk.child_chunk_ids or [],
+                    "chunk_depth": chunk.chunk_depth,
+                    # Additional metadata
+                    "decorators": chunk.decorators or [],
+                    "parameters": chunk.parameters or [],
+                    "return_type": chunk.return_type or "",
+                    "type_annotations": chunk.type_annotations or {},
+                    # Monorepo support
+                    "subproject_name": chunk.subproject_name or "",
+                    "subproject_path": chunk.subproject_path or "",
                 }
                 metadatas.append(metadata)
 
@@ -760,6 +773,21 @@ class PooledChromaVectorDatabase(VectorDatabase):
                             "chunk_type": chunk.chunk_type,
                             "function_name": chunk.function_name or "",
                             "class_name": chunk.class_name or "",
+                            "docstring": chunk.docstring or "",
+                            "complexity_score": chunk.complexity_score,
+                            # Hierarchy fields
+                            "chunk_id": chunk.chunk_id or "",
+                            "parent_chunk_id": chunk.parent_chunk_id or "",
+                            "child_chunk_ids": chunk.child_chunk_ids or [],
+                            "chunk_depth": chunk.chunk_depth,
+                            # Additional metadata
+                            "decorators": chunk.decorators or [],
+                            "parameters": chunk.parameters or [],
+                            "return_type": chunk.return_type or "",
+                            "type_annotations": chunk.type_annotations or {},
+                            # Monorepo support
+                            "subproject_name": chunk.subproject_name or "",
+                            "subproject_path": chunk.subproject_path or "",
                         }
                     )
                     ids.append(chunk.id)
