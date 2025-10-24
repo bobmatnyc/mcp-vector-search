@@ -710,6 +710,9 @@ class SemanticIndexer:
         Yields:
             Tuple of (file_path, chunks_added, success) for each processed file
         """
+        # Write version header to error log at start of indexing run
+        self._write_indexing_run_header()
+
         metadata = self._load_index_metadata()
 
         # Process files in batches for better memory management
@@ -826,3 +829,18 @@ class SemanticIndexer:
                 mod.chunk_depth = 0
 
         return chunks
+
+    def _write_indexing_run_header(self) -> None:
+        """Write version and timestamp header to error log at start of indexing run."""
+        try:
+            error_log_path = self.project_root / ".mcp-vector-search" / "indexing_errors.log"
+            error_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(error_log_path, "a", encoding="utf-8") as f:
+                timestamp = datetime.now(UTC).isoformat()
+                separator = "=" * 80
+                f.write(f"\n{separator}\n")
+                f.write(f"[{timestamp}] Indexing run started - mcp-vector-search v{__version__}\n")
+                f.write(f"{separator}\n")
+        except Exception as e:
+            logger.debug(f"Failed to write indexing run header: {e}")
