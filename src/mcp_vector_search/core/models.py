@@ -21,12 +21,40 @@ class CodeChunk:
     class_name: str | None = None
     docstring: str | None = None
     imports: list[str] = None
+
+    # Enhancement 1: Complexity scoring
     complexity_score: float = 0.0
 
+    # Enhancement 3: Hierarchical relationships
+    chunk_id: str | None = None
+    parent_chunk_id: str | None = None
+    child_chunk_ids: list[str] = None
+    chunk_depth: int = 0
+
+    # Enhancement 4: Enhanced metadata
+    decorators: list[str] = None
+    parameters: list[dict] = None
+    return_type: str | None = None
+    type_annotations: dict[str, str] = None
+
     def __post_init__(self) -> None:
-        """Initialize default values."""
+        """Initialize default values and generate chunk ID."""
         if self.imports is None:
             self.imports = []
+        if self.child_chunk_ids is None:
+            self.child_chunk_ids = []
+        if self.decorators is None:
+            self.decorators = []
+        if self.parameters is None:
+            self.parameters = []
+        if self.type_annotations is None:
+            self.type_annotations = {}
+
+        # Generate chunk ID if not provided
+        if self.chunk_id is None:
+            import hashlib
+            id_string = f"{self.file_path}:{self.chunk_type}:{self.start_line}:{self.end_line}"
+            self.chunk_id = hashlib.sha256(id_string.encode()).hexdigest()[:16]
 
     @property
     def id(self) -> str:
@@ -52,6 +80,14 @@ class CodeChunk:
             "docstring": self.docstring,
             "imports": self.imports,
             "complexity_score": self.complexity_score,
+            "chunk_id": self.chunk_id,
+            "parent_chunk_id": self.parent_chunk_id,
+            "child_chunk_ids": self.child_chunk_ids,
+            "chunk_depth": self.chunk_depth,
+            "decorators": self.decorators,
+            "parameters": self.parameters,
+            "return_type": self.return_type,
+            "type_annotations": self.type_annotations,
         }
 
     @classmethod
@@ -69,6 +105,14 @@ class CodeChunk:
             docstring=data.get("docstring"),
             imports=data.get("imports", []),
             complexity_score=data.get("complexity_score", 0.0),
+            chunk_id=data.get("chunk_id"),
+            parent_chunk_id=data.get("parent_chunk_id"),
+            child_chunk_ids=data.get("child_chunk_ids", []),
+            chunk_depth=data.get("chunk_depth", 0),
+            decorators=data.get("decorators", []),
+            parameters=data.get("parameters", []),
+            return_type=data.get("return_type"),
+            type_annotations=data.get("type_annotations", {}),
         )
 
 

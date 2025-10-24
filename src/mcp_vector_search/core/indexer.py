@@ -295,8 +295,11 @@ class SemanticIndexer:
                 logger.debug(f"No chunks extracted from {file_path}")
                 return True  # Not an error, just empty file
 
+            # Build hierarchical relationships between chunks
+            chunks_with_hierarchy = self._build_chunk_hierarchy(chunks)
+
             # Add chunks to database
-            await self.database.add_chunks(chunks)
+            await self.database.add_chunks(chunks_with_hierarchy)
 
             # Update metadata after successful indexing
             metadata = self._load_index_metadata()
@@ -710,8 +713,11 @@ class SemanticIndexer:
                     chunks = await self._parse_file(file_path)
 
                     if chunks:
+                        # Build hierarchical relationships
+                        chunks_with_hierarchy = self._build_chunk_hierarchy(chunks)
+
                         # Add chunks to database
-                        await self.database.add_chunks(chunks)
+                        await self.database.add_chunks(chunks_with_hierarchy)
                         chunks_added = len(chunks)
                         logger.debug(f"Indexed {chunks_added} chunks from {file_path}")
 
@@ -729,3 +735,67 @@ class SemanticIndexer:
 
         # Save metadata at the end
         self._save_index_metadata(metadata)
+
+    def _build_chunk_hierarchy(self, chunks: list[CodeChunk]) -> list[CodeChunk]:
+        """Build parent-child relationships between chunks.
+
+        Logic:
+        - Module chunks (chunk_type="module") have depth 0
+        - Class chunks have depth 1, parent is module
+        - Method chunks have depth 2, parent is class
+        - Function chunks outside classes have depth 1, parent is module
+        - Nested classes increment depth
+
+        Args:
+            chunks: List of code chunks to process
+
+        Returns:
+            List of chunks with hierarchy relationships established
+        """
+        if not chunks:
+            return chunks
+
+        # Group chunks by type and name
+        module_chunks = [c for c in chunks if c.chunk_type in ("module", "imports")]
+        class_chunks = [c for c in chunks if c.chunk_type in ("class", "interface", "mixin")]
+        function_chunks = [c for c in chunks if c.chunk_type in ("function", "method", "constructor")]
+
+        # Build relationships
+        for func in function_chunks:
+            if func.class_name:
+                # Find parent class
+                parent_class = next(
+                    (c for c in class_chunks if c.class_name == func.class_name),
+                    None
+                )
+                if parent_class:
+                    func.parent_chunk_id = parent_class.chunk_id
+                    func.chunk_depth = parent_class.chunk_depth + 1
+                    if func.chunk_id not in parent_class.child_chunk_ids:
+                        parent_class.child_chunk_ids.append(func.chunk_id)
+            else:
+                # Top-level function
+                if not func.chunk_depth:
+                    func.chunk_depth = 1
+                # Link to module if exists
+                if module_chunks and not func.parent_chunk_id:
+                    func.parent_chunk_id = module_chunks[0].chunk_id
+                    if func.chunk_id not in module_chunks[0].child_chunk_ids:
+                        module_chunks[0].child_chunk_ids.append(func.chunk_id)
+
+        for cls in class_chunks:
+            # Classes without parent are top-level (depth 1)
+            if not cls.chunk_depth:
+                cls.chunk_depth = 1
+            # Link to module if exists
+            if module_chunks and not cls.parent_chunk_id:
+                cls.parent_chunk_id = module_chunks[0].chunk_id
+                if cls.chunk_id not in module_chunks[0].child_chunk_ids:
+                    module_chunks[0].child_chunk_ids.append(cls.chunk_id)
+
+        # Module chunks stay at depth 0
+        for mod in module_chunks:
+            if not mod.chunk_depth:
+                mod.chunk_depth = 0
+
+        return chunks

@@ -64,6 +64,68 @@ class BaseParser(ABC):
         """
         ...
 
+    def _calculate_complexity(self, node, language: str | None = None) -> float:
+        """Calculate cyclomatic complexity from AST node.
+
+        Cyclomatic complexity = Number of decision points + 1
+
+        Args:
+            node: AST node (tree-sitter)
+            language: Programming language for language-specific patterns (defaults to self.language)
+
+        Returns:
+            Complexity score (1.0 = simple, 10+ = complex)
+        """
+        if language is None:
+            language = self.language
+
+        if not hasattr(node, 'children'):
+            return 1.0
+
+        complexity = 1.0  # Base complexity
+
+        # Language-specific decision node types
+        decision_nodes = {
+            "python": {
+                "if_statement", "elif_clause", "while_statement", "for_statement",
+                "except_clause", "with_statement", "conditional_expression",
+                "boolean_operator"  # and, or
+            },
+            "javascript": {
+                "if_statement", "while_statement", "for_statement", "for_in_statement",
+                "switch_case", "catch_clause", "conditional_expression", "ternary_expression"
+            },
+            "typescript": {
+                "if_statement", "while_statement", "for_statement", "for_in_statement",
+                "switch_case", "catch_clause", "conditional_expression", "ternary_expression"
+            },
+            "dart": {
+                "if_statement", "while_statement", "for_statement", "for_in_statement",
+                "switch_case", "catch_clause", "conditional_expression"
+            },
+            "php": {
+                "if_statement", "elseif_clause", "while_statement", "foreach_statement",
+                "for_statement", "switch_case", "catch_clause", "ternary_expression"
+            },
+            "ruby": {
+                "if", "unless", "while", "until", "for", "case", "rescue",
+                "conditional"
+            }
+        }
+
+        nodes_to_count = decision_nodes.get(language, decision_nodes.get("python", set()))
+
+        def count_decision_points(n):
+            nonlocal complexity
+            if hasattr(n, 'type') and n.type in nodes_to_count:
+                complexity += 1
+            if hasattr(n, 'children'):
+                for child in n.children:
+                    count_decision_points(child)
+
+        count_decision_points(node)
+        return complexity
+
     def _create_chunk(
         self,
         content: str,
@@ -74,6 +136,13 @@ class BaseParser(ABC):
         function_name: str | None = None,
         class_name: str | None = None,
         docstring: str | None = None,
+        complexity_score: float = 0.0,
+        decorators: list[str] | None = None,
+        parameters: list[dict] | None = None,
+        return_type: str | None = None,
+        chunk_id: str | None = None,
+        parent_chunk_id: str | None = None,
+        chunk_depth: int = 0,
     ) -> CodeChunk:
         """Create a code chunk with metadata.
 
@@ -86,6 +155,13 @@ class BaseParser(ABC):
             function_name: Function name if applicable
             class_name: Class name if applicable
             docstring: Docstring if applicable
+            complexity_score: Cyclomatic complexity score
+            decorators: List of decorators/annotations
+            parameters: List of function parameters with metadata
+            return_type: Return type annotation
+            chunk_id: Unique chunk identifier
+            parent_chunk_id: Parent chunk ID for hierarchical relationships
+            chunk_depth: Nesting level in code hierarchy
 
         Returns:
             CodeChunk instance
@@ -100,6 +176,13 @@ class BaseParser(ABC):
             function_name=function_name,
             class_name=class_name,
             docstring=docstring,
+            complexity_score=complexity_score,
+            decorators=decorators or [],
+            parameters=parameters or [],
+            return_type=return_type,
+            chunk_id=chunk_id,
+            parent_chunk_id=parent_chunk_id,
+            chunk_depth=chunk_depth,
         )
 
     def _split_into_lines(self, content: str) -> list[str]:

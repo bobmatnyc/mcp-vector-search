@@ -150,6 +150,18 @@ class PythonParser(BaseParser):
         # Extract docstring if present
         docstring = self._extract_docstring(node, lines)
 
+        # Enhancement 1: Calculate complexity
+        complexity = self._calculate_complexity(node, "python")
+
+        # Enhancement 4: Extract decorators
+        decorators = self._extract_decorators(node, lines)
+
+        # Enhancement 4: Extract parameters
+        parameters = self._extract_parameters(node)
+
+        # Enhancement 4: Extract return type
+        return_type = self._extract_return_type(node)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -159,6 +171,11 @@ class PythonParser(BaseParser):
             function_name=function_name,
             class_name=class_name,
             docstring=docstring,
+            complexity_score=complexity,
+            decorators=decorators,
+            parameters=parameters,
+            return_type=return_type,
+            chunk_depth=2 if class_name else 1,
         )
         chunks.append(chunk)
 
@@ -180,6 +197,12 @@ class PythonParser(BaseParser):
         # Extract docstring if present
         docstring = self._extract_docstring(node, lines)
 
+        # Enhancement 1: Calculate complexity (for the entire class)
+        complexity = self._calculate_complexity(node, "python")
+
+        # Enhancement 4: Extract decorators
+        decorators = self._extract_decorators(node, lines)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -188,6 +211,9 @@ class PythonParser(BaseParser):
             chunk_type="class",
             class_name=class_name,
             docstring=docstring,
+            complexity_score=complexity,
+            decorators=decorators,
+            chunk_depth=1,
         )
         chunks.append(chunk)
 
@@ -409,6 +435,59 @@ class PythonParser(BaseParser):
                 break
 
         return None
+
+    def _extract_decorators(self, node, lines: list[str]) -> list[str]:
+        """Extract decorator names from function/class node."""
+        decorators = []
+        for child in node.children:
+            if child.type == "decorator":
+                # Get decorator text (includes @ symbol)
+                dec_text = self._get_node_text(child).strip()
+                decorators.append(dec_text)
+        return decorators
+
+    def _extract_parameters(self, node) -> list[dict]:
+        """Extract function parameters with type annotations."""
+        parameters = []
+        for child in node.children:
+            if child.type == "parameters":
+                for param_node in child.children:
+                    if param_node.type in ("identifier", "typed_parameter", "default_parameter"):
+                        param_info = {
+                            "name": None,
+                            "type": None,
+                            "default": None
+                        }
+
+                        # Extract parameter name
+                        if param_node.type == "identifier":
+                            param_info["name"] = self._get_node_text(param_node)
+                        else:
+                            # For typed or default parameters, find the identifier
+                            for subchild in param_node.children:
+                                if subchild.type == "identifier":
+                                    param_info["name"] = self._get_node_text(subchild)
+                                elif subchild.type == "type":
+                                    param_info["type"] = self._get_node_text(subchild)
+                                elif "default" in subchild.type:
+                                    param_info["default"] = self._get_node_text(subchild)
+
+                        if param_info["name"] and param_info["name"] not in ("self", "cls", "(", ")", ","):
+                            parameters.append(param_info)
+        return parameters
+
+    def _extract_return_type(self, node) -> str | None:
+        """Extract return type annotation from function."""
+        for child in node.children:
+            if child.type == "type":
+                return self._get_node_text(child)
+        return None
+
+    def _get_node_text(self, node) -> str:
+        """Get text content of a node."""
+        if hasattr(node, 'text'):
+            return node.text.decode('utf-8')
+        return ""
 
     def get_supported_extensions(self) -> list[str]:
         """Get supported file extensions."""

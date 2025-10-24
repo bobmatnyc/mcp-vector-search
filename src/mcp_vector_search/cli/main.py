@@ -33,16 +33,17 @@ unfamiliar codebases, finding similar patterns, and integrating with AI tools.
   3. Check status: [green]mcp-vector-search status[/green]
 
 [bold cyan]Main Commands:[/bold cyan]
-  init      🔧 Initialize project
-  demo      🎬 Run interactive demo
-  doctor    🩺 Check system health
-  status    📊 Show project status
-  search    🔍 Search code semantically
-  index     📇 Index codebase
-  mcp       🤖 MCP integration for AI tools
-  config    ⚙️  Configure settings
-  help      ❓ Get help
-  version   ℹ️  Show version
+  init       🔧 Initialize project
+  demo       🎬 Run interactive demo
+  doctor     🩺 Check system health
+  status     📊 Show project status
+  search     🔍 Search code semantically
+  index      📇 Index codebase
+  mcp        🤖 MCP integration for AI tools
+  config     ⚙️  Configure settings
+  visualize  📊 Visualize code relationships
+  help       ❓ Get help
+  version    ℹ️  Show version
 
 [dim]For detailed help: [cyan]mcp-vector-search COMMAND --help[/cyan][/dim]
     """,
@@ -58,6 +59,7 @@ from .commands.init import init_app  # noqa: E402
 from .commands.mcp import mcp_app  # noqa: E402
 from .commands.search import search_app, search_main  # noqa: E402, F401
 from .commands.status import main as status_main  # noqa: E402
+from .commands.visualize import app as visualize_app  # noqa: E402
 
 # ============================================================================
 # MAIN COMMANDS - Clean hierarchy
@@ -89,7 +91,10 @@ app.add_typer(mcp_app, name="mcp", help="🤖 Manage MCP integration for AI tool
 # 8. CONFIG - Configuration
 app.add_typer(config_app, name="config", help="⚙️  Manage project configuration")
 
-# 9. HELP - Enhanced help
+# 9. VISUALIZE - Code graph visualization
+app.add_typer(visualize_app, name="visualize", help="📊 Visualize code chunk relationships")
+
+# 10. HELP - Enhanced help
 # (defined below inline)
 
 # 10. VERSION - Version info
