@@ -53,7 +53,13 @@ class CodeChunk:
         # Generate chunk ID if not provided
         if self.chunk_id is None:
             import hashlib
-            id_string = f"{self.file_path}:{self.chunk_type}:{self.start_line}:{self.end_line}"
+            import uuid
+
+            # Include name to differentiate chunks at same location
+            name = self.function_name or self.class_name or ""
+            # Add UUID to guarantee uniqueness even for identical chunks
+            unique_suffix = str(uuid.uuid4())[:8]
+            id_string = f"{self.file_path}:{self.chunk_type}:{name}:{self.start_line}:{self.end_line}:{unique_suffix}"
             self.chunk_id = hashlib.sha256(id_string.encode()).hexdigest()[:16]
 
     @property
