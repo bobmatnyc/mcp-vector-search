@@ -37,6 +37,10 @@ class CodeChunk:
     return_type: str | None = None
     type_annotations: dict[str, str] = None
 
+    # Enhancement 5: Monorepo support
+    subproject_name: str | None = None  # "ewtn-plus-foundation"
+    subproject_path: str | None = None  # Relative path from root
+
     def __post_init__(self) -> None:
         """Initialize default values and generate chunk ID."""
         if self.imports is None:
@@ -93,6 +97,8 @@ class CodeChunk:
             "parameters": self.parameters,
             "return_type": self.return_type,
             "type_annotations": self.type_annotations,
+            "subproject_name": self.subproject_name,
+            "subproject_path": self.subproject_path,
         }
 
     @classmethod
@@ -118,6 +124,8 @@ class CodeChunk:
             parameters=data.get("parameters", []),
             return_type=data.get("return_type"),
             type_annotations=data.get("type_annotations", {}),
+            subproject_name=data.get("subproject_name"),
+            subproject_path=data.get("subproject_path"),
         )
 
 

@@ -13,6 +13,7 @@ from .. import __version__
 from ..config.defaults import DEFAULT_IGNORE_PATTERNS
 from ..parsers.registry import get_parser_registry
 from ..utils.gitignore import create_gitignore_parser
+from ..utils.monorepo import MonorepoDetector
 from .database import VectorDatabase
 from .exceptions import ParsingError
 from .models import CodeChunk
@@ -71,6 +72,14 @@ class SemanticIndexer:
         except Exception as e:
             logger.warning(f"Failed to load gitignore patterns: {e}")
             self.gitignore_parser = None
+
+        # Initialize monorepo detector
+        self.monorepo_detector = MonorepoDetector(project_root)
+        if self.monorepo_detector.is_monorepo():
+            subprojects = self.monorepo_detector.detect_subprojects()
+            logger.info(f"Detected monorepo with {len(subprojects)} subprojects")
+            for sp in subprojects:
+                logger.debug(f"  - {sp.name} ({sp.relative_path})")
 
     async def index_project(
         self,
@@ -519,7 +528,7 @@ class SemanticIndexer:
             file_path: Path to the file to parse
 
         Returns:
-            List of code chunks
+            List of code chunks with subproject information
         """
         try:
             # Get appropriate parser
@@ -530,6 +539,13 @@ class SemanticIndexer:
 
             # Filter out empty chunks
             valid_chunks = [chunk for chunk in chunks if chunk.content.strip()]
+
+            # Assign subproject information for monorepos
+            subproject = self.monorepo_detector.get_subproject_for_file(file_path)
+            if subproject:
+                for chunk in valid_chunks:
+                    chunk.subproject_name = subproject.name
+                    chunk.subproject_path = subproject.relative_path
 
             return valid_chunks
 
