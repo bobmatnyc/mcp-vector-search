@@ -330,6 +330,11 @@ async def _run_batch_indexing(
                 console.print(
                     f"[yellow]⚠ {failed_count} files failed to index[/yellow]"
                 )
+                error_log_path = project_root / ".mcp-vector-search" / "indexing_errors.log"
+                if error_log_path.exists():
+                    console.print(
+                        f"[dim]  → See details in: {error_log_path}[/dim]"
+                    )
     else:
         # Non-progress mode (fallback to original behavior)
         indexed_count = await indexer.index_project(

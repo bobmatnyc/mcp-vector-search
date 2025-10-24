@@ -727,8 +727,19 @@ class SemanticIndexer:
                     metadata[str(file_path)] = os.path.getmtime(file_path)
 
                 except Exception as e:
-                    logger.error(f"Failed to index file {file_path}: {e}")
+                    error_msg = f"Failed to index file {file_path}: {type(e).__name__}: {str(e)}"
+                    logger.error(error_msg)
                     success = False
+
+                    # Save error to error log file
+                    try:
+                        error_log_path = self.project_root / ".mcp-vector-search" / "indexing_errors.log"
+                        with open(error_log_path, "a", encoding="utf-8") as f:
+                            from datetime import datetime
+                            timestamp = datetime.now().isoformat()
+                            f.write(f"[{timestamp}] {error_msg}\n")
+                    except Exception as log_err:
+                        logger.debug(f"Failed to write error log: {log_err}")
 
                 # Yield progress update
                 yield (file_path, chunks_added, success)
