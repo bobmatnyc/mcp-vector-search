@@ -332,6 +332,8 @@ async def _run_batch_indexing(
                 )
                 error_log_path = indexer.project_root / ".mcp-vector-search" / "indexing_errors.log"
                 if error_log_path.exists():
+                    # Prune log to keep only last 1000 errors
+                    _prune_error_log(error_log_path, max_lines=1000)
                     console.print(
                         f"[dim]  → See details in: {error_log_path}[/dim]"
                     )
@@ -690,6 +692,29 @@ def health_cmd(
 
     # Call the health function from reset.py
     health_main(project_root=project_root, repair=repair)
+
+
+def _prune_error_log(log_path: Path, max_lines: int = 1000) -> None:
+    """Prune error log to keep only the most recent N lines.
+
+    Args:
+        log_path: Path to the error log file
+        max_lines: Maximum number of lines to keep (default: 1000)
+    """
+    try:
+        with open(log_path, 'r') as f:
+            lines = f.readlines()
+
+        if len(lines) > max_lines:
+            # Keep only the last max_lines lines
+            pruned_lines = lines[-max_lines:]
+
+            with open(log_path, 'w') as f:
+                f.writelines(pruned_lines)
+
+            logger.debug(f"Pruned error log from {len(lines)} to {len(pruned_lines)} lines")
+    except Exception as e:
+        logger.warning(f"Failed to prune error log: {e}")
 
 
 if __name__ == "__main__":
