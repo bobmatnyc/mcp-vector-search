@@ -39,7 +39,7 @@ unfamiliar codebases, finding similar patterns, and integrating with AI tools.
   status    📊 Show project status
   search    🔍 Search code semantically
   index     📇 Index codebase
-  mcp       🤖 MCP integration
+  mcp       🤖 MCP integration for AI tools
   config    ⚙️  Configure settings
   help      ❓ Get help
   version   ℹ️  Show version
@@ -84,7 +84,7 @@ app.add_typer(search_app, name="search", help="🔍 Search code semantically")
 app.add_typer(index_app, name="index", help="📇 Index codebase for semantic search")
 
 # 7. MCP - MCP integration
-app.add_typer(mcp_app, name="mcp", help="🤖 Manage Claude Code MCP integration")
+app.add_typer(mcp_app, name="mcp", help="🤖 Manage MCP integration for AI tools")
 
 # 8. CONFIG - Configuration
 app.add_typer(config_app, name="config", help="⚙️  Manage project configuration")
