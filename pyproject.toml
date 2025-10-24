@@ -47,6 +47,8 @@ dev = [
     "pytest-benchmark>=4.0.0",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.11.0",
+    "pytest-xdist>=3.3.0",
+    "pytest-watch>=4.2.0",
     "hypothesis>=6.88.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
@@ -80,13 +82,7 @@ path = "src/mcp_vector_search/__init__.py"
 packages = ["src/mcp_vector_search"]
 
 # UV-specific configuration
-[tool.uv]
-dev-dependencies = [
-    "pytest-xdist>=3.3.0",
-    "pytest-watch>=4.2.0",
-]
-
-# UV sources configuration removed - using standard dependencies
+# Note: dev-dependencies moved to [dependency-groups] section above
 
 # Development tools configuration
 [tool.black]
