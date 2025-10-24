@@ -73,10 +73,15 @@ class JavaScriptParser(BaseParser):
             """Recursively visit AST nodes."""
             node_type = node.type
 
+            # Check if this node type should be extracted
+            extracted = False
+
             if node_type == "function_declaration":
                 chunks.extend(self._extract_function(node, lines, file_path, current_class))
+                extracted = True
             elif node_type == "arrow_function":
                 chunks.extend(self._extract_arrow_function(node, lines, file_path, current_class))
+                extracted = True
             elif node_type == "class_declaration":
                 class_chunks = self._extract_class(node, lines, file_path)
                 chunks.extend(class_chunks)
@@ -85,17 +90,22 @@ class JavaScriptParser(BaseParser):
                 class_name = self._get_node_name(node)
                 for child in node.children:
                     visit_node(child, class_name)
+                extracted = True
             elif node_type == "method_definition":
                 chunks.extend(self._extract_method(node, lines, file_path, current_class))
+                extracted = True
             elif node_type == "lexical_declaration":
                 # const/let declarations might be arrow functions
-                chunks.extend(self._extract_variable_function(node, lines, file_path, current_class))
+                extracted_chunks = self._extract_variable_function(node, lines, file_path, current_class)
+                if extracted_chunks:
+                    chunks.extend(extracted_chunks)
+                    extracted = True
 
-            # Recurse into children
-            if hasattr(node, 'children'):
+            # Only recurse into children if we didn't extract this node
+            # This prevents double-extraction of arrow functions in variable declarations
+            if not extracted and hasattr(node, 'children'):
                 for child in node.children:
-                    if child.type not in ("class_declaration", "function_declaration"):
-                        visit_node(child, current_class)
+                    visit_node(child, current_class)
 
         visit_node(tree.root_node)
 
