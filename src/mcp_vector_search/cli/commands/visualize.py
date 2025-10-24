@@ -166,8 +166,29 @@ def serve(
     """
     import http.server
     import os
+    import socket
     import socketserver
     import webbrowser
+
+    # Find free port in range 8080-8099
+    def find_free_port(start_port: int = 8080, end_port: int = 8099) -> int:
+        """Find a free port in the given range."""
+        for test_port in range(start_port, end_port + 1):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(("", test_port))
+                    return test_port
+            except OSError:
+                continue
+        raise OSError(f"No free ports available in range {start_port}-{end_port}")
+
+    # Use specified port or find free one
+    if port == 8080:  # Default port, try to find free one
+        try:
+            port = find_free_port(8080, 8099)
+        except OSError as e:
+            console.print(f"[red]✗ {e}[/red]")
+            raise typer.Exit(1)
 
     # Get visualization directory
     viz_dir = Path(__file__).parent.parent.parent / "visualization"
@@ -364,9 +385,8 @@ def _create_visualization_html(html_file: Path) -> None:
     <div id="controls">
         <h1>🔍 Code Graph</h1>
 
-        <div class="control-group">
-            <label>Load Graph Data:</label>
-            <input type="file" id="fileInput" accept=".json">
+        <div class="control-group" id="loading">
+            <label>⏳ Loading graph data...</label>
         </div>
 
         <h3>Legend</h3>
@@ -504,23 +524,29 @@ def _create_visualization_html(html_file: Path) -> None:
             `);
         }
 
-        document.getElementById("fileInput").addEventListener("change", (event) => {
-            const file = event.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const data = JSON.parse(e.target.result);
-                    visualizeGraph(data);
-                };
-                reader.readAsText(file);
-            }
-        });
+        // Auto-load graph data on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const loadingEl = document.getElementById('loading');
 
-        // Try to load default data
-        fetch("chunk-graph.json")
-            .then(response => response.json())
-            .then(data => visualizeGraph(data))
-            .catch(err => console.log("No default graph found. Please load a JSON file."));
+            fetch("chunk-graph.json")
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    loadingEl.innerHTML = '<label style="color: #238636;">✓ Graph loaded successfully</label>';
+                    setTimeout(() => loadingEl.style.display = 'none', 2000);
+                    visualizeGraph(data);
+                })
+                .catch(err => {
+                    loadingEl.innerHTML = `<label style="color: #f85149;">✗ Failed to load graph data</label><br>` +
+                                         `<small style="color: #8b949e;">${err.message}</small><br>` +
+                                         `<small style="color: #8b949e;">Run: mcp-vector-search visualize export</small>`;
+                    console.error("Failed to load graph:", err);
+                });
+        });
     </script>
 </body>
 </html>'''
