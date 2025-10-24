@@ -11,7 +11,7 @@ from rich.panel import Panel
 
 from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function
-from ...core.project import load_project
+from ...core.project import ProjectManager
 
 app = typer.Typer(
     help="Visualize code chunk relationships",
@@ -54,10 +54,16 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
     """Export chunk relationship data."""
     try:
         # Load project
-        project_manager, config = load_project(Path.cwd())
+        project_manager = ProjectManager(Path.cwd())
+
+        if not project_manager.is_initialized():
+            console.print("[red]Project not initialized. Run 'mcp-vector-search init' first.[/red]")
+            raise typer.Exit(1)
+
+        config = project_manager.load_config()
 
         # Get database
-        embedding_function = create_embedding_function(config.embedding_model)
+        embedding_function, _ = create_embedding_function(config.embedding_model)
         database = ChromaVectorDatabase(
             persist_directory=config.index_path,
             embedding_function=embedding_function,
