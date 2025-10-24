@@ -1,5 +1,6 @@
 """Database abstraction and ChromaDB implementation for MCP Vector Search."""
 
+import asyncio
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -369,38 +370,67 @@ class ChromaVectorDatabase(VectorDatabase):
             raise DatabaseError(f"Failed to delete chunks: {e}") from e
 
     async def get_stats(self) -> IndexStats:
-        """Get database statistics."""
+        """Get database statistics with optimized chunked queries."""
         if not self._collection:
             raise DatabaseNotInitializedError("Database not initialized")
 
         try:
-            # Get total count
+            # Get total count (fast operation)
             count = self._collection.count()
 
-            # Get ALL metadata to analyze (not just a sample)
-            # Only fetch metadata, not embeddings, for performance
-            results = self._collection.get(include=["metadatas"])
+            if count == 0:
+                return IndexStats(
+                    total_files=0,
+                    total_chunks=0,
+                    languages={},
+                    file_types={},
+                    index_size_mb=0.0,
+                    last_updated="N/A",
+                    embedding_model="unknown",
+                )
 
-            # Count unique files from all chunks
-            files = {m.get("file_path", "") for m in results.get("metadatas", [])}
+            # Process in chunks to avoid loading everything at once
+            batch_size_limit = 1000
 
-            # Count languages and file types
-            language_counts = {}
-            file_type_counts = {}
+            files = set()
+            language_counts: dict[str, int] = {}
+            file_type_counts: dict[str, int] = {}
 
-            for metadata in results.get("metadatas", []):
-                # Count languages
-                lang = metadata.get("language", "unknown")
-                language_counts[lang] = language_counts.get(lang, 0) + 1
+            offset = 0
+            while offset < count:
+                # Fetch batch
+                batch_size = min(batch_size_limit, count - offset)
+                logger.debug(
+                    f"Processing database stats: batch {offset // batch_size_limit + 1}, "
+                    f"{offset}-{offset + batch_size} of {count} chunks"
+                )
 
-                # Count file types
-                file_path = metadata.get("file_path", "")
-                if file_path:
-                    ext = Path(file_path).suffix or "no_extension"
-                    file_type_counts[ext] = file_type_counts.get(ext, 0) + 1
+                results = self._collection.get(
+                    include=["metadatas"],
+                    limit=batch_size,
+                    offset=offset,
+                )
 
-            # Estimate index size (rough approximation)
-            index_size_mb = count * 0.001  # Rough estimate
+                # Process batch metadata
+                for metadata in results.get("metadatas", []):
+                    # Language stats
+                    lang = metadata.get("language", "unknown")
+                    language_counts[lang] = language_counts.get(lang, 0) + 1
+
+                    # File stats
+                    file_path = metadata.get("file_path", "")
+                    if file_path:
+                        files.add(file_path)
+                        ext = Path(file_path).suffix or "no_extension"
+                        file_type_counts[ext] = file_type_counts.get(ext, 0) + 1
+
+                offset += batch_size
+
+                # Yield to event loop periodically to prevent blocking
+                await asyncio.sleep(0)
+
+            # Estimate index size (rough approximation: ~1KB per chunk)
+            index_size_mb = count * 0.001
 
             return IndexStats(
                 total_files=len(files),
@@ -408,12 +438,13 @@ class ChromaVectorDatabase(VectorDatabase):
                 languages=language_counts,
                 file_types=file_type_counts,
                 index_size_mb=index_size_mb,
-                last_updated="unknown",  # TODO: Track this
-                embedding_model="unknown",  # TODO: Track this
+                last_updated="unknown",
+                embedding_model="unknown",
             )
 
         except Exception as e:
-            logger.error(f"Failed to get stats: {e}")
+            logger.error(f"Failed to get database statistics: {e}")
+            # Return empty stats instead of raising
             return IndexStats(
                 total_files=0,
                 total_chunks=0,
@@ -768,56 +799,88 @@ class PooledChromaVectorDatabase(VectorDatabase):
             raise DatabaseError(f"Failed to delete chunks: {e}") from e
 
     async def get_stats(self) -> IndexStats:
-        """Get database statistics using pooled connection."""
+        """Get database statistics with connection pooling and chunked queries."""
         try:
             async with self._pool.get_connection() as conn:
-                # Get total count
+                # Get total count (fast operation)
                 count = conn.collection.count()
 
-                # Get all metadata to analyze
-                results = conn.collection.get(include=["metadatas"])
+                if count == 0:
+                    return IndexStats(
+                        total_files=0,
+                        total_chunks=0,
+                        languages={},
+                        file_types={},
+                        index_size_mb=0.0,
+                        last_updated="N/A",
+                        embedding_model="unknown",
+                    )
 
-                # Analyze languages and files
-                languages = set()
+                # Process in chunks to avoid loading everything at once
+                batch_size_limit = 1000
+
                 files = set()
+                language_counts: dict[str, int] = {}
+                file_type_counts: dict[str, int] = {}
 
-                for metadata in results["metadatas"]:
-                    if "language" in metadata:
-                        languages.add(metadata["language"])
-                    if "file_path" in metadata:
-                        files.add(metadata["file_path"])
+                offset = 0
+                while offset < count:
+                    # Fetch batch
+                    batch_size = min(batch_size_limit, count - offset)
+                    logger.debug(
+                        f"Processing database stats: batch {offset // batch_size_limit + 1}, "
+                        f"{offset}-{offset + batch_size} of {count} chunks"
+                    )
 
-                # Count languages and file types
-                language_counts = {}
-                file_type_counts = {}
+                    results = conn.collection.get(
+                        include=["metadatas"],
+                        limit=batch_size,
+                        offset=offset,
+                    )
 
-                for metadata in results["metadatas"]:
-                    # Count languages
-                    lang = metadata.get("language", "unknown")
-                    language_counts[lang] = language_counts.get(lang, 0) + 1
+                    # Process batch metadata
+                    for metadata in results.get("metadatas", []):
+                        # Language stats
+                        lang = metadata.get("language", "unknown")
+                        language_counts[lang] = language_counts.get(lang, 0) + 1
 
-                    # Count file types
-                    file_path = metadata.get("file_path", "")
-                    if file_path:
-                        ext = Path(file_path).suffix or "no_extension"
-                        file_type_counts[ext] = file_type_counts.get(ext, 0) + 1
+                        # File stats
+                        file_path = metadata.get("file_path", "")
+                        if file_path:
+                            files.add(file_path)
+                            ext = Path(file_path).suffix or "no_extension"
+                            file_type_counts[ext] = file_type_counts.get(ext, 0) + 1
 
-                # Estimate index size (rough approximation)
-                index_size_mb = count * 0.001  # Rough estimate
+                    offset += batch_size
+
+                    # Yield to event loop periodically to prevent blocking
+                    await asyncio.sleep(0)
+
+                # Estimate index size (rough approximation: ~1KB per chunk)
+                index_size_mb = count * 0.001
 
                 return IndexStats(
-                    total_chunks=count,
                     total_files=len(files),
+                    total_chunks=count,
                     languages=language_counts,
                     file_types=file_type_counts,
                     index_size_mb=index_size_mb,
-                    last_updated="unknown",  # ChromaDB doesn't track this
-                    embedding_model="unknown",  # TODO: Track this in metadata
+                    last_updated="unknown",
+                    embedding_model="unknown",
                 )
 
         except Exception as e:
-            logger.error(f"Failed to get database stats: {e}")
-            raise DatabaseError(f"Failed to get stats: {e}") from e
+            logger.error(f"Failed to get database statistics: {e}")
+            # Return empty stats instead of raising
+            return IndexStats(
+                total_files=0,
+                total_chunks=0,
+                languages={},
+                file_types={},
+                index_size_mb=0.0,
+                last_updated="error",
+                embedding_model="unknown",
+            )
 
     async def remove_file_chunks(self, file_path: str) -> int:
         """Remove all chunks for a specific file using pooled connection."""

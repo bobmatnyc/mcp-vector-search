@@ -102,16 +102,18 @@ class GitignoreParser:
         self._load_gitignore_files()
 
     def _load_gitignore_files(self) -> None:
-        """Load all .gitignore files in the project hierarchy."""
-        # Load global .gitignore first (if exists)
-        global_gitignore = self.project_root / ".gitignore"
-        if global_gitignore.exists():
-            self._parse_gitignore_file(global_gitignore)
+        """Load .gitignore file from project root only.
 
-        # Load .gitignore files in subdirectories
-        for gitignore_file in self.project_root.rglob(".gitignore"):
-            if gitignore_file != global_gitignore:
-                self._parse_gitignore_file(gitignore_file)
+        Note: Only the root .gitignore is loaded to avoid performance issues
+        with rglob traversing large directory trees (e.g., node_modules with
+        250K+ files). Subdirectory .gitignore files are intentionally skipped
+        as they would add significant overhead without much benefit for
+        semantic code search indexing.
+        """
+        # Load root .gitignore only
+        root_gitignore = self.project_root / ".gitignore"
+        if root_gitignore.exists():
+            self._parse_gitignore_file(root_gitignore)
 
     def _parse_gitignore_file(self, gitignore_path: Path) -> None:
         """Parse a single .gitignore file.
@@ -136,16 +138,7 @@ class GitignoreParser:
                 # Check for directory-only pattern
                 is_directory_only = line.endswith("/")
 
-                # Create pattern relative to the .gitignore file's directory
-                gitignore_dir = gitignore_path.parent
-                if gitignore_dir != self.project_root:
-                    # Adjust pattern for subdirectory .gitignore files
-                    relative_dir = gitignore_dir.relative_to(self.project_root)
-                    if not line.startswith("/") and not is_negation:
-                        line = str(relative_dir / line)
-                    elif is_negation and not line[1:].startswith("/"):
-                        line = "!" + str(relative_dir / line[1:])
-
+                # Create pattern (all patterns are from root .gitignore)
                 pattern = GitignorePattern(line, is_negation, is_directory_only)
                 self.patterns.append(pattern)
 

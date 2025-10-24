@@ -9,7 +9,7 @@ import typer
 from loguru import logger
 from rich.console import Console
 
-from ..output import print_error, print_info, print_success, print_warning
+from ..output import print_error, print_info, print_success
 
 console = Console()
 
@@ -321,9 +321,7 @@ class UserAPI:
             console.print("  ✅ Automatic code indexing")
             if not quick:
                 console.print("  ✅ Semantic code search in action")
-                console.print(
-                    "  ✅ Finding code by meaning (not just keywords)\n"
-                )
+                console.print("  ✅ Finding code by meaning (not just keywords)\n")
 
             console.print("[bold cyan]Next steps to use in your project:[/bold cyan]")
             console.print("  1. [green]cd /your/project[/green]")

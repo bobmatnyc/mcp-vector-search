@@ -102,15 +102,28 @@ def main(
         if project_root is None:
             project_root = Path.cwd()
 
-        asyncio.run(
-            show_status(
-                project_root=project_root,
-                verbose=verbose,
-                health_check=health_check,
-                mcp=mcp,
-                json_output=json_output,
-            )
-        )
+        async def run_status_with_timeout():
+            """Run status command with timeout protection."""
+            try:
+                await asyncio.wait_for(
+                    show_status(
+                        project_root=project_root,
+                        verbose=verbose,
+                        health_check=health_check,
+                        mcp=mcp,
+                        json_output=json_output,
+                    ),
+                    timeout=30.0,  # 30 second timeout
+                )
+            except TimeoutError:
+                logger.error("Status check timed out after 30 seconds")
+                print_error(
+                    "Status check timed out after 30 seconds. "
+                    "Try running with --verbose for more details."
+                )
+                raise typer.Exit(1)
+
+        asyncio.run(run_status_with_timeout())
 
     except Exception as e:
         logger.error(f"Status check failed: {e}")
@@ -162,6 +175,7 @@ async def show_status(
             file_extensions=config.file_extensions,
         )
 
+        # Get indexing stats (runs async file scanning in thread pool)
         async with database:
             index_stats = await indexer.get_indexing_stats()
             db_stats = await database.get_stats()

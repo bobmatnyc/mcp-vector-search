@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -49,26 +49,26 @@ SUPPORTED_TOOLS = {
         "name": "Auggie",
         "config_path": "~/.augment/settings.json",
         "format": "json",
-        "description": "Augment Code AI assistant"
+        "description": "Augment Code AI assistant",
     },
     "claude-code": {
         "name": "Claude Code",
         "config_path": ".mcp.json",
         "format": "json",
-        "description": "Claude Code (project-scoped)"
+        "description": "Claude Code (project-scoped)",
     },
     "codex": {
         "name": "Codex",
         "config_path": "~/.codex/config.toml",
         "format": "toml",
-        "description": "OpenAI Codex CLI"
+        "description": "OpenAI Codex CLI",
     },
     "gemini": {
         "name": "Gemini",
         "config_path": "~/.gemini/mcp.json",
         "format": "json",
-        "description": "Google Gemini CLI"
-    }
+        "description": "Google Gemini CLI",
+    },
 }
 
 
@@ -124,15 +124,18 @@ def get_mcp_server_command(
 
 
 def get_mcp_server_config_for_tool(
-    project_root: Path, tool_name: str, server_name: str, enable_file_watching: bool = True
-) -> Dict[str, Any]:
+    project_root: Path,
+    tool_name: str,
+    server_name: str,
+    enable_file_watching: bool = True,
+) -> dict[str, Any]:
     """Generate MCP server configuration for a specific tool."""
     base_config = {
         "command": "uv",
         "args": ["run", "mcp-vector-search", "mcp"],
         "env": {
             "MCP_ENABLE_FILE_WATCHING": "true" if enable_file_watching else "false"
-        }
+        },
     }
 
     if tool_name == "auggie":
@@ -140,29 +143,20 @@ def get_mcp_server_config_for_tool(
         return base_config
     elif tool_name == "claude-code":
         # Claude Code requires type: stdio and no cwd
-        return {
-            "type": "stdio",
-            **base_config
-        }
+        return {"type": "stdio", **base_config}
     elif tool_name == "codex":
         # Codex uses TOML format with different structure
         return {
             "command": base_config["command"],
             "args": base_config["args"],
-            "env": base_config["env"]
+            "env": base_config["env"],
         }
     elif tool_name == "gemini":
         # Gemini uses standard format with cwd
-        return {
-            **base_config,
-            "cwd": str(project_root.absolute())
-        }
+        return {**base_config, "cwd": str(project_root.absolute())}
     else:
         # Default configuration
-        return {
-            **base_config,
-            "cwd": str(project_root.absolute())
-        }
+        return {**base_config, "cwd": str(project_root.absolute())}
 
 
 def create_project_claude_config(
@@ -215,7 +209,7 @@ def configure_tool_mcp(
     project_root: Path,
     server_name: str = "mcp-vector-search",
     enable_file_watching: bool = True,
-    force: bool = False
+    force: bool = False,
 ) -> bool:
     """Configure MCP integration for a specific AI tool."""
     if tool_name not in SUPPORTED_TOOLS:
@@ -236,13 +230,21 @@ def configure_tool_mcp(
 
     try:
         if tool_name == "auggie":
-            return configure_auggie_mcp(config_path, project_root, server_name, enable_file_watching, force)
+            return configure_auggie_mcp(
+                config_path, project_root, server_name, enable_file_watching, force
+            )
         elif tool_name == "claude-code":
-            return configure_claude_code_mcp(config_path, project_root, server_name, enable_file_watching, force)
+            return configure_claude_code_mcp(
+                config_path, project_root, server_name, enable_file_watching, force
+            )
         elif tool_name == "codex":
-            return configure_codex_mcp(config_path, project_root, server_name, enable_file_watching, force)
+            return configure_codex_mcp(
+                config_path, project_root, server_name, enable_file_watching, force
+            )
         elif tool_name == "gemini":
-            return configure_gemini_mcp(config_path, project_root, server_name, enable_file_watching, force)
+            return configure_gemini_mcp(
+                config_path, project_root, server_name, enable_file_watching, force
+            )
         else:
             print_error(f"Configuration for {tool_name} not implemented yet")
             return False
@@ -256,7 +258,7 @@ def configure_auggie_mcp(
     project_root: Path,
     server_name: str,
     enable_file_watching: bool,
-    force: bool
+    force: bool,
 ) -> bool:
     """Configure Auggie MCP integration."""
     # Create backup if file exists
@@ -268,7 +270,9 @@ def configure_auggie_mcp(
             with open(config_path) as f:
                 config = json.load(f)
             if config.get("mcpServers", {}).get(server_name):
-                print_warning(f"MCP server '{server_name}' already exists in Auggie config")
+                print_warning(
+                    f"MCP server '{server_name}' already exists in Auggie config"
+                )
                 print_info("Use --force to overwrite")
                 return False
         shutil.copy2(config_path, backup_path)
@@ -283,7 +287,9 @@ def configure_auggie_mcp(
         config["mcpServers"] = {}
 
     # Get server configuration
-    server_config = get_mcp_server_config_for_tool(project_root, "auggie", server_name, enable_file_watching)
+    server_config = get_mcp_server_config_for_tool(
+        project_root, "auggie", server_name, enable_file_watching
+    )
     config["mcpServers"][server_name] = server_config
 
     # Write updated config
@@ -299,7 +305,7 @@ def configure_claude_code_mcp(
     project_root: Path,
     server_name: str,
     enable_file_watching: bool,
-    force: bool
+    force: bool,
 ) -> bool:
     """Configure Claude Code MCP integration."""
     # Use existing function for Claude Code
@@ -307,7 +313,9 @@ def configure_claude_code_mcp(
         with open(config_path) as f:
             config = json.load(f)
         if config.get("mcpServers", {}).get(server_name):
-            print_warning(f"MCP server '{server_name}' already exists in Claude Code config")
+            print_warning(
+                f"MCP server '{server_name}' already exists in Claude Code config"
+            )
             print_info("Use --force to overwrite")
             return False
 
@@ -321,7 +329,7 @@ def configure_codex_mcp(
     project_root: Path,
     server_name: str,
     enable_file_watching: bool,
-    force: bool
+    force: bool,
 ) -> bool:
     """Configure Codex MCP integration."""
     # Create backup if file exists
@@ -334,7 +342,9 @@ def configure_codex_mcp(
                 with open(config_path, "rb") as f:
                     config = tomllib.load(f)
                 if config.get("mcp_servers", {}).get(server_name):
-                    print_warning(f"MCP server '{server_name}' already exists in Codex config")
+                    print_warning(
+                        f"MCP server '{server_name}' already exists in Codex config"
+                    )
                     print_info("Use --force to overwrite")
                     return False
             except Exception as e:
@@ -342,19 +352,21 @@ def configure_codex_mcp(
 
         shutil.copy2(config_path, backup_path)
         # Read as text to preserve existing content
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config_text = f.read()
     else:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_text = ""
 
     # Get server configuration
-    server_config = get_mcp_server_config_for_tool(project_root, "codex", server_name, enable_file_watching)
+    server_config = get_mcp_server_config_for_tool(
+        project_root, "codex", server_name, enable_file_watching
+    )
 
     # Generate TOML section for the server
     toml_section = f"\n[mcp_servers.{server_name}]\n"
     toml_section += f'command = "{server_config["command"]}"\n'
-    toml_section += f'args = {server_config["args"]}\n'
+    toml_section += f"args = {server_config['args']}\n"
 
     if server_config.get("env"):
         toml_section += f"\n[mcp_servers.{server_name}.env]\n"
@@ -364,7 +376,7 @@ def configure_codex_mcp(
     # Append or replace the section
     if f"[mcp_servers.{server_name}]" in config_text:
         # Replace existing section (simple approach)
-        lines = config_text.split('\n')
+        lines = config_text.split("\n")
         new_lines = []
         skip_section = False
 
@@ -378,7 +390,7 @@ def configure_codex_mcp(
             elif not skip_section:
                 new_lines.append(line)
 
-        config_text = '\n'.join(new_lines) + toml_section
+        config_text = "\n".join(new_lines) + toml_section
     else:
         config_text += toml_section
 
@@ -395,7 +407,7 @@ def configure_gemini_mcp(
     project_root: Path,
     server_name: str,
     enable_file_watching: bool,
-    force: bool
+    force: bool,
 ) -> bool:
     """Configure Gemini MCP integration."""
     # Create backup if file exists
@@ -407,7 +419,9 @@ def configure_gemini_mcp(
             with open(config_path) as f:
                 config = json.load(f)
             if config.get("mcpServers", {}).get(server_name):
-                print_warning(f"MCP server '{server_name}' already exists in Gemini config")
+                print_warning(
+                    f"MCP server '{server_name}' already exists in Gemini config"
+                )
                 print_info("Use --force to overwrite")
                 return False
         shutil.copy2(config_path, backup_path)
@@ -422,7 +436,9 @@ def configure_gemini_mcp(
         config["mcpServers"] = {}
 
     # Get server configuration
-    server_config = get_mcp_server_config_for_tool(project_root, "gemini", server_name, enable_file_watching)
+    server_config = get_mcp_server_config_for_tool(
+        project_root, "gemini", server_name, enable_file_watching
+    )
     config["mcpServers"][server_name] = server_config
 
     # Write updated config
@@ -481,7 +497,9 @@ def configure_auggie(
             raise typer.Exit(1)
 
         enable_file_watching = not no_watch
-        success = configure_tool_mcp("auggie", project_root, server_name, enable_file_watching, force)
+        success = configure_tool_mcp(
+            "auggie", project_root, server_name, enable_file_watching, force
+        )
 
         if success:
             print_info("Auggie will automatically detect the server when restarted")
@@ -540,10 +558,14 @@ def configure_claude_code(
             raise typer.Exit(1)
 
         enable_file_watching = not no_watch
-        success = configure_tool_mcp("claude-code", project_root, server_name, enable_file_watching, force)
+        success = configure_tool_mcp(
+            "claude-code", project_root, server_name, enable_file_watching, force
+        )
 
         if success:
-            print_info("Claude Code will automatically detect the server when you open this project")
+            print_info(
+                "Claude Code will automatically detect the server when you open this project"
+            )
         else:
             raise typer.Exit(1)
 
@@ -599,7 +621,9 @@ def configure_codex(
             raise typer.Exit(1)
 
         enable_file_watching = not no_watch
-        success = configure_tool_mcp("codex", project_root, server_name, enable_file_watching, force)
+        success = configure_tool_mcp(
+            "codex", project_root, server_name, enable_file_watching, force
+        )
 
         if success:
             print_info("Codex will automatically detect the server when restarted")
@@ -658,7 +682,9 @@ def configure_gemini(
             raise typer.Exit(1)
 
         enable_file_watching = not no_watch
-        success = configure_tool_mcp("gemini", project_root, server_name, enable_file_watching, force)
+        success = configure_tool_mcp(
+            "gemini", project_root, server_name, enable_file_watching, force
+        )
 
         if success:
             print_info("Gemini will automatically detect the server when restarted")
@@ -730,10 +756,14 @@ def install_mcp_integration(
             raise typer.Exit(1)
 
         enable_file_watching = not no_watch
-        success = configure_tool_mcp("claude-code", project_root, server_name, enable_file_watching, force)
+        success = configure_tool_mcp(
+            "claude-code", project_root, server_name, enable_file_watching, force
+        )
 
         if success:
-            print_info("Claude Code will automatically detect the server when you open this project")
+            print_info(
+                "Claude Code will automatically detect the server when you open this project"
+            )
 
         # Test the server (using project_root for the server command)
         print_info("Testing server startup...")
@@ -870,15 +900,12 @@ def list_tools() -> None:
         except Exception:
             status = "❓ Unknown"
 
-        table.add_row(
-            tool_id,
-            tool_info["name"],
-            str(config_path),
-            status
-        )
+        table.add_row(tool_id, tool_info["name"], str(config_path), status)
 
     console.print(table)
-    console.print("\n[dim]💡 Use 'mcp-vector-search mcp <tool>' to configure a specific tool[/dim]")
+    console.print(
+        "\n[dim]💡 Use 'mcp-vector-search mcp <tool>' to configure a specific tool[/dim]"
+    )
 
 
 @mcp_app.command("tools")

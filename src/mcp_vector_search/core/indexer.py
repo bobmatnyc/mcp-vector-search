@@ -57,6 +57,11 @@ class SemanticIndexer:
             project_root / ".mcp-vector-search" / "index_metadata.json"
         )
 
+        # Add cache for indexable files to avoid repeated filesystem scans
+        self._indexable_files_cache: list[Path] | None = None
+        self._cache_timestamp: float = 0
+        self._cache_ttl: float = 60.0  # 60 second TTL
+
         # Initialize gitignore parser
         try:
             self.gitignore_parser = create_gitignore_parser(project_root)
@@ -334,18 +339,94 @@ class SemanticIndexer:
             return 0
 
     def _find_indexable_files(self) -> list[Path]:
-        """Find all files that should be indexed.
+        """Find all files that should be indexed with caching.
 
         Returns:
             List of file paths to index
         """
+        import time
+
+        # Check cache
+        current_time = time.time()
+        if (
+            self._indexable_files_cache is not None
+            and current_time - self._cache_timestamp < self._cache_ttl
+        ):
+            logger.debug(
+                f"Using cached indexable files ({len(self._indexable_files_cache)} files)"
+            )
+            return self._indexable_files_cache
+
+        # Rebuild cache using efficient directory filtering
+        logger.debug("Rebuilding indexable files cache...")
+        indexable_files = self._scan_files_sync()
+
+        self._indexable_files_cache = sorted(indexable_files)
+        self._cache_timestamp = current_time
+        logger.debug(f"Rebuilt indexable files cache ({len(indexable_files)} files)")
+
+        return self._indexable_files_cache
+
+    def _scan_files_sync(self) -> list[Path]:
+        """Synchronous file scanning (runs in thread pool).
+
+        Uses os.walk with directory filtering to avoid traversing ignored directories.
+
+        Returns:
+            List of indexable file paths
+        """
         indexable_files = []
 
-        for file_path in self.project_root.rglob("*"):
-            if self._should_index_file(file_path):
-                indexable_files.append(file_path)
+        # Use os.walk for efficient directory traversal with early filtering
+        for root, dirs, files in os.walk(self.project_root):
+            root_path = Path(root)
 
-        return sorted(indexable_files)
+            # Filter out ignored directories IN-PLACE to prevent os.walk from traversing them
+            # This is much more efficient than checking every file in ignored directories
+            dirs[:] = [d for d in dirs if not self._should_ignore_path(root_path / d)]
+
+            # Check each file in the current directory
+            for filename in files:
+                file_path = root_path / filename
+                if self._should_index_file(file_path):
+                    indexable_files.append(file_path)
+
+        return indexable_files
+
+    async def _find_indexable_files_async(self) -> list[Path]:
+        """Find all files asynchronously without blocking event loop.
+
+        Returns:
+            List of file paths to index
+        """
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+
+        # Check cache first
+        current_time = time.time()
+        if (
+            self._indexable_files_cache is not None
+            and current_time - self._cache_timestamp < self._cache_ttl
+        ):
+            logger.debug(
+                f"Using cached indexable files ({len(self._indexable_files_cache)} files)"
+            )
+            return self._indexable_files_cache
+
+        # Run filesystem scan in thread pool to avoid blocking
+        logger.debug("Scanning files in background thread...")
+        loop = asyncio.get_running_loop()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            indexable_files = await loop.run_in_executor(
+                executor, self._scan_files_sync
+            )
+
+        # Update cache
+        self._indexable_files_cache = sorted(indexable_files)
+        self._cache_timestamp = current_time
+        logger.debug(f"Found {len(indexable_files)} indexable files")
+
+        return self._indexable_files_cache
 
     def _should_index_file(self, file_path: Path) -> bool:
         """Check if a file should be indexed.
@@ -532,8 +613,8 @@ class SemanticIndexer:
             # Get database stats
             db_stats = await self.database.get_stats()
 
-            # Count indexable files
-            indexable_files = self._find_indexable_files()
+            # Count indexable files asynchronously without blocking
+            indexable_files = await self._find_indexable_files_async()
 
             return {
                 "total_indexable_files": len(indexable_files),
@@ -553,3 +634,90 @@ class SemanticIndexer:
                 "indexed_files": 0,
                 "total_chunks": 0,
             }
+
+    async def get_files_to_index(
+        self, force_reindex: bool = False
+    ) -> tuple[list[Path], list[Path]]:
+        """Get all indexable files and those that need indexing.
+
+        Args:
+            force_reindex: Whether to force reindex of all files
+
+        Returns:
+            Tuple of (all_indexable_files, files_to_index)
+        """
+        # Find all indexable files
+        all_files = await self._find_indexable_files_async()
+
+        if not all_files:
+            return [], []
+
+        # Load existing metadata for incremental indexing
+        metadata = self._load_index_metadata()
+
+        # Filter files that need indexing
+        if force_reindex:
+            files_to_index = all_files
+            logger.info(f"Force reindex: processing all {len(files_to_index)} files")
+        else:
+            files_to_index = [
+                f for f in all_files if self._needs_reindexing(f, metadata)
+            ]
+            logger.info(
+                f"Incremental index: {len(files_to_index)} of {len(all_files)} files need updating"
+            )
+
+        return all_files, files_to_index
+
+    async def index_files_with_progress(
+        self,
+        files_to_index: list[Path],
+        force_reindex: bool = False,
+    ):
+        """Index files and yield progress updates for each file.
+
+        Args:
+            files_to_index: List of file paths to index
+            force_reindex: Whether to force reindexing
+
+        Yields:
+            Tuple of (file_path, chunks_added, success) for each processed file
+        """
+        metadata = self._load_index_metadata()
+
+        # Process files in batches for better memory management
+        for i in range(0, len(files_to_index), self.batch_size):
+            batch = files_to_index[i : i + self.batch_size]
+
+            # Process each file in the batch
+            for file_path in batch:
+                chunks_added = 0
+                success = False
+
+                try:
+                    # Always remove existing chunks when reindexing
+                    await self.database.delete_by_file(file_path)
+
+                    # Parse file into chunks
+                    chunks = await self._parse_file(file_path)
+
+                    if chunks:
+                        # Add chunks to database
+                        await self.database.add_chunks(chunks)
+                        chunks_added = len(chunks)
+                        logger.debug(f"Indexed {chunks_added} chunks from {file_path}")
+
+                    success = True
+
+                    # Update metadata after successful indexing
+                    metadata[str(file_path)] = os.path.getmtime(file_path)
+
+                except Exception as e:
+                    logger.error(f"Failed to index file {file_path}: {e}")
+                    success = False
+
+                # Yield progress update
+                yield (file_path, chunks_added, success)
+
+        # Save metadata at the end
+        self._save_index_metadata(metadata)

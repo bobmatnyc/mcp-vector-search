@@ -13,7 +13,6 @@ from ...core.exceptions import ProjectNotFoundError
 from ...core.indexer import SemanticIndexer
 from ...core.project import ProjectManager
 from ..output import (
-    create_progress,
     print_error,
     print_index_stats,
     print_info,
@@ -201,17 +200,138 @@ async def _run_batch_indexing(
 ) -> None:
     """Run batch indexing of all files."""
     if show_progress:
-        with create_progress() as progress:
-            task = progress.add_task("Indexing files...", total=None)
+        # Import enhanced progress utilities
+        from rich.layout import Layout
+        from rich.live import Live
+        from rich.panel import Panel
+        from rich.progress import (
+            BarColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeRemainingColumn,
+        )
+        from rich.table import Table
 
-            # Start indexing
-            indexed_count = await indexer.index_project(
-                force_reindex=force_reindex,
-                show_progress=False,  # We handle progress here
+        from ..output import console
+
+        # Pre-scan to get total file count
+        console.print("[dim]Scanning for indexable files...[/dim]")
+        indexable_files, files_to_index = await indexer.get_files_to_index(
+            force_reindex=force_reindex
+        )
+        total_files = len(files_to_index)
+
+        if total_files == 0:
+            console.print("[yellow]No files need indexing[/yellow]")
+            indexed_count = 0
+        else:
+            console.print(f"[dim]Found {total_files} files to index[/dim]\n")
+
+            # Track recently indexed files for display
+            recent_files = []
+            current_file_name = ""
+            indexed_count = 0
+            failed_count = 0
+
+            # Create layout for two-panel display
+            layout = Layout()
+            layout.split_column(
+                Layout(name="progress", size=4),
+                Layout(name="samples", size=7),
             )
 
-            progress.update(task, completed=indexed_count, total=indexed_count)
+            # Create progress bar
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(bar_width=40),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("({task.completed}/{task.total} files)"),
+                TimeRemainingColumn(),
+                console=console,
+            )
+
+            task = progress.add_task("Indexing files...", total=total_files)
+
+            # Create live display with both panels
+            with Live(layout, console=console, refresh_per_second=4):
+                # Index files with progress updates
+                async for (
+                    file_path,
+                    chunks_added,
+                    success,
+                ) in indexer.index_files_with_progress(files_to_index, force_reindex):
+                    # Update counts
+                    if success:
+                        indexed_count += 1
+                    else:
+                        failed_count += 1
+
+                    # Update progress
+                    progress.update(task, advance=1)
+
+                    # Update current file name for display
+                    current_file_name = file_path.name
+
+                    # Keep last 5 files for sampling display
+                    try:
+                        relative_path = str(file_path.relative_to(indexer.project_root))
+                    except ValueError:
+                        relative_path = str(file_path)
+
+                    recent_files.append((relative_path, chunks_added, success))
+                    if len(recent_files) > 5:
+                        recent_files.pop(0)
+
+                    # Update display layouts
+                    layout["progress"].update(
+                        Panel(
+                            progress,
+                            title="[bold]Indexing Progress[/bold]",
+                            border_style="blue",
+                        )
+                    )
+
+                    # Build samples panel content
+                    samples_table = Table.grid(expand=True)
+                    samples_table.add_column(style="dim")
+
+                    if current_file_name:
+                        samples_table.add_row(
+                            f"[bold cyan]Currently processing:[/bold cyan] {current_file_name}"
+                        )
+                        samples_table.add_row("")
+
+                    samples_table.add_row("[dim]Recently indexed:[/dim]")
+                    for rel_path, chunk_count, file_success in recent_files[-5:]:
+                        icon = "✓" if file_success else "✗"
+                        style = "green" if file_success else "red"
+                        chunk_info = (
+                            f"({chunk_count} chunks)"
+                            if chunk_count > 0
+                            else "(no chunks)"
+                        )
+                        samples_table.add_row(
+                            f"  [{style}]{icon}[/{style}] [cyan]{rel_path}[/cyan] [dim]{chunk_info}[/dim]"
+                        )
+
+                    layout["samples"].update(
+                        Panel(
+                            samples_table,
+                            title="[bold]File Processing[/bold]",
+                            border_style="dim",
+                        )
+                    )
+
+            # Final progress summary
+            console.print()
+            if failed_count > 0:
+                console.print(
+                    f"[yellow]⚠ {failed_count} files failed to index[/yellow]"
+                )
     else:
+        # Non-progress mode (fallback to original behavior)
         indexed_count = await indexer.index_project(
             force_reindex=force_reindex,
             show_progress=show_progress,
@@ -374,28 +494,8 @@ async def _reindex_entire_project(project_root: Path) -> None:
             print_info("Clearing existing index...")
             await database.reset()
 
-            # Then reindex everything with progress
-            with create_progress() as progress:
-                task = progress.add_task("Reindexing files...", total=None)
-
-                # Force reindex all files
-                indexed_count = await indexer.index_project(
-                    force_reindex=True,  # Force reindexing
-                    show_progress=False,  # We handle progress here
-                )
-
-                progress.update(task, completed=indexed_count, total=indexed_count)
-
-            # Show statistics
-            stats = await indexer.get_indexing_stats()
-
-            # Display success message with chunk count for clarity
-            total_chunks = stats.get("total_chunks", 0)
-            print_success(
-                f"Processed {indexed_count} files ({total_chunks} searchable chunks created)"
-            )
-
-            print_index_stats(stats)
+            # Then reindex everything with enhanced progress display
+            await _run_batch_indexing(indexer, force_reindex=True, show_progress=True)
 
     except Exception as e:
         logger.error(f"Full reindex error: {e}")

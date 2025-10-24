@@ -122,8 +122,6 @@ def deprecated_install():
     _deprecated_command("install", "init")()
 
 
-
-
 # Deprecated: find -> search
 @app.command("find", hidden=True)
 def deprecated_find():
