@@ -99,6 +99,15 @@ class VectorDatabase(ABC):
         ...
 
     @abstractmethod
+    async def get_all_chunks(self) -> list[CodeChunk]:
+        """Get all chunks from the database.
+
+        Returns:
+            List of all code chunks with metadata
+        """
+        ...
+
+    @abstractmethod
     async def health_check(self) -> bool:
         """Check database health and integrity.
 
@@ -466,6 +475,59 @@ class ChromaVectorDatabase(VectorDatabase):
             except Exception as e:
                 logger.error(f"Failed to reset database: {e}")
                 raise DatabaseError(f"Failed to reset database: {e}") from e
+
+    async def get_all_chunks(self) -> list[CodeChunk]:
+        """Get all chunks from the database.
+
+        Returns:
+            List of all code chunks with metadata
+        """
+        if not self._collection:
+            raise DatabaseNotInitializedError("Database not initialized")
+
+        try:
+            # Get all documents from collection
+            results = self._collection.get(
+                include=["metadatas", "documents"]
+            )
+
+            chunks = []
+            if results and results.get("ids"):
+                for i, chunk_id in enumerate(results["ids"]):
+                    metadata = results["metadatas"][i]
+                    content = results["documents"][i]
+
+                    chunk = CodeChunk(
+                        content=content,
+                        file_path=Path(metadata["file_path"]),
+                        start_line=metadata["start_line"],
+                        end_line=metadata["end_line"],
+                        language=metadata["language"],
+                        chunk_type=metadata.get("chunk_type", "code"),
+                        function_name=metadata.get("function_name"),
+                        class_name=metadata.get("class_name"),
+                        docstring=metadata.get("docstring"),
+                        imports=metadata.get("imports", []),
+                        complexity_score=metadata.get("complexity_score", 0.0),
+                        chunk_id=metadata.get("chunk_id"),
+                        parent_chunk_id=metadata.get("parent_chunk_id"),
+                        child_chunk_ids=metadata.get("child_chunk_ids", []),
+                        chunk_depth=metadata.get("chunk_depth", 0),
+                        decorators=metadata.get("decorators", []),
+                        parameters=metadata.get("parameters", []),
+                        return_type=metadata.get("return_type"),
+                        type_annotations=metadata.get("type_annotations", {}),
+                        subproject_name=metadata.get("subproject_name"),
+                        subproject_path=metadata.get("subproject_path"),
+                    )
+                    chunks.append(chunk)
+
+            logger.debug(f"Retrieved {len(chunks)} chunks from database")
+            return chunks
+
+        except Exception as e:
+            logger.error(f"Failed to get all chunks: {e}")
+            raise DatabaseError(f"Failed to get all chunks: {e}") from e
 
     def _create_searchable_text(self, chunk: CodeChunk) -> str:
         """Create optimized searchable text from code chunk."""
@@ -913,6 +975,57 @@ class PooledChromaVectorDatabase(VectorDatabase):
         except Exception as e:
             logger.error(f"Failed to reset database: {e}")
             raise DatabaseError(f"Failed to reset database: {e}") from e
+
+    async def get_all_chunks(self) -> list[CodeChunk]:
+        """Get all chunks from the database using pooled connection.
+
+        Returns:
+            List of all code chunks with metadata
+        """
+        try:
+            async with self._pool.get_connection() as conn:
+                # Get all documents from collection
+                results = conn.collection.get(
+                    include=["metadatas", "documents"]
+                )
+
+                chunks = []
+                if results and results.get("ids"):
+                    for i, chunk_id in enumerate(results["ids"]):
+                        metadata = results["metadatas"][i]
+                        content = results["documents"][i]
+
+                        chunk = CodeChunk(
+                            content=content,
+                            file_path=Path(metadata["file_path"]),
+                            start_line=metadata["start_line"],
+                            end_line=metadata["end_line"],
+                            language=metadata["language"],
+                            chunk_type=metadata.get("chunk_type", "code"),
+                            function_name=metadata.get("function_name"),
+                            class_name=metadata.get("class_name"),
+                            docstring=metadata.get("docstring"),
+                            imports=metadata.get("imports", []),
+                            complexity_score=metadata.get("complexity_score", 0.0),
+                            chunk_id=metadata.get("chunk_id"),
+                            parent_chunk_id=metadata.get("parent_chunk_id"),
+                            child_chunk_ids=metadata.get("child_chunk_ids", []),
+                            chunk_depth=metadata.get("chunk_depth", 0),
+                            decorators=metadata.get("decorators", []),
+                            parameters=metadata.get("parameters", []),
+                            return_type=metadata.get("return_type"),
+                            type_annotations=metadata.get("type_annotations", {}),
+                            subproject_name=metadata.get("subproject_name"),
+                            subproject_path=metadata.get("subproject_path"),
+                        )
+                        chunks.append(chunk)
+
+                logger.debug(f"Retrieved {len(chunks)} chunks from database")
+                return chunks
+
+        except Exception as e:
+            logger.error(f"Failed to get all chunks: {e}")
+            raise DatabaseError(f"Failed to get all chunks: {e}") from e
 
     def _build_where_clause(self, filters: dict[str, Any]) -> dict[str, Any] | None:
         """Build ChromaDB where clause from filters."""

@@ -72,48 +72,116 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
 
         # Get all chunks with metadata
         console.print("[cyan]Fetching chunks from database...[/cyan]")
+        chunks = await database.get_all_chunks()
 
-        # Query all chunks (we'll use a dummy search to get all)
-        stats = await database.get_stats()
-
-        if stats.total_chunks == 0:
+        if len(chunks) == 0:
             console.print("[yellow]No chunks found in index. Run 'mcp-vector-search index' first.[/yellow]")
             raise typer.Exit(1)
+
+        console.print(f"[green]✓[/green] Retrieved {len(chunks)} chunks")
+
+        # Apply file filter if specified
+        if file_filter:
+            from fnmatch import fnmatch
+            chunks = [c for c in chunks if fnmatch(str(c.file_path), file_filter)]
+            console.print(f"[cyan]Filtered to {len(chunks)} chunks matching '{file_filter}'[/cyan]")
+
+        # Collect subprojects for monorepo support
+        subprojects = {}
+        for chunk in chunks:
+            if chunk.subproject_name and chunk.subproject_name not in subprojects:
+                subprojects[chunk.subproject_name] = {
+                    "name": chunk.subproject_name,
+                    "path": chunk.subproject_path,
+                    "color": _get_subproject_color(chunk.subproject_name, len(subprojects)),
+                }
 
         # Build graph data structure
         nodes = []
         links = []
+        chunk_id_map = {}  # Map chunk IDs to array indices
 
-        # We need to query the database to get actual chunk data
-        # Since there's no "get all chunks" method, we'll work with the stats
-        # In a real implementation, you would add a method to get all chunks
-
-        console.print(f"[yellow]Note: Full chunk export requires database enhancement.[/yellow]")
-        console.print(f"[cyan]Creating placeholder graph with {stats.total_chunks} chunks...[/cyan]")
-
-        # Create sample graph structure
-        graph_data = {
-            "nodes": [
-                {
-                    "id": f"chunk_{i}",
-                    "name": f"Chunk {i}",
-                    "type": "code",
-                    "file_path": "example.py",
-                    "start_line": i * 10,
-                    "end_line": (i + 1) * 10,
-                    "complexity": 1.0 + (i % 5),
+        # Add subproject root nodes for monorepos
+        if subprojects:
+            console.print(f"[cyan]Detected monorepo with {len(subprojects)} subprojects[/cyan]")
+            for sp_name, sp_data in subprojects.items():
+                node = {
+                    "id": f"subproject_{sp_name}",
+                    "name": sp_name,
+                    "type": "subproject",
+                    "file_path": sp_data["path"] or "",
+                    "start_line": 0,
+                    "end_line": 0,
+                    "complexity": 0,
+                    "color": sp_data["color"],
+                    "depth": 0,
                 }
-                for i in range(min(stats.total_chunks, 50))  # Limit to 50 for demo
-            ],
-            "links": [
-                {"source": f"chunk_{i}", "target": f"chunk_{i+1}"}
-                for i in range(min(stats.total_chunks - 1, 49))
-            ],
+                nodes.append(node)
+
+        # Add chunk nodes
+        for chunk in chunks:
+            node = {
+                "id": chunk.chunk_id or chunk.id,
+                "name": chunk.function_name or chunk.class_name or f"L{chunk.start_line}",
+                "type": chunk.chunk_type,
+                "file_path": str(chunk.file_path),
+                "start_line": chunk.start_line,
+                "end_line": chunk.end_line,
+                "complexity": chunk.complexity_score,
+                "parent_id": chunk.parent_chunk_id,
+                "depth": chunk.chunk_depth,
+            }
+
+            # Add subproject info for monorepos
+            if chunk.subproject_name:
+                node["subproject"] = chunk.subproject_name
+                node["color"] = subprojects[chunk.subproject_name]["color"]
+
+            nodes.append(node)
+            chunk_id_map[node["id"]] = len(nodes) - 1
+
+        # Build hierarchical links from parent-child relationships
+        for chunk in chunks:
+            chunk_id = chunk.chunk_id or chunk.id
+
+            # Link to subproject root if in monorepo
+            if chunk.subproject_name and not chunk.parent_chunk_id:
+                links.append({
+                    "source": f"subproject_{chunk.subproject_name}",
+                    "target": chunk_id,
+                })
+
+            # Link to parent chunk
+            if chunk.parent_chunk_id and chunk.parent_chunk_id in chunk_id_map:
+                links.append({
+                    "source": chunk.parent_chunk_id,
+                    "target": chunk_id,
+                })
+
+        # Parse inter-project dependencies for monorepos
+        if subprojects:
+            console.print("[cyan]Parsing inter-project dependencies...[/cyan]")
+            dep_links = _parse_project_dependencies(
+                project_manager.project_root,
+                subprojects
+            )
+            links.extend(dep_links)
+            if dep_links:
+                console.print(f"[green]✓[/green] Found {len(dep_links)} inter-project dependencies")
+
+        # Get stats
+        stats = await database.get_stats()
+
+        # Build final graph data
+        graph_data = {
+            "nodes": nodes,
+            "links": links,
             "metadata": {
-                "total_chunks": stats.total_chunks,
+                "total_chunks": len(chunks),
                 "total_files": stats.total_files,
                 "languages": stats.languages,
-                "export_note": "This is a placeholder. Full export requires database enhancement.",
+                "is_monorepo": len(subprojects) > 0,
+                "subprojects": list(subprojects.keys()) if subprojects else [],
             },
         }
 
@@ -129,7 +197,8 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
             Panel.fit(
                 f"[green]✓[/green] Exported graph data to [cyan]{output}[/cyan]\n\n"
                 f"Nodes: {len(graph_data['nodes'])}\n"
-                f"Links: {len(graph_data['links'])}\n\n"
+                f"Links: {len(graph_data['links'])}\n"
+                f"{'Subprojects: ' + str(len(subprojects)) if subprojects else ''}\n\n"
                 f"[dim]Next: Run 'mcp-vector-search visualize serve' to view[/dim]",
                 title="Export Complete",
                 border_style="green",
@@ -140,6 +209,69 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
         logger.error(f"Export failed: {e}")
         console.print(f"[red]✗ Export failed: {e}[/red]")
         raise typer.Exit(1)
+
+
+def _get_subproject_color(subproject_name: str, index: int) -> str:
+    """Get a consistent color for a subproject."""
+    # Color palette for subprojects (GitHub-style colors)
+    colors = [
+        "#238636",  # Green
+        "#1f6feb",  # Blue
+        "#d29922",  # Yellow
+        "#8957e5",  # Purple
+        "#da3633",  # Red
+        "#bf8700",  # Orange
+        "#1a7f37",  # Dark green
+        "#0969da",  # Dark blue
+    ]
+    return colors[index % len(colors)]
+
+
+def _parse_project_dependencies(project_root: Path, subprojects: dict) -> list[dict]:
+    """Parse package.json files to find inter-project dependencies.
+
+    Args:
+        project_root: Root directory of the monorepo
+        subprojects: Dictionary of subproject information
+
+    Returns:
+        List of dependency links between subprojects
+    """
+    dependency_links = []
+
+    for sp_name, sp_data in subprojects.items():
+        package_json = project_root / sp_data["path"] / "package.json"
+
+        if not package_json.exists():
+            continue
+
+        try:
+            with open(package_json) as f:
+                package_data = json.load(f)
+
+            # Check all dependency types
+            all_deps = {}
+            for dep_type in ["dependencies", "devDependencies", "peerDependencies"]:
+                if dep_type in package_data:
+                    all_deps.update(package_data[dep_type])
+
+            # Find dependencies on other subprojects
+            for dep_name in all_deps.keys():
+                # Check if this dependency is another subproject
+                for other_sp_name in subprojects.keys():
+                    if other_sp_name != sp_name and dep_name == other_sp_name:
+                        # Found inter-project dependency
+                        dependency_links.append({
+                            "source": f"subproject_{sp_name}",
+                            "target": f"subproject_{other_sp_name}",
+                            "type": "dependency",
+                        })
+
+        except Exception as e:
+            logger.debug(f"Failed to parse {package_json}: {e}")
+            continue
+
+    return dependency_links
 
 
 @app.command()
@@ -344,6 +476,7 @@ def _create_visualization_html(html_file: Path) -> None:
         .node.function circle { fill: #d29922; }
         .node.method circle { fill: #8957e5; }
         .node.code circle { fill: #6e7681; }
+        .node.subproject circle { fill: #da3633; stroke-width: 3px; }
 
         .node text {
             font-size: 11px;
@@ -357,6 +490,13 @@ def _create_visualization_html(html_file: Path) -> None:
             stroke: #30363d;
             stroke-opacity: 0.6;
             stroke-width: 1.5px;
+        }
+
+        .link.dependency {
+            stroke: #d29922;
+            stroke-opacity: 0.8;
+            stroke-width: 2px;
+            stroke-dasharray: 5,5;
         }
 
         .tooltip {
@@ -392,6 +532,9 @@ def _create_visualization_html(html_file: Path) -> None:
         <h3>Legend</h3>
         <div class="legend">
             <div class="legend-item">
+                <span class="legend-color" style="background: #da3633;"></span> Subproject
+            </div>
+            <div class="legend-item">
                 <span class="legend-color" style="background: #238636;"></span> Module
             </div>
             <div class="legend-item">
@@ -406,6 +549,11 @@ def _create_visualization_html(html_file: Path) -> None:
             <div class="legend-item">
                 <span class="legend-color" style="background: #6e7681;"></span> Code
             </div>
+        </div>
+
+        <div id="subprojects-legend" style="display: none;">
+            <h3>Subprojects</h3>
+            <div class="legend" id="subprojects-list"></div>
         </div>
 
         <div class="stats" id="stats"></div>
@@ -439,10 +587,17 @@ def _create_visualization_html(html_file: Path) -> None:
             allNodes = data.nodes;
             allLinks = data.links;
 
-            // Find root nodes (nodes without parents or depth 0/1)
-            const rootNodes = allNodes.filter(n =>
-                !n.parent_id || n.depth === 0 || n.depth === 1 || n.type === 'module'
-            );
+            // Find root nodes
+            let rootNodes;
+            if (data.metadata && data.metadata.is_monorepo) {
+                // In monorepos, subproject nodes are roots
+                rootNodes = allNodes.filter(n => n.type === 'subproject');
+            } else {
+                // Regular projects: nodes without parents or depth 0/1
+                rootNodes = allNodes.filter(n =>
+                    !n.parent_id || n.depth === 0 || n.depth === 1 || n.type === 'module'
+                );
+            }
 
             // Start with only root nodes visible
             visibleNodes = new Set(rootNodes.map(n => n.id));
@@ -470,7 +625,7 @@ def _create_visualization_html(html_file: Path) -> None:
                 .selectAll("line")
                 .data(visibleLinks)
                 .join("line")
-                .attr("class", "link");
+                .attr("class", d => d.type === "dependency" ? "link dependency" : "link");
 
             const node = g.append("g")
                 .selectAll("g")
@@ -484,9 +639,13 @@ def _create_visualization_html(html_file: Path) -> None:
 
             // Add circles with expand indicator
             node.append("circle")
-                .attr("r", d => d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12)
+                .attr("r", d => {
+                    if (d.type === 'subproject') return 20;
+                    return d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                })
                 .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
-                .attr("stroke-width", d => hasChildren(d) ? 2 : 0);
+                .attr("stroke-width", d => hasChildren(d) ? 2 : 0)
+                .style("fill", d => d.color || null);  // Use custom color if available
 
             // Add expand/collapse indicator
             node.filter(d => hasChildren(d))
@@ -620,7 +779,27 @@ def _create_visualization_html(html_file: Path) -> None:
                 <div>Nodes: ${data.nodes.length}</div>
                 <div>Links: ${data.links.length}</div>
                 ${data.metadata ? `<div>Files: ${data.metadata.total_files || 'N/A'}</div>` : ''}
+                ${data.metadata && data.metadata.is_monorepo ? `<div>Monorepo: ${data.metadata.subprojects.length} subprojects</div>` : ''}
             `);
+
+            // Show subproject legend if monorepo
+            if (data.metadata && data.metadata.is_monorepo && data.metadata.subprojects.length > 0) {
+                const subprojectsLegend = d3.select("#subprojects-legend");
+                const subprojectsList = d3.select("#subprojects-list");
+
+                subprojectsLegend.style("display", "block");
+
+                // Get subproject nodes with colors
+                const subprojectNodes = allNodes.filter(n => n.type === 'subproject');
+
+                subprojectsList.html(
+                    subprojectNodes.map(sp =>
+                        `<div class="legend-item">
+                            <span class="legend-color" style="background: ${sp.color};"></span> ${sp.name}
+                        </div>`
+                    ).join('')
+                );
+            }
         }
 
         // Auto-load graph data on page load
