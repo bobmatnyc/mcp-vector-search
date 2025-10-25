@@ -15,6 +15,7 @@ from ..parsers.registry import get_parser_registry
 from ..utils.gitignore import create_gitignore_parser
 from ..utils.monorepo import MonorepoDetector
 from .database import VectorDatabase
+from .directory_index import DirectoryIndex
 from .exceptions import ParsingError
 from .models import CodeChunk
 
@@ -29,6 +30,7 @@ class SemanticIndexer:
         file_extensions: list[str],
         max_workers: int | None = None,
         batch_size: int = 10,
+        debug: bool = False,
     ) -> None:
         """Initialize semantic indexer.
 
@@ -38,12 +40,14 @@ class SemanticIndexer:
             file_extensions: File extensions to index
             max_workers: Maximum number of worker threads for parallel processing
             batch_size: Number of files to process in each batch
+            debug: Enable debug output for hierarchy building
         """
         self.database = database
         self.project_root = project_root
         self.file_extensions = {ext.lower() for ext in file_extensions}
         self.parser_registry = get_parser_registry()
         self._ignore_patterns = set(DEFAULT_IGNORE_PATTERNS)
+        self.debug = debug
 
         # Safely get event loop for max_workers
         try:
@@ -80,6 +84,13 @@ class SemanticIndexer:
             logger.info(f"Detected monorepo with {len(subprojects)} subprojects")
             for sp in subprojects:
                 logger.debug(f"  - {sp.name} ({sp.relative_path})")
+
+        # Initialize directory index
+        self.directory_index = DirectoryIndex(
+            project_root / ".mcp-vector-search" / "directory_index.json"
+        )
+        # Load existing directory index
+        self.directory_index.load()
 
     async def index_project(
         self,
@@ -155,6 +166,38 @@ class SemanticIndexer:
                     pass  # File might have been deleted during indexing
 
             self._save_index_metadata(metadata)
+
+            # Rebuild directory index from successfully indexed files
+            try:
+                logger.debug("Rebuilding directory index...")
+                # We don't have chunk counts here, but we have file modification times
+                # Build a simple stats dict with file mod times for recency tracking
+                chunk_stats = {}
+                for file_path in files_to_index:
+                    try:
+                        mtime = os.path.getmtime(file_path)
+                        # For now, just track modification time
+                        # Chunk counts will be aggregated from the database later if needed
+                        chunk_stats[str(file_path)] = {
+                            'modified': mtime,
+                            'chunks': 1,  # Placeholder - real count from chunks
+                        }
+                    except OSError:
+                        pass
+
+                self.directory_index.rebuild_from_files(
+                    files_to_index, self.project_root, chunk_stats=chunk_stats
+                )
+                self.directory_index.save()
+                dir_stats = self.directory_index.get_stats()
+                logger.info(
+                    f"Directory index updated: {dir_stats['total_directories']} directories, "
+                    f"{dir_stats['total_files']} files"
+                )
+            except Exception as e:
+                logger.error(f"Failed to update directory index: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
 
         logger.info(
             f"Indexing complete: {indexed_count} files indexed, {failed_count} failed"
@@ -306,6 +349,10 @@ class SemanticIndexer:
 
             # Build hierarchical relationships between chunks
             chunks_with_hierarchy = self._build_chunk_hierarchy(chunks)
+
+            # Debug: Check if hierarchy was built
+            methods_with_parents = sum(1 for c in chunks_with_hierarchy if c.chunk_type in ("method", "function") and c.parent_chunk_id)
+            logger.debug(f"After hierarchy build: {methods_with_parents}/{len([c for c in chunks_with_hierarchy if c.chunk_type in ('method', 'function')])} methods have parents")
 
             # Add chunks to database
             await self.database.add_chunks(chunks_with_hierarchy)
@@ -790,6 +837,15 @@ class SemanticIndexer:
         class_chunks = [c for c in chunks if c.chunk_type in ("class", "interface", "mixin")]
         function_chunks = [c for c in chunks if c.chunk_type in ("function", "method", "constructor")]
 
+        # DEBUG: Print what we have (if debug enabled)
+        if self.debug:
+            import sys
+            print(f"\n[DEBUG] Building hierarchy: {len(module_chunks)} modules, {len(class_chunks)} classes, {len(function_chunks)} functions", file=sys.stderr)
+            if class_chunks:
+                print(f"[DEBUG] Class names: {[c.class_name for c in class_chunks[:5]]}", file=sys.stderr)
+            if function_chunks:
+                print(f"[DEBUG] First 5 functions with class_name: {[(f.function_name, f.class_name) for f in function_chunks[:5]]}", file=sys.stderr)
+
         # Build relationships
         for func in function_chunks:
             if func.class_name:
@@ -803,6 +859,10 @@ class SemanticIndexer:
                     func.chunk_depth = parent_class.chunk_depth + 1
                     if func.chunk_id not in parent_class.child_chunk_ids:
                         parent_class.child_chunk_ids.append(func.chunk_id)
+                    if self.debug:
+                        import sys
+                        print(f"[DEBUG] ✓ Linked '{func.function_name}' to class '{parent_class.class_name}'", file=sys.stderr)
+                    logger.debug(f"Linked method '{func.function_name}' (ID: {func.chunk_id[:8]}) to class '{parent_class.class_name}' (ID: {parent_class.chunk_id[:8]})")
             else:
                 # Top-level function
                 if not func.chunk_depth:
@@ -827,6 +887,13 @@ class SemanticIndexer:
         for mod in module_chunks:
             if not mod.chunk_depth:
                 mod.chunk_depth = 0
+
+        # DEBUG: Print summary
+        if self.debug:
+            import sys
+            funcs_with_parents = sum(1 for f in function_chunks if f.parent_chunk_id)
+            classes_with_parents = sum(1 for c in class_chunks if c.parent_chunk_id)
+            print(f"[DEBUG] Hierarchy built: {funcs_with_parents}/{len(function_chunks)} functions linked, {classes_with_parents}/{len(class_chunks)} classes linked\n", file=sys.stderr)
 
         return chunks
 

@@ -51,13 +51,23 @@ class GitignorePattern:
         Returns:
             True if the pattern matches
         """
-        # Directory-only patterns only match directories
-        if self.is_directory_only and not is_directory:
-            return False
-
         # Convert path separators for consistent matching
         path = path.replace("\\", "/")
         pattern = self.pattern.replace("\\", "/")
+
+        # For directory-only patterns, check if any parent directory matches
+        # This implements Git's behavior where "dir/" excludes both the directory
+        # AND all files within it recursively
+        if self.is_directory_only:
+            path_parts = path.split("/")
+            # Check each parent directory component
+            for i in range(1, len(path_parts) + 1):
+                parent = "/".join(path_parts[:i])
+                if fnmatch.fnmatch(parent, pattern):
+                    return True
+            # If no parent matches and this is not a directory, don't exclude
+            if not is_directory:
+                return False
 
         # Try exact match first
         if fnmatch.fnmatch(path, pattern):

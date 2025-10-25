@@ -1,6 +1,7 @@
 """Database abstraction and ChromaDB implementation for MCP Vector Search."""
 
 import asyncio
+import json
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -273,16 +274,16 @@ class ChromaVectorDatabase(VectorDatabase):
                     "class_name": chunk.class_name or "",
                     "docstring": chunk.docstring or "",
                     "complexity_score": chunk.complexity_score,
-                    # Hierarchy fields
+                    # Hierarchy fields (convert lists to JSON strings for ChromaDB)
                     "chunk_id": chunk.chunk_id or "",
                     "parent_chunk_id": chunk.parent_chunk_id or "",
-                    "child_chunk_ids": chunk.child_chunk_ids or [],
+                    "child_chunk_ids": json.dumps(chunk.child_chunk_ids or []),
                     "chunk_depth": chunk.chunk_depth,
-                    # Additional metadata
-                    "decorators": chunk.decorators or [],
-                    "parameters": chunk.parameters or [],
+                    # Additional metadata (convert lists/dicts to JSON strings)
+                    "decorators": json.dumps(chunk.decorators or []),
+                    "parameters": json.dumps(chunk.parameters or []),
                     "return_type": chunk.return_type or "",
-                    "type_annotations": chunk.type_annotations or {},
+                    "type_annotations": json.dumps(chunk.type_annotations or {}),
                     # Monorepo support
                     "subproject_name": chunk.subproject_name or "",
                     "subproject_path": chunk.subproject_path or "",
@@ -510,6 +511,23 @@ class ChromaVectorDatabase(VectorDatabase):
                     metadata = results["metadatas"][i]
                     content = results["documents"][i]
 
+                    # Parse JSON strings back to lists/dicts
+                    child_chunk_ids = metadata.get("child_chunk_ids", "[]")
+                    if isinstance(child_chunk_ids, str):
+                        child_chunk_ids = json.loads(child_chunk_ids)
+
+                    decorators = metadata.get("decorators", "[]")
+                    if isinstance(decorators, str):
+                        decorators = json.loads(decorators)
+
+                    parameters = metadata.get("parameters", "[]")
+                    if isinstance(parameters, str):
+                        parameters = json.loads(parameters)
+
+                    type_annotations = metadata.get("type_annotations", "{}")
+                    if isinstance(type_annotations, str):
+                        type_annotations = json.loads(type_annotations)
+
                     chunk = CodeChunk(
                         content=content,
                         file_path=Path(metadata["file_path"]),
@@ -524,12 +542,12 @@ class ChromaVectorDatabase(VectorDatabase):
                         complexity_score=metadata.get("complexity_score", 0.0),
                         chunk_id=metadata.get("chunk_id"),
                         parent_chunk_id=metadata.get("parent_chunk_id"),
-                        child_chunk_ids=metadata.get("child_chunk_ids", []),
+                        child_chunk_ids=child_chunk_ids,
                         chunk_depth=metadata.get("chunk_depth", 0),
-                        decorators=metadata.get("decorators", []),
-                        parameters=metadata.get("parameters", []),
+                        decorators=decorators,
+                        parameters=parameters,
                         return_type=metadata.get("return_type"),
-                        type_annotations=metadata.get("type_annotations", {}),
+                        type_annotations=type_annotations,
                         subproject_name=metadata.get("subproject_name"),
                         subproject_path=metadata.get("subproject_path"),
                     )
@@ -775,16 +793,16 @@ class PooledChromaVectorDatabase(VectorDatabase):
                             "class_name": chunk.class_name or "",
                             "docstring": chunk.docstring or "",
                             "complexity_score": chunk.complexity_score,
-                            # Hierarchy fields
+                            # Hierarchy fields (convert lists to JSON strings for ChromaDB)
                             "chunk_id": chunk.chunk_id or "",
                             "parent_chunk_id": chunk.parent_chunk_id or "",
-                            "child_chunk_ids": chunk.child_chunk_ids or [],
+                            "child_chunk_ids": json.dumps(chunk.child_chunk_ids or []),
                             "chunk_depth": chunk.chunk_depth,
-                            # Additional metadata
-                            "decorators": chunk.decorators or [],
-                            "parameters": chunk.parameters or [],
+                            # Additional metadata (convert lists/dicts to JSON strings)
+                            "decorators": json.dumps(chunk.decorators or []),
+                            "parameters": json.dumps(chunk.parameters or []),
                             "return_type": chunk.return_type or "",
-                            "type_annotations": chunk.type_annotations or {},
+                            "type_annotations": json.dumps(chunk.type_annotations or {}),
                             # Monorepo support
                             "subproject_name": chunk.subproject_name or "",
                             "subproject_path": chunk.subproject_path or "",
@@ -1023,6 +1041,23 @@ class PooledChromaVectorDatabase(VectorDatabase):
                         metadata = results["metadatas"][i]
                         content = results["documents"][i]
 
+                        # Parse JSON strings back to lists/dicts
+                        child_chunk_ids = metadata.get("child_chunk_ids", "[]")
+                        if isinstance(child_chunk_ids, str):
+                            child_chunk_ids = json.loads(child_chunk_ids)
+
+                        decorators = metadata.get("decorators", "[]")
+                        if isinstance(decorators, str):
+                            decorators = json.loads(decorators)
+
+                        parameters = metadata.get("parameters", "[]")
+                        if isinstance(parameters, str):
+                            parameters = json.loads(parameters)
+
+                        type_annotations = metadata.get("type_annotations", "{}")
+                        if isinstance(type_annotations, str):
+                            type_annotations = json.loads(type_annotations)
+
                         chunk = CodeChunk(
                             content=content,
                             file_path=Path(metadata["file_path"]),
@@ -1037,12 +1072,12 @@ class PooledChromaVectorDatabase(VectorDatabase):
                             complexity_score=metadata.get("complexity_score", 0.0),
                             chunk_id=metadata.get("chunk_id"),
                             parent_chunk_id=metadata.get("parent_chunk_id"),
-                            child_chunk_ids=metadata.get("child_chunk_ids", []),
+                            child_chunk_ids=child_chunk_ids,
                             chunk_depth=metadata.get("chunk_depth", 0),
-                            decorators=metadata.get("decorators", []),
-                            parameters=metadata.get("parameters", []),
+                            decorators=decorators,
+                            parameters=parameters,
                             return_type=metadata.get("return_type"),
-                            type_annotations=metadata.get("type_annotations", {}),
+                            type_annotations=type_annotations,
                             subproject_name=metadata.get("subproject_name"),
                             subproject_path=metadata.get("subproject_path"),
                         )

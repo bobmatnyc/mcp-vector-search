@@ -56,6 +56,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Created parser utilities module to reduce code duplication (potential -800 to -1000 LOC)
 - Proper LRU cache implementation with statistics and configurable size
 
+## [0.12.0] - 2025-10-25
+
+### Added
+- **Hierarchical Graph Visualization**: Complete directory, file, and chunk-based visualization system
+  - Interactive D3.js force-directed graph with expand/collapse functionality
+  - Directory nodes expand to show all files and subdirectories
+  - File nodes expand to show individual code chunks with metadata
+  - Visual hierarchy with optimized 35px folder/file icons
+  - Cache-busting URL parameters and meta tags for fresh data loading
+
+### Enhanced
+- **Graph Link Visibility**: Improved visual clarity of relationships
+  - Enhanced link colors with better opacity (0.4 for directories, 0.3 for files)
+  - Dynamic link distances based on node types (150px directories, 80px files/chunks)
+  - Optimized collision detection with dynamic radius calculations
+  - Better auto-spacing with enhanced force simulation parameters
+
+- **Expand/Collapse Functionality**: Robust node interaction system
+  - Working directory expansion showing all child files and subdirectories
+  - File expansion revealing all contained code chunks
+  - Preserves original link structure before D3 modifications
+  - Proper state management for expanded/collapsed nodes
+  - Visual feedback with node color changes
+
+### Fixed
+- **Parent Directory Linking**: Corrected absolute to relative path conversion
+  - Fixed lookup of parent directory IDs during graph generation
+  - Proper handling of nested directory structures
+  - Consistent path normalization across all node types
+
+- **Stale Data Prevention**: Enhanced data freshness mechanisms
+  - Added `Cache-Control: no-cache, no-store, must-revalidate` meta tags
+  - Implemented timestamp-based cache-busting for JSON files
+  - Ensured visualization directory contains latest graph data
+  - Prevents browser caching of outdated graph structures
+
+### Files Modified
+- `src/mcp_vector_search/visualization/index.html` - UI improvements, expand/collapse fixes, cache prevention
+- `src/mcp_vector_search/cli/commands/visualize.py` - Parent directory path normalization and linking fixes
+
+### Technical Details
+- Zero new dependencies (uses existing D3.js v7)
+- Enhanced force simulation with configurable parameters
+- Improved node interaction state management
+- Better visual design with optimized spacing and colors
+
 ## [0.5.0] - 2025-10-02
 
 ### Added

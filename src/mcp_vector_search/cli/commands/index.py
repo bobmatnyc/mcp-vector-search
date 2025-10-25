@@ -67,6 +67,13 @@ def main(
         max=128,
         rich_help_panel="⚡ Performance",
     ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        "-d",
+        help="Enable debug output (shows hierarchy building details)",
+        rich_help_panel="🔍 Debugging",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -114,6 +121,7 @@ def main(
                 force_reindex=force,
                 batch_size=batch_size,
                 show_progress=True,
+                debug=debug,
             )
         )
 
@@ -134,6 +142,7 @@ async def run_indexing(
     force_reindex: bool = False,
     batch_size: int = 32,
     show_progress: bool = True,
+    debug: bool = False,
 ) -> None:
     """Run the indexing process."""
     # Load project configuration
@@ -179,6 +188,7 @@ async def run_indexing(
         database=database,
         project_root=project_root,
         file_extensions=file_extensions,
+        debug=debug,
     )
 
     try:
@@ -323,6 +333,27 @@ async def _run_batch_indexing(
                             border_style="dim",
                         )
                     )
+
+            # Rebuild directory index after indexing completes
+            try:
+                import os
+                chunk_stats = {}
+                for file_path in files_to_index:
+                    try:
+                        mtime = os.path.getmtime(file_path)
+                        chunk_stats[str(file_path)] = {
+                            'modified': mtime,
+                            'chunks': 1,  # Placeholder - real counts are in database
+                        }
+                    except OSError:
+                        pass
+
+                indexer.directory_index.rebuild_from_files(
+                    files_to_index, indexer.project_root, chunk_stats=chunk_stats
+                )
+                indexer.directory_index.save()
+            except Exception as e:
+                logger.error(f"Failed to update directory index: {e}")
 
             # Final progress summary
             console.print()

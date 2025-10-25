@@ -1,3 +1,13 @@
+# All dotfiles and dot-directories (catch-all)
+.*
+!.gitignore
+!.github/
+!.pre-commit-config.yaml
+
+# Explicitly exclude common dotfiles/directories
+.claude/
+.changesets/
+
 # MCP Vector Search specific
 .mcp-vector-search/
 *.db
@@ -179,6 +189,8 @@ test_*.py
 *_test.py
 debug_*.py
 test_js_project/
+test-screenshots/
+chunk-graph.json
 
 # UV specific
 .uv/

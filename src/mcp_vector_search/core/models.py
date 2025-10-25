@@ -206,6 +206,64 @@ class IndexStats(BaseModel):
         }
 
 
+@dataclass
+class Directory:
+    """Represents a directory in the project structure."""
+
+    path: Path  # Relative path from project root
+    name: str  # Directory name
+    parent_path: Path | None = None  # Parent directory path (None for root)
+    file_count: int = 0  # Number of files directly in this directory
+    subdirectory_count: int = 0  # Number of subdirectories
+    total_chunks: int = 0  # Total code chunks in this directory (recursive)
+    languages: dict[str, int] = None  # Language distribution in this directory
+    depth: int = 0  # Depth from project root (0 = root)
+    is_package: bool = False  # True if contains __init__.py or package.json
+    last_modified: float | None = None  # Most recent file modification time (unix timestamp)
+
+    def __post_init__(self) -> None:
+        """Initialize default values and generate directory ID."""
+        if self.languages is None:
+            self.languages = {}
+
+    @property
+    def id(self) -> str:
+        """Generate unique ID for this directory."""
+        import hashlib
+        return hashlib.sha256(str(self.path).encode()).hexdigest()[:16]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for storage."""
+        return {
+            "path": str(self.path),
+            "name": self.name,
+            "parent_path": str(self.parent_path) if self.parent_path else None,
+            "file_count": self.file_count,
+            "subdirectory_count": self.subdirectory_count,
+            "total_chunks": self.total_chunks,
+            "languages": self.languages,
+            "depth": self.depth,
+            "is_package": self.is_package,
+            "last_modified": self.last_modified,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Directory":
+        """Create from dictionary."""
+        return cls(
+            path=Path(data["path"]),
+            name=data["name"],
+            parent_path=Path(data["parent_path"]) if data.get("parent_path") else None,
+            file_count=data.get("file_count", 0),
+            subdirectory_count=data.get("subdirectory_count", 0),
+            total_chunks=data.get("total_chunks", 0),
+            languages=data.get("languages", {}),
+            depth=data.get("depth", 0),
+            is_package=data.get("is_package", False),
+            last_modified=data.get("last_modified"),
+        )
+
+
 class ProjectInfo(BaseModel):
     """Information about a project."""
 

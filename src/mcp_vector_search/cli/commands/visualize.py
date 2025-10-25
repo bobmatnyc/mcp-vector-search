@@ -100,6 +100,8 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
         nodes = []
         links = []
         chunk_id_map = {}  # Map chunk IDs to array indices
+        file_nodes = {}  # Track file nodes by path
+        dir_nodes = {}  # Track directory nodes by path
 
         # Add subproject root nodes for monorepos
         if subprojects:
@@ -118,6 +120,80 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
                 }
                 nodes.append(node)
 
+        # Load directory index for enhanced directory metadata
+        console.print("[cyan]Loading directory index...[/cyan]")
+        from ...core.directory_index import DirectoryIndex
+        dir_index_path = project_manager.project_root / ".mcp-vector-search" / "directory_index.json"
+        dir_index = DirectoryIndex(dir_index_path)
+        dir_index.load()
+
+        # Create directory nodes from directory index
+        console.print(f"[green]✓[/green] Loaded {len(dir_index.directories)} directories")
+        for dir_path_str, directory in dir_index.directories.items():
+            dir_id = f"dir_{hash(dir_path_str) & 0xffffffff:08x}"
+            dir_nodes[dir_path_str] = {
+                "id": dir_id,
+                "name": directory.name,
+                "type": "directory",
+                "file_path": dir_path_str,
+                "start_line": 0,
+                "end_line": 0,
+                "complexity": 0,
+                "depth": directory.depth,
+                "dir_path": dir_path_str,
+                "file_count": directory.file_count,
+                "subdirectory_count": directory.subdirectory_count,
+                "total_chunks": directory.total_chunks,
+                "languages": directory.languages or {},
+                "is_package": directory.is_package,
+                "last_modified": directory.last_modified,
+            }
+
+        # Create file nodes from chunks
+        for chunk in chunks:
+            file_path_str = str(chunk.file_path)
+            file_path = Path(file_path_str)
+
+            # Create file node with parent directory reference
+            if file_path_str not in file_nodes:
+                file_id = f"file_{hash(file_path_str) & 0xffffffff:08x}"
+
+                # Convert absolute path to relative path for parent directory lookup
+                try:
+                    relative_file_path = file_path.relative_to(project_manager.project_root)
+                    parent_dir = relative_file_path.parent
+                    # Use relative path for parent directory (matches directory_index)
+                    parent_dir_str = str(parent_dir) if parent_dir != Path(".") else None
+                except ValueError:
+                    # File is outside project root
+                    parent_dir_str = None
+
+                # Look up parent directory ID from dir_nodes (must match exactly)
+                parent_dir_id = None
+                if parent_dir_str and parent_dir_str in dir_nodes:
+                    parent_dir_id = dir_nodes[parent_dir_str]["id"]
+
+                file_nodes[file_path_str] = {
+                    "id": file_id,
+                    "name": file_path.name,
+                    "type": "file",
+                    "file_path": file_path_str,
+                    "start_line": 0,
+                    "end_line": 0,
+                    "complexity": 0,
+                    "depth": len(file_path.parts) - 1,
+                    "parent_dir_id": parent_dir_id,
+                    "parent_dir_path": parent_dir_str,
+                }
+
+        # Add directory nodes to graph
+        for dir_node in dir_nodes.values():
+            nodes.append(dir_node)
+
+        # Add file nodes to graph
+        for file_node in file_nodes.values():
+            nodes.append(file_node)
+
         # Add chunk nodes
         for chunk in chunks:
             node = {
@@ -130,6 +206,9 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
                 "complexity": chunk.complexity_score,
                 "parent_id": chunk.parent_chunk_id,
                 "depth": chunk.chunk_depth,
+                "content": chunk.content,  # Add content for code viewer
+                "docstring": chunk.docstring,
+                "language": chunk.language,
             }
 
             # Add subproject info for monorepos
@@ -140,9 +219,52 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
             nodes.append(node)
             chunk_id_map[node["id"]] = len(nodes) - 1
 
+        # Link directories to their parent directories (hierarchical structure)
+        for dir_path_str, dir_info in dir_index.directories.items():
+            if dir_info.parent_path:
+                parent_path_str = str(dir_info.parent_path)
+                if parent_path_str in dir_nodes:
+                    parent_dir_id = f"dir_{hash(parent_path_str) & 0xffffffff:08x}"
+                    child_dir_id = f"dir_{hash(dir_path_str) & 0xffffffff:08x}"
+                    links.append({
+                        "source": parent_dir_id,
+                        "target": child_dir_id,
+                        "type": "dir_hierarchy",
+                    })
+
+        # Link directories to subprojects in monorepos (simple flat structure)
+        if subprojects:
+            for dir_path_str, dir_node in dir_nodes.items():
+                for sp_name, sp_data in subprojects.items():
+                    if dir_path_str.startswith(sp_data.get("path", "")):
+                        links.append({
+                            "source": f"subproject_{sp_name}",
+                            "target": dir_node["id"],
+                            "type": "dir_containment",
+                        })
+                        break
+
+        # Link files to their parent directories
+        for file_path_str, file_node in file_nodes.items():
+            if file_node.get("parent_dir_id"):
+                links.append({
+                    "source": file_node["parent_dir_id"],
+                    "target": file_node["id"],
+                    "type": "dir_containment",
+                })
+
         # Build hierarchical links from parent-child relationships
         for chunk in chunks:
             chunk_id = chunk.chunk_id or chunk.id
+            file_path = str(chunk.file_path)
+
+            # Link chunk to its file node if it has no parent (top-level chunks)
+            if not chunk.parent_chunk_id and file_path in file_nodes:
+                links.append({
+                    "source": file_nodes[file_path]["id"],
+                    "target": chunk_id,
+                    "type": "file_containment",
+                })
 
             # Link to subproject root if in monorepo
             if chunk.subproject_name and not chunk.parent_chunk_id:
@@ -476,7 +598,29 @@ def _create_visualization_html(html_file: Path) -> None:
         .node.function circle { fill: #d29922; }
         .node.method circle { fill: #8957e5; }
         .node.code circle { fill: #6e7681; }
+        .node.file circle {
+            fill: none;
+            stroke: #58a6ff;
+            stroke-width: 2px;
+            stroke-dasharray: 5,3;
+            opacity: 0.6;
+        }
+        .node.directory circle {
+            fill: none;
+            stroke: #79c0ff;
+            stroke-width: 2px;
+            stroke-dasharray: 3,3;
+            opacity: 0.5;
+        }
         .node.subproject circle { fill: #da3633; stroke-width: 3px; }
+
+        /* Non-code document nodes - squares */
+        .node.docstring rect { fill: #8b949e; }
+        .node.comment rect { fill: #6e7681; }
+        .node rect {
+            stroke: #c9d1d9;
+            stroke-width: 1.5px;
+        }
 
         .node text {
             font-size: 11px;
@@ -519,6 +663,79 @@ def _create_visualization_html(html_file: Path) -> None:
             font-size: 12px;
             color: #8b949e;
         }
+
+        #code-viewer {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 500px;
+            max-height: 80vh;
+            background: rgba(13, 17, 23, 0.95);
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 16px;
+            overflow-y: auto;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            display: none;
+        }
+
+        #code-viewer.visible {
+            display: block;
+        }
+
+        #code-viewer .header {
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #30363d;
+        }
+
+        #code-viewer .title {
+            font-size: 14px;
+            font-weight: bold;
+            color: #58a6ff;
+            margin-bottom: 4px;
+        }
+
+        #code-viewer .meta {
+            font-size: 11px;
+            color: #8b949e;
+        }
+
+        #code-viewer .close-btn {
+            float: right;
+            cursor: pointer;
+            color: #8b949e;
+            font-size: 20px;
+            line-height: 1;
+            margin-top: -4px;
+        }
+
+        #code-viewer .close-btn:hover {
+            color: #c9d1d9;
+        }
+
+        #code-viewer pre {
+            margin: 0;
+            padding: 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+
+        #code-viewer code {
+            color: #c9d1d9;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        }
+
+        .node.highlighted circle,
+        .node.highlighted rect {
+            stroke: #f0e68c;
+            stroke-width: 3px;
+            filter: drop-shadow(0 0 8px #f0e68c);
+        }
     </style>
 </head>
 <body>
@@ -535,6 +752,12 @@ def _create_visualization_html(html_file: Path) -> None:
                 <span class="legend-color" style="background: #da3633;"></span> Subproject
             </div>
             <div class="legend-item">
+                <span class="legend-color" style="border: 2px dashed #79c0ff; border-radius: 50%; background: transparent;"></span> Directory
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="border: 2px dashed #58a6ff; border-radius: 50%; background: transparent;"></span> File
+            </div>
+            <div class="legend-item">
                 <span class="legend-color" style="background: #238636;"></span> Module
             </div>
             <div class="legend-item">
@@ -549,6 +772,12 @@ def _create_visualization_html(html_file: Path) -> None:
             <div class="legend-item">
                 <span class="legend-color" style="background: #6e7681;"></span> Code
             </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #8b949e; border-radius: 2px;"></span> Docstring ▢
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #6e7681; border-radius: 2px;"></span> Comment ▢
+            </div>
         </div>
 
         <div id="subprojects-legend" style="display: none;">
@@ -561,6 +790,15 @@ def _create_visualization_html(html_file: Path) -> None:
 
     <svg id="graph"></svg>
     <div id="tooltip" class="tooltip"></div>
+
+    <div id="code-viewer">
+        <div class="header">
+            <span class="close-btn" onclick="closeCodeViewer()">×</span>
+            <div class="title" id="viewer-title"></div>
+            <div class="meta" id="viewer-meta"></div>
+        </div>
+        <pre><code id="viewer-code"></code></pre>
+    </div>
 
     <script>
         const width = window.innerWidth;
@@ -580,6 +818,7 @@ def _create_visualization_html(html_file: Path) -> None:
         let allLinks = [];
         let visibleNodes = new Set();
         let collapsedNodes = new Set();
+        let highlightedNode = null;
 
         function visualizeGraph(data) {
             g.selectAll("*").remove();
@@ -587,19 +826,37 @@ def _create_visualization_html(html_file: Path) -> None:
             allNodes = data.nodes;
             allLinks = data.links;
 
-            // Find root nodes
+            // Find root nodes - start with only top-level nodes
             let rootNodes;
             if (data.metadata && data.metadata.is_monorepo) {
                 // In monorepos, subproject nodes are roots
                 rootNodes = allNodes.filter(n => n.type === 'subproject');
             } else {
-                // Regular projects: nodes without parents or depth 0/1
-                rootNodes = allNodes.filter(n =>
-                    !n.parent_id || n.depth === 0 || n.depth === 1 || n.type === 'module'
-                );
+                // Regular projects: show root-level directories AND files
+                const dirNodes = allNodes.filter(n => n.type === 'directory');
+                const fileNodes = allNodes.filter(n => n.type === 'file');
+
+                // Find minimum depth for directories and files
+                const minDirDepth = dirNodes.length > 0
+                    ? Math.min(...dirNodes.map(n => n.depth))
+                    : Infinity;
+                const minFileDepth = fileNodes.length > 0
+                    ? Math.min(...fileNodes.map(n => n.depth))
+                    : Infinity;
+
+                // Include both root-level directories and root-level files
+                rootNodes = [
+                    ...dirNodes.filter(n => n.depth === minDirDepth),
+                    ...fileNodes.filter(n => n.depth === minFileDepth)
+                ];
+
+                // Fallback to all files if nothing found
+                if (rootNodes.length === 0) {
+                    rootNodes = fileNodes;
+                }
             }
 
-            // Start with only root nodes visible
+            // Start with only root nodes visible, all collapsed
             visibleNodes = new Set(rootNodes.map(n => n.id));
             collapsedNodes = new Set(rootNodes.map(n => n.id));
 
@@ -631,21 +888,58 @@ def _create_visualization_html(html_file: Path) -> None:
                 .selectAll("g")
                 .data(visibleNodesList)
                 .join("g")
-                .attr("class", d => `node ${d.type}`)
+                .attr("class", d => {
+                    let classes = `node ${d.type}`;
+                    if (highlightedNode && d.id === highlightedNode.id) {
+                        classes += ' highlighted';
+                    }
+                    return classes;
+                })
                 .call(drag(simulation))
-                .on("click", toggleNode)
+                .on("click", handleNodeClick)
                 .on("mouseover", showTooltip)
                 .on("mouseout", hideTooltip);
 
-            // Add circles with expand indicator
-            node.append("circle")
+            // Add shapes based on node type (circles for code, squares for docs)
+            const isDocNode = d => ['docstring', 'comment'].includes(d.type);
+
+            // Add circles for code nodes
+            node.filter(d => !isDocNode(d))
+                .append("circle")
                 .attr("r", d => {
                     if (d.type === 'subproject') return 20;
+                    if (d.type === 'directory') return 40;  // Largest for directory containers
+                    if (d.type === 'file') return 30;  // Larger transparent circle for files
                     return d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
                 })
                 .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
                 .attr("stroke-width", d => hasChildren(d) ? 2 : 0)
                 .style("fill", d => d.color || null);  // Use custom color if available
+
+            // Add rectangles for document nodes
+            node.filter(d => isDocNode(d))
+                .append("rect")
+                .attr("width", d => {
+                    const size = d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    return size * 2;
+                })
+                .attr("height", d => {
+                    const size = d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    return size * 2;
+                })
+                .attr("x", d => {
+                    const size = d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    return -size;
+                })
+                .attr("y", d => {
+                    const size = d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    return -size;
+                })
+                .attr("rx", 2)  // Rounded corners
+                .attr("ry", 2)
+                .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
+                .attr("stroke-width", d => hasChildren(d) ? 2 : 0)
+                .style("fill", d => d.color || null);
 
             // Add expand/collapse indicator
             node.filter(d => hasChildren(d))
@@ -681,20 +975,21 @@ def _create_visualization_html(html_file: Path) -> None:
             return allLinks.some(l => (l.source.id || l.source) === node.id);
         }
 
-        function toggleNode(event, d) {
+        function handleNodeClick(event, d) {
             event.stopPropagation();
 
-            if (!hasChildren(d)) return;
-
-            if (collapsedNodes.has(d.id)) {
-                // Expand: show children
-                expandNode(d);
+            // If node has children, toggle expansion
+            if (hasChildren(d)) {
+                if (collapsedNodes.has(d.id)) {
+                    expandNode(d);
+                } else {
+                    collapseNode(d);
+                }
+                renderGraph();
             } else {
-                // Collapse: hide children
-                collapseNode(d);
+                // Leaf node - show code viewer
+                showCodeViewer(d);
             }
-
-            renderGraph();
         }
 
         function expandNode(node) {
@@ -800,6 +1095,49 @@ def _create_visualization_html(html_file: Path) -> None:
                     ).join('')
                 );
             }
+        }
+
+        function showCodeViewer(node) {
+            // Highlight the node
+            highlightedNode = node;
+            renderGraph();
+
+            // Populate code viewer
+            const viewer = document.getElementById('code-viewer');
+            const title = document.getElementById('viewer-title');
+            const meta = document.getElementById('viewer-meta');
+            const code = document.getElementById('viewer-code');
+
+            title.textContent = node.name;
+
+            let metaText = `${node.type} • ${node.file_path}`;
+            if (node.start_line) {
+                metaText += ` • Lines ${node.start_line}-${node.end_line}`;
+            }
+            if (node.language) {
+                metaText += ` • ${node.language}`;
+            }
+            meta.textContent = metaText;
+
+            // Show content if available
+            if (node.content) {
+                code.textContent = node.content;
+            } else if (node.docstring) {
+                code.textContent = `// Docstring:\n${node.docstring}`;
+            } else {
+                code.textContent = '// No content available';
+            }
+
+            viewer.classList.add('visible');
+        }
+
+        function closeCodeViewer() {
+            const viewer = document.getElementById('code-viewer');
+            viewer.classList.remove('visible');
+
+            // Remove highlight
+            highlightedNode = null;
+            renderGraph();
         }
 
         // Auto-load graph data on page load

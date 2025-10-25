@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Code Chunk Relationship Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            overflow: hidden;
+        }
+
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(13, 17, 23, 0.95);
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 16px;
+            min-width: 250px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        h1 { margin: 0 0 16px 0; font-size: 18px; }
+        h3 { margin: 16px 0 8px 0; font-size: 14px; color: #8b949e; }
+
+        .control-group {
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 12px;
+            color: #8b949e;
+        }
+
+        input[type="file"] {
+            width: 100%;
+            padding: 6px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 12px;
+        }
+
+        .legend {
+            font-size: 12px;
+        }
+
+        .legend-item {
+            margin: 4px 0;
+            display: flex;
+            align-items: center;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .node circle {
+            cursor: pointer;
+            stroke: #c9d1d9;
+            stroke-width: 1.5px;
+        }
+
+        .node.directory circle { fill: #ffa657; }
+        .node.file circle { fill: #58a6ff; }
+        .node.module circle { fill: #238636; }
+        .node.class circle { fill: #1f6feb; }
+        .node.function circle { fill: #d29922; }
+        .node.method circle { fill: #8957e5; }
+        .node.imports circle { fill: #6e7681; }
+        .node.text circle { fill: #6e7681; }
+        .node.code circle { fill: #6e7681; }
+        .node.subproject circle { fill: #da3633; stroke-width: 3px; }
+
+        .node-icon {
+            font-size: 35px !important;
+            text-anchor: middle;
+            pointer-events: none;
+            user-select: none;
+            fill: #0d1117;
+            font-weight: bold;
+        }
+
+        .node text {
+            font-size: 11px;
+            fill: #c9d1d9;
+            text-anchor: middle;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        .link {
+            stroke: #58a6ff;
+            stroke-opacity: 0.4;
+            stroke-width: 2px;
+        }
+
+        .link.dependency {
+            stroke: #d29922;
+            stroke-opacity: 0.8;
+            stroke-width: 2px;
+            stroke-dasharray: 5,5;
+        }
+
+        .tooltip {
+            position: absolute;
+            padding: 12px;
+            background: rgba(13, 17, 23, 0.95);
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            pointer-events: none;
+            display: none;
+            font-size: 12px;
+            max-width: 300px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        .stats {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid #30363d;
+            font-size: 12px;
+            color: #8b949e;
+        }
+
+        #code-viewer {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 500px;
+            max-height: 80vh;
+            background: rgba(13, 17, 23, 0.95);
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 16px;
+            overflow-y: auto;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            display: none;
+        }
+
+        #code-viewer.visible {
+            display: block;
+        }
+
+        #code-viewer .header {
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #30363d;
+        }
+
+        #code-viewer .title {
+            font-size: 14px;
+            font-weight: bold;
+            color: #58a6ff;
+            margin-bottom: 4px;
+        }
+
+        #code-viewer .meta {
+            font-size: 11px;
+            color: #8b949e;
+        }
+
+        #code-viewer .close-btn {
+            float: right;
+            cursor: pointer;
+            color: #8b949e;
+            font-size: 20px;
+            line-height: 1;
+            margin-top: -4px;
+        }
+
+        #code-viewer .close-btn:hover {
+            color: #c9d1d9;
+        }
+
+        #code-viewer pre {
+            margin: 0;
+            padding: 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+
+        #code-viewer code {
+            color: #c9d1d9;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        }
+
+        .node.highlighted circle {
+            stroke: #f0e68c;
+            stroke-width: 3px;
+            filter: drop-shadow(0 0 8px #f0e68c);
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h1>🔍 Code Graph</h1>
+
+        <div class="control-group" id="loading">
+            <label>⏳ Loading graph data...</label>
+        </div>
+
+        <h3>Legend</h3>
+        <div class="legend">
+            <div class="legend-item">
+                📁 <span class="legend-color" style="background: #ffa657;"></span> Directory
+            </div>
+            <div class="legend-item">
+                📄 <span class="legend-color" style="background: #58a6ff;"></span> File
+            </div>
+            <div class="legend-item">
+                C <span class="legend-color" style="background: #1f6feb;"></span> Class
+            </div>
+            <div class="legend-item">
+                ƒ <span class="legend-color" style="background: #d29922;"></span> Function
+            </div>
+            <div class="legend-item">
+                m <span class="legend-color" style="background: #8957e5;"></span> Method
+            </div>
+            <div class="legend-item">
+                M <span class="legend-color" style="background: #238636;"></span> Module
+            </div>
+            <div class="legend-item">
+                • <span class="legend-color" style="background: #6e7681;"></span> Text/Other
+            </div>
+        </div>
+
+        <div id="subprojects-legend" style="display: none;">
+            <h3>Subprojects</h3>
+            <div class="legend" id="subprojects-list"></div>
+        </div>
+
+        <div class="stats" id="stats"></div>
+    </div>
+
+    <svg id="graph"></svg>
+    <div id="tooltip" class="tooltip"></div>
+
+    <div id="code-viewer">
+        <div class="header">
+            <span class="close-btn" onclick="closeCodeViewer()">×</span>
+            <div class="title" id="viewer-title"></div>
+            <div class="meta" id="viewer-meta"></div>
+        </div>
+        <pre><code id="viewer-code"></code></pre>
+    </div>
+
+    <script>
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height)
+            .call(d3.zoom().on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            }));
+
+        const g = svg.append("g");
+        const tooltip = d3.select("#tooltip");
+        let simulation;
+        let allNodes = [];
+        let allLinks = [];
+        let allLinksOriginal = []; // Keep original link structure before D3 modifies it
+        let visibleNodes = new Set();
+        let collapsedNodes = new Set();
+        let highlightedNode = null;
+
+        function visualizeGraph(data) {
+            g.selectAll("*").remove();
+
+            allNodes = data.nodes;
+            allLinks = data.links;
+            // Deep copy links before D3 modifies them
+            allLinksOriginal = JSON.parse(JSON.stringify(data.links));
+
+            // Find root nodes - start with only top-level nodes
+            let rootNodes;
+            if (data.metadata && data.metadata.is_monorepo) {
+                // In monorepos, subproject nodes are roots
+                rootNodes = allNodes.filter(n => n.type === 'subproject');
+            } else {
+                // Regular projects: prefer directories, fallback to files
+                const dirNodes = allNodes.filter(n => n.type === 'directory');
+                const fileNodes = allNodes.filter(n => n.type === 'file');
+
+                if (dirNodes.length > 0) {
+                    // Show root-level directories (minimum depth)
+                    const minDirDepth = Math.min(...dirNodes.map(n => n.depth || 0));
+                    rootNodes = dirNodes.filter(n => (n.depth || 0) === minDirDepth);
+                } else if (fileNodes.length > 0) {
+                    // No directories, show root-level files
+                    const minFileDepth = Math.min(...fileNodes.map(n => n.depth || 0));
+                    rootNodes = fileNodes.filter(n => (n.depth || 0) === minFileDepth);
+                } else {
+                    // No directories or files, show all nodes
+                    rootNodes = allNodes;
+                }
+            }
+
+            // Start with only root nodes visible, all collapsed
+            visibleNodes = new Set(rootNodes.map(n => n.id));
+            collapsedNodes = new Set(rootNodes.map(n => n.id));
+
+            renderGraph();
+        }
+
+        function renderGraph() {
+            const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
+            const visibleLinks = allLinks.filter(l =>
+                visibleNodes.has(l.source.id || l.source) &&
+                visibleNodes.has(l.target.id || l.target)
+            );
+
+            // Dynamic collision radius based on node type
+            const getNodeRadius = (d) => {
+                if (d.type === 'directory') return 35;
+                if (d.type === 'file') return 32;
+                if (d.type === 'subproject') return 38;
+                return d.complexity ? Math.min(20 + d.complexity * 2, 35) : 25;
+            };
+
+            // Dynamic link distance based on node types
+            const getLinkDistance = (link) => {
+                const source = typeof link.source === 'object' ? link.source : visibleNodesList.find(n => n.id === link.source);
+                const target = typeof link.target === 'object' ? link.target : visibleNodesList.find(n => n.id === link.target);
+
+                if (!source || !target) return 150;
+
+                // Longer distances for directory relationships
+                if (source.type === 'directory' || target.type === 'directory') return 200;
+                if (source.type === 'file' || target.type === 'file') return 150;
+                return 100;
+            };
+
+            simulation = d3.forceSimulation(visibleNodesList)
+                .force("link", d3.forceLink(visibleLinks)
+                    .id(d => d.id)
+                    .distance(getLinkDistance)
+                    .strength(0.5))
+                .force("charge", d3.forceManyBody()
+                    .strength(d => {
+                        // Stronger repulsion for directories and files
+                        if (d.type === 'directory') return -800;
+                        if (d.type === 'file') return -600;
+                        return -400;
+                    })
+                    .distanceMax(500))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide()
+                    .radius(getNodeRadius)
+                    .strength(0.9))
+                .force("x", d3.forceX(width / 2).strength(0.05))
+                .force("y", d3.forceY(height / 2).strength(0.05))
+                .alphaDecay(0.02)
+                .velocityDecay(0.3);
+
+            g.selectAll("*").remove();
+
+            const link = g.append("g")
+                .selectAll("line")
+                .data(visibleLinks)
+                .join("line")
+                .attr("class", d => d.type === "dependency" ? "link dependency" : "link");
+
+            const node = g.append("g")
+                .selectAll("g")
+                .data(visibleNodesList)
+                .join("g")
+                .attr("class", d => {
+                    let classes = `node ${d.type}`;
+                    if (highlightedNode && d.id === highlightedNode.id) {
+                        classes += ' highlighted';
+                    }
+                    return classes;
+                })
+                .call(drag(simulation))
+                .on("click", handleNodeClick)
+                .on("mouseover", showTooltip)
+                .on("mouseout", hideTooltip);
+
+            // Add circles
+            node.append("circle")
+                .attr("r", d => {
+                    if (d.type === 'directory') return 25;
+                    if (d.type === 'file') return 22;
+                    if (d.type === 'subproject') return 28;
+                    return d.complexity ? Math.min(12 + d.complexity * 2, 25) : 15;
+                })
+                .style("fill", d => d.color || null);
+
+            // Add icons based on node type
+            node.append("text")
+                .attr("class", "node-icon")
+                .attr("dy", 15)
+                .text(d => {
+                    if (d.type === 'directory') return '📁';
+                    if (d.type === 'file') return '📄';
+                    if (d.type === 'class') return 'C';
+                    if (d.type === 'function') return 'ƒ';
+                    if (d.type === 'method') return 'm';
+                    if (d.type === 'module') return 'M';
+                    if (d.type === 'imports') return '⇄';
+                    return '•';
+                });
+
+            // Add expand/collapse indicator for nodes with children
+            node.filter(d => hasChildren(d))
+                .append("text")
+                .attr("class", "expand-indicator")
+                .attr("text-anchor", "middle")
+                .attr("dy", -20)
+                .style("font-size", "14px")
+                .style("font-weight", "bold")
+                .style("fill", "#58a6ff")
+                .style("pointer-events", "none")
+                .text(d => collapsedNodes.has(d.id) ? "+" : "−");
+
+            // Add labels
+            node.append("text")
+                .text(d => d.name)
+                .attr("dy", 30);
+
+            simulation.on("tick", () => {
+                link
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+
+                node.attr("transform", d => `translate(${d.x},${d.y})`);
+            });
+
+            updateStats({nodes: visibleNodesList, links: visibleLinks, metadata: {total_files: allNodes.length}});
+        }
+
+        function hasChildren(node) {
+            // Use original links (not modified by D3)
+            return allLinksOriginal.some(l => l.source === node.id);
+        }
+
+        function handleNodeClick(event, d) {
+            event.stopPropagation();
+
+            // If node has children, toggle expansion
+            if (hasChildren(d)) {
+                if (collapsedNodes.has(d.id)) {
+                    expandNode(d);
+                } else {
+                    collapseNode(d);
+                }
+                renderGraph();
+            } else {
+                // Leaf node - show code viewer
+                showCodeViewer(d);
+            }
+        }
+
+        function expandNode(node) {
+            collapsedNodes.delete(node.id);
+
+            // Find direct children using original links (not modified by D3)
+            const children = allLinksOriginal
+                .filter(l => l.source === node.id)
+                .map(l => allNodes.find(n => n.id === l.target))
+                .filter(n => n);
+
+            children.forEach(child => {
+                visibleNodes.add(child.id);
+                collapsedNodes.add(child.id); // Children start collapsed
+            });
+        }
+
+        function collapseNode(node) {
+            collapsedNodes.add(node.id);
+
+            // Hide all descendants recursively using original links
+            function hideDescendants(parentId) {
+                const children = allLinksOriginal
+                    .filter(l => l.source === parentId)
+                    .map(l => l.target);
+
+                children.forEach(childId => {
+                    visibleNodes.delete(childId);
+                    collapsedNodes.delete(childId);
+                    hideDescendants(childId);
+                });
+            }
+
+            hideDescendants(node.id);
+        }
+
+        function showTooltip(event, d) {
+            tooltip
+                .style("display", "block")
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY + 10) + "px")
+                .html(`
+                    <div><strong>${d.name}</strong></div>
+                    <div>Type: ${d.type}</div>
+                    ${d.complexity ? `<div>Complexity: ${d.complexity.toFixed(1)}</div>` : ''}
+                    ${d.start_line ? `<div>Lines: ${d.start_line}-${d.end_line}</div>` : ''}
+                    <div>File: ${d.file_path}</div>
+                `);
+        }
+
+        function hideTooltip() {
+            tooltip.style("display", "none");
+        }
+
+        function drag(simulation) {
+            function dragstarted(event) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0);
+                event.subject.fx = null;
+                event.subject.fy = null;
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        function updateStats(data) {
+            const stats = d3.select("#stats");
+            stats.html(`
+                <div>Nodes: ${data.nodes.length}</div>
+                <div>Links: ${data.links.length}</div>
+                ${data.metadata ? `<div>Files: ${data.metadata.total_files || 'N/A'}</div>` : ''}
+                ${data.metadata && data.metadata.is_monorepo ? `<div>Monorepo: ${data.metadata.subprojects.length} subprojects</div>` : ''}
+            `);
+
+            // Show subproject legend if monorepo
+            if (data.metadata && data.metadata.is_monorepo && data.metadata.subprojects.length > 0) {
+                const subprojectsLegend = d3.select("#subprojects-legend");
+                const subprojectsList = d3.select("#subprojects-list");
+
+                subprojectsLegend.style("display", "block");
+
+                // Get subproject nodes with colors
+                const subprojectNodes = allNodes.filter(n => n.type === 'subproject');
+
+                subprojectsList.html(
+                    subprojectNodes.map(sp =>
+                        `<div class="legend-item">
+                            <span class="legend-color" style="background: ${sp.color};"></span> ${sp.name}
+                        </div>`
+                    ).join('')
+                );
+            }
+        }
+
+        function showCodeViewer(node) {
+            // Highlight the node
+            highlightedNode = node;
+            renderGraph();
+
+            // Populate code viewer
+            const viewer = document.getElementById('code-viewer');
+            const title = document.getElementById('viewer-title');
+            const meta = document.getElementById('viewer-meta');
+            const code = document.getElementById('viewer-code');
+
+            title.textContent = node.name;
+
+            let metaText = `${node.type} • ${node.file_path}`;
+            if (node.start_line) {
+                metaText += ` • Lines ${node.start_line}-${node.end_line}`;
+            }
+            if (node.language) {
+                metaText += ` • ${node.language}`;
+            }
+            meta.textContent = metaText;
+
+            // Show content if available
+            if (node.content) {
+                code.textContent = node.content;
+            } else if (node.docstring) {
+                code.textContent = `// Docstring:
+${node.docstring}`;
+            } else {
+                code.textContent = '// No content available';
+            }
+
+            viewer.classList.add('visible');
+        }
+
+        function closeCodeViewer() {
+            const viewer = document.getElementById('code-viewer');
+            viewer.classList.remove('visible');
+
+            // Remove highlight
+            highlightedNode = null;
+            renderGraph();
+        }
+
+        // Auto-load graph data on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const loadingEl = document.getElementById('loading');
+
+            fetch(`chunk-graph.json?t=${Date.now()}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    loadingEl.innerHTML = '<label style="color: #238636;">✓ Graph loaded successfully</label>';
+                    setTimeout(() => loadingEl.style.display = 'none', 2000);
+                    visualizeGraph(data);
+                })
+                .catch(err => {
+                    loadingEl.innerHTML = `<label style="color: #f85149;">✗ Failed to load graph data</label><br>` +
+                                         `<small style="color: #8b949e;">${err.message}</small><br>` +
+                                         `<small style="color: #8b949e;">Run: mcp-vector-search visualize export</small>`;
+                    console.error("Failed to load graph:", err);
+                });
+        });
+    </script>
+</body>
+</html>
