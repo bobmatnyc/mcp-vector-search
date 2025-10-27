@@ -219,18 +219,20 @@ class ChromaConnectionPool:
                 logger.debug(f"Created new connection (pool size: {len(self._pool)})")
                 return conn
 
-            # Pool is full, wait for a connection to become available
-            self._stats["pool_misses"] += 1
-            logger.warning(
-                "Connection pool exhausted, waiting for available connection"
-            )
+        # Pool is full, wait for a connection to become available (outside lock)
+        self._stats["pool_misses"] += 1
+        logger.warning(
+            "Connection pool exhausted, waiting for available connection"
+        )
 
-            # Wait for a connection (with timeout)
-            timeout = 30.0  # 30 seconds
-            start_time = time.time()
+        # Wait for a connection (with timeout) - release lock during wait
+        timeout = 30.0  # 30 seconds
+        start_time = time.time()
 
-            while time.time() - start_time < timeout:
-                await asyncio.sleep(0.1)
+        while time.time() - start_time < timeout:
+            await asyncio.sleep(0.1)
+            # Re-acquire lock to check for available connections
+            async with self._lock:
                 for conn in self._pool:
                     if not conn.in_use and self._is_connection_valid(conn):
                         conn.in_use = True
@@ -239,7 +241,7 @@ class ChromaConnectionPool:
                         self._stats["connections_reused"] += 1
                         return conn
 
-            raise DatabaseError("Connection pool timeout: no connections available")
+        raise DatabaseError("Connection pool timeout: no connections available")
 
     async def _release_connection(self, conn: PooledConnection) -> None:
         """Release a connection back to the pool."""
