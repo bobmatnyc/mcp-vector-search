@@ -53,49 +53,68 @@ cd mcp-vector-search
 uv sync && uv pip install -e .
 ```
 
-### Complete Setup with Install Command
+### Complete Setup (One Command)
 
-The new **enhanced install command** provides a complete one-step setup:
+The **hierarchical install command** (v0.13.0) provides complete project setup and MCP integration management:
 
 ```bash
-# Interactive setup with MCP configuration
+# Quick setup (recommended)
 mcp-vector-search install
 
-# Setup without MCP configuration
-mcp-vector-search install --no-mcp
+# This will:
+# 1. Initialize your project configuration
+# 2. Automatically index your codebase
+# 3. Provide next-step hints for MCP integration
 
-# Setup for specific MCP tool
-mcp-vector-search install --mcp-tool "Claude Code"
-
-# Setup without automatic indexing
-mcp-vector-search install --no-index
+# Install with all MCP integrations at once
+mcp-vector-search install --with-mcp
 
 # Custom file extensions
 mcp-vector-search install --extensions .py,.js,.ts,.dart
+
+# Skip automatic indexing
+mcp-vector-search install --no-auto-index
 ```
 
-The install command:
-- Initializes your project configuration
-- Detects and configures MCP tools (Claude Code, Cursor, Windsurf, VS Code)
-- Automatically indexes your codebase
-- Provides rich progress indicators and next-step hints
+### Add MCP Integration for AI Tools
+
+```bash
+# Add Claude Code integration (project-scoped)
+mcp-vector-search install claude-code
+
+# Add Cursor IDE integration (global)
+mcp-vector-search install cursor
+
+# Add Claude Desktop integration (global)
+mcp-vector-search install claude-desktop
+
+# See all available platforms
+mcp-vector-search install list
+```
+
+### Remove MCP Integrations
+
+```bash
+# Remove specific platform
+mcp-vector-search uninstall claude-code
+
+# Remove all integrations
+mcp-vector-search uninstall --all
+
+# List configured integrations
+mcp-vector-search uninstall list
+```
 
 ### Basic Usage
 
 ```bash
-# Initialize your project
-mcp-vector-search init
-
-# Index your codebase
-mcp-vector-search index
-
 # Search your code
 mcp-vector-search search "authentication logic"
 mcp-vector-search search "database connection setup"
 mcp-vector-search search "error handling patterns"
 
-# Setup automatic reindexing (recommended)
-mcp-vector-search auto-index setup --method all
+# Index your codebase (if not done during install)
+mcp-vector-search index
 
 # Check project status
 mcp-vector-search status
@@ -134,7 +153,50 @@ See [docs/VERSIONING_WORKFLOW.md](docs/VERSIONING_WORKFLOW.md) for complete docu
 
 ### Commands
 
-#### `init` - Initialize Project
+#### `install` - Install Project and MCP Integrations (v0.13.0)
+```bash
+# Quick setup (recommended)
+mcp-vector-search install
+
+# Install with all MCP integrations
+mcp-vector-search install --with-mcp
+
+# Custom file extensions
+mcp-vector-search install --extensions .py,.js,.ts
+
+# Skip automatic indexing
+mcp-vector-search install --no-auto-index
+
+# Platform-specific MCP integration
+mcp-vector-search install claude-code      # Project-scoped
+mcp-vector-search install claude-desktop   # Global
+mcp-vector-search install cursor           # Global
+mcp-vector-search install windsurf         # Global
+mcp-vector-search install vscode           # Global
+
+# List available platforms
+mcp-vector-search install list
+```
+
+#### `uninstall` - Remove MCP Integrations (v0.13.0)
+```bash
+# Remove specific platform
+mcp-vector-search uninstall claude-code
+
+# Remove all integrations
+mcp-vector-search uninstall --all
+
+# List configured integrations
+mcp-vector-search uninstall list
+
+# Skip backup creation
+mcp-vector-search uninstall claude-code --no-backup
+
+# Alias (same as uninstall)
+mcp-vector-search remove claude-code
+```
+
+#### `init` - Initialize Project (Simple)
 ```bash
 # Basic initialization
 mcp-vector-search init

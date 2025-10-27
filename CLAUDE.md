@@ -23,6 +23,14 @@ This file provides comprehensive guidance for Claude Code (claude.ai/code) and C
 
 ### 🎉 Recent Major Features
 
+**NEW (v0.13.0): Hierarchical Install/Uninstall Commands** 📦
+- New `install` command with platform-specific subcommands
+- New `uninstall` command for removing MCP integrations
+- Support for 5 MCP platforms: claude-code, claude-desktop, cursor, windsurf, vscode
+- `install list` and `uninstall list` for discovery
+- `remove` alias for `uninstall`
+- `mcp` command now reserved for server operations only
+
 **NEW (Unreleased): HTML Language Support** 🌐
 - Semantic content extraction from HTML documents
 - Intelligent chunking based on heading hierarchy (h1-h6)
@@ -88,36 +96,64 @@ mcp-vector-search demo
 # 4. Show you what to expect
 ```
 
-**Then initialize your own project:**
+**Then install and configure your own project:**
 
 ```bash
-# Interactive setup (recommended)
-mcp-vector-search init
+# Quick setup (recommended for most users)
+mcp-vector-search install
 
 # This single command will:
 # 1. Initialize project configuration
-# 2. Detect and configure MCP tools (Claude Code, Cursor, etc.)
-# 3. Automatically index your codebase
-# 4. Provide next-step hints
+# 2. Index your codebase automatically
+# 3. Provide next-step hints
 ```
 
-**Advanced init options:**
+**Add MCP integration for AI tools:**
 
 ```bash
-# Skip MCP configuration
-mcp-vector-search init --no-mcp
+# Add Claude Code integration (project-scoped)
+mcp-vector-search install claude-code
 
-# Skip automatic indexing
-mcp-vector-search init --no-auto-index
+# Add Cursor IDE integration (global)
+mcp-vector-search install cursor
 
-# Custom file extensions
-mcp-vector-search init --extensions .py,.js,.ts,.dart
+# Add Claude Desktop integration (global)
+mcp-vector-search install claude-desktop
 
-# Combine options
-mcp-vector-search init --no-auto-index --no-mcp
+# See all available platforms
+mcp-vector-search install list
 ```
 
-**Deprecated commands:** The `install` command has been replaced by `init`. Use `mcp-vector-search init` instead.
+**Advanced install options:**
+
+```bash
+# Install with all MCP integrations at once
+mcp-vector-search install --with-mcp
+
+# Custom file extensions
+mcp-vector-search install --extensions .py,.js,.ts,.dart
+
+# Skip automatic indexing
+mcp-vector-search install --no-auto-index
+
+# Combine options
+mcp-vector-search install --extensions .ts,.tsx,.js --with-mcp
+```
+
+**Remove MCP integrations when no longer needed:**
+
+```bash
+# Remove specific platform
+mcp-vector-search uninstall claude-code
+
+# Remove all integrations
+mcp-vector-search uninstall --all
+
+# List configured integrations
+mcp-vector-search uninstall list
+```
+
+**Note:** The `init` command is still available for simple project initialization without MCP setup. Use `install` for the complete workflow.
 
 ### 🔴 Core Architecture (MUST UNDERSTAND)
 - **Vector Database**: ChromaDB with connection pooling (13.6% performance boost)
@@ -148,16 +184,43 @@ make quality       # Run all quality checks (lint, type, test, security)
 ### 🔴 Main Commands (ALL USERS MUST KNOW)
 ```bash
 # Core Workflow
-mcp-vector-search init          # Initialize project
+mcp-vector-search install       # Install project and setup
+mcp-vector-search init          # Initialize project (simple)
 mcp-vector-search demo          # Run interactive demo
 mcp-vector-search doctor        # Check system health
 mcp-vector-search status        # Show project status
 mcp-vector-search search "query" # Search code
 mcp-vector-search index         # Index codebase
-mcp-vector-search mcp           # MCP integration
 mcp-vector-search config        # Configuration
 mcp-vector-search help          # Get help
 mcp-vector-search version       # Show version
+```
+
+### 🔴 Install/Uninstall Commands (NEW IN v0.13.0)
+```bash
+# Project Installation
+mcp-vector-search install                    # Install in current project
+mcp-vector-search install --with-mcp         # Install + all MCP integrations
+mcp-vector-search install --extensions .py,.js  # Custom file extensions
+
+# Platform-Specific MCP Integration
+mcp-vector-search install claude-code        # Project-scoped (.mcp.json)
+mcp-vector-search install claude-desktop     # Global (~/.claude/config.json)
+mcp-vector-search install cursor             # Global (~/.cursor/mcp.json)
+mcp-vector-search install windsurf           # Global (~/.codeium/windsurf/)
+mcp-vector-search install vscode             # Global (~/.vscode/mcp.json)
+mcp-vector-search install list               # Show all platforms
+
+# Remove MCP Integrations
+mcp-vector-search uninstall claude-code      # Remove specific platform
+mcp-vector-search uninstall --all            # Remove all integrations
+mcp-vector-search uninstall list             # Show configured integrations
+mcp-vector-search remove claude-code         # Alias for uninstall
+
+# MCP Server Operations (Reserved for server commands)
+mcp-vector-search mcp                        # Start MCP server (stdio mode)
+mcp-vector-search mcp list                   # List configured servers
+mcp-vector-search mcp test                   # Test server startup
 ```
 
 ### 🔴 Search Commands (PRIMARY USER INTERFACE)
@@ -627,7 +690,6 @@ Or use simplified format:
 
 | Old Command | New Command | Reason |
 |-------------|-------------|---------|
-| `install` | `init` | Renamed for clarity |
 | `find` | `search` | Simplified |
 | `search-similar` | `search --similar` | Moved to option |
 | `search-context` | `search --context` | Moved to option |
@@ -641,10 +703,12 @@ Or use simplified format:
 | `auto-index` | `index auto` | Moved to subcommand |
 | `reset` | `mcp reset` or `config reset` | Split by function |
 | `init-check` | `init check` | Nested subcommand |
-| `init-mcp` | `mcp install` | Reorganized |
+| `init-mcp` | `install claude-code` | Reorganized (v0.13.0) |
 | `init-models` | `config models` | Reorganized |
 
 **All deprecated commands display helpful migration messages when used.**
+
+**Note:** In v0.13.0, the `install` command was reintroduced with a new hierarchical structure for managing project installation and MCP integrations. The `init` command remains available for simple project initialization without MCP configuration.
 
 ---
 

@@ -1,22 +1,41 @@
-"""Install command for MCP Vector Search CLI."""
+"""Install and integration commands for MCP Vector Search CLI.
+
+This module provides installation commands for:
+1. Project initialization (main command)
+2. Platform-specific MCP integrations (subcommands)
+
+Examples:
+    # Install in current project
+    $ mcp-vector-search install
+
+    # Install Claude Code integration
+    $ mcp-vector-search install claude-code
+
+    # Install all available integrations
+    $ mcp-vector-search install --all
+"""
 
 import asyncio
 import json
 import shutil
-import subprocess
-import sys
 from pathlib import Path
+from typing import Any
 
 import typer
 from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.table import Table
 
+from ...config.defaults import DEFAULT_EMBEDDING_MODELS, DEFAULT_FILE_EXTENSIONS
+from ...core.exceptions import ProjectInitializationError
 from ...core.project import ProjectManager
+from ..didyoumean import create_enhanced_typer
 from ..output import (
+    confirm_action,
     print_error,
     print_info,
+    print_next_steps,
     print_success,
     print_warning,
 )
@@ -24,115 +43,200 @@ from ..output import (
 # Create console for rich output
 console = Console()
 
-# Create install subcommand app
-install_app = typer.Typer(help="Install mcp-vector-search in projects")
+# Create install app with subcommands
+install_app = create_enhanced_typer(
+    help="""📦 Install mcp-vector-search and MCP integrations
+
+[bold cyan]Usage Patterns:[/bold cyan]
+
+  [green]1. Project Installation (Primary)[/green]
+     Install mcp-vector-search in the current project:
+     [code]$ mcp-vector-search install[/code]
+
+  [green]2. MCP Platform Integration[/green]
+     Add MCP integration for specific platforms:
+     [code]$ mcp-vector-search install claude-code[/code]
+     [code]$ mcp-vector-search install cursor[/code]
+     [code]$ mcp-vector-search install windsurf[/code]
+
+  [green]3. Complete Setup[/green]
+     Install project + all MCP integrations:
+     [code]$ mcp-vector-search install --with-mcp[/code]
+
+[bold cyan]Supported Platforms:[/bold cyan]
+  • [green]claude-code[/green]     - Claude Code (project-scoped .mcp.json)
+  • [green]claude-desktop[/green]  - Claude Desktop (~/.claude/config.json)
+  • [green]cursor[/green]          - Cursor IDE (~/.cursor/mcp.json)
+  • [green]windsurf[/green]        - Windsurf IDE (~/.codeium/windsurf/mcp_config.json)
+  • [green]vscode[/green]          - VS Code (~/.vscode/mcp.json)
+
+[dim]💡 Use 'mcp-vector-search uninstall <platform>' to remove integrations[/dim]
+""",
+    invoke_without_command=True,
+    no_args_is_help=False,
+)
 
 
-# ============================================================================
-# MCP Multi-Tool Integration Helpers
-# ============================================================================
+# ==============================================================================
+# Platform Configuration
+# ==============================================================================
+
+SUPPORTED_PLATFORMS = {
+    "claude-code": {
+        "name": "Claude Code",
+        "config_path": ".mcp.json",  # Project-scoped
+        "description": "Claude Code with project-scoped configuration",
+        "scope": "project",
+    },
+    "claude-desktop": {
+        "name": "Claude Desktop",
+        "config_path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+        "description": "Claude Desktop application",
+        "scope": "global",
+    },
+    "cursor": {
+        "name": "Cursor",
+        "config_path": "~/.cursor/mcp.json",
+        "description": "Cursor IDE",
+        "scope": "global",
+    },
+    "windsurf": {
+        "name": "Windsurf",
+        "config_path": "~/.codeium/windsurf/mcp_config.json",
+        "description": "Windsurf IDE",
+        "scope": "global",
+    },
+    "vscode": {
+        "name": "VS Code",
+        "config_path": "~/.vscode/mcp.json",
+        "description": "Visual Studio Code",
+        "scope": "global",
+    },
+}
 
 
-def detect_ai_tools() -> dict[str, Path]:
-    """Detect installed AI coding tools by checking config file existence.
+def get_platform_config_path(platform: str, project_root: Path) -> Path:
+    """Get the configuration file path for a platform.
+
+    Args:
+        platform: Platform name (e.g., "claude-code", "cursor")
+        project_root: Project root directory (for project-scoped configs)
 
     Returns:
-        Dictionary mapping tool names to their config file paths.
-        For Claude Code, returns a placeholder path since it uses project-scoped .mcp.json
+        Path to the configuration file
     """
-    home = Path.home()
+    if platform not in SUPPORTED_PLATFORMS:
+        raise ValueError(f"Unsupported platform: {platform}")
 
-    config_locations = {
-        "claude-desktop": home
-        / "Library"
-        / "Application Support"
-        / "Claude"
-        / "claude_desktop_config.json",
-        "cursor": home / ".cursor" / "mcp.json",
-        "windsurf": home / ".codeium" / "windsurf" / "mcp_config.json",
-        "vscode": home / ".vscode" / "mcp.json",
-    }
+    config_info = SUPPORTED_PLATFORMS[platform]
+    config_path_str = config_info["config_path"]
 
-    # Return only tools with existing config files
-    detected_tools = {}
-    for tool_name, config_path in config_locations.items():
-        if config_path.exists():
-            detected_tools[tool_name] = config_path
-
-    # Always include Claude Code as an option (it uses project-scoped .mcp.json)
-    detected_tools["claude-code"] = Path(
-        ".mcp.json"
-    )  # Placeholder - will be project-scoped
-
-    return detected_tools
+    # Resolve project-scoped vs global paths
+    if config_info["scope"] == "project":
+        return project_root / config_path_str
+    else:
+        return Path(config_path_str).expanduser()
 
 
 def get_mcp_server_config(
-    project_root: Path, enable_watch: bool = True, tool_name: str = ""
-) -> dict:
-    """Generate MCP server configuration dict.
+    project_root: Path,
+    platform: str,
+    enable_watch: bool = True,
+) -> dict[str, Any]:
+    """Generate MCP server configuration for a platform.
 
     Args:
-        project_root: Path to the project root directory
-        enable_watch: Whether to enable file watching (default: True)
-        tool_name: Name of the tool (for tool-specific config adjustments)
+        project_root: Project root directory
+        platform: Platform name
+        enable_watch: Whether to enable file watching
 
     Returns:
-        Dictionary containing MCP server configuration.
+        Dictionary containing MCP server configuration
     """
-    # Base configuration
-    config = {
+    # Base configuration using uv for compatibility
+    config: dict[str, Any] = {
         "command": "uv",
         "args": ["run", "mcp-vector-search", "mcp"],
-        "env": {"MCP_ENABLE_FILE_WATCHING": "true" if enable_watch else "false"},
+        "env": {
+            "MCP_ENABLE_FILE_WATCHING": "true" if enable_watch else "false",
+        },
     }
 
-    # Add "type": "stdio" for Claude Code and other tools that require it
-    if tool_name in ("claude-code", "cursor", "windsurf", "vscode"):
+    # Platform-specific adjustments
+    if platform in ("claude-code", "cursor", "windsurf", "vscode"):
+        # These platforms require "type": "stdio"
         config["type"] = "stdio"
 
-    # Add cwd only for tools that support it (not Claude Code)
-    if tool_name not in ("claude-code",):
+    # Only add cwd for global-scope platforms (not project-scoped)
+    if SUPPORTED_PLATFORMS[platform]["scope"] == "global":
         config["cwd"] = str(project_root.absolute())
 
     return config
 
 
-def configure_mcp_for_tool(
-    tool_name: str,
-    config_path: Path,
+def detect_installed_platforms() -> dict[str, Path]:
+    """Detect which MCP platforms are installed on the system.
+
+    Returns:
+        Dictionary mapping platform names to their config paths
+    """
+    detected = {}
+
+    for platform, info in SUPPORTED_PLATFORMS.items():
+        # For project-scoped platforms, always include them
+        if info["scope"] == "project":
+            detected[platform] = Path(info["config_path"])
+            continue
+
+        # For global platforms, check if config directory exists
+        config_path = Path(info["config_path"]).expanduser()
+        if config_path.parent.exists():
+            detected[platform] = config_path
+
+    return detected
+
+
+def configure_platform(
+    platform: str,
     project_root: Path,
     server_name: str = "mcp-vector-search",
     enable_watch: bool = True,
+    force: bool = False,
 ) -> bool:
-    """Add MCP server configuration to a tool's config file.
+    """Configure MCP integration for a specific platform.
 
     Args:
-        tool_name: Name of the AI tool (e.g., "claude-code", "cursor")
-        config_path: Path to the tool's configuration file
-        project_root: Path to the project root directory
+        platform: Platform name (e.g., "claude-code", "cursor")
+        project_root: Project root directory
         server_name: Name for the MCP server entry
         enable_watch: Whether to enable file watching
+        force: Whether to overwrite existing configuration
 
     Returns:
-        True if configuration was successful, False otherwise.
+        True if configuration was successful, False otherwise
     """
     try:
-        # For Claude Code, we create .mcp.json in project root instead of ~/.claude.json
-        if tool_name == "claude-code":
-            # Override config_path to project-scoped .mcp.json
-            config_path = project_root / ".mcp.json"
+        config_path = get_platform_config_path(platform, project_root)
 
-        # Create backup of existing config
-        backup_path = config_path.with_suffix(config_path.suffix + ".backup")
-
-        # Load existing config or create new one
+        # Create backup if file exists
         if config_path.exists():
+            backup_path = config_path.with_suffix(config_path.suffix + ".backup")
             shutil.copy2(config_path, backup_path)
+
+            # Load existing config
             with open(config_path) as f:
                 config = json.load(f)
+
+            # Check if server already exists
+            if "mcpServers" in config and server_name in config["mcpServers"]:
+                if not force:
+                    print_warning(
+                        f"  ⚠️  Server '{server_name}' already exists in {platform} config"
+                    )
+                    print_info("  Use --force to overwrite")
+                    return False
         else:
-            # Create parent directory if it doesn't exist
+            # Create new config
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config = {}
 
@@ -140,556 +244,410 @@ def configure_mcp_for_tool(
         if "mcpServers" not in config:
             config["mcpServers"] = {}
 
-        # Get the MCP server configuration with tool-specific settings
-        server_config = get_mcp_server_config(project_root, enable_watch, tool_name)
-
         # Add server configuration
+        server_config = get_mcp_server_config(project_root, platform, enable_watch)
         config["mcpServers"][server_name] = server_config
 
-        # Write the updated config
+        # Write configuration
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
 
-        print_success(f"  ✅ Configured {tool_name} at {config_path}")
+        platform_name = SUPPORTED_PLATFORMS[platform]["name"]
+        print_success(f"  ✅ Configured {platform_name}")
+        print_info(f"     Config: {config_path}")
+
         return True
 
     except Exception as e:
-        print_error(f"  ❌ Failed to configure {tool_name}: {e}")
-        # Restore backup if it exists
-        if backup_path.exists():
-            shutil.copy2(backup_path, config_path)
+        logger.error(f"Failed to configure {platform}: {e}")
+        print_error(f"  ❌ Failed to configure {platform}: {e}")
         return False
 
 
-def setup_mcp_integration(
-    project_root: Path,
-    mcp_tool: str | None = None,
-    enable_watch: bool = True,
-    interactive: bool = True,
-) -> dict[str, bool]:
-    """Setup MCP integration for one or more AI tools.
+# ==============================================================================
+# Main Install Command (Project Installation)
+# ==============================================================================
 
-    Args:
-        project_root: Path to the project root directory
-        mcp_tool: Specific tool to configure (None for interactive selection)
-        enable_watch: Whether to enable file watching
-        interactive: Whether to prompt user for tool selection
-
-    Returns:
-        Dictionary mapping tool names to success status.
-    """
-    detected_tools = detect_ai_tools()
-
-    if not detected_tools:
-        print_warning("No AI coding tools detected on this system.")
-        print_info(
-            "Supported tools: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code"
-        )
-        print_info("Install one of these tools and try again.")
-        return {}
-
-    # Determine which tools to configure
-    tools_to_configure = {}
-
-    if mcp_tool:
-        # Specific tool requested
-        if mcp_tool in detected_tools:
-            tools_to_configure[mcp_tool] = detected_tools[mcp_tool]
-        else:
-            print_error(f"Tool '{mcp_tool}' not found or not installed.")
-            print_info(f"Detected tools: {', '.join(detected_tools.keys())}")
-            return {}
-    elif interactive and len(detected_tools) > 1:
-        # Multiple tools detected, prompt user
-        console.print("\n[bold blue]🔍 Detected AI coding tools:[/bold blue]")
-        for i, tool_name in enumerate(detected_tools.keys(), 1):
-            console.print(f"  {i}. {tool_name}")
-
-        console.print("\n[bold]Configure MCP integration for:[/bold]")
-        console.print("  [1] All detected tools")
-        console.print("  [2] Choose specific tool(s)")
-        console.print("  [3] Skip MCP setup")
-
-        choice = typer.prompt("\nSelect option", type=int, default=1)
-
-        if choice == 1:
-            # Configure all tools
-            tools_to_configure = detected_tools
-        elif choice == 2:
-            # Let user choose specific tools
-            console.print(
-                "\n[bold]Select tools to configure (comma-separated numbers):[/bold]"
-            )
-            tool_list = list(detected_tools.keys())
-            for i, tool_name in enumerate(tool_list, 1):
-                console.print(f"  {i}. {tool_name}")
-
-            selections = typer.prompt("Tool numbers").strip()
-            for num_str in selections.split(","):
-                try:
-                    idx = int(num_str.strip()) - 1
-                    if 0 <= idx < len(tool_list):
-                        tool_name = tool_list[idx]
-                        tools_to_configure[tool_name] = detected_tools[tool_name]
-                except ValueError:
-                    print_warning(f"Invalid selection: {num_str}")
-        else:
-            # Skip MCP setup
-            print_info("Skipping MCP setup")
-            return {}
-    else:
-        # Single tool or non-interactive mode - configure all
-        tools_to_configure = detected_tools
-
-    # Configure selected tools
-    results = {}
-
-    if tools_to_configure:
-        console.print("\n[bold blue]🔗 Configuring MCP integration...[/bold blue]")
-
-        for tool_name, config_path in tools_to_configure.items():
-            results[tool_name] = configure_mcp_for_tool(
-                tool_name=tool_name,
-                config_path=config_path,
-                project_root=project_root,
-                server_name="mcp-vector-search",
-                enable_watch=enable_watch,
-            )
-
-    return results
-
-
-def print_next_steps(
-    project_root: Path,
-    indexed: bool,
-    mcp_results: dict[str, bool],
-) -> None:
-    """Print helpful next steps after installation.
-
-    Args:
-        project_root: Path to the project root
-        indexed: Whether the codebase was indexed
-        mcp_results: Results of MCP integration (tool_name -> success)
-    """
-    console.print("\n[bold green]🎉 Installation Complete![/bold green]")
-
-    # Show what was completed
-    console.print("\n[bold blue]✨ Setup Summary:[/bold blue]")
-    console.print("  ✅ Vector database initialized")
-    if indexed:
-        console.print("  ✅ Codebase indexed and searchable")
-    else:
-        console.print("  ⏭️  Indexing skipped (use --no-index flag)")
-
-    if mcp_results:
-        successful_tools = [tool for tool, success in mcp_results.items() if success]
-        if successful_tools:
-            console.print(
-                f"  ✅ MCP integration configured for: {', '.join(successful_tools)}"
-            )
-
-    # Next steps
-    console.print("\n[bold green]🚀 Ready to use:[/bold green]")
-    console.print(
-        "  • Search your code: [code]mcp-vector-search search 'your query'[/code]"
-    )
-    console.print("  • Check status: [code]mcp-vector-search status[/code]")
-
-    if mcp_results:
-        console.print("\n[bold blue]🤖 Using MCP Integration:[/bold blue]")
-        if "claude-code" in mcp_results and mcp_results["claude-code"]:
-            console.print("  • Open Claude Code in this project directory")
-            console.print("  • Use: 'Search my code for authentication functions'")
-        if "cursor" in mcp_results and mcp_results["cursor"]:
-            console.print("  • Open Cursor in this project directory")
-            console.print("  • MCP tools should be available automatically")
-        if "claude-desktop" in mcp_results and mcp_results["claude-desktop"]:
-            console.print("  • Restart Claude Desktop")
-            console.print("  • The mcp-vector-search server will be available")
-
-    console.print(
-        "\n[dim]💡 Tip: Run 'mcp-vector-search --help' for more commands[/dim]"
-    )
-
-
-# ============================================================================
-# Main Install Command
-# ============================================================================
-
-
+@install_app.callback()
 def main(
     ctx: typer.Context,
-    project_path: Path = typer.Argument(
-        ...,
-        help="Project directory to initialize and index",
-    ),
     extensions: str | None = typer.Option(
         None,
         "--extensions",
         "-e",
-        help="Comma-separated file extensions (e.g., .py,.js,.ts,.dart)",
-    ),
-    no_index: bool = typer.Option(
-        False,
-        "--no-index",
-        help="Skip initial indexing",
-    ),
-    no_mcp: bool = typer.Option(
-        False,
-        "--no-mcp",
-        help="Skip MCP integration setup",
-    ),
-    mcp_tool: str | None = typer.Option(
-        None,
-        "--mcp-tool",
-        help="Specific AI tool for MCP integration (claude-code, cursor, etc.)",
-    ),
-    no_watch: bool = typer.Option(
-        False,
-        "--no-watch",
-        help="Disable file watching for MCP integration",
+        help="Comma-separated file extensions (e.g., .py,.js,.ts)",
+        rich_help_panel="📁 Configuration",
     ),
     embedding_model: str = typer.Option(
-        "sentence-transformers/all-MiniLM-L6-v2",
+        DEFAULT_EMBEDDING_MODELS["code"],
         "--embedding-model",
         "-m",
-        help="Embedding model to use for semantic search",
+        help="Embedding model for semantic search",
+        rich_help_panel="🧠 Model Settings",
     ),
     similarity_threshold: float = typer.Option(
         0.5,
         "--similarity-threshold",
         "-s",
-        help="Similarity threshold for search results (0.0 to 1.0)",
+        help="Similarity threshold (0.0-1.0)",
         min=0.0,
         max=1.0,
+        rich_help_panel="🧠 Model Settings",
+    ),
+    auto_index: bool = typer.Option(
+        True,
+        "--auto-index/--no-auto-index",
+        help="Automatically index after initialization",
+        rich_help_panel="🚀 Workflow",
+    ),
+    with_mcp: bool = typer.Option(
+        False,
+        "--with-mcp",
+        help="Install all available MCP integrations",
+        rich_help_panel="🚀 Workflow",
     ),
     force: bool = typer.Option(
         False,
         "--force",
         "-f",
-        help="Force re-installation if project is already initialized",
+        help="Force re-initialization",
+        rich_help_panel="⚙️  Advanced",
     ),
 ) -> None:
-    """Install mcp-vector-search with complete setup including MCP integration.
+    """📦 Install mcp-vector-search in the current project.
 
-    This command provides a comprehensive one-step installation that:
+    This command initializes mcp-vector-search with:
+    ✅ Vector database setup
+    ✅ Configuration file creation
+    ✅ Automatic code indexing
+    ✅ Ready-to-use semantic search
 
-    ✅ Initializes mcp-vector-search in the project directory
-    ✅ Auto-detects programming languages and file types
-    ✅ Indexes the codebase for semantic search
-    ✅ Configures MCP integration for multiple AI tools
-    ✅ Sets up file watching for automatic updates
+    [bold cyan]Examples:[/bold cyan]
 
-    Perfect for getting started quickly with semantic code search!
+      [green]Basic installation:[/green]
+        $ mcp-vector-search install
 
-    Examples:
-        mcp-vector-search install .                          # Install in current directory
-        mcp-vector-search install ~/my-project               # Install in specific directory
-        mcp-vector-search install . --no-mcp                 # Skip MCP integration
-        mcp-vector-search install . --mcp-tool claude-code   # Configure specific tool
-        mcp-vector-search install . --extensions .py,.js,.ts # Custom file types
-        mcp-vector-search install . --force                  # Force re-initialization
+      [green]Custom file types:[/green]
+        $ mcp-vector-search install --extensions .py,.js,.ts
+
+      [green]Install with MCP integrations:[/green]
+        $ mcp-vector-search install --with-mcp
+
+      [green]Skip auto-indexing:[/green]
+        $ mcp-vector-search install --no-auto-index
+
+    [dim]💡 After installation, use 'mcp-vector-search search' to search your code[/dim]
     """
-    try:
-        # Resolve project path
-        project_root = project_path.resolve()
+    # Only run main logic if no subcommand was invoked
+    if ctx.invoked_subcommand is not None:
+        return
 
-        # Show installation header
+    try:
+        project_root = ctx.obj.get("project_root") or Path.cwd()
+
         console.print(
             Panel.fit(
-                f"[bold blue]🚀 MCP Vector Search - Complete Installation[/bold blue]\n\n"
-                f"📁 Project: [cyan]{project_root}[/cyan]\n"
-                f"🔧 Setting up with full initialization and MCP integration",
-                border_style="blue",
+                f"[bold cyan]Installing mcp-vector-search[/bold cyan]\n"
+                f"📁 Project: {project_root}",
+                border_style="cyan",
             )
         )
-
-        # Check if project directory exists
-        if not project_root.exists():
-            print_error(f"Project directory does not exist: {project_root}")
-            raise typer.Exit(1)
 
         # Check if already initialized
         project_manager = ProjectManager(project_root)
         if project_manager.is_initialized() and not force:
-            print_success("✅ Project is already initialized!")
-            print_info("Vector search capabilities are enabled.")
-            print_info("Use --force to re-initialize if needed.")
-
-            # Show MCP configuration option
-            if not no_mcp:
-                console.print("\n[bold blue]💡 MCP Integration:[/bold blue]")
-                console.print(
-                    "  Run install again with --force to reconfigure MCP integration"
-                )
-
-            return
+            print_success("✅ Project already initialized!")
+            print_info("   Use --force to re-initialize")
+            raise typer.Exit(0)
 
         # Parse file extensions
         file_extensions = None
         if extensions:
-            file_extensions = [ext.strip() for ext in extensions.split(",")]
-            # Ensure extensions start with dot
             file_extensions = [
-                ext if ext.startswith(".") else f".{ext}" for ext in file_extensions
+                ext.strip() if ext.startswith(".") else f".{ext.strip()}"
+                for ext in extensions.split(",")
             ]
+        else:
+            file_extensions = DEFAULT_FILE_EXTENSIONS
 
-        # ========================================================================
-        # STEP 1: Initialize Project
-        # ========================================================================
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("📁 Initializing project...", total=None)
+        # Show configuration
+        console.print("\n[bold blue]Configuration:[/bold blue]")
+        console.print(f"  📄 Extensions: {', '.join(file_extensions)}")
+        console.print(f"  🧠 Model: {embedding_model}")
+        console.print(f"  🎯 Threshold: {similarity_threshold}")
+        console.print(f"  🔍 Auto-index: {'✅' if auto_index else '❌'}")
+        console.print(f"  🔗 With MCP: {'✅' if with_mcp else '❌'}")
 
-            # Initialize the project
-            project_manager.initialize(
-                file_extensions=file_extensions,
-                embedding_model=embedding_model,
-                similarity_threshold=similarity_threshold,
-                force=force,
-            )
+        # Initialize project
+        console.print("\n[bold]Initializing project...[/bold]")
+        project_manager.initialize(
+            file_extensions=file_extensions,
+            embedding_model=embedding_model,
+            similarity_threshold=similarity_threshold,
+            force=force,
+        )
+        print_success("✅ Project initialized")
 
-            progress.update(task, completed=True)
-            print_success("✅ Project initialized successfully")
+        # Auto-index if requested
+        if auto_index:
+            console.print("\n[bold]🔍 Indexing codebase...[/bold]")
+            from .index import run_indexing
 
-        # ========================================================================
-        # STEP 2: Index Codebase (unless --no-index)
-        # ========================================================================
-        indexed = False
-        if not no_index:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console,
-            ) as progress:
-                task = progress.add_task("🔍 Indexing codebase...", total=None)
-
-                # Import and run indexing
-                from .index import run_indexing
-
-                try:
-                    asyncio.run(
-                        run_indexing(
-                            project_root=project_root,
-                            force_reindex=False,
-                            show_progress=False,  # We handle progress here
-                        )
+            try:
+                asyncio.run(
+                    run_indexing(
+                        project_root=project_root,
+                        force_reindex=False,
+                        show_progress=True,
                     )
-                    indexed = True
-                    progress.update(task, completed=True)
-                    print_success("✅ Codebase indexed successfully")
-                except Exception as e:
-                    print_error(f"❌ Indexing failed: {e}")
-                    print_info("You can run 'mcp-vector-search index' later")
-        else:
-            print_info("⏭️  Indexing skipped (--no-index)")
+                )
+                print_success("✅ Indexing completed")
+            except Exception as e:
+                print_error(f"❌ Indexing failed: {e}")
+                print_info("   Run 'mcp-vector-search index' to index later")
 
-        # ========================================================================
-        # STEP 3: Configure MCP Integration (unless --no-mcp)
-        # ========================================================================
-        mcp_results = {}
-        if not no_mcp:
-            enable_watch = not no_watch
-            mcp_results = setup_mcp_integration(
-                project_root=project_root,
-                mcp_tool=mcp_tool,
-                enable_watch=enable_watch,
-                interactive=True,  # Allow interactive tool selection
+        # Install MCP integrations if requested
+        if with_mcp:
+            console.print("\n[bold blue]🔗 Installing MCP integrations...[/bold blue]")
+            detected = detect_installed_platforms()
+
+            if detected:
+                for platform in detected:
+                    configure_platform(platform, project_root, enable_watch=True)
+            else:
+                print_warning("No MCP platforms detected")
+                print_info("Install platforms manually using:")
+                print_info("  mcp-vector-search install <platform>")
+
+        # Success message
+        console.print("\n[bold green]🎉 Installation Complete![/bold green]")
+
+        next_steps = [
+            "[cyan]mcp-vector-search search 'your query'[/cyan] - Search your code",
+            "[cyan]mcp-vector-search status[/cyan] - View project status",
+        ]
+
+        if not with_mcp:
+            next_steps.append(
+                "[cyan]mcp-vector-search install claude-code[/cyan] - Add MCP integration"
             )
 
-            if not mcp_results:
-                print_info("⏭️  MCP integration skipped")
-        else:
-            print_info("⏭️  MCP integration skipped (--no-mcp)")
+        print_next_steps(next_steps, title="Ready to Use")
 
-        # ========================================================================
-        # STEP 4: Verification
-        # ========================================================================
-        console.print("\n[bold blue]✅ Verifying installation...[/bold blue]")
-
-        # Check project initialized
-        if project_manager.is_initialized():
-            print_success("  ✅ Project configuration created")
-
-        # Check index created
-        if indexed:
-            print_success("  ✅ Index created and populated")
-
-        # Check MCP configured
-        if mcp_results:
-            successful_tools = [
-                tool for tool, success in mcp_results.items() if success
-            ]
-            if successful_tools:
-                print_success(f"  ✅ MCP configured for: {', '.join(successful_tools)}")
-
-        # ========================================================================
-        # STEP 5: Print Next Steps
-        # ========================================================================
-        print_next_steps(
-            project_root=project_root,
-            indexed=indexed,
-            mcp_results=mcp_results,
-        )
-
+    except ProjectInitializationError as e:
+        print_error(f"Installation failed: {e}")
+        raise typer.Exit(1)
     except Exception as e:
-        logger.error(f"Installation failed: {e}")
-        print_error(f"❌ Installation failed: {e}")
-
-        # Provide recovery instructions
-        console.print("\n[bold]Recovery steps:[/bold]")
-        console.print("  1. Check that the project directory exists and is writable")
-        console.print(
-            "  2. Ensure required dependencies are installed: [code]pip install mcp-vector-search[/code]"
-        )
-        console.print(
-            "  3. Try running with --force to override existing configuration"
-        )
-        console.print("  4. Check logs with --verbose flag for more details")
-
+        logger.error(f"Unexpected error during installation: {e}")
+        print_error(f"Unexpected error: {e}")
         raise typer.Exit(1)
 
 
-@install_app.command("demo")
-def demo(
-    project_root: Path | None = typer.Option(
-        None,
-        "--project-root",
-        "-p",
-        help="Project root directory (auto-detected if not specified)",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        readable=True,
+# ==============================================================================
+# Platform-Specific Installation Commands
+# ==============================================================================
+
+@install_app.command("claude-code")
+def install_claude_code(
+    ctx: typer.Context,
+    enable_watch: bool = typer.Option(
+        True,
+        "--watch/--no-watch",
+        help="Enable file watching for auto-reindex",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force overwrite existing configuration",
     ),
 ) -> None:
-    """Run installation demo with sample project."""
-    try:
-        import tempfile
+    """Install Claude Code MCP integration (project-scoped).
 
-        print_info("🎬 Running mcp-vector-search installation demo...")
+    Creates .mcp.json in the project root for team sharing.
+    This file should be committed to version control.
+    """
+    project_root = ctx.obj.get("project_root") or Path.cwd()
 
-        # Create temporary demo directory
-        with tempfile.TemporaryDirectory(prefix="mcp-demo-") as temp_dir:
-            demo_dir = Path(temp_dir) / "demo-project"
-            demo_dir.mkdir()
+    console.print(
+        Panel.fit(
+            "[bold cyan]Installing Claude Code Integration[/bold cyan]\n"
+            "📁 Project-scoped configuration",
+            border_style="cyan",
+        )
+    )
 
-            # Create sample files
-            (demo_dir / "main.py").write_text("""
-def main():
-    '''Main entry point for the application.'''
-    print("Hello, World!")
-    user_service = UserService()
-    user_service.create_user("Alice", "alice@example.com")
+    success = configure_platform("claude-code", project_root, enable_watch=enable_watch, force=force)
 
-class UserService:
-    '''Service for managing users.'''
-
-    def create_user(self, name: str, email: str):
-        '''Create a new user with the given name and email.'''
-        print(f"Creating user: {name} ({email})")
-        return {"name": name, "email": email}
-
-    def authenticate_user(self, email: str, password: str):
-        '''Authenticate user with email and password.'''
-        # Simple authentication logic
-        return email.endswith("@example.com")
-
-if __name__ == "__main__":
-    main()
-""")
-
-            (demo_dir / "utils.py").write_text("""
-import json
-from typing import Dict, Any
-
-def load_config(config_path: str) -> Dict[str, Any]:
-    '''Load configuration from JSON file.'''
-    with open(config_path, 'r') as f:
-        return json.load(f)
-
-def validate_email(email: str) -> bool:
-    '''Validate email address format.'''
-    return "@" in email and "." in email.split("@")[1]
-
-def hash_password(password: str) -> str:
-    '''Hash password for secure storage.'''
-    import hashlib
-    return hashlib.sha256(password.encode()).hexdigest()
-""")
-
-            console.print(
-                f"\n[bold blue]📁 Created demo project at:[/bold blue] {demo_dir}"
-            )
-
-            # Run installation
-            print_info("Installing mcp-vector-search in demo project...")
-
-            # Use subprocess to run the install command
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "mcp_vector_search.cli.main",
-                    "--project-root",
-                    str(demo_dir),
-                    "install",
-                    str(demo_dir),
-                    "--extensions",
-                    ".py",
-                    "--no-mcp",  # Skip MCP for demo
-                ],
-                capture_output=True,
-                text=True,
-            )
-
-            if result.returncode == 0:
-                print_success("✅ Demo installation completed!")
-
-                # Run a sample search
-                print_info("Running sample search: 'user authentication'...")
-
-                search_result = subprocess.run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "mcp_vector_search.cli.main",
-                        "--project-root",
-                        str(demo_dir),
-                        "search",
-                        "user authentication",
-                        "--limit",
-                        "3",
-                    ],
-                    capture_output=True,
-                    text=True,
-                )
-
-                if search_result.returncode == 0:
-                    console.print(
-                        "\n[bold green]🔍 Sample search results:[/bold green]"
-                    )
-                    console.print(search_result.stdout)
-                else:
-                    print_warning("Search demo failed, but installation was successful")
-
-                console.print("\n[bold blue]🎉 Demo completed![/bold blue]")
-                console.print(f"Demo project was created at: [cyan]{demo_dir}[/cyan]")
-                console.print(
-                    "The temporary directory will be cleaned up automatically."
-                )
-
-            else:
-                print_error(f"Demo installation failed: {result.stderr}")
-                raise typer.Exit(1)
-
-    except Exception as e:
-        logger.error(f"Demo failed: {e}")
-        print_error(f"Demo failed: {e}")
+    if success:
+        console.print("\n[bold green]✨ Claude Code Integration Installed![/bold green]")
+        console.print("\n[bold blue]Next Steps:[/bold blue]")
+        console.print("  1. Open Claude Code in this project directory")
+        console.print("  2. The MCP server will be available automatically")
+        console.print("  3. Try: 'Search my code for authentication functions'")
+        console.print("\n[dim]💡 Commit .mcp.json to share with your team[/dim]")
+    else:
         raise typer.Exit(1)
+
+
+@install_app.command("cursor")
+def install_cursor(
+    ctx: typer.Context,
+    enable_watch: bool = typer.Option(True, "--watch/--no-watch"),
+    force: bool = typer.Option(False, "--force", "-f"),
+) -> None:
+    """Install Cursor IDE MCP integration (global)."""
+    project_root = ctx.obj.get("project_root") or Path.cwd()
+
+    console.print(
+        Panel.fit(
+            "[bold cyan]Installing Cursor Integration[/bold cyan]\n"
+            "🌐 Global configuration (~/.cursor/mcp.json)",
+            border_style="cyan",
+        )
+    )
+
+    success = configure_platform("cursor", project_root, enable_watch=enable_watch, force=force)
+
+    if success:
+        console.print("\n[bold green]✨ Cursor Integration Installed![/bold green]")
+        console.print("\n[bold blue]Next Steps:[/bold blue]")
+        console.print("  1. Restart Cursor IDE")
+        console.print("  2. Open this project in Cursor")
+        console.print("  3. MCP tools should be available")
+    else:
+        raise typer.Exit(1)
+
+
+@install_app.command("windsurf")
+def install_windsurf(
+    ctx: typer.Context,
+    enable_watch: bool = typer.Option(True, "--watch/--no-watch"),
+    force: bool = typer.Option(False, "--force", "-f"),
+) -> None:
+    """Install Windsurf IDE MCP integration (global)."""
+    project_root = ctx.obj.get("project_root") or Path.cwd()
+
+    console.print(
+        Panel.fit(
+            "[bold cyan]Installing Windsurf Integration[/bold cyan]\n"
+            "🌐 Global configuration (~/.codeium/windsurf/mcp_config.json)",
+            border_style="cyan",
+        )
+    )
+
+    success = configure_platform("windsurf", project_root, enable_watch=enable_watch, force=force)
+
+    if success:
+        console.print("\n[bold green]✨ Windsurf Integration Installed![/bold green]")
+        console.print("\n[bold blue]Next Steps:[/bold blue]")
+        console.print("  1. Restart Windsurf IDE")
+        console.print("  2. Open this project in Windsurf")
+        console.print("  3. MCP tools should be available")
+    else:
+        raise typer.Exit(1)
+
+
+@install_app.command("claude-desktop")
+def install_claude_desktop(
+    ctx: typer.Context,
+    enable_watch: bool = typer.Option(True, "--watch/--no-watch"),
+    force: bool = typer.Option(False, "--force", "-f"),
+) -> None:
+    """Install Claude Desktop MCP integration (global)."""
+    project_root = ctx.obj.get("project_root") or Path.cwd()
+
+    console.print(
+        Panel.fit(
+            "[bold cyan]Installing Claude Desktop Integration[/bold cyan]\n"
+            "🌐 Global configuration (~/.claude/config.json)",
+            border_style="cyan",
+        )
+    )
+
+    success = configure_platform("claude-desktop", project_root, enable_watch=enable_watch, force=force)
+
+    if success:
+        console.print("\n[bold green]✨ Claude Desktop Integration Installed![/bold green]")
+        console.print("\n[bold blue]Next Steps:[/bold blue]")
+        console.print("  1. Restart Claude Desktop")
+        console.print("  2. The mcp-vector-search server will be available")
+        console.print("  3. Open conversations in the project directory")
+    else:
+        raise typer.Exit(1)
+
+
+@install_app.command("vscode")
+def install_vscode(
+    ctx: typer.Context,
+    enable_watch: bool = typer.Option(True, "--watch/--no-watch"),
+    force: bool = typer.Option(False, "--force", "-f"),
+) -> None:
+    """Install VS Code MCP integration (global)."""
+    project_root = ctx.obj.get("project_root") or Path.cwd()
+
+    console.print(
+        Panel.fit(
+            "[bold cyan]Installing VS Code Integration[/bold cyan]\n"
+            "🌐 Global configuration (~/.vscode/mcp.json)",
+            border_style="cyan",
+        )
+    )
+
+    success = configure_platform("vscode", project_root, enable_watch=enable_watch, force=force)
+
+    if success:
+        console.print("\n[bold green]✨ VS Code Integration Installed![/bold green]")
+        console.print("\n[bold blue]Next Steps:[/bold blue]")
+        console.print("  1. Restart VS Code")
+        console.print("  2. Open this project in VS Code")
+        console.print("  3. MCP tools should be available")
+    else:
+        raise typer.Exit(1)
+
+
+@install_app.command("list")
+def list_platforms(ctx: typer.Context) -> None:
+    """List all supported MCP platforms and their installation status."""
+    project_root = ctx.obj.get("project_root") or Path.cwd()
+
+    console.print(Panel.fit("[bold cyan]MCP Platform Status[/bold cyan]", border_style="cyan"))
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Platform", style="cyan")
+    table.add_column("Name")
+    table.add_column("Status")
+    table.add_column("Config Location")
+
+    detected = detect_installed_platforms()
+
+    for platform, info in SUPPORTED_PLATFORMS.items():
+        config_path = get_platform_config_path(platform, project_root)
+
+        # Check if configured
+        is_configured = False
+        if config_path.exists():
+            try:
+                with open(config_path) as f:
+                    config = json.load(f)
+                is_configured = "mcp-vector-search" in config.get("mcpServers", {})
+            except Exception:
+                pass
+
+        status = "✅ Configured" if is_configured else ("⚠️ Available" if platform in detected else "❌ Not Found")
+
+        table.add_row(
+            platform,
+            info["name"],
+            status,
+            str(config_path) if info["scope"] == "project" else info["config_path"],
+        )
+
+    console.print(table)
+
+    console.print("\n[bold blue]Installation Commands:[/bold blue]")
+    for platform in SUPPORTED_PLATFORMS:
+        console.print(f"  mcp-vector-search install {platform}")
 
 
 if __name__ == "__main__":

@@ -33,13 +33,15 @@ unfamiliar codebases, finding similar patterns, and integrating with AI tools.
   3. Check status: [green]mcp-vector-search status[/green]
 
 [bold cyan]Main Commands:[/bold cyan]
-  init       🔧 Initialize project
+  install    📦 Install project and MCP integrations
+  uninstall  🗑️  Remove MCP integrations
+  init       🔧 Initialize project (simple)
   demo       🎬 Run interactive demo
   doctor     🩺 Check system health
   status     📊 Show project status
   search     🔍 Search code semantically
   index      📇 Index codebase
-  mcp        🤖 MCP integration for AI tools
+  mcp        🔌 MCP server operations
   config     ⚙️  Configure settings
   visualize  📊 Visualize code relationships
   help       ❓ Get help
@@ -56,48 +58,57 @@ from .commands.config import config_app  # noqa: E402
 from .commands.demo import demo_app  # noqa: E402
 from .commands.index import index_app  # noqa: E402
 from .commands.init import init_app  # noqa: E402
+from .commands.install import install_app  # noqa: E402
 from .commands.mcp import mcp_app  # noqa: E402
 from .commands.search import search_app, search_main  # noqa: E402, F401
 from .commands.status import main as status_main  # noqa: E402
+from .commands.uninstall import uninstall_app  # noqa: E402
 from .commands.visualize import app as visualize_app  # noqa: E402
 
 # ============================================================================
 # MAIN COMMANDS - Clean hierarchy
 # ============================================================================
 
-# 1. INIT - Initialize project
+# 1. INSTALL - Install project and MCP integrations (NEW!)
+app.add_typer(install_app, name="install", help="📦 Install project and MCP integrations")
+
+# 2. UNINSTALL - Remove MCP integrations (NEW!)
+app.add_typer(uninstall_app, name="uninstall", help="🗑️  Remove MCP integrations")
+app.add_typer(uninstall_app, name="remove", help="🗑️  Remove MCP integrations (alias)")
+
+# 3. INIT - Initialize project (simplified)
 # Use Typer group for init to support both direct call and subcommands
 app.add_typer(init_app, name="init", help="🔧 Initialize project for semantic search")
 
-# 2. DEMO - Interactive demo
+# 4. DEMO - Interactive demo
 app.add_typer(demo_app, name="demo", help="🎬 Run interactive demo with sample project")
 
-# 3. DOCTOR - System health check
+# 5. DOCTOR - System health check
 # (defined below inline)
 
-# 4. STATUS - Project status
+# 6. STATUS - Project status
 app.command("status", help="📊 Show project status and statistics")(status_main)
 
-# 5. SEARCH - Search code
+# 7. SEARCH - Search code
 # Register search as both a command and a typer group
 app.add_typer(search_app, name="search", help="🔍 Search code semantically")
 
-# 6. INDEX - Index codebase
+# 8. INDEX - Index codebase
 app.add_typer(index_app, name="index", help="📇 Index codebase for semantic search")
 
-# 7. MCP - MCP integration
-app.add_typer(mcp_app, name="mcp", help="🤖 Manage MCP integration for AI tools")
+# 9. MCP - MCP server operations (RESERVED for server ops only!)
+app.add_typer(mcp_app, name="mcp", help="🔌 MCP server operations")
 
-# 8. CONFIG - Configuration
+# 10. CONFIG - Configuration
 app.add_typer(config_app, name="config", help="⚙️  Manage project configuration")
 
-# 9. VISUALIZE - Code graph visualization
+# 11. VISUALIZE - Code graph visualization
 app.add_typer(visualize_app, name="visualize", help="📊 Visualize code chunk relationships")
 
-# 10. HELP - Enhanced help
+# 12. HELP - Enhanced help
 # (defined below inline)
 
-# 10. VERSION - Version info
+# 13. VERSION - Version info
 # (defined below inline)
 
 
@@ -120,11 +131,9 @@ def _deprecated_command(old_cmd: str, new_cmd: str):
     return wrapper
 
 
-# Deprecated: install -> init
-@app.command("install", hidden=True)
-def deprecated_install():
-    """[DEPRECATED] Use 'init' instead."""
-    _deprecated_command("install", "init")()
+# NOTE: 'install' command is now the primary command for project installation
+# Old 'install' was deprecated in favor of 'init' in v0.7.0
+# Now 'install' is back as the hierarchical installation command in v0.13.0
 
 
 # Deprecated: find -> search

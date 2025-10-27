@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2025-10-27
+
+### Added
+- **Hierarchical Install/Uninstall Commands**: Complete CLI command restructuring for better user experience
+  - New `install` command with platform-specific subcommands
+  - New `uninstall` command for removing MCP integrations
+  - Support for 5 MCP platforms: claude-code, claude-desktop, cursor, windsurf, vscode
+  - Project-scoped configuration (`.mcp.json`) for claude-code
+  - Global-scoped configuration for other platforms (home directory)
+  - `install list` and `uninstall list` for platform discovery
+  - `remove` command as alias for `uninstall`
+  - `--with-mcp` flag to install all MCP integrations at once
+  - `--no-auto-index` flag to skip automatic indexing
+  - `--no-backup` flag for uninstall operations
+
+### Changed
+- **MCP Command Reserved**: The `mcp` command is now exclusively for MCP server operations (not installation)
+  - `mcp-vector-search mcp` - Start MCP server (stdio mode)
+  - `mcp-vector-search mcp list` - List configured servers
+  - `mcp-vector-search mcp test` - Test server startup
+- **Install Command Reintroduced**: Previously deprecated `install` command is back with new hierarchical structure
+  - `install` is now the primary command for project setup and MCP integration
+  - `init` remains available for simple project initialization without MCP
+
+### Deprecated
+- `init-mcp` command deprecated in favor of `install claude-code` (or other platform subcommands)
+
+### Files Modified
+- `src/mcp_vector_search/cli/commands/install.py` - Rewritten with hierarchical structure
+- `src/mcp_vector_search/cli/commands/uninstall.py` - New command for MCP removal
+- `src/mcp_vector_search/cli/main.py` - Updated command registration and help text
+- `CLAUDE.md` - Updated with new command examples and structure
+- `README.md` - Updated quick start and command documentation
+
+### Migration Guide
+**Old Pattern** (v0.12.0 and earlier):
+```bash
+mcp-vector-search init --mcp
+```
+
+**New Pattern** (v0.13.0+):
+```bash
+# Quick setup
+mcp-vector-search install
+
+# Add specific platform
+mcp-vector-search install claude-code
+```
+
+The new structure provides:
+- Better command discoverability
+- Fine-grained platform control
+- Clear separation between installation and MCP server operations
+- Ability to remove specific integrations
+
 ### Added
 - **HTML Language Support**: Full HTML parser implementation
   - Semantic content extraction from HTML tags
