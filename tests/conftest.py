@@ -327,7 +327,7 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
             language_counts = {}
             file_types = {}
             files = set()
-            
+
             for chunk in self.chunks:
                 files.add(chunk.file_path)
                 # Count languages
@@ -337,7 +337,7 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
                 ext = chunk.file_path.suffix
                 if ext:
                     file_types[ext] = file_types.get(ext, 0) + 1
-            
+
             return IndexStats(
                 total_chunks=len(self.chunks),
                 total_files=len(files),
@@ -347,6 +347,10 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
                 last_updated="2024-01-01T00:00:00",  # Mock timestamp
                 embedding_model="test-embedding-model",  # Mock model name
             )
+
+        async def get_all_chunks(self) -> List[CodeChunk]:
+            """Get all chunks from the database."""
+            return self.chunks.copy()
         
         async def health_check(self) -> bool:
             return self.initialized
