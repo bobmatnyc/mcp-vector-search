@@ -17,7 +17,7 @@ from ..utils.monorepo import MonorepoDetector
 from .database import VectorDatabase
 from .directory_index import DirectoryIndex
 from .exceptions import ParsingError
-from .models import CodeChunk
+from .models import CodeChunk, IndexStats
 
 
 class SemanticIndexer:
@@ -677,24 +677,34 @@ class SemanticIndexer:
             # If we can't parse versions, be safe and reindex
             return True
 
-    async def get_indexing_stats(self) -> dict:
+    async def get_indexing_stats(self, db_stats: IndexStats | None = None) -> dict:
         """Get statistics about the indexing process.
+
+        Args:
+            db_stats: Optional pre-fetched database stats to avoid duplicate queries
 
         Returns:
             Dictionary with indexing statistics
+
+        Note:
+            Uses database statistics only for performance on large projects.
+            Filesystem scanning would timeout on 100K+ file projects.
+            Pass db_stats parameter to avoid calling database.get_stats() twice.
         """
         try:
-            # Get database stats
-            db_stats = await self.database.get_stats()
+            # Get database stats if not provided (fast, no filesystem scan)
+            if db_stats is None:
+                db_stats = await self.database.get_stats()
 
-            # Count indexable files asynchronously without blocking
-            indexable_files = await self._find_indexable_files_async()
-
+            # Use database stats for all file counts
+            # This avoids expensive filesystem scans on large projects
             return {
-                "total_indexable_files": len(indexable_files),
+                "total_indexable_files": db_stats.total_files,
                 "indexed_files": db_stats.total_files,
+                "total_files": db_stats.total_files,  # For backward compatibility
                 "total_chunks": db_stats.total_chunks,
                 "languages": db_stats.languages,
+                "file_types": db_stats.file_types,  # Include file type distribution
                 "file_extensions": list(self.file_extensions),
                 "ignore_patterns": list(self._ignore_patterns),
                 "parser_info": self.parser_registry.get_parser_info(),
@@ -706,6 +716,7 @@ class SemanticIndexer:
                 "error": str(e),
                 "total_indexable_files": 0,
                 "indexed_files": 0,
+                "total_files": 0,
                 "total_chunks": 0,
             }
 

@@ -158,11 +158,10 @@ async def show_status(
                 print_info("Run 'mcp-vector-search init' to initialize the project")
             return
 
-        # Get project information
-        project_info = project_manager.get_project_info()
+        # Get configuration first
         config = project_manager.load_config()
 
-        # Get indexing statistics
+        # Get indexing statistics from database (fast, no filesystem scan)
         embedding_function, _ = create_embedding_function(config.embedding_model)
         database = ChromaVectorDatabase(
             persist_directory=config.index_path,
@@ -175,10 +174,13 @@ async def show_status(
             file_extensions=config.file_extensions,
         )
 
-        # Get indexing stats (runs async file scanning in thread pool)
+        # Get indexing stats (using database stats only, no filesystem scan)
         async with database:
-            index_stats = await indexer.get_indexing_stats()
             db_stats = await database.get_stats()
+            index_stats = await indexer.get_indexing_stats(db_stats=db_stats)
+
+        # Get project information with pre-computed file count (avoids filesystem scan)
+        project_info = project_manager.get_project_info(file_count=db_stats.total_files)
 
         # Get version information
         index_version = indexer.get_index_version()

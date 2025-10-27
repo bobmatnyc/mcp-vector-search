@@ -57,6 +57,11 @@ class EnhancedDidYouMeanTyper(typer.Typer):
         # Get the underlying click group
         click_group = super().__call__(*args, **kwargs)
 
+        # If click_group is None (command already executed), return None
+        # This happens after command execution completes successfully
+        if click_group is None:
+            return None
+
         # Create enhanced DYM group with original group's properties
         enhanced_group = EnhancedDidYouMeanGroup(
             name=click_group.name,
@@ -160,6 +165,11 @@ def enhance_existing_typer(app: typer.Typer) -> typer.Typer:
     def enhanced_call(*args, **kwargs):
         """Enhanced call that uses EnhancedDidYouMeanGroup."""
         click_group = original_call(*args, **kwargs)
+
+        # If click_group is None (command already executed), return None
+        # This happens after command execution completes successfully
+        if click_group is None:
+            return None
 
         # Create enhanced group
         enhanced_group = EnhancedDidYouMeanGroup(

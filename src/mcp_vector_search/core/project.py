@@ -236,8 +236,11 @@ class ProjectManager:
                 count += 1
         return count
 
-    def get_project_info(self) -> ProjectInfo:
+    def get_project_info(self, file_count: int | None = None) -> ProjectInfo:
         """Get comprehensive project information.
+
+        Args:
+            file_count: Optional pre-computed file count (avoids expensive filesystem scan)
 
         Returns:
             Project information
@@ -247,13 +250,17 @@ class ProjectManager:
 
         is_initialized = self.is_initialized()
         languages = []
-        file_count = 0
+        computed_file_count = 0
 
         if is_initialized:
             try:
                 config = self.config
                 languages = config.languages
-                file_count = self.count_indexable_files(config.file_extensions)
+                # Use provided file_count if available to avoid filesystem scan
+                if file_count is not None:
+                    computed_file_count = file_count
+                else:
+                    computed_file_count = self.count_indexable_files(config.file_extensions)
             except Exception:
                 # Ignore errors when getting detailed info
                 pass
@@ -265,7 +272,7 @@ class ProjectManager:
             index_path=index_path,
             is_initialized=is_initialized,
             languages=languages,
-            file_count=file_count,
+            file_count=computed_file_count,
         )
 
     def _iter_source_files(self) -> list[Path]:

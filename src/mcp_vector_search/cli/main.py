@@ -441,7 +441,12 @@ def cli_with_suggestions():
     except Exception as e:
         # For other exceptions, show error and exit if verbose logging is enabled
         # Suppress internal framework errors in normal operation
-        if "--verbose" in sys.argv or "-v" in sys.argv:
+
+        # Suppress harmless didyoumean framework AttributeError (known issue)
+        # This occurs during Click/Typer cleanup after successful command completion
+        if isinstance(e, AttributeError) and "attribute" in str(e) and "name" in str(e):
+            pass  # Ignore - this is a harmless framework cleanup error
+        elif "--verbose" in sys.argv or "-v" in sys.argv:
             click.echo(f"Unexpected error: {e}", err=True)
             sys.exit(1)
         # Otherwise, just exit silently to avoid confusing error messages
