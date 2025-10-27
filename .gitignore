@@ -299,3 +299,6 @@ pip-wheel-metadata/
 site/
 temp/
 tmp/
+
+# MCP Ticketer
+.mcp-ticketer/
