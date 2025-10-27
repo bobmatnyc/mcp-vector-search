@@ -130,8 +130,8 @@ class TestCLICommands:
         # Test search
         result = cli_runner.invoke(app, [
             "search",
-            "main function",
             "--limit", "5",
+            "main function",
         ])
         
         assert result.exit_code == 0
@@ -152,9 +152,9 @@ class TestCLICommands:
         # Test search with language filter
         result = cli_runner.invoke(app, [
             "search",
-            "function",
             "--language", "python",
-            "--threshold", "0.1"
+            "--threshold", "0.1",
+            "function",
         ])
         
         assert result.exit_code == 0
@@ -351,8 +351,8 @@ class TestCLICommands:
         # Step 3: Search
         result = cli_runner.invoke(app, [
             "search",
+            "--limit", "3",
             "user",
-            "--limit", "3"
         ])
         assert result.exit_code == 0
         
@@ -433,8 +433,8 @@ class TestCLICommands:
         start_time = time.perf_counter()
         result = cli_runner.invoke(app, [
             "search",
+            "--threshold", "0.1",
             "function",
-            "--threshold", "0.1"
         ])
         search_time = time.perf_counter() - start_time
         
