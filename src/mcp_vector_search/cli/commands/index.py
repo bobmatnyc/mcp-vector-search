@@ -674,22 +674,14 @@ def watch_cmd(
     watch_app()
 
 
-@index_app.command("auto")
-def auto_cmd() -> None:
-    """🔄 Manage automatic indexing.
+# Import and register auto-index sub-app as a proper typer group
+from .auto_index import auto_index_app
 
-    Configure automatic indexing strategies like git hooks and scheduled tasks.
-    This command provides subcommands for setup, status, and checking.
-
-    Examples:
-        mcp-vector-search index auto setup
-        mcp-vector-search index auto status
-        mcp-vector-search index auto check
-    """
-    from .auto_index import auto_index_app
-
-    # This will show help for the auto subcommands
-    auto_index_app()
+index_app.add_typer(
+    auto_index_app,
+    name="auto",
+    help="🔄 Manage automatic indexing"
+)
 
 
 @index_app.command("health")

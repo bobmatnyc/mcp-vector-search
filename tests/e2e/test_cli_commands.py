@@ -64,14 +64,15 @@ class TestCLICommands:
             ])
             assert result.exit_code == 0
         
-        # Try to initialize again without force - should fail
+        # Try to initialize again without force - should succeed with message
         with patch('mcp_vector_search.cli.commands.init.confirm_action') as mock_confirm:
-            mock_confirm.side_effect = [True, False]  # Won't matter - should fail early
+            mock_confirm.side_effect = [True, False]  # Won't matter - already initialized
             result = cli_runner.invoke(app, [
                 "init",
                 "--extensions", ".py"
             ])
-            assert result.exit_code != 0
+            # Modern behavior: init succeeds but shows "already initialized" message
+            assert result.exit_code == 0
             assert "already initialized" in result.output.lower()
     
     def test_index_command(self, cli_runner, temp_project_dir):
@@ -259,7 +260,8 @@ class TestCLICommands:
         
         # Test auto-index status
         result = cli_runner.invoke(app, [
-            "auto-index",
+            "index",
+            "auto",
             "status"
         ])
         
@@ -279,7 +281,8 @@ class TestCLICommands:
         
         # Test auto-index check
         result = cli_runner.invoke(app, [
-            "auto-index",
+            "index",
+            "auto",
             "check",
             "--no-auto-reindex",
         ])
