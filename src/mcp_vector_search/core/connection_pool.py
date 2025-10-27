@@ -24,6 +24,16 @@ class PooledConnection:
     in_use: bool = False
     use_count: int = 0
 
+    @property
+    def age(self) -> float:
+        """Get the age of this connection in seconds."""
+        return time.time() - self.created_at
+
+    @property
+    def idle_time(self) -> float:
+        """Get the idle time of this connection in seconds."""
+        return time.time() - self.last_used
+
 
 class ChromaConnectionPool:
     """Connection pool for ChromaDB operations."""
@@ -320,3 +330,31 @@ class ChromaConnectionPool:
         except Exception as e:
             logger.error(f"Connection pool health check failed: {e}")
             return False
+
+    # Backward compatibility aliases for old test API
+    async def cleanup(self) -> None:
+        """Alias for close() method (backward compatibility)."""
+        await self.close()
+
+    def _validate_connection(self, conn: PooledConnection) -> bool:
+        """Alias for _is_connection_valid() method (backward compatibility)."""
+        return self._is_connection_valid(conn)
+
+    async def _cleanup_idle_connections(self) -> None:
+        """Alias for _cleanup_expired_connections() method (backward compatibility)."""
+        await self._cleanup_expired_connections()
+
+    @property
+    def _connections(self) -> list[PooledConnection]:
+        """Alias for _pool attribute (backward compatibility)."""
+        return self._pool
+
+    @property
+    def _max_connections(self) -> int:
+        """Alias for max_connections attribute (backward compatibility)."""
+        return self.max_connections
+
+    @property
+    def _min_connections(self) -> int:
+        """Alias for min_connections attribute (backward compatibility)."""
+        return self.min_connections
