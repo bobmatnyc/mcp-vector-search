@@ -443,7 +443,7 @@
 
             // Add labels
             node.append("text")
-                .text(d => d.name)
+                .text(d => getNodeLabel(d))
                 .attr("dy", 30);
 
             simulation.on("tick", () => {
@@ -457,6 +457,21 @@
             });
 
             updateStats({nodes: visibleNodesList, links: visibleLinks, metadata: {total_files: allNodes.length}});
+        }
+
+        function getNodeLabel(node) {
+            if (node.type === 'imports' && node.content) {
+                // Extract first import line
+                const lines = node.content.split('\n');
+                const firstImport = lines[0].trim();
+
+                // Truncate if longer than 60 characters
+                if (firstImport.length > 60) {
+                    return firstImport.substring(0, 57) + '...';
+                }
+                return firstImport;
+            }
+            return node.name;
         }
 
         function hasChildren(node) {
@@ -597,7 +612,7 @@
             const meta = document.getElementById('viewer-meta');
             const code = document.getElementById('viewer-code');
 
-            title.textContent = node.name;
+            title.textContent = getNodeLabel(node);
 
             let metaText = `${node.type} • ${node.file_path}`;
             if (node.start_line) {
@@ -609,7 +624,10 @@
             meta.textContent = metaText;
 
             // Show content if available
-            if (node.content) {
+            if (node.type === 'imports' && node.content) {
+                // For imports, show the import statement prominently
+                code.textContent = node.content;
+            } else if (node.content) {
                 code.textContent = node.content;
             } else if (node.docstring) {
                 code.textContent = `// Docstring:

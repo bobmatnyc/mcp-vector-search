@@ -1069,12 +1069,18 @@ def _create_visualization_html(html_file: Path) -> None:
                 .style("pointer-events", "none")
                 .text(d => collapsedNodes.has(d.id) ? "+" : "−");
 
-            // Add labels (show "Import:" prefix for L1 nodes)
+            // Add labels (show actual import statement for L1 nodes)
             node.append("text")
                 .text(d => {
                     // L1 (depth 1) nodes are imports
                     if (d.depth === 1 && d.type !== 'directory' && d.type !== 'file') {
-                        return `Import: ${d.name}`;
+                        if (d.content) {
+                            // Extract first line of import statement
+                            const importLine = d.content.split('\n')[0].trim();
+                            // Truncate if too long (max 60 chars)
+                            return importLine.length > 60 ? importLine.substring(0, 57) + '...' : importLine;
+                        }
+                        return d.name;  // Fallback to name if no content
                     }
                     return d.name;
                 })
@@ -1230,9 +1236,14 @@ def _create_visualization_html(html_file: Path) -> None:
             const meta = document.getElementById('pane-meta');
             const content = document.getElementById('pane-content');
 
-            // Set title with "Import:" prefix for L1 nodes
+            // Set title with actual import statement for L1 nodes
             if (node.depth === 1 && node.type !== 'directory' && node.type !== 'file') {
-                title.textContent = `Import: ${node.name}`;
+                if (node.content) {
+                    const importLine = node.content.split('\n')[0].trim();
+                    title.textContent = importLine;
+                } else {
+                    title.textContent = `Import: ${node.name}`;
+                }
             } else {
                 title.textContent = node.name;
             }
@@ -1360,10 +1371,15 @@ def _create_visualization_html(html_file: Path) -> None:
         }
 
         function showImportDetails(node, container) {
-            // L1 nodes are import statements
+            // L1 nodes are import statements - show import content prominently
             const importHtml = `
                 <div class="import-details">
-                    <div class="import-statement">${escapeHtml(node.name)}</div>
+                    ${node.content ? `
+                        <div style="margin-bottom: 16px;">
+                            <div class="detail-label" style="margin-bottom: 8px;">Import Statement:</div>
+                            <pre><code>${escapeHtml(node.content)}</code></pre>
+                        </div>
+                    ` : '<p style="color: #8b949e;">No import content available</p>'}
                     <div class="detail-row">
                         <span class="detail-label">File:</span> ${node.file_path}
                     </div>
@@ -1375,12 +1391,6 @@ def _create_visualization_html(html_file: Path) -> None:
                     ${node.language ? `
                         <div class="detail-row">
                             <span class="detail-label">Language:</span> ${node.language}
-                        </div>
-                    ` : ''}
-                    ${node.content ? `
-                        <div style="margin-top: 16px;">
-                            <div class="detail-label" style="margin-bottom: 8px;">Import Statement:</div>
-                            <pre><code>${escapeHtml(node.content)}</code></pre>
                         </div>
                     ` : ''}
                 </div>
