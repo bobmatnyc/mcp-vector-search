@@ -452,12 +452,12 @@ class PythonParser(BaseParser):
         for child in node.children:
             if child.type == "parameters":
                 for param_node in child.children:
-                    if param_node.type in ("identifier", "typed_parameter", "default_parameter"):
-                        param_info = {
-                            "name": None,
-                            "type": None,
-                            "default": None
-                        }
+                    if param_node.type in (
+                        "identifier",
+                        "typed_parameter",
+                        "default_parameter",
+                    ):
+                        param_info = {"name": None, "type": None, "default": None}
 
                         # Extract parameter name
                         if param_node.type == "identifier":
@@ -470,9 +470,17 @@ class PythonParser(BaseParser):
                                 elif subchild.type == "type":
                                     param_info["type"] = self._get_node_text(subchild)
                                 elif "default" in subchild.type:
-                                    param_info["default"] = self._get_node_text(subchild)
+                                    param_info["default"] = self._get_node_text(
+                                        subchild
+                                    )
 
-                        if param_info["name"] and param_info["name"] not in ("self", "cls", "(", ")", ","):
+                        if param_info["name"] and param_info["name"] not in (
+                            "self",
+                            "cls",
+                            "(",
+                            ")",
+                            ",",
+                        ):
                             parameters.append(param_info)
         return parameters
 
@@ -485,8 +493,8 @@ class PythonParser(BaseParser):
 
     def _get_node_text(self, node) -> str:
         """Get text content of a node."""
-        if hasattr(node, 'text'):
-            return node.text.decode('utf-8')
+        if hasattr(node, "text"):
+            return node.text.decode("utf-8")
         return ""
 
     def get_supported_extensions(self) -> list[str]:

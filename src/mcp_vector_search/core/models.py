@@ -219,7 +219,9 @@ class Directory:
     languages: dict[str, int] = None  # Language distribution in this directory
     depth: int = 0  # Depth from project root (0 = root)
     is_package: bool = False  # True if contains __init__.py or package.json
-    last_modified: float | None = None  # Most recent file modification time (unix timestamp)
+    last_modified: float | None = (
+        None  # Most recent file modification time (unix timestamp)
+    )
 
     def __post_init__(self) -> None:
         """Initialize default values and generate directory ID."""
@@ -230,6 +232,7 @@ class Directory:
     def id(self) -> str:
         """Generate unique ID for this directory."""
         import hashlib
+
         return hashlib.sha256(str(self.path).encode()).hexdigest()[:16]
 
     def to_dict(self) -> dict[str, Any]:

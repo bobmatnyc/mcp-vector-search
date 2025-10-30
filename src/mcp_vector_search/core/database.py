@@ -501,13 +501,11 @@ class ChromaVectorDatabase(VectorDatabase):
 
         try:
             # Get all documents from collection
-            results = self._collection.get(
-                include=["metadatas", "documents"]
-            )
+            results = self._collection.get(include=["metadatas", "documents"])
 
             chunks = []
             if results and results.get("ids"):
-                for i, chunk_id in enumerate(results["ids"]):
+                for i, _chunk_id in enumerate(results["ids"]):
                     metadata = results["metadatas"][i]
                     content = results["documents"][i]
 
@@ -802,7 +800,9 @@ class PooledChromaVectorDatabase(VectorDatabase):
                             "decorators": json.dumps(chunk.decorators or []),
                             "parameters": json.dumps(chunk.parameters or []),
                             "return_type": chunk.return_type or "",
-                            "type_annotations": json.dumps(chunk.type_annotations or {}),
+                            "type_annotations": json.dumps(
+                                chunk.type_annotations or {}
+                            ),
                             # Monorepo support
                             "subproject_name": chunk.subproject_name or "",
                             "subproject_path": chunk.subproject_path or "",
@@ -1031,13 +1031,11 @@ class PooledChromaVectorDatabase(VectorDatabase):
         try:
             async with self._pool.get_connection() as conn:
                 # Get all documents from collection
-                results = conn.collection.get(
-                    include=["metadatas", "documents"]
-                )
+                results = conn.collection.get(include=["metadatas", "documents"])
 
                 chunks = []
                 if results and results.get("ids"):
-                    for i, chunk_id in enumerate(results["ids"]):
+                    for i, _chunk_id in enumerate(results["ids"]):
                         metadata = results["metadatas"][i]
                         content = results["documents"][i]
 

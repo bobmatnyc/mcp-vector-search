@@ -32,7 +32,6 @@ from ...core.exceptions import ProjectInitializationError
 from ...core.project import ProjectManager
 from ..didyoumean import create_enhanced_typer
 from ..output import (
-    confirm_action,
     print_error,
     print_info,
     print_next_steps,
@@ -268,6 +267,7 @@ def configure_platform(
 # Main Install Command (Project Installation)
 # ==============================================================================
 
+
 @install_app.callback()
 def main(
     ctx: typer.Context,
@@ -447,6 +447,7 @@ def main(
 # Platform-Specific Installation Commands
 # ==============================================================================
 
+
 @install_app.command("claude-code")
 def install_claude_code(
     ctx: typer.Context,
@@ -477,10 +478,14 @@ def install_claude_code(
         )
     )
 
-    success = configure_platform("claude-code", project_root, enable_watch=enable_watch, force=force)
+    success = configure_platform(
+        "claude-code", project_root, enable_watch=enable_watch, force=force
+    )
 
     if success:
-        console.print("\n[bold green]✨ Claude Code Integration Installed![/bold green]")
+        console.print(
+            "\n[bold green]✨ Claude Code Integration Installed![/bold green]"
+        )
         console.print("\n[bold blue]Next Steps:[/bold blue]")
         console.print("  1. Open Claude Code in this project directory")
         console.print("  2. The MCP server will be available automatically")
@@ -507,7 +512,9 @@ def install_cursor(
         )
     )
 
-    success = configure_platform("cursor", project_root, enable_watch=enable_watch, force=force)
+    success = configure_platform(
+        "cursor", project_root, enable_watch=enable_watch, force=force
+    )
 
     if success:
         console.print("\n[bold green]✨ Cursor Integration Installed![/bold green]")
@@ -536,7 +543,9 @@ def install_windsurf(
         )
     )
 
-    success = configure_platform("windsurf", project_root, enable_watch=enable_watch, force=force)
+    success = configure_platform(
+        "windsurf", project_root, enable_watch=enable_watch, force=force
+    )
 
     if success:
         console.print("\n[bold green]✨ Windsurf Integration Installed![/bold green]")
@@ -565,10 +574,14 @@ def install_claude_desktop(
         )
     )
 
-    success = configure_platform("claude-desktop", project_root, enable_watch=enable_watch, force=force)
+    success = configure_platform(
+        "claude-desktop", project_root, enable_watch=enable_watch, force=force
+    )
 
     if success:
-        console.print("\n[bold green]✨ Claude Desktop Integration Installed![/bold green]")
+        console.print(
+            "\n[bold green]✨ Claude Desktop Integration Installed![/bold green]"
+        )
         console.print("\n[bold blue]Next Steps:[/bold blue]")
         console.print("  1. Restart Claude Desktop")
         console.print("  2. The mcp-vector-search server will be available")
@@ -594,7 +607,9 @@ def install_vscode(
         )
     )
 
-    success = configure_platform("vscode", project_root, enable_watch=enable_watch, force=force)
+    success = configure_platform(
+        "vscode", project_root, enable_watch=enable_watch, force=force
+    )
 
     if success:
         console.print("\n[bold green]✨ VS Code Integration Installed![/bold green]")
@@ -611,7 +626,9 @@ def list_platforms(ctx: typer.Context) -> None:
     """List all supported MCP platforms and their installation status."""
     project_root = ctx.obj.get("project_root") or Path.cwd()
 
-    console.print(Panel.fit("[bold cyan]MCP Platform Status[/bold cyan]", border_style="cyan"))
+    console.print(
+        Panel.fit("[bold cyan]MCP Platform Status[/bold cyan]", border_style="cyan")
+    )
 
     table = Table(show_header=True, header_style="bold cyan")
     table.add_column("Platform", style="cyan")
@@ -634,7 +651,11 @@ def list_platforms(ctx: typer.Context) -> None:
             except Exception:
                 pass
 
-        status = "✅ Configured" if is_configured else ("⚠️ Available" if platform in detected else "❌ Not Found")
+        status = (
+            "✅ Configured"
+            if is_configured
+            else ("⚠️ Available" if platform in detected else "❌ Not Found")
+        )
 
         table.add_row(
             platform,

@@ -79,7 +79,7 @@ class BaseParser(ABC):
         if language is None:
             language = self.language
 
-        if not hasattr(node, 'children'):
+        if not hasattr(node, "children"):
             return 1.0
 
         complexity = 1.0  # Base complexity
@@ -87,39 +87,75 @@ class BaseParser(ABC):
         # Language-specific decision node types
         decision_nodes = {
             "python": {
-                "if_statement", "elif_clause", "while_statement", "for_statement",
-                "except_clause", "with_statement", "conditional_expression",
-                "boolean_operator"  # and, or
+                "if_statement",
+                "elif_clause",
+                "while_statement",
+                "for_statement",
+                "except_clause",
+                "with_statement",
+                "conditional_expression",
+                "boolean_operator",  # and, or
             },
             "javascript": {
-                "if_statement", "while_statement", "for_statement", "for_in_statement",
-                "switch_case", "catch_clause", "conditional_expression", "ternary_expression"
+                "if_statement",
+                "while_statement",
+                "for_statement",
+                "for_in_statement",
+                "switch_case",
+                "catch_clause",
+                "conditional_expression",
+                "ternary_expression",
             },
             "typescript": {
-                "if_statement", "while_statement", "for_statement", "for_in_statement",
-                "switch_case", "catch_clause", "conditional_expression", "ternary_expression"
+                "if_statement",
+                "while_statement",
+                "for_statement",
+                "for_in_statement",
+                "switch_case",
+                "catch_clause",
+                "conditional_expression",
+                "ternary_expression",
             },
             "dart": {
-                "if_statement", "while_statement", "for_statement", "for_in_statement",
-                "switch_case", "catch_clause", "conditional_expression"
+                "if_statement",
+                "while_statement",
+                "for_statement",
+                "for_in_statement",
+                "switch_case",
+                "catch_clause",
+                "conditional_expression",
             },
             "php": {
-                "if_statement", "elseif_clause", "while_statement", "foreach_statement",
-                "for_statement", "switch_case", "catch_clause", "ternary_expression"
+                "if_statement",
+                "elseif_clause",
+                "while_statement",
+                "foreach_statement",
+                "for_statement",
+                "switch_case",
+                "catch_clause",
+                "ternary_expression",
             },
             "ruby": {
-                "if", "unless", "while", "until", "for", "case", "rescue",
-                "conditional"
-            }
+                "if",
+                "unless",
+                "while",
+                "until",
+                "for",
+                "case",
+                "rescue",
+                "conditional",
+            },
         }
 
-        nodes_to_count = decision_nodes.get(language, decision_nodes.get("python", set()))
+        nodes_to_count = decision_nodes.get(
+            language, decision_nodes.get("python", set())
+        )
 
         def count_decision_points(n):
             nonlocal complexity
-            if hasattr(n, 'type') and n.type in nodes_to_count:
+            if hasattr(n, "type") and n.type in nodes_to_count:
                 complexity += 1
-            if hasattr(n, 'children'):
+            if hasattr(n, "children"):
                 for child in n.children:
                     count_decision_points(child)
 

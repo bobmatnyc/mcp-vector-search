@@ -38,6 +38,7 @@ dependencies = [
     "mcp>=1.12.4",
     "click-didyoumean>=0.3.0",
     "packaging>=23.0",
+    "authlib>=1.6.4",
 ]
 
 [dependency-groups]

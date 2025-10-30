@@ -337,13 +337,14 @@ async def _run_batch_indexing(
             # Rebuild directory index after indexing completes
             try:
                 import os
+
                 chunk_stats = {}
                 for file_path in files_to_index:
                     try:
                         mtime = os.path.getmtime(file_path)
                         chunk_stats[str(file_path)] = {
-                            'modified': mtime,
-                            'chunks': 1,  # Placeholder - real counts are in database
+                            "modified": mtime,
+                            "chunks": 1,  # Placeholder - real counts are in database
                         }
                     except OSError:
                         pass
@@ -361,13 +362,13 @@ async def _run_batch_indexing(
                 console.print(
                     f"[yellow]⚠ {failed_count} files failed to index[/yellow]"
                 )
-                error_log_path = indexer.project_root / ".mcp-vector-search" / "indexing_errors.log"
+                error_log_path = (
+                    indexer.project_root / ".mcp-vector-search" / "indexing_errors.log"
+                )
                 if error_log_path.exists():
                     # Prune log to keep only last 1000 errors
                     _prune_error_log(error_log_path, max_lines=1000)
-                    console.print(
-                        f"[dim]  → See details in: {error_log_path}[/dim]"
-                    )
+                    console.print(f"[dim]  → See details in: {error_log_path}[/dim]")
     else:
         # Non-progress mode (fallback to original behavior)
         indexed_count = await indexer.index_project(
@@ -675,13 +676,9 @@ def watch_cmd(
 
 
 # Import and register auto-index sub-app as a proper typer group
-from .auto_index import auto_index_app
+from .auto_index import auto_index_app  # noqa: E402
 
-index_app.add_typer(
-    auto_index_app,
-    name="auto",
-    help="🔄 Manage automatic indexing"
-)
+index_app.add_typer(auto_index_app, name="auto", help="🔄 Manage automatic indexing")
 
 
 @index_app.command("health")
@@ -725,17 +722,19 @@ def _prune_error_log(log_path: Path, max_lines: int = 1000) -> None:
         max_lines: Maximum number of lines to keep (default: 1000)
     """
     try:
-        with open(log_path, 'r') as f:
+        with open(log_path) as f:
             lines = f.readlines()
 
         if len(lines) > max_lines:
             # Keep only the last max_lines lines
             pruned_lines = lines[-max_lines:]
 
-            with open(log_path, 'w') as f:
+            with open(log_path, "w") as f:
                 f.writelines(pruned_lines)
 
-            logger.debug(f"Pruned error log from {len(lines)} to {len(pruned_lines)} lines")
+            logger.debug(
+                f"Pruned error log from {len(lines)} to {len(pruned_lines)} lines"
+            )
     except Exception as e:
         logger.warning(f"Failed to prune error log: {e}")
 

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import shutil
 from pathlib import Path
 
 import typer
@@ -57,7 +58,9 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
         project_manager = ProjectManager(Path.cwd())
 
         if not project_manager.is_initialized():
-            console.print("[red]Project not initialized. Run 'mcp-vector-search init' first.[/red]")
+            console.print(
+                "[red]Project not initialized. Run 'mcp-vector-search init' first.[/red]"
+            )
             raise typer.Exit(1)
 
         config = project_manager.load_config()
@@ -75,7 +78,9 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
         chunks = await database.get_all_chunks()
 
         if len(chunks) == 0:
-            console.print("[yellow]No chunks found in index. Run 'mcp-vector-search index' first.[/yellow]")
+            console.print(
+                "[yellow]No chunks found in index. Run 'mcp-vector-search index' first.[/yellow]"
+            )
             raise typer.Exit(1)
 
         console.print(f"[green]✓[/green] Retrieved {len(chunks)} chunks")
@@ -83,8 +88,11 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
         # Apply file filter if specified
         if file_filter:
             from fnmatch import fnmatch
+
             chunks = [c for c in chunks if fnmatch(str(c.file_path), file_filter)]
-            console.print(f"[cyan]Filtered to {len(chunks)} chunks matching '{file_filter}'[/cyan]")
+            console.print(
+                f"[cyan]Filtered to {len(chunks)} chunks matching '{file_filter}'[/cyan]"
+            )
 
         # Collect subprojects for monorepo support
         subprojects = {}
@@ -93,7 +101,9 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
                 subprojects[chunk.subproject_name] = {
                     "name": chunk.subproject_name,
                     "path": chunk.subproject_path,
-                    "color": _get_subproject_color(chunk.subproject_name, len(subprojects)),
+                    "color": _get_subproject_color(
+                        chunk.subproject_name, len(subprojects)
+                    ),
                 }
 
         # Build graph data structure
@@ -105,7 +115,9 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
 
         # Add subproject root nodes for monorepos
         if subprojects:
-            console.print(f"[cyan]Detected monorepo with {len(subprojects)} subprojects[/cyan]")
+            console.print(
+                f"[cyan]Detected monorepo with {len(subprojects)} subprojects[/cyan]"
+            )
             for sp_name, sp_data in subprojects.items():
                 node = {
                     "id": f"subproject_{sp_name}",
@@ -123,14 +135,19 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
         # Load directory index for enhanced directory metadata
         console.print("[cyan]Loading directory index...[/cyan]")
         from ...core.directory_index import DirectoryIndex
-        dir_index_path = project_manager.project_root / ".mcp-vector-search" / "directory_index.json"
+
+        dir_index_path = (
+            project_manager.project_root / ".mcp-vector-search" / "directory_index.json"
+        )
         dir_index = DirectoryIndex(dir_index_path)
         dir_index.load()
 
         # Create directory nodes from directory index
-        console.print(f"[green]✓[/green] Loaded {len(dir_index.directories)} directories")
+        console.print(
+            f"[green]✓[/green] Loaded {len(dir_index.directories)} directories"
+        )
         for dir_path_str, directory in dir_index.directories.items():
-            dir_id = f"dir_{hash(dir_path_str) & 0xffffffff:08x}"
+            dir_id = f"dir_{hash(dir_path_str) & 0xFFFFFFFF:08x}"
             dir_nodes[dir_path_str] = {
                 "id": dir_id,
                 "name": directory.name,
@@ -156,14 +173,18 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
 
             # Create file node with parent directory reference
             if file_path_str not in file_nodes:
-                file_id = f"file_{hash(file_path_str) & 0xffffffff:08x}"
+                file_id = f"file_{hash(file_path_str) & 0xFFFFFFFF:08x}"
 
                 # Convert absolute path to relative path for parent directory lookup
                 try:
-                    relative_file_path = file_path.relative_to(project_manager.project_root)
+                    relative_file_path = file_path.relative_to(
+                        project_manager.project_root
+                    )
                     parent_dir = relative_file_path.parent
                     # Use relative path for parent directory (matches directory_index)
-                    parent_dir_str = str(parent_dir) if parent_dir != Path(".") else None
+                    parent_dir_str = (
+                        str(parent_dir) if parent_dir != Path(".") else None
+                    )
                 except ValueError:
                     # File is outside project root
                     parent_dir_str = None
@@ -198,7 +219,9 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
         for chunk in chunks:
             node = {
                 "id": chunk.chunk_id or chunk.id,
-                "name": chunk.function_name or chunk.class_name or f"L{chunk.start_line}",
+                "name": chunk.function_name
+                or chunk.class_name
+                or f"L{chunk.start_line}",
                 "type": chunk.chunk_type,
                 "file_path": str(chunk.file_path),
                 "start_line": chunk.start_line,
@@ -224,34 +247,40 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
             if dir_info.parent_path:
                 parent_path_str = str(dir_info.parent_path)
                 if parent_path_str in dir_nodes:
-                    parent_dir_id = f"dir_{hash(parent_path_str) & 0xffffffff:08x}"
-                    child_dir_id = f"dir_{hash(dir_path_str) & 0xffffffff:08x}"
-                    links.append({
-                        "source": parent_dir_id,
-                        "target": child_dir_id,
-                        "type": "dir_hierarchy",
-                    })
+                    parent_dir_id = f"dir_{hash(parent_path_str) & 0xFFFFFFFF:08x}"
+                    child_dir_id = f"dir_{hash(dir_path_str) & 0xFFFFFFFF:08x}"
+                    links.append(
+                        {
+                            "source": parent_dir_id,
+                            "target": child_dir_id,
+                            "type": "dir_hierarchy",
+                        }
+                    )
 
         # Link directories to subprojects in monorepos (simple flat structure)
         if subprojects:
             for dir_path_str, dir_node in dir_nodes.items():
                 for sp_name, sp_data in subprojects.items():
                     if dir_path_str.startswith(sp_data.get("path", "")):
-                        links.append({
-                            "source": f"subproject_{sp_name}",
-                            "target": dir_node["id"],
-                            "type": "dir_containment",
-                        })
+                        links.append(
+                            {
+                                "source": f"subproject_{sp_name}",
+                                "target": dir_node["id"],
+                                "type": "dir_containment",
+                            }
+                        )
                         break
 
         # Link files to their parent directories
-        for file_path_str, file_node in file_nodes.items():
+        for _file_path_str, file_node in file_nodes.items():
             if file_node.get("parent_dir_id"):
-                links.append({
-                    "source": file_node["parent_dir_id"],
-                    "target": file_node["id"],
-                    "type": "dir_containment",
-                })
+                links.append(
+                    {
+                        "source": file_node["parent_dir_id"],
+                        "target": file_node["id"],
+                        "type": "dir_containment",
+                    }
+                )
 
         # Build hierarchical links from parent-child relationships
         for chunk in chunks:
@@ -260,36 +289,43 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
 
             # Link chunk to its file node if it has no parent (top-level chunks)
             if not chunk.parent_chunk_id and file_path in file_nodes:
-                links.append({
-                    "source": file_nodes[file_path]["id"],
-                    "target": chunk_id,
-                    "type": "file_containment",
-                })
+                links.append(
+                    {
+                        "source": file_nodes[file_path]["id"],
+                        "target": chunk_id,
+                        "type": "file_containment",
+                    }
+                )
 
             # Link to subproject root if in monorepo
             if chunk.subproject_name and not chunk.parent_chunk_id:
-                links.append({
-                    "source": f"subproject_{chunk.subproject_name}",
-                    "target": chunk_id,
-                })
+                links.append(
+                    {
+                        "source": f"subproject_{chunk.subproject_name}",
+                        "target": chunk_id,
+                    }
+                )
 
             # Link to parent chunk
             if chunk.parent_chunk_id and chunk.parent_chunk_id in chunk_id_map:
-                links.append({
-                    "source": chunk.parent_chunk_id,
-                    "target": chunk_id,
-                })
+                links.append(
+                    {
+                        "source": chunk.parent_chunk_id,
+                        "target": chunk_id,
+                    }
+                )
 
         # Parse inter-project dependencies for monorepos
         if subprojects:
             console.print("[cyan]Parsing inter-project dependencies...[/cyan]")
             dep_links = _parse_project_dependencies(
-                project_manager.project_root,
-                subprojects
+                project_manager.project_root, subprojects
             )
             links.extend(dep_links)
             if dep_links:
-                console.print(f"[green]✓[/green] Found {len(dep_links)} inter-project dependencies")
+                console.print(
+                    f"[green]✓[/green] Found {len(dep_links)} inter-project dependencies"
+                )
 
         # Get stats
         stats = await database.get_stats()
@@ -383,11 +419,13 @@ def _parse_project_dependencies(project_root: Path, subprojects: dict) -> list[d
                 for other_sp_name in subprojects.keys():
                     if other_sp_name != sp_name and dep_name == other_sp_name:
                         # Found inter-project dependency
-                        dependency_links.append({
-                            "source": f"subproject_{sp_name}",
-                            "target": f"subproject_{other_sp_name}",
-                            "type": "dependency",
-                        })
+                        dependency_links.append(
+                            {
+                                "source": f"subproject_{sp_name}",
+                                "target": f"subproject_{other_sp_name}",
+                                "type": "dependency",
+                            }
+                        )
 
         except Exception as e:
             logger.debug(f"Failed to parse {package_json}: {e}")
@@ -398,7 +436,9 @@ def _parse_project_dependencies(project_root: Path, subprojects: dict) -> list[d
 
 @app.command()
 def serve(
-    port: int = typer.Option(8080, "--port", "-p", help="Port for visualization server"),
+    port: int = typer.Option(
+        8080, "--port", "-p", help="Port for visualization server"
+    ),
     graph_file: Path = typer.Option(
         Path("chunk-graph.json"),
         "--graph",
@@ -461,24 +501,30 @@ def serve(
 
     # Copy graph file to visualization directory if it exists
     if graph_file.exists():
-        import shutil
-
         dest = viz_dir / "chunk-graph.json"
         shutil.copy(graph_file, dest)
         console.print(f"[green]✓[/green] Copied graph data to {dest}")
     else:
+        # Auto-generate graph file if it doesn't exist
         console.print(
-            f"[yellow]Warning: Graph file {graph_file} not found. "
-            "Run 'mcp-vector-search visualize export' first.[/yellow]"
+            f"[yellow]Graph file {graph_file} not found. Generating it now...[/yellow]"
         )
+        asyncio.run(_export_chunks(graph_file, None))
+        console.print()
+
+        # Copy the newly generated graph to visualization directory
+        if graph_file.exists():
+            dest = viz_dir / "chunk-graph.json"
+            shutil.copy(graph_file, dest)
+            console.print(f"[green]✓[/green] Copied graph data to {dest}")
 
     # Change to visualization directory
     os.chdir(viz_dir)
 
     # Start server
-    Handler = http.server.SimpleHTTPRequestHandler
+    handler = http.server.SimpleHTTPRequestHandler
     try:
-        with socketserver.TCPServer(("", port), Handler) as httpd:
+        with socketserver.TCPServer(("", port), handler) as httpd:
             url = f"http://localhost:{port}"
             console.print()
             console.print(
@@ -512,7 +558,7 @@ def serve(
 
 def _create_visualization_html(html_file: Path) -> None:
     """Create the D3.js visualization HTML file."""
-    html_content = '''<!DOCTYPE html>
+    html_content = """<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -664,70 +710,137 @@ def _create_visualization_html(html_file: Path) -> None:
             color: #8b949e;
         }
 
-        #code-viewer {
+        #content-pane {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 600px;
+            height: 100vh;
+            background: rgba(13, 17, 23, 0.98);
+            border-left: 1px solid #30363d;
+            overflow-y: auto;
+            box-shadow: -4px 0 24px rgba(0, 0, 0, 0.5);
+            transform: translateX(100%);
+            transition: transform 0.3s ease-in-out;
+            z-index: 1000;
+        }
+
+        #content-pane.visible {
+            transform: translateX(0);
+        }
+
+        #content-pane .pane-header {
+            position: sticky;
+            top: 0;
+            background: rgba(13, 17, 23, 0.98);
+            padding: 20px;
+            border-bottom: 1px solid #30363d;
+            z-index: 1;
+        }
+
+        #content-pane .pane-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #58a6ff;
+            margin-bottom: 8px;
+            padding-right: 30px;
+        }
+
+        #content-pane .pane-meta {
+            font-size: 12px;
+            color: #8b949e;
+        }
+
+        #content-pane .collapse-btn {
             position: absolute;
             top: 20px;
             right: 20px;
-            width: 500px;
-            max-height: 80vh;
-            background: rgba(13, 17, 23, 0.95);
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 16px;
-            overflow-y: auto;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-            display: none;
-        }
-
-        #code-viewer.visible {
-            display: block;
-        }
-
-        #code-viewer .header {
-            margin-bottom: 12px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid #30363d;
-        }
-
-        #code-viewer .title {
-            font-size: 14px;
-            font-weight: bold;
-            color: #58a6ff;
-            margin-bottom: 4px;
-        }
-
-        #code-viewer .meta {
-            font-size: 11px;
-            color: #8b949e;
-        }
-
-        #code-viewer .close-btn {
-            float: right;
             cursor: pointer;
             color: #8b949e;
-            font-size: 20px;
+            font-size: 24px;
             line-height: 1;
-            margin-top: -4px;
+            background: none;
+            border: none;
+            padding: 0;
+            transition: color 0.2s;
         }
 
-        #code-viewer .close-btn:hover {
+        #content-pane .collapse-btn:hover {
             color: #c9d1d9;
         }
 
-        #code-viewer pre {
+        #content-pane .pane-content {
+            padding: 20px;
+        }
+
+        #content-pane pre {
             margin: 0;
-            padding: 12px;
+            padding: 16px;
             background: #0d1117;
             border: 1px solid #30363d;
             border-radius: 6px;
             overflow-x: auto;
-            font-size: 11px;
-            line-height: 1.5;
+            font-size: 12px;
+            line-height: 1.6;
         }
 
-        #code-viewer code {
+        #content-pane code {
             color: #c9d1d9;
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        }
+
+        #content-pane .directory-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        #content-pane .directory-list li {
+            padding: 8px 12px;
+            margin: 4px 0;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+        }
+
+        #content-pane .directory-list .item-icon {
+            margin-right: 8px;
+            font-size: 14px;
+        }
+
+        #content-pane .directory-list .item-type {
+            margin-left: auto;
+            padding-left: 12px;
+            font-size: 10px;
+            color: #8b949e;
+        }
+
+        #content-pane .import-details {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 16px;
+        }
+
+        #content-pane .import-details .import-statement {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+            color: #79c0ff;
+            margin-bottom: 12px;
+        }
+
+        #content-pane .import-details .detail-row {
+            font-size: 11px;
+            color: #8b949e;
+            margin: 4px 0;
+        }
+
+        #content-pane .import-details .detail-label {
+            color: #c9d1d9;
+            font-weight: 600;
         }
 
         .node.highlighted circle,
@@ -772,6 +885,9 @@ def _create_visualization_html(html_file: Path) -> None:
             <div class="legend-item">
                 <span class="legend-color" style="background: #6e7681;"></span> Code
             </div>
+            <div class="legend-item" style="font-style: italic; color: #79c0ff;">
+                <span class="legend-color" style="background: #6e7681;"></span> Import (L1)
+            </div>
             <div class="legend-item">
                 <span class="legend-color" style="background: #8b949e; border-radius: 2px;"></span> Docstring ▢
             </div>
@@ -791,13 +907,13 @@ def _create_visualization_html(html_file: Path) -> None:
     <svg id="graph"></svg>
     <div id="tooltip" class="tooltip"></div>
 
-    <div id="code-viewer">
-        <div class="header">
-            <span class="close-btn" onclick="closeCodeViewer()">×</span>
-            <div class="title" id="viewer-title"></div>
-            <div class="meta" id="viewer-meta"></div>
+    <div id="content-pane">
+        <div class="pane-header">
+            <button class="collapse-btn" onclick="closeContentPane()">×</button>
+            <div class="pane-title" id="pane-title"></div>
+            <div class="pane-meta" id="pane-meta"></div>
         </div>
-        <pre><code id="viewer-code"></code></pre>
+        <div class="pane-content" id="pane-content"></div>
     </div>
 
     <script>
@@ -953,9 +1069,15 @@ def _create_visualization_html(html_file: Path) -> None:
                 .style("pointer-events", "none")
                 .text(d => collapsedNodes.has(d.id) ? "+" : "−");
 
-            // Add labels
+            // Add labels (show "Import:" prefix for L1 nodes)
             node.append("text")
-                .text(d => d.name)
+                .text(d => {
+                    // L1 (depth 1) nodes are imports
+                    if (d.depth === 1 && d.type !== 'directory' && d.type !== 'file') {
+                        return `Import: ${d.name}`;
+                    }
+                    return d.name;
+                })
                 .attr("dy", 30);
 
             simulation.on("tick", () => {
@@ -978,7 +1100,10 @@ def _create_visualization_html(html_file: Path) -> None:
         function handleNodeClick(event, d) {
             event.stopPropagation();
 
-            // If node has children, toggle expansion
+            // Always show content pane when clicking any node
+            showContentPane(d);
+
+            // If node has children, also toggle expansion
             if (hasChildren(d)) {
                 if (collapsedNodes.has(d.id)) {
                     expandNode(d);
@@ -986,9 +1111,6 @@ def _create_visualization_html(html_file: Path) -> None:
                     collapseNode(d);
                 }
                 renderGraph();
-            } else {
-                // Leaf node - show code viewer
-                showCodeViewer(d);
             }
         }
 
@@ -1097,19 +1219,25 @@ def _create_visualization_html(html_file: Path) -> None:
             }
         }
 
-        function showCodeViewer(node) {
+        function showContentPane(node) {
             // Highlight the node
             highlightedNode = node;
             renderGraph();
 
-            // Populate code viewer
-            const viewer = document.getElementById('code-viewer');
-            const title = document.getElementById('viewer-title');
-            const meta = document.getElementById('viewer-meta');
-            const code = document.getElementById('viewer-code');
+            // Populate content pane
+            const pane = document.getElementById('content-pane');
+            const title = document.getElementById('pane-title');
+            const meta = document.getElementById('pane-meta');
+            const content = document.getElementById('pane-content');
 
-            title.textContent = node.name;
+            // Set title with "Import:" prefix for L1 nodes
+            if (node.depth === 1 && node.type !== 'directory' && node.type !== 'file') {
+                title.textContent = `Import: ${node.name}`;
+            } else {
+                title.textContent = node.name;
+            }
 
+            // Set metadata
             let metaText = `${node.type} • ${node.file_path}`;
             if (node.start_line) {
                 metaText += ` • Lines ${node.start_line}-${node.end_line}`;
@@ -1119,21 +1247,179 @@ def _create_visualization_html(html_file: Path) -> None:
             }
             meta.textContent = metaText;
 
-            // Show content if available
-            if (node.content) {
-                code.textContent = node.content;
-            } else if (node.docstring) {
-                code.textContent = `// Docstring:\n${node.docstring}`;
+            // Display content based on node type
+            if (node.type === 'directory') {
+                showDirectoryContents(node, content);
+            } else if (node.type === 'file') {
+                showFileContents(node, content);
+            } else if (node.depth === 1 && node.type !== 'directory' && node.type !== 'file') {
+                // L1 nodes are imports
+                showImportDetails(node, content);
             } else {
-                code.textContent = '// No content available';
+                // Class, function, method, code nodes
+                showCodeContent(node, content);
             }
 
-            viewer.classList.add('visible');
+            pane.classList.add('visible');
         }
 
-        function closeCodeViewer() {
-            const viewer = document.getElementById('code-viewer');
-            viewer.classList.remove('visible');
+        function showDirectoryContents(node, container) {
+            // Find all direct children of this directory
+            const children = allLinks
+                .filter(l => (l.source.id || l.source) === node.id)
+                .map(l => allNodes.find(n => n.id === (l.target.id || l.target)))
+                .filter(n => n);
+
+            if (children.length === 0) {
+                container.innerHTML = '<p style="color: #8b949e;">Empty directory</p>';
+                return;
+            }
+
+            // Group by type
+            const files = children.filter(n => n.type === 'file');
+            const subdirs = children.filter(n => n.type === 'directory');
+            const chunks = children.filter(n => n.type !== 'file' && n.type !== 'directory');
+
+            let html = '<ul class="directory-list">';
+
+            // Show subdirectories first
+            subdirs.forEach(child => {
+                html += `
+                    <li>
+                        <span class="item-icon">📁</span>
+                        ${child.name}
+                        <span class="item-type">directory</span>
+                    </li>
+                `;
+            });
+
+            // Then files
+            files.forEach(child => {
+                html += `
+                    <li>
+                        <span class="item-icon">📄</span>
+                        ${child.name}
+                        <span class="item-type">file</span>
+                    </li>
+                `;
+            });
+
+            // Then code chunks
+            chunks.forEach(child => {
+                const icon = child.type === 'class' ? '🔷' : child.type === 'function' ? '⚡' : '📝';
+                html += `
+                    <li>
+                        <span class="item-icon">${icon}</span>
+                        ${child.name}
+                        <span class="item-type">${child.type}</span>
+                    </li>
+                `;
+            });
+
+            html += '</ul>';
+
+            // Add summary
+            const summary = `<p style="color: #8b949e; font-size: 11px; margin-top: 16px;">
+                Total: ${children.length} items (${subdirs.length} directories, ${files.length} files, ${chunks.length} code chunks)
+            </p>`;
+
+            container.innerHTML = html + summary;
+        }
+
+        function showFileContents(node, container) {
+            // Find all chunks in this file
+            const fileChunks = allLinks
+                .filter(l => (l.source.id || l.source) === node.id)
+                .map(l => allNodes.find(n => n.id === (l.target.id || l.target)))
+                .filter(n => n);
+
+            if (fileChunks.length === 0) {
+                container.innerHTML = '<p style="color: #8b949e;">No code chunks found in this file</p>';
+                return;
+            }
+
+            // Collect all content from chunks and sort by line number
+            const sortedChunks = fileChunks
+                .filter(c => c.content)
+                .sort((a, b) => a.start_line - b.start_line);
+
+            if (sortedChunks.length === 0) {
+                container.innerHTML = '<p style="color: #8b949e;">File content not available</p>';
+                return;
+            }
+
+            // Combine all chunks to show full file
+            const fullContent = sortedChunks.map(c => c.content).join('\n\n');
+
+            container.innerHTML = `
+                <p style="color: #8b949e; font-size: 11px; margin-bottom: 12px;">
+                    Contains ${fileChunks.length} code chunks
+                </p>
+                <pre><code>${escapeHtml(fullContent)}</code></pre>
+            `;
+        }
+
+        function showImportDetails(node, container) {
+            // L1 nodes are import statements
+            const importHtml = `
+                <div class="import-details">
+                    <div class="import-statement">${escapeHtml(node.name)}</div>
+                    <div class="detail-row">
+                        <span class="detail-label">File:</span> ${node.file_path}
+                    </div>
+                    ${node.start_line ? `
+                        <div class="detail-row">
+                            <span class="detail-label">Location:</span> Lines ${node.start_line}-${node.end_line}
+                        </div>
+                    ` : ''}
+                    ${node.language ? `
+                        <div class="detail-row">
+                            <span class="detail-label">Language:</span> ${node.language}
+                        </div>
+                    ` : ''}
+                    ${node.content ? `
+                        <div style="margin-top: 16px;">
+                            <div class="detail-label" style="margin-bottom: 8px;">Import Statement:</div>
+                            <pre><code>${escapeHtml(node.content)}</code></pre>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+
+            container.innerHTML = importHtml;
+        }
+
+        function showCodeContent(node, container) {
+            // Show code for function, class, method, or code chunks
+            let html = '';
+
+            if (node.docstring) {
+                html += `
+                    <div style="margin-bottom: 16px; padding: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px;">
+                        <div style="font-size: 11px; color: #8b949e; margin-bottom: 8px; font-weight: 600;">DOCSTRING</div>
+                        <pre style="margin: 0; padding: 0; background: transparent; border: none;"><code>${escapeHtml(node.docstring)}</code></pre>
+                    </div>
+                `;
+            }
+
+            if (node.content) {
+                html += `<pre><code>${escapeHtml(node.content)}</code></pre>`;
+            } else {
+                html += '<p style="color: #8b949e;">No content available</p>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function closeContentPane() {
+            const pane = document.getElementById('content-pane');
+            pane.classList.remove('visible');
 
             // Remove highlight
             highlightedNode = null;
@@ -1165,7 +1451,7 @@ def _create_visualization_html(html_file: Path) -> None:
         });
     </script>
 </body>
-</html>'''
+</html>"""
 
     with open(html_file, "w") as f:
         f.write(html_content)

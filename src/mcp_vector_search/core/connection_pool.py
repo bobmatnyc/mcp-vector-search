@@ -221,9 +221,7 @@ class ChromaConnectionPool:
 
         # Pool is full, wait for a connection to become available (outside lock)
         self._stats["pool_misses"] += 1
-        logger.warning(
-            "Connection pool exhausted, waiting for available connection"
-        )
+        logger.warning("Connection pool exhausted, waiting for available connection")
 
         # Wait for a connection (with timeout) - release lock during wait
         timeout = 30.0  # 30 seconds

@@ -70,7 +70,9 @@ from .commands.visualize import app as visualize_app  # noqa: E402
 # ============================================================================
 
 # 1. INSTALL - Install project and MCP integrations (NEW!)
-app.add_typer(install_app, name="install", help="📦 Install project and MCP integrations")
+app.add_typer(
+    install_app, name="install", help="📦 Install project and MCP integrations"
+)
 
 # 2. UNINSTALL - Remove MCP integrations (NEW!)
 app.add_typer(uninstall_app, name="uninstall", help="🗑️  Remove MCP integrations")
@@ -103,7 +105,9 @@ app.add_typer(mcp_app, name="mcp", help="🔌 MCP server operations")
 app.add_typer(config_app, name="config", help="⚙️  Manage project configuration")
 
 # 11. VISUALIZE - Code graph visualization
-app.add_typer(visualize_app, name="visualize", help="📊 Visualize code chunk relationships")
+app.add_typer(
+    visualize_app, name="visualize", help="📊 Visualize code chunk relationships"
+)
 
 # 12. HELP - Enhanced help
 # (defined below inline)

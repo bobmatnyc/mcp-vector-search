@@ -22,7 +22,9 @@ class DirectoryIndex:
         self.index_path = index_path
         self.directories: dict[str, Directory] = {}  # path -> Directory
         self.file_to_directory: dict[str, str] = {}  # file_path -> directory_path
-        self.directory_files: dict[str, list[str]] = defaultdict(list)  # dir_path -> [file_paths]
+        self.directory_files: dict[str, list[str]] = defaultdict(
+            list
+        )  # dir_path -> [file_paths]
 
     def load(self) -> None:
         """Load directory index from disk."""
@@ -31,7 +33,7 @@ class DirectoryIndex:
             return
 
         try:
-            with open(self.index_path, "r") as f:
+            with open(self.index_path) as f:
                 data = json.load(f)
 
             # Load directories
@@ -138,7 +140,7 @@ class DirectoryIndex:
         parent_path_str = str(directory_path)
         subdirs = []
 
-        for dir_path_str, directory in self.directories.items():
+        for _dir_path_str, directory in self.directories.items():
             if directory.parent_path and str(directory.parent_path) == parent_path_str:
                 subdirs.append(directory)
 
@@ -195,7 +197,12 @@ class DirectoryIndex:
                         self.directory_files[dir_path]
                     )
 
-    def rebuild_from_files(self, file_paths: list[Path], root_path: Path, chunk_stats: dict[str, dict] | None = None) -> None:
+    def rebuild_from_files(
+        self,
+        file_paths: list[Path],
+        root_path: Path,
+        chunk_stats: dict[str, dict] | None = None,
+    ) -> None:
         """Rebuild directory index from list of files with statistics from chunks.
 
         Args:
@@ -210,7 +217,9 @@ class DirectoryIndex:
         # Track all unique directories and their statistics
         dir_set = set()
         dir_chunks = defaultdict(int)  # directory -> total chunks
-        dir_languages = defaultdict(lambda: defaultdict(int))  # directory -> {language: count}
+        dir_languages = defaultdict(
+            lambda: defaultdict(int)
+        )  # directory -> {language: count}
         dir_modified = defaultdict(float)  # directory -> most recent modification time
 
         for file_path in file_paths:
@@ -227,12 +236,16 @@ class DirectoryIndex:
                     # Accumulate statistics up the directory tree
                     if chunk_stats and str(file_path) in chunk_stats:
                         stats = chunk_stats[str(file_path)]
-                        dir_chunks[current] += stats.get('chunks', 0)
-                        if 'language' in stats:
-                            dir_languages[current][stats['language']] += stats.get('chunks', 0)
+                        dir_chunks[current] += stats.get("chunks", 0)
+                        if "language" in stats:
+                            dir_languages[current][stats["language"]] += stats.get(
+                                "chunks", 0
+                            )
                         # Track most recent modification time
-                        if 'modified' in stats:
-                            dir_modified[current] = max(dir_modified.get(current, 0), stats['modified'])
+                        if "modified" in stats:
+                            dir_modified[current] = max(
+                                dir_modified.get(current, 0), stats["modified"]
+                            )
 
                     current = current.parent
 
@@ -276,7 +289,9 @@ class DirectoryIndex:
             subdirs = self.get_subdirectories(directory.path)
             directory.subdirectory_count = len(subdirs)
 
-        logger.info(f"Rebuilt directory index with {len(self.directories)} directories, {sum(dir_chunks.values())} total chunks")
+        logger.info(
+            f"Rebuilt directory index with {len(self.directories)} directories, {sum(dir_chunks.values())} total chunks"
+        )
 
     def get_stats(self) -> dict[str, Any]:
         """Get directory index statistics.

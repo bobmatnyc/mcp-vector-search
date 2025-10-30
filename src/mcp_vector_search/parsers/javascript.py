@@ -54,7 +54,7 @@ class JavaScriptParser(BaseParser):
 
         if self._use_tree_sitter:
             try:
-                tree = self._parser.parse(content.encode('utf-8'))
+                tree = self._parser.parse(content.encode("utf-8"))
                 return self._extract_chunks_from_tree(tree, content, file_path)
             except Exception as e:
                 logger.warning(f"Tree-sitter parsing failed for {file_path}: {e}")
@@ -77,10 +77,14 @@ class JavaScriptParser(BaseParser):
             extracted = False
 
             if node_type == "function_declaration":
-                chunks.extend(self._extract_function(node, lines, file_path, current_class))
+                chunks.extend(
+                    self._extract_function(node, lines, file_path, current_class)
+                )
                 extracted = True
             elif node_type == "arrow_function":
-                chunks.extend(self._extract_arrow_function(node, lines, file_path, current_class))
+                chunks.extend(
+                    self._extract_arrow_function(node, lines, file_path, current_class)
+                )
                 extracted = True
             elif node_type == "class_declaration":
                 class_chunks = self._extract_class(node, lines, file_path)
@@ -92,18 +96,22 @@ class JavaScriptParser(BaseParser):
                     visit_node(child, class_name)
                 extracted = True
             elif node_type == "method_definition":
-                chunks.extend(self._extract_method(node, lines, file_path, current_class))
+                chunks.extend(
+                    self._extract_method(node, lines, file_path, current_class)
+                )
                 extracted = True
             elif node_type == "lexical_declaration":
                 # const/let declarations might be arrow functions
-                extracted_chunks = self._extract_variable_function(node, lines, file_path, current_class)
+                extracted_chunks = self._extract_variable_function(
+                    node, lines, file_path, current_class
+                )
                 if extracted_chunks:
                     chunks.extend(extracted_chunks)
                     extracted = True
 
             # Only recurse into children if we didn't extract this node
             # This prevents double-extraction of arrow functions in variable declarations
-            if not extracted and hasattr(node, 'children'):
+            if not extracted and hasattr(node, "children"):
                 for child in node.children:
                     visit_node(child, current_class)
 
@@ -163,7 +171,7 @@ class JavaScriptParser(BaseParser):
     ) -> list[CodeChunk]:
         """Extract arrow function from AST."""
         # Arrow functions often don't have explicit names, try to get from parent
-        parent = getattr(node, 'parent', None)
+        parent = getattr(node, "parent", None)
         function_name = None
 
         if parent and parent.type == "variable_declarator":
@@ -219,7 +227,9 @@ class JavaScriptParser(BaseParser):
                             docstring = self._extract_jsdoc_from_node(child, lines)
 
                             # Calculate complexity
-                            complexity = self._calculate_complexity(subchild, "javascript")
+                            complexity = self._calculate_complexity(
+                                subchild, "javascript"
+                            )
 
                             # Extract parameters
                             parameters = self._extract_js_parameters(subchild)
@@ -319,8 +329,8 @@ class JavaScriptParser(BaseParser):
 
     def _get_node_text(self, node) -> str:
         """Get text content of a node."""
-        if hasattr(node, 'text'):
-            return node.text.decode('utf-8')
+        if hasattr(node, "text"):
+            return node.text.decode("utf-8")
         return ""
 
     def _extract_js_parameters(self, node) -> list[dict]:
@@ -330,12 +340,13 @@ class JavaScriptParser(BaseParser):
         for child in node.children:
             if child.type == "formal_parameters":
                 for param_node in child.children:
-                    if param_node.type in ("identifier", "required_parameter", "optional_parameter", "rest_parameter"):
-                        param_info = {
-                            "name": None,
-                            "type": None,
-                            "default": None
-                        }
+                    if param_node.type in (
+                        "identifier",
+                        "required_parameter",
+                        "optional_parameter",
+                        "rest_parameter",
+                    ):
+                        param_info = {"name": None, "type": None, "default": None}
 
                         # Extract parameter details
                         if param_node.type == "identifier":
@@ -347,10 +358,20 @@ class JavaScriptParser(BaseParser):
                                     param_info["name"] = self._get_node_text(subchild)
                                 elif subchild.type == "type_annotation":
                                     param_info["type"] = self._get_node_text(subchild)
-                                elif "default" in subchild.type or subchild.type == "number":
-                                    param_info["default"] = self._get_node_text(subchild)
+                                elif (
+                                    "default" in subchild.type
+                                    or subchild.type == "number"
+                                ):
+                                    param_info["default"] = self._get_node_text(
+                                        subchild
+                                    )
 
-                        if param_info["name"] and param_info["name"] not in ("(", ")", ",", "..."):
+                        if param_info["name"] and param_info["name"] not in (
+                            "(",
+                            ")",
+                            ",",
+                            "...",
+                        ):
                             # Clean up rest parameters
                             if param_info["name"].startswith("..."):
                                 param_info["name"] = param_info["name"][3:]

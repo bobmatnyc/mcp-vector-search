@@ -233,7 +233,9 @@ def create_gitignore_parser(project_root: Path) -> GitignoreParser:
     return GitignoreParser(project_root)
 
 
-def is_path_gitignored(path: Path, project_root: Path, is_directory: bool | None = None) -> bool:
+def is_path_gitignored(
+    path: Path, project_root: Path, is_directory: bool | None = None
+) -> bool:
     """Quick function to check if a path is gitignored.
 
     Args:

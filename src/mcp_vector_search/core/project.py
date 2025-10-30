@@ -260,7 +260,9 @@ class ProjectManager:
                 if file_count is not None:
                     computed_file_count = file_count
                 else:
-                    computed_file_count = self.count_indexable_files(config.file_extensions)
+                    computed_file_count = self.count_indexable_files(
+                        config.file_extensions
+                    )
             except Exception:
                 # Ignore errors when getting detailed info
                 pass
@@ -308,7 +310,9 @@ class ProjectManager:
         """
         # First check gitignore rules if available
         # PERFORMANCE: Pass is_directory hint to avoid redundant stat() calls
-        if self.gitignore_parser and self.gitignore_parser.is_ignored(path, is_directory=is_directory):
+        if self.gitignore_parser and self.gitignore_parser.is_ignored(
+            path, is_directory=is_directory
+        ):
             return True
 
         # Check if any parent directory is in ignore patterns

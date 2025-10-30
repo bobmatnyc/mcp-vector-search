@@ -179,8 +179,8 @@ class SemanticIndexer:
                         # For now, just track modification time
                         # Chunk counts will be aggregated from the database later if needed
                         chunk_stats[str(file_path)] = {
-                            'modified': mtime,
-                            'chunks': 1,  # Placeholder - real count from chunks
+                            "modified": mtime,
+                            "chunks": 1,  # Placeholder - real count from chunks
                         }
                     except OSError:
                         pass
@@ -197,6 +197,7 @@ class SemanticIndexer:
             except Exception as e:
                 logger.error(f"Failed to update directory index: {e}")
                 import traceback
+
                 logger.debug(traceback.format_exc())
 
         logger.info(
@@ -351,8 +352,14 @@ class SemanticIndexer:
             chunks_with_hierarchy = self._build_chunk_hierarchy(chunks)
 
             # Debug: Check if hierarchy was built
-            methods_with_parents = sum(1 for c in chunks_with_hierarchy if c.chunk_type in ("method", "function") and c.parent_chunk_id)
-            logger.debug(f"After hierarchy build: {methods_with_parents}/{len([c for c in chunks_with_hierarchy if c.chunk_type in ('method', 'function')])} methods have parents")
+            methods_with_parents = sum(
+                1
+                for c in chunks_with_hierarchy
+                if c.chunk_type in ("method", "function") and c.parent_chunk_id
+            )
+            logger.debug(
+                f"After hierarchy build: {methods_with_parents}/{len([c for c in chunks_with_hierarchy if c.chunk_type in ('method', 'function')])} methods have parents"
+            )
 
             # Add chunks to database
             await self.database.add_chunks(chunks_with_hierarchy)
@@ -443,7 +450,11 @@ class SemanticIndexer:
             # Filter out ignored directories IN-PLACE to prevent os.walk from traversing them
             # This is much more efficient than checking every file in ignored directories
             # PERFORMANCE: Pass is_directory=True hint to skip filesystem stat() calls
-            dirs[:] = [d for d in dirs if not self._should_ignore_path(root_path / d, is_directory=True)]
+            dirs[:] = [
+                d
+                for d in dirs
+                if not self._should_ignore_path(root_path / d, is_directory=True)
+            ]
 
             # Check each file in the current directory
             # PERFORMANCE: skip_file_check=True because os.walk guarantees these are files
@@ -489,7 +500,9 @@ class SemanticIndexer:
 
         return self._indexable_files_cache
 
-    def _should_index_file(self, file_path: Path, skip_file_check: bool = False) -> bool:
+    def _should_index_file(
+        self, file_path: Path, skip_file_check: bool = False
+    ) -> bool:
         """Check if a file should be indexed.
 
         Args:
@@ -525,7 +538,9 @@ class SemanticIndexer:
 
         return True
 
-    def _should_ignore_path(self, file_path: Path, is_directory: bool | None = None) -> bool:
+    def _should_ignore_path(
+        self, file_path: Path, is_directory: bool | None = None
+    ) -> bool:
         """Check if a path should be ignored.
 
         Args:
@@ -538,7 +553,9 @@ class SemanticIndexer:
         try:
             # First check gitignore rules if available
             # PERFORMANCE: Pass is_directory hint to avoid redundant stat() calls
-            if self.gitignore_parser and self.gitignore_parser.is_ignored(file_path, is_directory=is_directory):
+            if self.gitignore_parser and self.gitignore_parser.is_ignored(
+                file_path, is_directory=is_directory
+            ):
                 logger.debug(f"Path ignored by .gitignore: {file_path}")
                 return True
 
@@ -810,9 +827,14 @@ class SemanticIndexer:
 
                     # Save error to error log file
                     try:
-                        error_log_path = self.project_root / ".mcp-vector-search" / "indexing_errors.log"
+                        error_log_path = (
+                            self.project_root
+                            / ".mcp-vector-search"
+                            / "indexing_errors.log"
+                        )
                         with open(error_log_path, "a", encoding="utf-8") as f:
                             from datetime import datetime
+
                             timestamp = datetime.now().isoformat()
                             f.write(f"[{timestamp}] {error_msg}\n")
                     except Exception as log_err:
@@ -845,25 +867,38 @@ class SemanticIndexer:
 
         # Group chunks by type and name
         module_chunks = [c for c in chunks if c.chunk_type in ("module", "imports")]
-        class_chunks = [c for c in chunks if c.chunk_type in ("class", "interface", "mixin")]
-        function_chunks = [c for c in chunks if c.chunk_type in ("function", "method", "constructor")]
+        class_chunks = [
+            c for c in chunks if c.chunk_type in ("class", "interface", "mixin")
+        ]
+        function_chunks = [
+            c for c in chunks if c.chunk_type in ("function", "method", "constructor")
+        ]
 
         # DEBUG: Print what we have (if debug enabled)
         if self.debug:
             import sys
-            print(f"\n[DEBUG] Building hierarchy: {len(module_chunks)} modules, {len(class_chunks)} classes, {len(function_chunks)} functions", file=sys.stderr)
+
+            print(
+                f"\n[DEBUG] Building hierarchy: {len(module_chunks)} modules, {len(class_chunks)} classes, {len(function_chunks)} functions",
+                file=sys.stderr,
+            )
             if class_chunks:
-                print(f"[DEBUG] Class names: {[c.class_name for c in class_chunks[:5]]}", file=sys.stderr)
+                print(
+                    f"[DEBUG] Class names: {[c.class_name for c in class_chunks[:5]]}",
+                    file=sys.stderr,
+                )
             if function_chunks:
-                print(f"[DEBUG] First 5 functions with class_name: {[(f.function_name, f.class_name) for f in function_chunks[:5]]}", file=sys.stderr)
+                print(
+                    f"[DEBUG] First 5 functions with class_name: {[(f.function_name, f.class_name) for f in function_chunks[:5]]}",
+                    file=sys.stderr,
+                )
 
         # Build relationships
         for func in function_chunks:
             if func.class_name:
                 # Find parent class
                 parent_class = next(
-                    (c for c in class_chunks if c.class_name == func.class_name),
-                    None
+                    (c for c in class_chunks if c.class_name == func.class_name), None
                 )
                 if parent_class:
                     func.parent_chunk_id = parent_class.chunk_id
@@ -872,8 +907,14 @@ class SemanticIndexer:
                         parent_class.child_chunk_ids.append(func.chunk_id)
                     if self.debug:
                         import sys
-                        print(f"[DEBUG] ✓ Linked '{func.function_name}' to class '{parent_class.class_name}'", file=sys.stderr)
-                    logger.debug(f"Linked method '{func.function_name}' (ID: {func.chunk_id[:8]}) to class '{parent_class.class_name}' (ID: {parent_class.chunk_id[:8]})")
+
+                        print(
+                            f"[DEBUG] ✓ Linked '{func.function_name}' to class '{parent_class.class_name}'",
+                            file=sys.stderr,
+                        )
+                    logger.debug(
+                        f"Linked method '{func.function_name}' (ID: {func.chunk_id[:8]}) to class '{parent_class.class_name}' (ID: {parent_class.chunk_id[:8]})"
+                    )
             else:
                 # Top-level function
                 if not func.chunk_depth:
@@ -902,23 +943,31 @@ class SemanticIndexer:
         # DEBUG: Print summary
         if self.debug:
             import sys
+
             funcs_with_parents = sum(1 for f in function_chunks if f.parent_chunk_id)
             classes_with_parents = sum(1 for c in class_chunks if c.parent_chunk_id)
-            print(f"[DEBUG] Hierarchy built: {funcs_with_parents}/{len(function_chunks)} functions linked, {classes_with_parents}/{len(class_chunks)} classes linked\n", file=sys.stderr)
+            print(
+                f"[DEBUG] Hierarchy built: {funcs_with_parents}/{len(function_chunks)} functions linked, {classes_with_parents}/{len(class_chunks)} classes linked\n",
+                file=sys.stderr,
+            )
 
         return chunks
 
     def _write_indexing_run_header(self) -> None:
         """Write version and timestamp header to error log at start of indexing run."""
         try:
-            error_log_path = self.project_root / ".mcp-vector-search" / "indexing_errors.log"
+            error_log_path = (
+                self.project_root / ".mcp-vector-search" / "indexing_errors.log"
+            )
             error_log_path.parent.mkdir(parents=True, exist_ok=True)
 
             with open(error_log_path, "a", encoding="utf-8") as f:
                 timestamp = datetime.now(UTC).isoformat()
                 separator = "=" * 80
                 f.write(f"\n{separator}\n")
-                f.write(f"[{timestamp}] Indexing run started - mcp-vector-search v{__version__}\n")
+                f.write(
+                    f"[{timestamp}] Indexing run started - mcp-vector-search v{__version__}\n"
+                )
                 f.write(f"{separator}\n")
         except Exception as e:
             logger.debug(f"Failed to write indexing run header: {e}")

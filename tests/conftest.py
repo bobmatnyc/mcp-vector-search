@@ -21,8 +21,7 @@ from mcp_vector_search.core.models import CodeChunk, SearchResult, IndexStats
 from mcp_vector_search.config.settings import ProjectConfig
 
 
-# Configure pytest-asyncio
-pytest_asyncio.auto_mode = True
+# Configure pytest-asyncio - asyncio_mode is set in pytest.ini
 
 
 @pytest.fixture(scope="session")

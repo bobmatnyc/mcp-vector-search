@@ -162,11 +162,11 @@ class ParserRegistry:
             info[language] = {
                 "class": parser.__class__.__name__,
                 "extensions": parser.get_supported_extensions(),
-                "language": getattr(parser, 'language', None) or language,
+                "language": getattr(parser, "language", None) or language,
             }
 
         # Add fallback parser info
-        fallback_lang = getattr(self._fallback_parser, 'language', None) or "unknown"
+        fallback_lang = getattr(self._fallback_parser, "language", None) or "unknown"
         info["fallback"] = {
             "class": self._fallback_parser.__class__.__name__,
             "extensions": ["*"],

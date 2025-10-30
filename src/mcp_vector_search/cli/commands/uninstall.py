@@ -16,7 +16,6 @@ Examples:
 import json
 import shutil
 from pathlib import Path
-from typing import Any
 
 import typer
 from loguru import logger
@@ -219,6 +218,7 @@ def find_configured_platforms(project_root: Path) -> dict[str, Path]:
 # Main Uninstall Command
 # ==============================================================================
 
+
 @uninstall_app.callback()
 def main(
     ctx: typer.Context,
@@ -308,6 +308,7 @@ def main(
 # ==============================================================================
 # Platform-Specific Uninstall Commands
 # ==============================================================================
+
 
 @uninstall_app.command("claude-code")
 def uninstall_claude_code(
@@ -403,7 +404,9 @@ def uninstall_claude_desktop(
     success = unconfigure_platform("claude-desktop", project_root, backup=not no_backup)
 
     if success:
-        console.print("\n[bold green]✅ Claude Desktop Integration Removed[/bold green]")
+        console.print(
+            "\n[bold green]✅ Claude Desktop Integration Removed[/bold green]"
+        )
         console.print("\n[dim]💡 Restart Claude Desktop to apply changes[/dim]")
     else:
         raise typer.Exit(1)
@@ -440,14 +443,18 @@ def list_integrations(ctx: typer.Context) -> None:
     project_root = ctx.obj.get("project_root") or Path.cwd()
 
     console.print(
-        Panel.fit("[bold cyan]Configured MCP Integrations[/bold cyan]", border_style="cyan")
+        Panel.fit(
+            "[bold cyan]Configured MCP Integrations[/bold cyan]", border_style="cyan"
+        )
     )
 
     configured = find_configured_platforms(project_root)
 
     if not configured:
         console.print("\n[yellow]No MCP integrations configured[/yellow]")
-        console.print("\n[dim]Use 'mcp-vector-search install <platform>' to add integrations[/dim]")
+        console.print(
+            "\n[dim]Use 'mcp-vector-search install <platform>' to add integrations[/dim]"
+        )
         return
 
     table = Table(show_header=True, header_style="bold cyan")
@@ -468,7 +475,9 @@ def list_integrations(ctx: typer.Context) -> None:
     console.print(table)
 
     console.print("\n[bold blue]Removal Options:[/bold blue]")
-    console.print("  • Remove specific: [code]mcp-vector-search uninstall <platform>[/code]")
+    console.print(
+        "  • Remove specific: [code]mcp-vector-search uninstall <platform>[/code]"
+    )
     console.print("  • Remove all:      [code]mcp-vector-search uninstall --all[/code]")
 
 
