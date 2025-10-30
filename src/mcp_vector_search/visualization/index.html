@@ -406,7 +406,16 @@
                     ...fileNodes.filter(n => n.depth === minFileDepth)
                 ];
 
-                // Fallback to all files if nothing found
+                // Fallback: Include all depth-1 nodes if we got too few root nodes
+                // This ensures code nodes (functions/classes) at root level are included
+                if (rootNodes.length < 50) {  // Expect more root nodes in typical projects
+                    const allDepth1Nodes = allNodes.filter(n => n.depth === 1);
+                    if (allDepth1Nodes.length > rootNodes.length) {
+                        rootNodes = allDepth1Nodes;
+                    }
+                }
+
+                // Final fallback to all files if nothing found
                 if (rootNodes.length === 0) {
                     rootNodes = fileNodes;
                 }
