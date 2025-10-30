@@ -1,87 +1,202 @@
 #!/usr/bin/env bash
-
-# ============================================================================
-# dev-mcp - Development CLI Runner
-# ============================================================================
+# dev-mcp - Development helper script for mcp-vector-search
 #
-# Purpose:
-#   Run mcp-vector-search CLI from source code instead of installed pipx version.
-#   This ensures changes to the source code are immediately reflected when testing.
+# This script runs the CLI from source using uv, with visual indicators
+# and error checking to ensure a smooth development experience.
 #
 # Usage:
-#   ./dev-mcp [command] [options]
+#   ./dev-mcp [options] <command> [arguments]
+#   ./dev-mcp --help
+#   ./dev-mcp search "authentication" --limit 5
+#   ./dev-mcp index --force
+#
+# Script Options:
+#   -v, --verbose    Show Python interpreter and additional debug info
+#   -h, --help       Show this help message (not CLI help)
+#
+# CLI Commands:
+#   search <query>   Search codebase semantically
+#   index            Index the project codebase
+#   status           Show indexing status
+#   similar <file>   Find similar code to a file
+#   context <desc>   Search by contextual description
 #
 # Examples:
-#   ./dev-mcp visualize serve
-#   ./dev-mcp index auto
+#   ./dev-mcp search "database connection"
+#   ./dev-mcp index --file-extensions .py .js
 #   ./dev-mcp status
-#   ./dev-mcp search "authentication logic"
+#   ./dev-mcp -v search "error handling"
+#   ./dev-mcp search "auth" --help  # Shows CLI help for search command
 #
-# How it works:
-#   - Uses 'uv run' to execute from source in src/mcp_vector_search/
+# How it Works:
+#   - Runs CLI entry point: mcp_vector_search.cli.main:cli_with_suggestions
+#   - Uses 'uv run python -m mcp_vector_search.cli.main' for execution
+#   - Verifies uv installation and project root location
 #   - Displays [DEV] prefix to indicate development mode
-#   - Shows which Python interpreter is being used
-#   - Forwards all arguments to the source CLI
+#   - Forwards all CLI arguments and preserves exit codes
 #
 # Requirements:
-#   - uv must be installed (https://github.com/astral-sh/uv)
-#   - Run from project root directory
-#
-# ============================================================================
+#   - uv must be installed (pip install uv)
+#   - Must be run from project root directory
+#   - pyproject.toml must exist in current directory
 
 set -e  # Exit on error
+set -o pipefail  # Catch errors in pipes
 
-# Colors for output
+# Color definitions for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+BOLD='\033[1m'
+NC='\033[0m'  # No Color
 
-# Get the directory where this script lives
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Configuration
+VERBOSE=0
+SHOW_HELP=0
 
-# Check if we're in the project root
-if [ ! -f "$SCRIPT_DIR/pyproject.toml" ]; then
-    echo -e "${RED}Error: Must run from project root directory${NC}"
-    echo "Expected to find pyproject.toml in: $SCRIPT_DIR"
-    exit 1
+# Parse script-specific flags before forwarding to CLI
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -v|--verbose)
+            VERBOSE=1
+            shift
+            ;;
+        -h|--help)
+            SHOW_HELP=1
+            shift
+            ;;
+        *)
+            # Collect remaining arguments for CLI
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Show help if requested (this is script help, not CLI help)
+if [[ $SHOW_HELP -eq 1 ]]; then
+    echo -e "${BOLD}dev-mcp${NC} - Development helper for mcp-vector-search"
+    echo ""
+    echo -e "${BOLD}Usage:${NC}"
+    echo "  ./dev-mcp [options] <command> [arguments]"
+    echo ""
+    echo -e "${BOLD}Script Options:${NC}"
+    echo "  -v, --verbose    Show Python interpreter and debug info"
+    echo "  -h, --help       Show this help message (script help)"
+    echo ""
+    echo -e "${BOLD}CLI Commands:${NC}"
+    echo "  search <query>   Search codebase semantically"
+    echo "  index            Index the project codebase"
+    echo "  status           Show indexing status"
+    echo "  similar <file>   Find similar code to a file"
+    echo "  context <desc>   Search by contextual description"
+    echo ""
+    echo -e "${BOLD}Examples:${NC}"
+    echo "  ./dev-mcp search \"database connection\""
+    echo "  ./dev-mcp index --force"
+    echo "  ./dev-mcp status"
+    echo "  ./dev-mcp -v search \"error handling\""
+    echo "  ./dev-mcp search --help  # Shows CLI help for search"
+    echo ""
+    echo -e "${BOLD}Requirements:${NC}"
+    echo "  - uv installed (pip install uv)"
+    echo "  - Run from project root"
+    echo "  - pyproject.toml must exist"
+    exit 0
 fi
+
+# Function to print error messages
+error() {
+    echo -e "${RED}${BOLD}[ERROR]${NC} $1" >&2
+}
+
+# Function to print info messages
+info() {
+    echo -e "${CYAN}${BOLD}[INFO]${NC} $1"
+}
+
+# Function to print success messages
+success() {
+    echo -e "${GREEN}${BOLD}[SUCCESS]${NC} $1"
+}
+
+# Function to print dev indicator
+dev_indicator() {
+    echo -e "${YELLOW}${BOLD}[DEV]${NC} $1"
+}
 
 # Check if uv is installed
 if ! command -v uv &> /dev/null; then
-    echo -e "${RED}Error: 'uv' is not installed${NC}"
-    echo "Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh"
-    echo "Or visit: https://github.com/astral-sh/uv"
+    error "uv is not installed"
+    echo ""
+    echo "Install uv with one of these methods:"
+    echo "  pip install uv"
+    echo "  # or"
+    echo "  curl -LsSf https://astral.sh/uv/install.sh | sh"
+    echo ""
+    echo "Documentation: https://github.com/astral-sh/uv"
+    exit 1
+fi
+
+# Check if running from project root (look for pyproject.toml)
+if [[ ! -f "pyproject.toml" ]]; then
+    error "Must be run from project root"
+    echo ""
+    echo "This script expects to find pyproject.toml in the current directory."
+    echo "Please cd to the project root and try again."
+    echo ""
+    echo "Current directory: $(pwd)"
+    exit 1
+fi
+
+# Verify the CLI module exists (check both possible locations)
+if [[ ! -f "src/mcp_vector_search/cli/main.py" ]] && [[ ! -f "mcp_vector_search/cli/main.py" ]]; then
+    error "CLI module not found"
+    echo ""
+    echo "Expected to find one of:"
+    echo "  - src/mcp_vector_search/cli/main.py"
+    echo "  - mcp_vector_search/cli/main.py"
+    echo "Current directory: $(pwd)"
     exit 1
 fi
 
 # Show development mode indicator
-echo -e "${CYAN}[DEV]${NC} Running mcp-vector-search from source..."
+dev_indicator "Running CLI from source"
 
-# Show Python info in verbose mode
-if [[ " $* " =~ " --verbose " ]] || [[ " $* " =~ " -v " ]]; then
-    echo -e "${BLUE}Project:${NC} $SCRIPT_DIR"
-    echo -e "${BLUE}Python:${NC} $(uv run python --version 2>&1 | head -n1)"
+# Show verbose info if requested
+if [[ $VERBOSE -eq 1 ]]; then
+    info "UV version: $(uv --version)"
+    info "Python interpreter: $(uv run python --version 2>&1)"
+    info "Project root: $(pwd)"
+    info "CLI module: mcp_vector_search.cli.main"
+    if [[ ${#ARGS[@]} -gt 0 ]]; then
+        info "CLI arguments: ${ARGS[*]}"
+    else
+        info "CLI arguments: (none)"
+    fi
     echo ""
 fi
 
-# Run the CLI from source using uv
-# The -m flag runs the module as a script
-# All arguments are forwarded using "$@"
-cd "$SCRIPT_DIR"
-uv run python -m mcp_vector_search.cli.main "$@"
-
-# Capture exit code from the CLI
-EXIT_CODE=$?
-
-# Show completion message for successful runs (except for --help or --version)
-if [ $EXIT_CODE -eq 0 ]; then
-    if [[ ! " $* " =~ " --help " ]] && [[ ! " $* " =~ " -h " ]] && \
-       [[ ! " $* " =~ " --version " ]] && [[ ! " $* " =~ " -v " ]]; then
-        echo -e "${GREEN}[DEV]${NC} Command completed successfully"
-    fi
+# Run the CLI with all forwarded arguments
+# Entry point: mcp_vector_search.cli.main:cli_with_suggestions
+# Store exit code to preserve it
+EXIT_CODE=0
+if [[ ${#ARGS[@]} -gt 0 ]]; then
+    uv run python -m mcp_vector_search.cli.main "${ARGS[@]}" || EXIT_CODE=$?
+else
+    uv run python -m mcp_vector_search.cli.main || EXIT_CODE=$?
 fi
 
+# Show completion message based on exit code
+echo ""
+if [[ $EXIT_CODE -eq 0 ]]; then
+    success "CLI execution completed"
+else
+    error "CLI execution failed with exit code $EXIT_CODE"
+fi
+
+# Preserve the original exit code
 exit $EXIT_CODE

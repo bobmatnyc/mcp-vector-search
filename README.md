@@ -432,6 +432,10 @@ uv sync
 # Install in development mode
 uv pip install -e .
 
+# Test CLI from source (recommended during development)
+./dev-mcp version        # Shows [DEV] indicator
+./dev-mcp search "test"  # No reinstall needed after code changes
+
 # Run tests
 uv run pytest
 
@@ -439,6 +443,8 @@ uv run pytest
 uv run ruff check
 uv run mypy src/
 ```
+
+For detailed development workflow and `dev-mcp` usage, see the [Development](#-development) section below.
 
 ### Adding Language Support
 
@@ -512,14 +518,63 @@ uv sync && uv pip install -e .
 # Run development tests
 ./scripts/dev-test.sh
 
-# Test CLI from source (recommended during development)
-./dev-mcp version        # Run from source instead of installed version
+# Run CLI from source (recommended during development)
+./dev-mcp version        # Visual [DEV] indicator
 ./dev-mcp status         # Any command works
-./dev-mcp --verbose      # Shows Python interpreter info
+./dev-mcp search "auth"  # Immediate feedback on changes
 
 # Alternative: use uv run directly
 uv run mcp-vector-search version
 ```
+
+#### Using the `dev-mcp` Development Helper
+
+The `./dev-mcp` script provides a streamlined way to run the CLI from source code during development, eliminating the need for repeated installations.
+
+**Key Features:**
+- **Visual [DEV] Indicator**: Shows `[DEV]` prefix to distinguish from installed version
+- **No Reinstall Required**: Reflects code changes immediately
+- **Complete Argument Forwarding**: Works with all CLI commands and options
+- **Verbose Mode**: Debug output with `--verbose` flag
+- **Built-in Help**: Script usage with `--help`
+
+**Usage Examples:**
+```bash
+# Basic commands (note the [DEV] prefix in output)
+./dev-mcp version
+./dev-mcp status
+./dev-mcp index
+./dev-mcp search "authentication logic"
+
+# With CLI options
+./dev-mcp search "error handling" --limit 10
+./dev-mcp index --force
+
+# Script verbose mode (shows Python interpreter, paths)
+./dev-mcp --verbose search "database"
+
+# Script help (shows dev-mcp usage, not CLI help)
+./dev-mcp --help
+
+# CLI command help (forwards --help to the CLI)
+./dev-mcp search --help
+./dev-mcp index --help
+```
+
+**When to Use:**
+- **`./dev-mcp`** → Development workflow (runs from source code)
+- **`mcp-vector-search`** → Production usage (runs installed version via pipx/pip)
+
+**Benefits:**
+- **Instant Feedback**: Changes to source code are reflected immediately
+- **No Build Step**: Skip the reinstall cycle during active development
+- **Clear Context**: Visual `[DEV]` indicator prevents confusion about which version is running
+- **Error Handling**: Built-in checks for uv installation and project structure
+
+**Requirements:**
+- Must have `uv` installed (`pip install uv`)
+- Must run from project root directory
+- Requires `pyproject.toml` in current directory
 
 **Stage B: Local Deployment Testing**
 ```bash
