@@ -388,36 +388,36 @@
                 // In monorepos, subproject nodes are roots
                 rootNodes = allNodes.filter(n => n.type === 'subproject');
             } else {
-                // Regular projects: show root-level directories AND files
+                // Regular projects: Find root nodes by graph structure
                 const dirNodes = allNodes.filter(n => n.type === 'directory');
                 const fileNodes = allNodes.filter(n => n.type === 'file');
 
-                // Find minimum depth for directories and files
-                const minDirDepth = dirNodes.length > 0
-                    ? Math.min(...dirNodes.map(n => n.depth))
-                    : Infinity;
-                const minFileDepth = fileNodes.length > 0
-                    ? Math.min(...fileNodes.map(n => n.depth))
-                    : Infinity;
+                // Find minimum depth for directories and files (for fallback)
+                let minDirDepth = Infinity;
+                let minFileDepth = Infinity;
 
-                // Include both root-level directories and root-level files
-                rootNodes = [
-                    ...dirNodes.filter(n => n.depth === minDirDepth),
-                    ...fileNodes.filter(n => n.depth === minFileDepth)
-                ];
+                dirNodes.forEach(d => {
+                    if (d.depth < minDirDepth) minDirDepth = d.depth;
+                });
 
-                // Fallback: Include all depth-1 nodes if we got too few root nodes
-                // This ensures code nodes (functions/classes) at root level are included
-                if (rootNodes.length < 50) {  // Expect more root nodes in typical projects
-                    const allDepth1Nodes = allNodes.filter(n => n.depth === 1);
-                    if (allDepth1Nodes.length > rootNodes.length) {
-                        rootNodes = allDepth1Nodes;
-                    }
-                }
+                fileNodes.forEach(f => {
+                    if (f.depth < minFileDepth) minFileDepth = f.depth;
+                });
 
-                // Final fallback to all files if nothing found
+                // CORRECT: Find root nodes by checking graph structure
+                // Root nodes are nodes with no incoming links (no parent)
+                const targetIds = new Set(allLinks.map(link => link.target));
+                rootNodes = allNodes.filter(node => !targetIds.has(node.id));
+
+                console.log(`Root nodes found via links: ${rootNodes.length}`, rootNodes.map(n => n.name));
+
+                // Fallback only if we got 0 root nodes (shouldn't happen with correct data)
                 if (rootNodes.length === 0) {
-                    rootNodes = fileNodes;
+                    console.warn('No root nodes found via links, falling back to depth-based detection');
+                    rootNodes = [
+                        ...dirNodes.filter(n => n.depth === minDirDepth),
+                        ...fileNodes.filter(n => n.depth === minFileDepth)
+                    ];
                 }
             }
 
