@@ -77,6 +77,14 @@
             cursor: pointer;
             stroke: #c9d1d9;
             stroke-width: 1.5px;
+            transition: all 0.2s ease;
+        }
+
+        .node circle:hover,
+        .node rect:hover {
+            stroke-width: 3px !important;
+            filter: brightness(1.2);
+            cursor: pointer;
         }
 
         .node.module circle { fill: #238636; }
@@ -114,6 +122,15 @@
             text-anchor: middle;
             pointer-events: none;
             user-select: none;
+        }
+
+        .node-icon {
+            font-size: 35px !important;
+            text-anchor: middle;
+            pointer-events: none;
+            user-select: none;
+            fill: #0d1117;
+            font-weight: bold;
         }
 
         .link {
@@ -478,7 +495,7 @@
                     return d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
                 })
                 .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
-                .attr("stroke-width", d => hasChildren(d) ? 2 : 0)
+                .attr("stroke-width", d => hasChildren(d) ? 3 : 0)
                 .style("fill", d => d.color || null);  // Use custom color if available
 
             // Add rectangles for document nodes
@@ -503,7 +520,7 @@
                 .attr("rx", 2)  // Rounded corners
                 .attr("ry", 2)
                 .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
-                .attr("stroke-width", d => hasChildren(d) ? 2 : 0)
+                .attr("stroke-width", d => hasChildren(d) ? 3 : 0)
                 .style("fill", d => d.color || null);
 
             // Add expand/collapse indicator
@@ -517,6 +534,24 @@
                 .style("fill", "#ffffff")
                 .style("pointer-events", "none")
                 .text(d => collapsedNodes.has(d.id) ? "+" : "−");
+
+            // Add icons based on node type
+            node.append("text")
+                .attr("class", "node-icon")
+                .attr("dy", 15)
+                .text(d => {
+                    if (d.type === 'directory') return '📁';
+                    if (d.type === 'file') return '📄';
+                    if (d.type === 'class') return 'C';
+                    if (d.type === 'function') return 'ƒ';
+                    if (d.type === 'method') return 'm';
+                    if (d.type === 'module') return 'M';
+                    if (d.type === 'imports') return '⇄';
+                    if (d.type === 'docstring') return '📝';
+                    if (d.type === 'comment') return '💬';
+                    if (d.type === 'subproject') return '📦';
+                    return '•';
+                });
 
             // Add labels (show actual import statement for import nodes)
             node.append("text")
