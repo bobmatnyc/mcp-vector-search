@@ -3,6 +3,14 @@
 <head>
     <meta charset="utf-8">
     <title>Code Chunk Relationship Graph</title>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="favicon-v1.ico">
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-v1-16.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-v1-32.png">
+    <link rel="icon" type="image/png" sizes="64x64" href="favicon-v1-64.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="favicon-v1-512.png">
+
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body {
@@ -442,15 +450,29 @@
             visibleNodes = new Set(rootNodes.map(n => n.id));
             collapsedNodes = new Set(rootNodes.map(n => n.id));
 
+            console.log('=== INITIAL STATE ===');
+            console.log(`Total nodes: ${allNodes.length}`);
+            console.log(`Total links: ${allLinks.length}`);
+            console.log(`Root nodes: ${rootNodes.length}`, rootNodes.map(n => n.name));
+            console.log(`Initial visibleNodes:`, Array.from(visibleNodes));
+            console.log(`Initial collapsedNodes:`, Array.from(collapsedNodes));
+
             renderGraph();
         }
 
         function renderGraph() {
+            console.log('=== renderGraph() called ===');
+            console.log(`visibleNodes.size: ${visibleNodes.size}`);
+            console.log(`collapsedNodes.size: ${collapsedNodes.size}`);
+
             const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
+            console.log(`Rendering ${visibleNodesList.length} visible nodes`);
+
             const visibleLinks = allLinks.filter(l =>
                 visibleNodes.has(l.source.id || l.source) &&
                 visibleNodes.has(l.target.id || l.target)
             );
+            console.log(`Rendering ${visibleLinks.length} visible links`);
 
             simulation = d3.forceSimulation(visibleNodesList)
                 .force("link", d3.forceLink(visibleLinks).id(d => d.id).distance(100))
@@ -584,39 +606,77 @@
         }
 
         function hasChildren(node) {
-            return allLinks.some(l => (l.source.id || l.source) === node.id);
+            // Handle both pre-mutation (string IDs) and post-mutation (object references)
+            const result = allLinks.some(l => {
+                const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                return sourceId === node.id;
+            });
+            console.log(`hasChildren(${node.name}):`, result,
+                `Checking ${allLinks.length} links for node ID: ${node.id}`);
+            return result;
         }
 
         function handleNodeClick(event, d) {
+            console.log('=== NODE CLICKED ===');
+            console.log('Node:', d.name, 'Type:', d.type, 'ID:', d.id);
+            console.log('Event:', event);
+
             event.stopPropagation();
 
             // Always show content pane when clicking any node
             showContentPane(d);
 
             // If node has children, also toggle expansion
-            if (hasChildren(d)) {
-                if (collapsedNodes.has(d.id)) {
+            const nodeHasChildren = hasChildren(d);
+            console.log('Node has children:', nodeHasChildren);
+
+            if (nodeHasChildren) {
+                const isCollapsed = collapsedNodes.has(d.id);
+                console.log('Node is collapsed:', isCollapsed);
+
+                if (isCollapsed) {
+                    console.log('Expanding node...');
                     expandNode(d);
                 } else {
+                    console.log('Collapsing node...');
                     collapseNode(d);
                 }
+                console.log('Calling renderGraph()...');
                 renderGraph();
+                console.log('renderGraph() complete');
+            } else {
+                console.log('Node has no children, skipping expansion');
             }
         }
 
         function expandNode(node) {
+            console.log(`expandNode(${node.name}):`, 'Removing from collapsedNodes');
             collapsedNodes.delete(node.id);
 
             // Find direct children
-            const children = allLinks
-                .filter(l => (l.source.id || l.source) === node.id)
-                .map(l => allNodes.find(n => n.id === (l.target.id || l.target)))
+            const childLinks = allLinks.filter(l => (l.source.id || l.source) === node.id);
+            console.log(`  Found ${childLinks.length} child links for node ${node.id}`);
+
+            const children = childLinks
+                .map(l => {
+                    const targetId = l.target.id || l.target;
+                    const child = allNodes.find(n => n.id === targetId);
+                    if (!child) {
+                        console.warn(`  Could not find child node with ID: ${targetId}`);
+                    }
+                    return child;
+                })
                 .filter(n => n);
 
+            console.log(`  Found ${children.length} child nodes:`, children.map(c => c.name));
+
             children.forEach(child => {
+                console.log(`    Adding child to visibleNodes: ${child.name} (${child.id})`);
                 visibleNodes.add(child.id);
                 collapsedNodes.add(child.id); // Children start collapsed
             });
+
+            console.log(`  visibleNodes now has ${visibleNodes.size} items`);
         }
 
         function collapseNode(node) {
