@@ -2,9 +2,6 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
     <title>Code Chunk Relationship Graph</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
@@ -82,24 +79,33 @@
             stroke-width: 1.5px;
         }
 
-        .node.directory circle { fill: #ffa657; }
-        .node.file circle { fill: #58a6ff; }
         .node.module circle { fill: #238636; }
         .node.class circle { fill: #1f6feb; }
         .node.function circle { fill: #d29922; }
         .node.method circle { fill: #8957e5; }
-        .node.imports circle { fill: #6e7681; }
-        .node.text circle { fill: #6e7681; }
         .node.code circle { fill: #6e7681; }
+        .node.file circle {
+            fill: none;
+            stroke: #58a6ff;
+            stroke-width: 2px;
+            stroke-dasharray: 5,3;
+            opacity: 0.6;
+        }
+        .node.directory circle {
+            fill: none;
+            stroke: #79c0ff;
+            stroke-width: 2px;
+            stroke-dasharray: 3,3;
+            opacity: 0.5;
+        }
         .node.subproject circle { fill: #da3633; stroke-width: 3px; }
 
-        .node-icon {
-            font-size: 35px !important;
-            text-anchor: middle;
-            pointer-events: none;
-            user-select: none;
-            fill: #0d1117;
-            font-weight: bold;
+        /* Non-code document nodes - squares */
+        .node.docstring rect { fill: #8b949e; }
+        .node.comment rect { fill: #6e7681; }
+        .node rect {
+            stroke: #c9d1d9;
+            stroke-width: 1.5px;
         }
 
         .node text {
@@ -111,9 +117,9 @@
         }
 
         .link {
-            stroke: #58a6ff;
-            stroke-opacity: 0.4;
-            stroke-width: 2px;
+            stroke: #30363d;
+            stroke-opacity: 0.6;
+            stroke-width: 1.5px;
         }
 
         .link.dependency {
@@ -144,73 +150,141 @@
             color: #8b949e;
         }
 
-        #code-viewer {
+        #content-pane {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 600px;
+            height: 100vh;
+            background: rgba(13, 17, 23, 0.98);
+            border-left: 1px solid #30363d;
+            overflow-y: auto;
+            box-shadow: -4px 0 24px rgba(0, 0, 0, 0.5);
+            transform: translateX(100%);
+            transition: transform 0.3s ease-in-out;
+            z-index: 1000;
+        }
+
+        #content-pane.visible {
+            transform: translateX(0);
+        }
+
+        #content-pane .pane-header {
+            position: sticky;
+            top: 0;
+            background: rgba(13, 17, 23, 0.98);
+            padding: 20px;
+            border-bottom: 1px solid #30363d;
+            z-index: 1;
+        }
+
+        #content-pane .pane-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #58a6ff;
+            margin-bottom: 8px;
+            padding-right: 30px;
+        }
+
+        #content-pane .pane-meta {
+            font-size: 12px;
+            color: #8b949e;
+        }
+
+        #content-pane .collapse-btn {
             position: absolute;
             top: 20px;
             right: 20px;
-            width: 500px;
-            max-height: 80vh;
-            background: rgba(13, 17, 23, 0.95);
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 16px;
-            overflow-y: auto;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-            display: none;
-        }
-
-        #code-viewer.visible {
-            display: block;
-        }
-
-        #code-viewer .header {
-            margin-bottom: 12px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid #30363d;
-        }
-
-        #code-viewer .title {
-            font-size: 14px;
-            font-weight: bold;
-            color: #58a6ff;
-            margin-bottom: 4px;
-        }
-
-        #code-viewer .meta {
-            font-size: 11px;
-            color: #8b949e;
-        }
-
-        #code-viewer .close-btn {
-            float: right;
             cursor: pointer;
             color: #8b949e;
-            font-size: 20px;
+            font-size: 24px;
             line-height: 1;
-            margin-top: -4px;
+            background: none;
+            border: none;
+            padding: 0;
+            transition: color 0.2s;
         }
 
-        #code-viewer .close-btn:hover {
+        #content-pane .collapse-btn:hover {
             color: #c9d1d9;
         }
 
-        #code-viewer pre {
+        #content-pane .pane-content {
+            padding: 20px;
+        }
+
+        #content-pane pre {
             margin: 0;
-            padding: 12px;
+            padding: 16px;
             background: #0d1117;
             border: 1px solid #30363d;
             border-radius: 6px;
             overflow-x: auto;
-            font-size: 11px;
-            line-height: 1.5;
+            font-size: 12px;
+            line-height: 1.6;
         }
 
-        #code-viewer code {
+        #content-pane code {
             color: #c9d1d9;
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
         }
 
-        .node.highlighted circle {
+        #content-pane .directory-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        #content-pane .directory-list li {
+            padding: 8px 12px;
+            margin: 4px 0;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+        }
+
+        #content-pane .directory-list .item-icon {
+            margin-right: 8px;
+            font-size: 14px;
+        }
+
+        #content-pane .directory-list .item-type {
+            margin-left: auto;
+            padding-left: 12px;
+            font-size: 10px;
+            color: #8b949e;
+        }
+
+        #content-pane .import-details {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 16px;
+        }
+
+        #content-pane .import-details .import-statement {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+            color: #79c0ff;
+            margin-bottom: 12px;
+        }
+
+        #content-pane .import-details .detail-row {
+            font-size: 11px;
+            color: #8b949e;
+            margin: 4px 0;
+        }
+
+        #content-pane .import-details .detail-label {
+            color: #c9d1d9;
+            font-weight: 600;
+        }
+
+        .node.highlighted circle,
+        .node.highlighted rect {
             stroke: #f0e68c;
             stroke-width: 3px;
             filter: drop-shadow(0 0 8px #f0e68c);
@@ -228,25 +302,37 @@
         <h3>Legend</h3>
         <div class="legend">
             <div class="legend-item">
-                📁 <span class="legend-color" style="background: #ffa657;"></span> Directory
+                <span class="legend-color" style="background: #da3633;"></span> Subproject
             </div>
             <div class="legend-item">
-                📄 <span class="legend-color" style="background: #58a6ff;"></span> File
+                <span class="legend-color" style="border: 2px dashed #79c0ff; border-radius: 50%; background: transparent;"></span> Directory
             </div>
             <div class="legend-item">
-                C <span class="legend-color" style="background: #1f6feb;"></span> Class
+                <span class="legend-color" style="border: 2px dashed #58a6ff; border-radius: 50%; background: transparent;"></span> File
             </div>
             <div class="legend-item">
-                ƒ <span class="legend-color" style="background: #d29922;"></span> Function
+                <span class="legend-color" style="background: #238636;"></span> Module
             </div>
             <div class="legend-item">
-                m <span class="legend-color" style="background: #8957e5;"></span> Method
+                <span class="legend-color" style="background: #1f6feb;"></span> Class
             </div>
             <div class="legend-item">
-                M <span class="legend-color" style="background: #238636;"></span> Module
+                <span class="legend-color" style="background: #d29922;"></span> Function
             </div>
             <div class="legend-item">
-                • <span class="legend-color" style="background: #6e7681;"></span> Text/Other
+                <span class="legend-color" style="background: #8957e5;"></span> Method
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #6e7681;"></span> Code
+            </div>
+            <div class="legend-item" style="font-style: italic; color: #79c0ff;">
+                <span class="legend-color" style="background: #6e7681;"></span> Import
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #8b949e; border-radius: 2px;"></span> Docstring ▢
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #6e7681; border-radius: 2px;"></span> Comment ▢
             </div>
         </div>
 
@@ -261,13 +347,13 @@
     <svg id="graph"></svg>
     <div id="tooltip" class="tooltip"></div>
 
-    <div id="code-viewer">
-        <div class="header">
-            <span class="close-btn" onclick="closeCodeViewer()">×</span>
-            <div class="title" id="viewer-title"></div>
-            <div class="meta" id="viewer-meta"></div>
+    <div id="content-pane">
+        <div class="pane-header">
+            <button class="collapse-btn" onclick="closeContentPane()">×</button>
+            <div class="pane-title" id="pane-title"></div>
+            <div class="pane-meta" id="pane-meta"></div>
         </div>
-        <pre><code id="viewer-code"></code></pre>
+        <div class="pane-content" id="pane-content"></div>
     </div>
 
     <script>
@@ -286,7 +372,6 @@
         let simulation;
         let allNodes = [];
         let allLinks = [];
-        let allLinksOriginal = []; // Keep original link structure before D3 modifies it
         let visibleNodes = new Set();
         let collapsedNodes = new Set();
         let highlightedNode = null;
@@ -296,8 +381,6 @@
 
             allNodes = data.nodes;
             allLinks = data.links;
-            // Deep copy links before D3 modifies them
-            allLinksOriginal = JSON.parse(JSON.stringify(data.links));
 
             // Find root nodes - start with only top-level nodes
             let rootNodes;
@@ -305,21 +388,27 @@
                 // In monorepos, subproject nodes are roots
                 rootNodes = allNodes.filter(n => n.type === 'subproject');
             } else {
-                // Regular projects: prefer directories, fallback to files
+                // Regular projects: show root-level directories AND files
                 const dirNodes = allNodes.filter(n => n.type === 'directory');
                 const fileNodes = allNodes.filter(n => n.type === 'file');
 
-                if (dirNodes.length > 0) {
-                    // Show root-level directories (minimum depth)
-                    const minDirDepth = Math.min(...dirNodes.map(n => n.depth || 0));
-                    rootNodes = dirNodes.filter(n => (n.depth || 0) === minDirDepth);
-                } else if (fileNodes.length > 0) {
-                    // No directories, show root-level files
-                    const minFileDepth = Math.min(...fileNodes.map(n => n.depth || 0));
-                    rootNodes = fileNodes.filter(n => (n.depth || 0) === minFileDepth);
-                } else {
-                    // No directories or files, show all nodes
-                    rootNodes = allNodes;
+                // Find minimum depth for directories and files
+                const minDirDepth = dirNodes.length > 0
+                    ? Math.min(...dirNodes.map(n => n.depth))
+                    : Infinity;
+                const minFileDepth = fileNodes.length > 0
+                    ? Math.min(...fileNodes.map(n => n.depth))
+                    : Infinity;
+
+                // Include both root-level directories and root-level files
+                rootNodes = [
+                    ...dirNodes.filter(n => n.depth === minDirDepth),
+                    ...fileNodes.filter(n => n.depth === minFileDepth)
+                ];
+
+                // Fallback to all files if nothing found
+                if (rootNodes.length === 0) {
+                    rootNodes = fileNodes;
                 }
             }
 
@@ -337,48 +426,11 @@
                 visibleNodes.has(l.target.id || l.target)
             );
 
-            // Dynamic collision radius based on node type
-            const getNodeRadius = (d) => {
-                if (d.type === 'directory') return 35;
-                if (d.type === 'file') return 32;
-                if (d.type === 'subproject') return 38;
-                return d.complexity ? Math.min(20 + d.complexity * 2, 35) : 25;
-            };
-
-            // Dynamic link distance based on node types
-            const getLinkDistance = (link) => {
-                const source = typeof link.source === 'object' ? link.source : visibleNodesList.find(n => n.id === link.source);
-                const target = typeof link.target === 'object' ? link.target : visibleNodesList.find(n => n.id === link.target);
-
-                if (!source || !target) return 150;
-
-                // Longer distances for directory relationships
-                if (source.type === 'directory' || target.type === 'directory') return 200;
-                if (source.type === 'file' || target.type === 'file') return 150;
-                return 100;
-            };
-
             simulation = d3.forceSimulation(visibleNodesList)
-                .force("link", d3.forceLink(visibleLinks)
-                    .id(d => d.id)
-                    .distance(getLinkDistance)
-                    .strength(0.5))
-                .force("charge", d3.forceManyBody()
-                    .strength(d => {
-                        // Stronger repulsion for directories and files
-                        if (d.type === 'directory') return -800;
-                        if (d.type === 'file') return -600;
-                        return -400;
-                    })
-                    .distanceMax(500))
+                .force("link", d3.forceLink(visibleLinks).id(d => d.id).distance(100))
+                .force("charge", d3.forceManyBody().strength(-400))
                 .force("center", d3.forceCenter(width / 2, height / 2))
-                .force("collision", d3.forceCollide()
-                    .radius(getNodeRadius)
-                    .strength(0.9))
-                .force("x", d3.forceX(width / 2).strength(0.05))
-                .force("y", d3.forceY(height / 2).strength(0.05))
-                .alphaDecay(0.02)
-                .velocityDecay(0.3);
+                .force("collision", d3.forceCollide().radius(40));
 
             g.selectAll("*").remove();
 
@@ -404,46 +456,74 @@
                 .on("mouseover", showTooltip)
                 .on("mouseout", hideTooltip);
 
-            // Add circles
-            node.append("circle")
+            // Add shapes based on node type (circles for code, squares for docs)
+            const isDocNode = d => ['docstring', 'comment'].includes(d.type);
+
+            // Add circles for code nodes
+            node.filter(d => !isDocNode(d))
+                .append("circle")
                 .attr("r", d => {
-                    if (d.type === 'directory') return 25;
-                    if (d.type === 'file') return 22;
-                    if (d.type === 'subproject') return 28;
-                    return d.complexity ? Math.min(12 + d.complexity * 2, 25) : 15;
+                    if (d.type === 'subproject') return 20;
+                    if (d.type === 'directory') return 40;  // Largest for directory containers
+                    if (d.type === 'file') return 30;  // Larger transparent circle for files
+                    return d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
                 })
+                .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
+                .attr("stroke-width", d => hasChildren(d) ? 2 : 0)
+                .style("fill", d => d.color || null);  // Use custom color if available
+
+            // Add rectangles for document nodes
+            node.filter(d => isDocNode(d))
+                .append("rect")
+                .attr("width", d => {
+                    const size = d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    return size * 2;
+                })
+                .attr("height", d => {
+                    const size = d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    return size * 2;
+                })
+                .attr("x", d => {
+                    const size = d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    return -size;
+                })
+                .attr("y", d => {
+                    const size = d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    return -size;
+                })
+                .attr("rx", 2)  // Rounded corners
+                .attr("ry", 2)
+                .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
+                .attr("stroke-width", d => hasChildren(d) ? 2 : 0)
                 .style("fill", d => d.color || null);
 
-            // Add icons based on node type
-            node.append("text")
-                .attr("class", "node-icon")
-                .attr("dy", 15)
-                .text(d => {
-                    if (d.type === 'directory') return '📁';
-                    if (d.type === 'file') return '📄';
-                    if (d.type === 'class') return 'C';
-                    if (d.type === 'function') return 'ƒ';
-                    if (d.type === 'method') return 'm';
-                    if (d.type === 'module') return 'M';
-                    if (d.type === 'imports') return '⇄';
-                    return '•';
-                });
-
-            // Add expand/collapse indicator for nodes with children
+            // Add expand/collapse indicator
             node.filter(d => hasChildren(d))
                 .append("text")
                 .attr("class", "expand-indicator")
                 .attr("text-anchor", "middle")
-                .attr("dy", -20)
-                .style("font-size", "14px")
+                .attr("dy", 5)
+                .style("font-size", "16px")
                 .style("font-weight", "bold")
-                .style("fill", "#58a6ff")
+                .style("fill", "#ffffff")
                 .style("pointer-events", "none")
                 .text(d => collapsedNodes.has(d.id) ? "+" : "−");
 
-            // Add labels
+            // Add labels (show actual import statement for import nodes)
             node.append("text")
-                .text(d => getNodeLabel(d))
+                .text(d => {
+                    // Import nodes have type === 'imports'
+                    if (d.type === 'imports') {
+                        if (d.content) {
+                            // Extract first line of import statement
+                            const importLine = d.content.split('\n')[0].trim();
+                            // Truncate if too long (max 60 chars)
+                            return importLine.length > 60 ? importLine.substring(0, 57) + '...' : importLine;
+                        }
+                        return d.name;  // Fallback to name if no content
+                    }
+                    return d.name;
+                })
                 .attr("dy", 30);
 
             simulation.on("tick", () => {
@@ -459,30 +539,17 @@
             updateStats({nodes: visibleNodesList, links: visibleLinks, metadata: {total_files: allNodes.length}});
         }
 
-        function getNodeLabel(node) {
-            if (node.type === 'imports' && node.content) {
-                // Extract first import line
-                const lines = node.content.split('\n');
-                const firstImport = lines[0].trim();
-
-                // Truncate if longer than 60 characters
-                if (firstImport.length > 60) {
-                    return firstImport.substring(0, 57) + '...';
-                }
-                return firstImport;
-            }
-            return node.name;
-        }
-
         function hasChildren(node) {
-            // Use original links (not modified by D3)
-            return allLinksOriginal.some(l => l.source === node.id);
+            return allLinks.some(l => (l.source.id || l.source) === node.id);
         }
 
         function handleNodeClick(event, d) {
             event.stopPropagation();
 
-            // If node has children, toggle expansion
+            // Always show content pane when clicking any node
+            showContentPane(d);
+
+            // If node has children, also toggle expansion
             if (hasChildren(d)) {
                 if (collapsedNodes.has(d.id)) {
                     expandNode(d);
@@ -490,19 +557,16 @@
                     collapseNode(d);
                 }
                 renderGraph();
-            } else {
-                // Leaf node - show code viewer
-                showCodeViewer(d);
             }
         }
 
         function expandNode(node) {
             collapsedNodes.delete(node.id);
 
-            // Find direct children using original links (not modified by D3)
-            const children = allLinksOriginal
-                .filter(l => l.source === node.id)
-                .map(l => allNodes.find(n => n.id === l.target))
+            // Find direct children
+            const children = allLinks
+                .filter(l => (l.source.id || l.source) === node.id)
+                .map(l => allNodes.find(n => n.id === (l.target.id || l.target)))
                 .filter(n => n);
 
             children.forEach(child => {
@@ -514,11 +578,11 @@
         function collapseNode(node) {
             collapsedNodes.add(node.id);
 
-            // Hide all descendants recursively using original links
+            // Hide all descendants recursively
             function hideDescendants(parentId) {
-                const children = allLinksOriginal
-                    .filter(l => l.source === parentId)
-                    .map(l => l.target);
+                const children = allLinks
+                    .filter(l => (l.source.id || l.source) === parentId)
+                    .map(l => l.target.id || l.target);
 
                 children.forEach(childId => {
                     visibleNodes.delete(childId);
@@ -601,19 +665,30 @@
             }
         }
 
-        function showCodeViewer(node) {
+        function showContentPane(node) {
             // Highlight the node
             highlightedNode = node;
             renderGraph();
 
-            // Populate code viewer
-            const viewer = document.getElementById('code-viewer');
-            const title = document.getElementById('viewer-title');
-            const meta = document.getElementById('viewer-meta');
-            const code = document.getElementById('viewer-code');
+            // Populate content pane
+            const pane = document.getElementById('content-pane');
+            const title = document.getElementById('pane-title');
+            const meta = document.getElementById('pane-meta');
+            const content = document.getElementById('pane-content');
 
-            title.textContent = getNodeLabel(node);
+            // Set title with actual import statement for import nodes
+            if (node.type === 'imports') {
+                if (node.content) {
+                    const importLine = node.content.split('\n')[0].trim();
+                    title.textContent = importLine;
+                } else {
+                    title.textContent = `Import: ${node.name}`;
+                }
+            } else {
+                title.textContent = node.name;
+            }
 
+            // Set metadata
             let metaText = `${node.type} • ${node.file_path}`;
             if (node.start_line) {
                 metaText += ` • Lines ${node.start_line}-${node.end_line}`;
@@ -623,25 +698,178 @@
             }
             meta.textContent = metaText;
 
-            // Show content if available
-            if (node.type === 'imports' && node.content) {
-                // For imports, show the import statement prominently
-                code.textContent = node.content;
-            } else if (node.content) {
-                code.textContent = node.content;
-            } else if (node.docstring) {
-                code.textContent = `// Docstring:
-${node.docstring}`;
+            // Display content based on node type
+            if (node.type === 'directory') {
+                showDirectoryContents(node, content);
+            } else if (node.type === 'file') {
+                showFileContents(node, content);
+            } else if (node.type === 'imports') {
+                // Import nodes show import details
+                showImportDetails(node, content);
             } else {
-                code.textContent = '// No content available';
+                // Class, function, method, code nodes
+                showCodeContent(node, content);
             }
 
-            viewer.classList.add('visible');
+            pane.classList.add('visible');
         }
 
-        function closeCodeViewer() {
-            const viewer = document.getElementById('code-viewer');
-            viewer.classList.remove('visible');
+        function showDirectoryContents(node, container) {
+            // Find all direct children of this directory
+            const children = allLinks
+                .filter(l => (l.source.id || l.source) === node.id)
+                .map(l => allNodes.find(n => n.id === (l.target.id || l.target)))
+                .filter(n => n);
+
+            if (children.length === 0) {
+                container.innerHTML = '<p style="color: #8b949e;">Empty directory</p>';
+                return;
+            }
+
+            // Group by type
+            const files = children.filter(n => n.type === 'file');
+            const subdirs = children.filter(n => n.type === 'directory');
+            const chunks = children.filter(n => n.type !== 'file' && n.type !== 'directory');
+
+            let html = '<ul class="directory-list">';
+
+            // Show subdirectories first
+            subdirs.forEach(child => {
+                html += `
+                    <li>
+                        <span class="item-icon">📁</span>
+                        ${child.name}
+                        <span class="item-type">directory</span>
+                    </li>
+                `;
+            });
+
+            // Then files
+            files.forEach(child => {
+                html += `
+                    <li>
+                        <span class="item-icon">📄</span>
+                        ${child.name}
+                        <span class="item-type">file</span>
+                    </li>
+                `;
+            });
+
+            // Then code chunks
+            chunks.forEach(child => {
+                const icon = child.type === 'class' ? '🔷' : child.type === 'function' ? '⚡' : '📝';
+                html += `
+                    <li>
+                        <span class="item-icon">${icon}</span>
+                        ${child.name}
+                        <span class="item-type">${child.type}</span>
+                    </li>
+                `;
+            });
+
+            html += '</ul>';
+
+            // Add summary
+            const summary = `<p style="color: #8b949e; font-size: 11px; margin-top: 16px;">
+                Total: ${children.length} items (${subdirs.length} directories, ${files.length} files, ${chunks.length} code chunks)
+            </p>`;
+
+            container.innerHTML = html + summary;
+        }
+
+        function showFileContents(node, container) {
+            // Find all chunks in this file
+            const fileChunks = allLinks
+                .filter(l => (l.source.id || l.source) === node.id)
+                .map(l => allNodes.find(n => n.id === (l.target.id || l.target)))
+                .filter(n => n);
+
+            if (fileChunks.length === 0) {
+                container.innerHTML = '<p style="color: #8b949e;">No code chunks found in this file</p>';
+                return;
+            }
+
+            // Collect all content from chunks and sort by line number
+            const sortedChunks = fileChunks
+                .filter(c => c.content)
+                .sort((a, b) => a.start_line - b.start_line);
+
+            if (sortedChunks.length === 0) {
+                container.innerHTML = '<p style="color: #8b949e;">File content not available</p>';
+                return;
+            }
+
+            // Combine all chunks to show full file
+            const fullContent = sortedChunks.map(c => c.content).join('\n\n');
+
+            container.innerHTML = `
+                <p style="color: #8b949e; font-size: 11px; margin-bottom: 12px;">
+                    Contains ${fileChunks.length} code chunks
+                </p>
+                <pre><code>${escapeHtml(fullContent)}</code></pre>
+            `;
+        }
+
+        function showImportDetails(node, container) {
+            // Import nodes (type === 'imports') - show import content prominently
+            const importHtml = `
+                <div class="import-details">
+                    ${node.content ? `
+                        <div style="margin-bottom: 16px;">
+                            <div class="detail-label" style="margin-bottom: 8px;">Import Statement:</div>
+                            <pre><code>${escapeHtml(node.content)}</code></pre>
+                        </div>
+                    ` : '<p style="color: #8b949e;">No import content available</p>'}
+                    <div class="detail-row">
+                        <span class="detail-label">File:</span> ${node.file_path}
+                    </div>
+                    ${node.start_line ? `
+                        <div class="detail-row">
+                            <span class="detail-label">Location:</span> Lines ${node.start_line}-${node.end_line}
+                        </div>
+                    ` : ''}
+                    ${node.language ? `
+                        <div class="detail-row">
+                            <span class="detail-label">Language:</span> ${node.language}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+
+            container.innerHTML = importHtml;
+        }
+
+        function showCodeContent(node, container) {
+            // Show code for function, class, method, or code chunks
+            let html = '';
+
+            if (node.docstring) {
+                html += `
+                    <div style="margin-bottom: 16px; padding: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px;">
+                        <div style="font-size: 11px; color: #8b949e; margin-bottom: 8px; font-weight: 600;">DOCSTRING</div>
+                        <pre style="margin: 0; padding: 0; background: transparent; border: none;"><code>${escapeHtml(node.docstring)}</code></pre>
+                    </div>
+                `;
+            }
+
+            if (node.content) {
+                html += `<pre><code>${escapeHtml(node.content)}</code></pre>`;
+            } else {
+                html += '<p style="color: #8b949e;">No content available</p>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function closeContentPane() {
+            const pane = document.getElementById('content-pane');
+            pane.classList.remove('visible');
 
             // Remove highlight
             highlightedNode = null;
@@ -652,7 +880,7 @@ ${node.docstring}`;
         window.addEventListener('DOMContentLoaded', () => {
             const loadingEl = document.getElementById('loading');
 
-            fetch(`chunk-graph.json?t=${Date.now()}`)
+            fetch("chunk-graph.json")
                 .then(response => {
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
