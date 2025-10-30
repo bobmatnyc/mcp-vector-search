@@ -512,7 +512,12 @@ uv sync && uv pip install -e .
 # Run development tests
 ./scripts/dev-test.sh
 
-# Test CLI locally
+# Test CLI from source (recommended during development)
+./dev-mcp version        # Run from source instead of installed version
+./dev-mcp status         # Any command works
+./dev-mcp --verbose      # Shows Python interpreter info
+
+# Alternative: use uv run directly
 uv run mcp-vector-search version
 ```
 

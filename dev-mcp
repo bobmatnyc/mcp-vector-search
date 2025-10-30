@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+
+# ============================================================================
+# dev-mcp - Development CLI Runner
+# ============================================================================
+#
+# Purpose:
+#   Run mcp-vector-search CLI from source code instead of installed pipx version.
+#   This ensures changes to the source code are immediately reflected when testing.
+#
+# Usage:
+#   ./dev-mcp [command] [options]
+#
+# Examples:
+#   ./dev-mcp visualize serve
+#   ./dev-mcp index auto
+#   ./dev-mcp status
+#   ./dev-mcp search "authentication logic"
+#
+# How it works:
+#   - Uses 'uv run' to execute from source in src/mcp_vector_search/
+#   - Displays [DEV] prefix to indicate development mode
+#   - Shows which Python interpreter is being used
+#   - Forwards all arguments to the source CLI
+#
+# Requirements:
+#   - uv must be installed (https://github.com/astral-sh/uv)
+#   - Run from project root directory
+#
+# ============================================================================
+
+set -e  # Exit on error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Get the directory where this script lives
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Check if we're in the project root
+if [ ! -f "$SCRIPT_DIR/pyproject.toml" ]; then
+    echo -e "${RED}Error: Must run from project root directory${NC}"
+    echo "Expected to find pyproject.toml in: $SCRIPT_DIR"
+    exit 1
+fi
+
+# Check if uv is installed
+if ! command -v uv &> /dev/null; then
+    echo -e "${RED}Error: 'uv' is not installed${NC}"
+    echo "Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    echo "Or visit: https://github.com/astral-sh/uv"
+    exit 1
+fi
+
+# Show development mode indicator
+echo -e "${CYAN}[DEV]${NC} Running mcp-vector-search from source..."
+
+# Show Python info in verbose mode
+if [[ " $* " =~ " --verbose " ]] || [[ " $* " =~ " -v " ]]; then
+    echo -e "${BLUE}Project:${NC} $SCRIPT_DIR"
+    echo -e "${BLUE}Python:${NC} $(uv run python --version 2>&1 | head -n1)"
+    echo ""
+fi
+
+# Run the CLI from source using uv
+# The -m flag runs the module as a script
+# All arguments are forwarded using "$@"
+cd "$SCRIPT_DIR"
+uv run python -m mcp_vector_search.cli.main "$@"
+
+# Capture exit code from the CLI
+EXIT_CODE=$?
+
+# Show completion message for successful runs (except for --help or --version)
+if [ $EXIT_CODE -eq 0 ]; then
+    if [[ ! " $* " =~ " --help " ]] && [[ ! " $* " =~ " -h " ]] && \
+       [[ ! " $* " =~ " --version " ]] && [[ ! " $* " =~ " -v " ]]; then
+        echo -e "${GREEN}[DEV]${NC} Command completed successfully"
+    fi
+fi
+
+exit $EXIT_CODE
