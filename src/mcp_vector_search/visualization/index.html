@@ -1574,12 +1574,49 @@
                 }
             }
 
-            // Re-find siblings (already found parentLinks above)
-            // const parentLinks = allLinks.filter(l => {
-            //     const targetId = typeof l.target === 'object' ? l.target.id : l.target;
-            //     return targetId === node.id;
-            // });
+            // Find all chunks in this file
+            const fileChunks = allLinks
+                .filter(l => {
+                    const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                    return sourceId === node.id;
+                })
+                .map(l => {
+                    const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                    return allNodes.find(n => n.id === targetId);
+                })
+                .filter(n => n);
 
+            // Collect all content from chunks and sort by line number
+            const sortedChunks = fileChunks
+                .filter(c => c.content)
+                .sort((a, b) => a.start_line - b.start_line);
+
+            // SHOW CODE FIRST - Full File Content section at the top
+            if (sortedChunks.length > 0) {
+                const contentHeader = document.createElement('h4');
+                contentHeader.textContent = 'Full File Content';
+                contentHeader.style.color = '#8b949e';
+                contentHeader.style.marginTop = '0';
+                container.appendChild(contentHeader);
+
+                const contentInfo = document.createElement('p');
+                contentInfo.textContent = `Contains ${fileChunks.length} code chunks`;
+                contentInfo.style.color = '#8b949e';
+                contentInfo.style.fontSize = '11px';
+                contentInfo.style.marginBottom = '12px';
+                container.appendChild(contentInfo);
+
+                // Combine all chunks to show full file
+                const fullContent = sortedChunks.map(c => c.content).join('\n\n');
+                const pre = document.createElement('pre');
+                pre.className = 'code-editor';
+                const code = document.createElement('code');
+                code.textContent = fullContent;
+                pre.appendChild(code);
+                container.appendChild(pre);
+            }
+
+            // Re-find siblings (already found parentLinks above)
             let siblings = [];
             if (parentLinks.length > 0) {
                 const parentId = typeof parentLinks[0].source === 'object'
@@ -1599,12 +1636,12 @@
                     .filter(n => n && n.id !== node.id);  // Exclude self
             }
 
-            // Display siblings first if they exist
+            // Display siblings AFTER code content
             if (siblings.length > 0) {
                 const siblingsHeader = document.createElement('h4');
                 siblingsHeader.textContent = 'Siblings';
                 siblingsHeader.style.color = '#8b949e';
-                siblingsHeader.style.marginTop = '0';
+                siblingsHeader.style.marginTop = '25px';
                 container.appendChild(siblingsHeader);
 
                 const siblingsList = document.createElement('ul');
@@ -1648,25 +1685,12 @@
                 container.appendChild(siblingsList);
             }
 
-            // Find all chunks in this file
-            const fileChunks = allLinks
-                .filter(l => {
-                    const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
-                    return sourceId === node.id;
-                })
-                .map(l => {
-                    const targetId = typeof l.target === 'object' ? l.target.id : l.target;
-                    return allNodes.find(n => n.id === targetId);
-                })
-                .filter(n => n);
-
+            // Show chunks list AFTER code content
             if (fileChunks.length === 0) {
                 const emptyMsg = document.createElement('p');
                 emptyMsg.textContent = 'No code chunks found in this file';
                 emptyMsg.style.color = '#8b949e';
-                if (siblings.length > 0) {
-                    emptyMsg.style.marginTop = '20px';
-                }
+                emptyMsg.style.marginTop = '20px';
                 container.appendChild(emptyMsg);
                 return;
             }
@@ -1675,11 +1699,7 @@
             const chunksHeader = document.createElement('h4');
             chunksHeader.textContent = 'Code Chunks';
             chunksHeader.style.color = '#8b949e';
-            if (siblings.length > 0) {
-                chunksHeader.style.marginTop = '20px';
-            } else {
-                chunksHeader.style.marginTop = '0';
-            }
+            chunksHeader.style.marginTop = '20px';
             container.appendChild(chunksHeader);
 
             // Create clickable list of chunks
@@ -1739,36 +1759,6 @@
             });
 
             container.appendChild(chunksList);
-
-            // Collect all content from chunks and sort by line number
-            const sortedChunks = fileChunks
-                .filter(c => c.content)
-                .sort((a, b) => a.start_line - b.start_line);
-
-            if (sortedChunks.length > 0) {
-                // Add full content section
-                const contentHeader = document.createElement('h4');
-                contentHeader.textContent = 'Full File Content';
-                contentHeader.style.color = '#8b949e';
-                contentHeader.style.marginTop = '20px';
-                container.appendChild(contentHeader);
-
-                const contentInfo = document.createElement('p');
-                contentInfo.textContent = `Contains ${fileChunks.length} code chunks`;
-                contentInfo.style.color = '#8b949e';
-                contentInfo.style.fontSize = '11px';
-                contentInfo.style.marginBottom = '12px';
-                container.appendChild(contentInfo);
-
-                // Combine all chunks to show full file
-                const fullContent = sortedChunks.map(c => c.content).join('\n\n');
-                const pre = document.createElement('pre');
-                pre.className = 'code-editor';
-                const code = document.createElement('code');
-                code.textContent = fullContent;
-                pre.appendChild(code);
-                container.appendChild(pre);
-            }
 
             // Add references section AFTER content for applicable node types
             if (node.type === 'function' || node.type === 'class' || node.type === 'method' || node.type === 'code') {
