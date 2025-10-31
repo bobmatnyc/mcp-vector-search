@@ -437,7 +437,9 @@
         const markerTypes = [
             {id: "arrow-directory", color: "#58a6ff"},  // Blue for folder→file
             {id: "arrow-file", color: "#8b949e"},       // Gray for file→section
-            {id: "arrow-ast", color: "#a371f7"}         // Purple for section→AST
+            {id: "arrow-ast", color: "#a371f7"},        // Purple for section→AST
+            {id: "arrow-reference", color: "#58a6ff"},  // Blue for direct references
+            {id: "arrow-semantic", color: "#a371f7"}    // Purple for semantic references
         ];
 
         markerTypes.forEach(type => {
@@ -1258,98 +1260,6 @@
                 container.appendChild(siblingsList);
             }
 
-            // Add references section for applicable node types
-            if (node.type === 'function' || node.type === 'class' || node.type === 'method' || node.type === 'code') {
-                const directCallers = findReferences(node);
-                const semanticRefs = findSemanticReferences(node);
-
-                if (directCallers.length > 0 || semanticRefs.length > 0) {
-                    const refsHeader = document.createElement('h4');
-                    refsHeader.textContent = 'References';
-                    refsHeader.style.color = '#8b949e';
-                    refsHeader.style.marginTop = siblings.length > 0 ? '20px' : '0';
-                    container.appendChild(refsHeader);
-
-                    if (directCallers.length > 0) {
-                        const callersSubheader = document.createElement('h5');
-                        callersSubheader.textContent = 'Direct Callers (AST)';
-                        callersSubheader.style.color = '#58a6ff';
-                        callersSubheader.style.fontSize = '14px';
-                        callersSubheader.style.marginTop = '10px';
-                        container.appendChild(callersSubheader);
-
-                        const callersList = document.createElement('ul');
-                        callersList.className = 'directory-list';
-
-                        directCallers.forEach(caller => {
-                            const listItem = document.createElement('li');
-                            listItem.style.cursor = 'pointer';
-                            listItem.style.transition = 'background-color 0.2s';
-                            listItem.innerHTML = `
-                                <span class="item-icon">🔗</span>
-                                ${caller.name}
-                                <span class="item-type">${caller.type}</span>
-                            `;
-
-                            listItem.addEventListener('mouseover', function() {
-                                this.style.backgroundColor = '#30363d';
-                            });
-                            listItem.addEventListener('mouseout', function() {
-                                this.style.backgroundColor = 'transparent';
-                            });
-                            listItem.addEventListener('click', () => {
-                                showContentPane(caller);
-                                updateGraphForNode(caller);
-                            });
-
-                            callersList.appendChild(listItem);
-                        });
-
-                        container.appendChild(callersList);
-                    }
-
-                    if (semanticRefs.length > 0) {
-                        const semanticSubheader = document.createElement('h5');
-                        semanticSubheader.textContent = 'Semantic References';
-                        semanticSubheader.style.color = '#a371f7';
-                        semanticSubheader.style.fontSize = '14px';
-                        semanticSubheader.style.marginTop = '10px';
-                        container.appendChild(semanticSubheader);
-
-                        const semanticList = document.createElement('ul');
-                        semanticList.className = 'directory-list';
-
-                        semanticRefs.forEach(ref => {
-                            const listItem = document.createElement('li');
-                            listItem.style.cursor = 'pointer';
-                            listItem.style.transition = 'background-color 0.2s';
-                            listItem.style.borderLeft = '2px dotted #a371f7';
-                            listItem.style.paddingLeft = '10px';
-                            listItem.innerHTML = `
-                                <span class="item-icon">🔗</span>
-                                ${ref.name}
-                                <span class="item-type">${ref.type}</span>
-                            `;
-
-                            listItem.addEventListener('mouseover', function() {
-                                this.style.backgroundColor = '#30363d';
-                            });
-                            listItem.addEventListener('mouseout', function() {
-                                this.style.backgroundColor = 'transparent';
-                            });
-                            listItem.addEventListener('click', () => {
-                                showContentPane(ref);
-                                updateGraphForNode(ref);
-                            });
-
-                            semanticList.appendChild(listItem);
-                        });
-
-                        container.appendChild(semanticList);
-                    }
-                }
-            }
-
             // Display children
             if (children.length === 0) {
                 const emptyMsg = document.createElement('p');
@@ -1500,6 +1410,102 @@
             summary.style.marginTop = '16px';
             summary.textContent = `Total: ${children.length} items (${subdirs.length} directories, ${files.length} files, ${chunks.length} code chunks)`;
             container.appendChild(summary);
+
+            // Add references section AFTER content for applicable node types
+            if (node.type === 'function' || node.type === 'class' || node.type === 'method' || node.type === 'code') {
+                const directCallers = findReferences(node);
+                const semanticRefs = findSemanticReferences(node);
+
+                if (directCallers.length > 0 || semanticRefs.length > 0) {
+                    const refsHeader = document.createElement('h4');
+                    refsHeader.textContent = 'References';
+                    refsHeader.style.color = '#8b949e';
+                    refsHeader.style.marginTop = '25px';
+                    container.appendChild(refsHeader);
+
+                    if (directCallers.length > 0) {
+                        const callersSubheader = document.createElement('h5');
+                        callersSubheader.textContent = 'Direct Callers (AST)';
+                        callersSubheader.style.color = '#58a6ff';
+                        callersSubheader.style.fontSize = '14px';
+                        callersSubheader.style.marginTop = '10px';
+                        container.appendChild(callersSubheader);
+
+                        const callersList = document.createElement('ul');
+                        callersList.className = 'directory-list';
+
+                        directCallers.forEach(caller => {
+                            const listItem = document.createElement('li');
+                            listItem.style.cursor = 'pointer';
+                            listItem.style.transition = 'background-color 0.2s';
+                            listItem.innerHTML = `
+                                <span class="item-icon">🔗</span>
+                                ${caller.name}
+                                <span class="item-type">${caller.type}</span>
+                            `;
+
+                            listItem.addEventListener('mouseover', function() {
+                                this.style.backgroundColor = '#30363d';
+                                highlightReferencePath(caller, node);
+                            });
+                            listItem.addEventListener('mouseout', function() {
+                                this.style.backgroundColor = 'transparent';
+                                clearReferencePath();
+                            });
+                            listItem.addEventListener('click', () => {
+                                showContentPane(caller);
+                                updateGraphForNode(caller);
+                            });
+
+                            callersList.appendChild(listItem);
+                        });
+
+                        container.appendChild(callersList);
+                    }
+
+                    if (semanticRefs.length > 0) {
+                        const semanticSubheader = document.createElement('h5');
+                        semanticSubheader.textContent = 'Semantic References';
+                        semanticSubheader.style.color = '#a371f7';
+                        semanticSubheader.style.fontSize = '14px';
+                        semanticSubheader.style.marginTop = '10px';
+                        container.appendChild(semanticSubheader);
+
+                        const semanticList = document.createElement('ul');
+                        semanticList.className = 'directory-list';
+
+                        semanticRefs.forEach(ref => {
+                            const listItem = document.createElement('li');
+                            listItem.style.cursor = 'pointer';
+                            listItem.style.transition = 'background-color 0.2s';
+                            listItem.style.borderLeft = '2px dotted #a371f7';
+                            listItem.style.paddingLeft = '10px';
+                            listItem.innerHTML = `
+                                <span class="item-icon">🔗</span>
+                                ${ref.name}
+                                <span class="item-type">${ref.type}</span>
+                            `;
+
+                            listItem.addEventListener('mouseover', function() {
+                                this.style.backgroundColor = '#30363d';
+                                highlightReferencePath(ref, node, true);
+                            });
+                            listItem.addEventListener('mouseout', function() {
+                                this.style.backgroundColor = 'transparent';
+                                clearReferencePath();
+                            });
+                            listItem.addEventListener('click', () => {
+                                showContentPane(ref);
+                                updateGraphForNode(ref);
+                            });
+
+                            semanticList.appendChild(listItem);
+                        });
+
+                        container.appendChild(semanticList);
+                    }
+                }
+            }
         }
 
         function showFileContents(node, container) {
@@ -1619,98 +1625,6 @@
                 });
 
                 container.appendChild(siblingsList);
-            }
-
-            // Add references section for applicable node types
-            if (node.type === 'function' || node.type === 'class' || node.type === 'method' || node.type === 'code') {
-                const directCallers = findReferences(node);
-                const semanticRefs = findSemanticReferences(node);
-
-                if (directCallers.length > 0 || semanticRefs.length > 0) {
-                    const refsHeader = document.createElement('h4');
-                    refsHeader.textContent = 'References';
-                    refsHeader.style.color = '#8b949e';
-                    refsHeader.style.marginTop = siblings.length > 0 ? '20px' : '0';
-                    container.appendChild(refsHeader);
-
-                    if (directCallers.length > 0) {
-                        const callersSubheader = document.createElement('h5');
-                        callersSubheader.textContent = 'Direct Callers (AST)';
-                        callersSubheader.style.color = '#58a6ff';
-                        callersSubheader.style.fontSize = '14px';
-                        callersSubheader.style.marginTop = '10px';
-                        container.appendChild(callersSubheader);
-
-                        const callersList = document.createElement('ul');
-                        callersList.className = 'directory-list';
-
-                        directCallers.forEach(caller => {
-                            const listItem = document.createElement('li');
-                            listItem.style.cursor = 'pointer';
-                            listItem.style.transition = 'background-color 0.2s';
-                            listItem.innerHTML = `
-                                <span class="item-icon">🔗</span>
-                                ${caller.name}
-                                <span class="item-type">${caller.type}</span>
-                            `;
-
-                            listItem.addEventListener('mouseover', function() {
-                                this.style.backgroundColor = '#30363d';
-                            });
-                            listItem.addEventListener('mouseout', function() {
-                                this.style.backgroundColor = 'transparent';
-                            });
-                            listItem.addEventListener('click', () => {
-                                showContentPane(caller);
-                                updateGraphForNode(caller);
-                            });
-
-                            callersList.appendChild(listItem);
-                        });
-
-                        container.appendChild(callersList);
-                    }
-
-                    if (semanticRefs.length > 0) {
-                        const semanticSubheader = document.createElement('h5');
-                        semanticSubheader.textContent = 'Semantic References';
-                        semanticSubheader.style.color = '#a371f7';
-                        semanticSubheader.style.fontSize = '14px';
-                        semanticSubheader.style.marginTop = '10px';
-                        container.appendChild(semanticSubheader);
-
-                        const semanticList = document.createElement('ul');
-                        semanticList.className = 'directory-list';
-
-                        semanticRefs.forEach(ref => {
-                            const listItem = document.createElement('li');
-                            listItem.style.cursor = 'pointer';
-                            listItem.style.transition = 'background-color 0.2s';
-                            listItem.style.borderLeft = '2px dotted #a371f7';
-                            listItem.style.paddingLeft = '10px';
-                            listItem.innerHTML = `
-                                <span class="item-icon">🔗</span>
-                                ${ref.name}
-                                <span class="item-type">${ref.type}</span>
-                            `;
-
-                            listItem.addEventListener('mouseover', function() {
-                                this.style.backgroundColor = '#30363d';
-                            });
-                            listItem.addEventListener('mouseout', function() {
-                                this.style.backgroundColor = 'transparent';
-                            });
-                            listItem.addEventListener('click', () => {
-                                showContentPane(ref);
-                                updateGraphForNode(ref);
-                            });
-
-                            semanticList.appendChild(listItem);
-                        });
-
-                        container.appendChild(semanticList);
-                    }
-                }
             }
 
             // Find all chunks in this file
@@ -1833,41 +1747,8 @@
                 pre.appendChild(code);
                 container.appendChild(pre);
             }
-        }
 
-        function showImportDetails(node, container) {
-            // Import nodes (type === 'imports') - show import content prominently
-            const importHtml = `
-                <div class="import-details">
-                    ${node.content ? `
-                        <div style="margin-bottom: 16px;">
-                            <div class="detail-label" style="margin-bottom: 8px;">Import Statement:</div>
-                            <pre><code>${escapeHtml(node.content)}</code></pre>
-                        </div>
-                    ` : '<p style="color: #8b949e;">No import content available</p>'}
-                    <div class="detail-row">
-                        <span class="detail-label">File:</span> ${node.file_path}
-                    </div>
-                    ${node.start_line ? `
-                        <div class="detail-row">
-                            <span class="detail-label">Location:</span> Lines ${node.start_line}-${node.end_line}
-                        </div>
-                    ` : ''}
-                    ${node.language ? `
-                        <div class="detail-row">
-                            <span class="detail-label">Language:</span> ${node.language}
-                        </div>
-                    ` : ''}
-                </div>
-            `;
-
-            container.innerHTML = importHtml;
-        }
-
-        function showCodeContent(node, container) {
-            container.innerHTML = '';  // Clear first
-
-            // Add references section for applicable node types
+            // Add references section AFTER content for applicable node types
             if (node.type === 'function' || node.type === 'class' || node.type === 'method' || node.type === 'code') {
                 const directCallers = findReferences(node);
                 const semanticRefs = findSemanticReferences(node);
@@ -1876,8 +1757,7 @@
                     const refsHeader = document.createElement('h4');
                     refsHeader.textContent = 'References';
                     refsHeader.style.color = '#8b949e';
-                    refsHeader.style.marginTop = '0';
-                    refsHeader.style.marginBottom = '10px';
+                    refsHeader.style.marginTop = '25px';
                     container.appendChild(refsHeader);
 
                     if (directCallers.length > 0) {
@@ -1903,9 +1783,11 @@
 
                             listItem.addEventListener('mouseover', function() {
                                 this.style.backgroundColor = '#30363d';
+                                highlightReferencePath(caller, node);
                             });
                             listItem.addEventListener('mouseout', function() {
                                 this.style.backgroundColor = 'transparent';
+                                clearReferencePath();
                             });
                             listItem.addEventListener('click', () => {
                                 showContentPane(caller);
@@ -1943,9 +1825,11 @@
 
                             listItem.addEventListener('mouseover', function() {
                                 this.style.backgroundColor = '#30363d';
+                                highlightReferencePath(ref, node, true);
                             });
                             listItem.addEventListener('mouseout', function() {
                                 this.style.backgroundColor = 'transparent';
+                                clearReferencePath();
                             });
                             listItem.addEventListener('click', () => {
                                 showContentPane(ref);
@@ -1957,16 +1841,41 @@
 
                         container.appendChild(semanticList);
                     }
-
-                    // Add separator
-                    const separator = document.createElement('h4');
-                    separator.textContent = 'Code Content';
-                    separator.style.color = '#8b949e';
-                    separator.style.marginTop = '20px';
-                    separator.style.marginBottom = '10px';
-                    container.appendChild(separator);
                 }
             }
+        }
+
+        function showImportDetails(node, container) {
+            // Import nodes (type === 'imports') - show import content prominently
+            const importHtml = `
+                <div class="import-details">
+                    ${node.content ? `
+                        <div style="margin-bottom: 16px;">
+                            <div class="detail-label" style="margin-bottom: 8px;">Import Statement:</div>
+                            <pre><code>${escapeHtml(node.content)}</code></pre>
+                        </div>
+                    ` : '<p style="color: #8b949e;">No import content available</p>'}
+                    <div class="detail-row">
+                        <span class="detail-label">File:</span> ${node.file_path}
+                    </div>
+                    ${node.start_line ? `
+                        <div class="detail-row">
+                            <span class="detail-label">Location:</span> Lines ${node.start_line}-${node.end_line}
+                        </div>
+                    ` : ''}
+                    ${node.language ? `
+                        <div class="detail-row">
+                            <span class="detail-label">Language:</span> ${node.language}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+
+            container.innerHTML = importHtml;
+        }
+
+        function showCodeContent(node, container) {
+            container.innerHTML = '';  // Clear first
 
             // Show code for function, class, method, or code chunks
             if (node.docstring) {
@@ -2000,12 +1909,156 @@
                 noContent.style.color = '#8b949e';
                 container.appendChild(noContent);
             }
+
+            // Add references section AFTER content for applicable node types
+            if (node.type === 'function' || node.type === 'class' || node.type === 'method' || node.type === 'code') {
+                const directCallers = findReferences(node);
+                const semanticRefs = findSemanticReferences(node);
+
+                if (directCallers.length > 0 || semanticRefs.length > 0) {
+                    const refsHeader = document.createElement('h4');
+                    refsHeader.textContent = 'References';
+                    refsHeader.style.color = '#8b949e';
+                    refsHeader.style.marginTop = '25px';
+                    container.appendChild(refsHeader);
+
+                    if (directCallers.length > 0) {
+                        const callersSubheader = document.createElement('h5');
+                        callersSubheader.textContent = 'Direct Callers (AST)';
+                        callersSubheader.style.color = '#58a6ff';
+                        callersSubheader.style.fontSize = '14px';
+                        callersSubheader.style.marginTop = '10px';
+                        container.appendChild(callersSubheader);
+
+                        const callersList = document.createElement('ul');
+                        callersList.className = 'directory-list';
+
+                        directCallers.forEach(caller => {
+                            const listItem = document.createElement('li');
+                            listItem.style.cursor = 'pointer';
+                            listItem.style.transition = 'background-color 0.2s';
+                            listItem.innerHTML = `
+                                <span class="item-icon">🔗</span>
+                                ${caller.name}
+                                <span class="item-type">${caller.type}</span>
+                            `;
+
+                            listItem.addEventListener('mouseover', function() {
+                                this.style.backgroundColor = '#30363d';
+                                highlightReferencePath(caller, node);
+                            });
+                            listItem.addEventListener('mouseout', function() {
+                                this.style.backgroundColor = 'transparent';
+                                clearReferencePath();
+                            });
+                            listItem.addEventListener('click', () => {
+                                showContentPane(caller);
+                                updateGraphForNode(caller);
+                            });
+
+                            callersList.appendChild(listItem);
+                        });
+
+                        container.appendChild(callersList);
+                    }
+
+                    if (semanticRefs.length > 0) {
+                        const semanticSubheader = document.createElement('h5');
+                        semanticSubheader.textContent = 'Semantic References';
+                        semanticSubheader.style.color = '#a371f7';
+                        semanticSubheader.style.fontSize = '14px';
+                        semanticSubheader.style.marginTop = '10px';
+                        container.appendChild(semanticSubheader);
+
+                        const semanticList = document.createElement('ul');
+                        semanticList.className = 'directory-list';
+
+                        semanticRefs.forEach(ref => {
+                            const listItem = document.createElement('li');
+                            listItem.style.cursor = 'pointer';
+                            listItem.style.transition = 'background-color 0.2s';
+                            listItem.style.borderLeft = '2px dotted #a371f7';
+                            listItem.style.paddingLeft = '10px';
+                            listItem.innerHTML = `
+                                <span class="item-icon">🔗</span>
+                                ${ref.name}
+                                <span class="item-type">${ref.type}</span>
+                            `;
+
+                            listItem.addEventListener('mouseover', function() {
+                                this.style.backgroundColor = '#30363d';
+                                highlightReferencePath(ref, node, true);
+                            });
+                            listItem.addEventListener('mouseout', function() {
+                                this.style.backgroundColor = 'transparent';
+                                clearReferencePath();
+                            });
+                            listItem.addEventListener('click', () => {
+                                showContentPane(ref);
+                                updateGraphForNode(ref);
+                            });
+
+                            semanticList.appendChild(listItem);
+                        });
+
+                        container.appendChild(semanticList);
+                    }
+                }
+            }
         }
 
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        // Visual indicators for reference connections
+        let referenceLine = null;
+
+        function highlightReferencePath(fromNode, toNode, isSemantic = false) {
+            // Check if both nodes are currently visible in the graph
+            const fromVisible = visibleNodes.has(fromNode.id);
+            const toVisible = visibleNodes.has(toNode.id);
+
+            if (!fromVisible || !toVisible) {
+                return; // Can't draw line if nodes aren't visible
+            }
+
+            // Find the actual D3 nodes to get their positions
+            const fromD3Node = d3.selectAll('.node').filter(d => d.id === fromNode.id).datum();
+            const toD3Node = d3.selectAll('.node').filter(d => d.id === toNode.id).datum();
+
+            if (!fromD3Node || !toD3Node || !fromD3Node.x || !toD3Node.x) {
+                return; // Nodes don't have positions yet
+            }
+
+            // Remove any existing reference line
+            clearReferencePath();
+
+            // Create a dotted line from caller to current node
+            referenceLine = g.append("line")
+                .attr("class", "reference-line")
+                .attr("x1", fromD3Node.x)
+                .attr("y1", fromD3Node.y)
+                .attr("x2", toD3Node.x)
+                .attr("y2", toD3Node.y)
+                .attr("stroke", isSemantic ? "#a371f7" : "#58a6ff")
+                .attr("stroke-width", 3)
+                .attr("stroke-dasharray", isSemantic ? "5,5" : "10,5")
+                .attr("stroke-opacity", 0.8)
+                .attr("pointer-events", "none")
+                .style("z-index", 1000);
+
+            // Add an arrowhead marker if needed
+            referenceLine.attr("marker-end", isSemantic ? "url(#arrow-semantic)" : "url(#arrow-reference)");
+        }
+
+        function clearReferencePath() {
+            if (referenceLine) {
+                referenceLine.remove();
+                referenceLine = null;
+            }
         }
 
         function closeContentPane() {
