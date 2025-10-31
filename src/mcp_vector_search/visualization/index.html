@@ -336,6 +336,27 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
+
+        /* Code editor styling - white background for code content */
+        .code-editor {
+            background-color: #ffffff !important;
+            color: #24292f !important;
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
+            padding: 16px;
+            margin-top: 10px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            overflow-x: auto;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+        }
+
+        .code-editor code {
+            background-color: transparent !important;
+            color: inherit !important;
+            padding: 0 !important;
+        }
     </style>
 </head>
 <body>
@@ -1742,6 +1763,7 @@
                 // Combine all chunks to show full file
                 const fullContent = sortedChunks.map(c => c.content).join('\n\n');
                 const pre = document.createElement('pre');
+                pre.className = 'code-editor';
                 const code = document.createElement('code');
                 code.textContent = fullContent;
                 pre.appendChild(code);
@@ -1852,7 +1874,7 @@
                     ${node.content ? `
                         <div style="margin-bottom: 16px;">
                             <div class="detail-label" style="margin-bottom: 8px;">Import Statement:</div>
-                            <pre><code>${escapeHtml(node.content)}</code></pre>
+                            <pre class="code-editor"><code>${escapeHtml(node.content)}</code></pre>
                         </div>
                     ` : '<p style="color: #8b949e;">No import content available</p>'}
                     <div class="detail-row">
@@ -1899,6 +1921,7 @@
 
             if (node.content) {
                 const pre = document.createElement('pre');
+                pre.className = 'code-editor';
                 const code = document.createElement('code');
                 code.textContent = node.content;
                 pre.appendChild(code);
