@@ -142,15 +142,15 @@
         }
 
         .link {
-            stroke: #30363d;
-            stroke-opacity: 0.6;
-            stroke-width: 1.5px;
+            stroke: #58a6ff;
+            stroke-opacity: 0.8;
+            stroke-width: 3px;
         }
 
         .link.dependency {
             stroke: #d29922;
             stroke-opacity: 0.8;
-            stroke-width: 2px;
+            stroke-width: 3px;
             stroke-dasharray: 5,5;
         }
 
@@ -314,6 +314,28 @@
             stroke-width: 3px;
             filter: drop-shadow(0 0 8px #f0e68c);
         }
+
+        .control-button {
+            padding: 8px 12px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-top: 8px;
+            width: 100%;
+        }
+
+        .control-button:hover {
+            background: #30363d;
+        }
+
+        .control-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -322,6 +344,10 @@
 
         <div class="control-group" id="loading">
             <label>⏳ Loading graph data...</label>
+        </div>
+
+        <div class="control-group">
+            <button id="focus-button" class="control-button" disabled>📍 Focus on Selected</button>
         </div>
 
         <h3>Legend</h3>
@@ -387,19 +413,46 @@
 
         const svg = d3.select("#graph")
             .attr("width", width)
-            .attr("height", height)
-            .call(d3.zoom().on("zoom", (event) => {
-                g.attr("transform", event.transform);
-            }));
+            .attr("height", height);
 
         const g = svg.append("g");
         const tooltip = d3.select("#tooltip");
+
+        const zoom = d3.zoom().on("zoom", (event) => {
+            g.attr("transform", event.transform);
+        });
+        svg.call(zoom);
+
         let simulation;
         let allNodes = [];
         let allLinks = [];
         let visibleNodes = new Set();
         let collapsedNodes = new Set();
         let highlightedNode = null;
+        let currentNode = null;  // Track currently selected node
+
+        // Add arrow markers for different relationship types
+        const defs = svg.append("defs");
+
+        const markerTypes = [
+            {id: "arrow-directory", color: "#58a6ff"},  // Blue for folder→file
+            {id: "arrow-file", color: "#8b949e"},       // Gray for file→section
+            {id: "arrow-ast", color: "#a371f7"}         // Purple for section→AST
+        ];
+
+        markerTypes.forEach(type => {
+            defs.append("marker")
+                .attr("id", type.id)
+                .attr("viewBox", "0 -5 10 10")
+                .attr("refX", 20)
+                .attr("refY", 0)
+                .attr("markerWidth", 6)
+                .attr("markerHeight", 6)
+                .attr("orient", "auto")
+                .append("path")
+                .attr("d", "M0,-5L10,0L0,5")
+                .attr("fill", type.color);
+        });
 
         function visualizeGraph(data) {
             g.selectAll("*").remove();
@@ -413,36 +466,36 @@
                 // In monorepos, subproject nodes are roots
                 rootNodes = allNodes.filter(n => n.type === 'subproject');
             } else {
-                // Regular projects: Find root nodes by graph structure
-                const dirNodes = allNodes.filter(n => n.type === 'directory');
-                const fileNodes = allNodes.filter(n => n.type === 'file');
-
-                // Find minimum depth for directories and files (for fallback)
-                let minDirDepth = Infinity;
-                let minFileDepth = Infinity;
-
-                dirNodes.forEach(d => {
-                    if (d.depth < minDirDepth) minDirDepth = d.depth;
-                });
-
-                fileNodes.forEach(f => {
-                    if (f.depth < minFileDepth) minFileDepth = f.depth;
-                });
-
-                // CORRECT: Find root nodes by checking graph structure
+                // Regular projects: Find root nodes by checking graph structure
                 // Root nodes are nodes with no incoming links (no parent)
                 const targetIds = new Set(allLinks.map(link => link.target));
-                rootNodes = allNodes.filter(node => !targetIds.has(node.id));
+                const allRootNodes = allNodes.filter(node => !targetIds.has(node.id));
 
-                console.log(`Root nodes found via links: ${rootNodes.length}`, rootNodes.map(n => n.name));
+                console.log(`All root nodes found via links: ${allRootNodes.length}`, allRootNodes.map(n => `${n.name} (${n.type})`));
+
+                // Filter to show only directories and files at root
+                // Exclude orphaned files (files with no directory parent) from initial view
+                // These are typically config/doc files at project root
+                rootNodes = allRootNodes.filter(n => {
+                    // Include all directories
+                    if (n.type === 'directory') return true;
+
+                    // Include files only if they're in a directory structure
+                    // Exclude standalone files with no dir_path (project root files)
+                    if (n.type === 'file' && n.dir_path === null) {
+                        console.log(`Filtering out orphaned root file: ${n.name}`);
+                        return false;
+                    }
+
+                    return false;  // Exclude all other types (classes, functions, etc.)
+                });
+
+                console.log(`Filtered root nodes (directories only): ${rootNodes.length}`, rootNodes.map(n => n.name));
 
                 // Fallback only if we got 0 root nodes (shouldn't happen with correct data)
                 if (rootNodes.length === 0) {
-                    console.warn('No root nodes found via links, falling back to depth-based detection');
-                    rootNodes = [
-                        ...dirNodes.filter(n => n.depth === minDirDepth),
-                        ...fileNodes.filter(n => n.depth === minFileDepth)
-                    ];
+                    console.warn('No root nodes after filtering, using all root nodes');
+                    rootNodes = allRootNodes;
                 }
             }
 
@@ -468,10 +521,11 @@
             const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
             console.log(`Rendering ${visibleNodesList.length} visible nodes`);
 
-            const visibleLinks = allLinks.filter(l =>
-                visibleNodes.has(l.source.id || l.source) &&
-                visibleNodes.has(l.target.id || l.target)
-            );
+            const visibleLinks = allLinks.filter(l => {
+                const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                return visibleNodes.has(sourceId) && visibleNodes.has(targetId);
+            });
             console.log(`Rendering ${visibleLinks.length} visible links`);
 
             simulation = d3.forceSimulation(visibleNodesList)
@@ -486,7 +540,33 @@
                 .selectAll("line")
                 .data(visibleLinks)
                 .join("line")
-                .attr("class", d => d.type === "dependency" ? "link dependency" : "link");
+                .attr("class", d => d.type === "dependency" ? "link dependency" : "link")
+                .attr("marker-end", d => {
+                    const sourceId = typeof d.source === 'object' ? d.source.id : d.source;
+                    const targetId = typeof d.target === 'object' ? d.target.id : d.target;
+                    const source = allNodes.find(n => n.id === sourceId);
+                    const target = allNodes.find(n => n.id === targetId);
+
+                    if (source && target) {
+                        if (source.type === 'directory' && target.type === 'file') {
+                            return "url(#arrow-directory)";
+                        } else if (source.type === 'file' && ['class', 'function', 'method', 'imports'].includes(target.type)) {
+                            return "url(#arrow-file)";
+                        } else {
+                            return "url(#arrow-ast)";
+                        }
+                    }
+                    return "url(#arrow-ast)";
+                })
+                .attr("stroke", d => {
+                    const sourceId = typeof d.source === 'object' ? d.source.id : d.source;
+                    const source = allNodes.find(n => n.id === sourceId);
+                    if (source) {
+                        if (source.type === 'directory') return "#58a6ff";
+                        if (source.type === 'file') return "#8b949e";
+                    }
+                    return "#a371f7";
+                });
 
             const node = g.append("g")
                 .selectAll("g")
@@ -518,7 +598,8 @@
                 })
                 .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
                 .attr("stroke-width", d => hasChildren(d) ? 3 : 0)
-                .style("fill", d => d.color || null);  // Use custom color if available
+                .style("fill", d => d.color || null)  // Use custom color if available
+                .style("cursor", "pointer");  // Ensure cursor shows pointer on all nodes
 
             // Add rectangles for document nodes
             node.filter(d => isDocNode(d))
@@ -543,17 +624,31 @@
                 .attr("ry", 2)
                 .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
                 .attr("stroke-width", d => hasChildren(d) ? 3 : 0)
-                .style("fill", d => d.color || null);
+                .style("fill", d => d.color || null)
+                .style("cursor", "pointer");  // Ensure cursor shows pointer on all nodes
 
-            // Add expand/collapse indicator
+            // Add expand/collapse indicator - circle background below node name
+            node.filter(d => hasChildren(d))
+                .append("circle")
+                .attr("class", "expand-circle")
+                .attr("r", 14)
+                .attr("cy", 35)  // Position below the text
+                .attr("fill", "#2c2c2c")
+                .attr("stroke", "#ffeb3b")
+                .attr("stroke-width", 2.5)
+                .style("cursor", "pointer")
+                .style("pointer-events", "all");
+
+            // Add +/- text inside the circle
             node.filter(d => hasChildren(d))
                 .append("text")
                 .attr("class", "expand-indicator")
+                .attr("y", 35)  // Same position as circle
+                .attr("dy", 6)  // Center vertically within circle
                 .attr("text-anchor", "middle")
-                .attr("dy", 5)
-                .style("font-size", "16px")
+                .style("font-size", "22px")
                 .style("font-weight", "bold")
-                .style("fill", "#ffffff")
+                .style("fill", "#ffeb3b")
                 .style("pointer-events", "none")
                 .text(d => collapsedNodes.has(d.id) ? "+" : "−");
 
@@ -575,7 +670,7 @@
                     return '•';
                 });
 
-            // Add labels (show actual import statement for import nodes)
+            // Add labels (show actual import statement for import nodes, better names for text chunks)
             node.append("text")
                 .text(d => {
                     // Import nodes have type === 'imports'
@@ -588,6 +683,45 @@
                         }
                         return d.name;  // Fallback to name if no content
                     }
+
+                    // Text chunk nodes - show content preview instead of just line numbers
+                    if (d.type === 'text' && d.content) {
+                        // Extract first line of content
+                        const firstLine = d.content.split('\n')[0].trim();
+                        if (firstLine.length > 0) {
+                            // Truncate if too long (max 40 chars for graph labels)
+                            const preview = firstLine.length > 40 ? firstLine.substring(0, 37) + '...' : firstLine;
+                            return preview;
+                        }
+                        // Fallback to line numbers if content is empty
+                        if (d.start_line) {
+                            return `L${d.start_line}-${d.end_line}`;
+                        }
+                        return d.name;
+                    }
+
+                    // Code chunk nodes - show parent context if available
+                    if (d.type === 'code' && d.start_line) {
+                        // Try to find parent class/function by looking at incoming links
+                        const parentLink = allLinks.find(l => {
+                            const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                            return targetId === d.id;
+                        });
+
+                        if (parentLink) {
+                            const sourceId = typeof parentLink.source === 'object' ? parentLink.source.id : parentLink.source;
+                            const parentNode = allNodes.find(n => n.id === sourceId);
+
+                            if (parentNode && ['class', 'function', 'method'].includes(parentNode.type)) {
+                                // Show parent context with line numbers
+                                return `${parentNode.name}:L${d.start_line}-${d.end_line}`;
+                            }
+                        }
+
+                        // Fallback: just show line numbers if no parent found
+                        return `L${d.start_line}-${d.end_line}`;
+                    }
+
                     return d.name;
                 })
                 .attr("dy", 30);
@@ -603,6 +737,102 @@
             });
 
             updateStats({nodes: visibleNodesList, links: visibleLinks, metadata: {total_files: allNodes.length}});
+        }
+
+        function highlightNode(node) {
+            // Remove previous highlights - reset all to default stroke
+            d3.selectAll('.node circle, .node rect')
+                .attr('stroke-width', d => hasChildren(d) ? (d.type === 'file' || d.type === 'directory' ? 2 : 3) : 1.5)
+                .attr('stroke', d => {
+                    if (hasChildren(d)) {
+                        return '#ffffff';
+                    }
+                    return d.type === 'file' || d.type === 'directory' ? (d.type === 'file' ? '#58a6ff' : '#79c0ff') : '#30363d';
+                });
+
+            // Highlight the current node with blue stroke
+            const currentNodeElement = d3.selectAll('.node')
+                .filter(d => d.id === node.id);
+
+            currentNodeElement.select('circle, rect')
+                .attr('stroke', '#58a6ff')
+                .attr('stroke-width', 4);
+        }
+
+        function centerOnNode(node) {
+            const nodeElement = d3.selectAll('.node')
+                .filter(d => d.id === node.id);
+
+            if (nodeElement.empty()) return;
+
+            const nodeData = nodeElement.datum();
+            const transform = d3.zoomTransform(svg.node());
+
+            // Calculate center position
+            const x = -nodeData.x * transform.k + width / 2;
+            const y = -nodeData.y * transform.k + height / 2;
+
+            svg.transition()
+                .duration(750)
+                .call(zoom.transform, d3.zoomIdentity.translate(x, y).scale(transform.k));
+        }
+
+        function updateGraphForNode(node) {
+            if (!node) {
+                // Show default root view
+                renderGraph();
+                return;
+            }
+
+            // Find parent
+            const parentLinks = allLinks.filter(l => {
+                const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                return targetId === node.id;
+            });
+
+            if (parentLinks.length === 0) {
+                // This is a root node - show all roots
+                renderGraph();
+                highlightNode(node);
+                return;
+            }
+
+            // Get parent
+            const parentId = typeof parentLinks[0].source === 'object'
+                ? parentLinks[0].source.id
+                : parentLinks[0].source;
+            const parent = allNodes.find(n => n.id === parentId);
+
+            // Get all siblings (children of same parent)
+            const siblingLinks = allLinks.filter(l => {
+                const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                return sourceId === parentId;
+            });
+
+            const siblings = siblingLinks.map(l => {
+                const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                return allNodes.find(n => n.id === targetId);
+            }).filter(n => n);
+
+            // Update visible nodes to show parent + siblings + current node's children
+            visibleNodes.clear();
+            visibleNodes.add(parentId);  // Parent
+            siblings.forEach(s => visibleNodes.add(s.id));  // All siblings including current
+
+            // If current node is expanded, show its children too
+            if (!collapsedNodes.has(node.id)) {
+                const childLinks = allLinks.filter(l => {
+                    const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                    return sourceId === node.id;
+                });
+                childLinks.forEach(l => {
+                    const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                    visibleNodes.add(targetId);
+                });
+            }
+
+            renderGraph();
+            highlightNode(node);
         }
 
         function hasChildren(node) {
@@ -622,6 +852,9 @@
             console.log('Event:', event);
 
             event.stopPropagation();
+
+            // Track current node
+            currentNode = d;
 
             // Always show content pane when clicking any node
             showContentPane(d);
@@ -647,6 +880,9 @@
             } else {
                 console.log('Node has no children, skipping expansion');
             }
+
+            // Highlight in graph
+            highlightNode(d);
         }
 
         function expandNode(node) {
@@ -654,12 +890,15 @@
             collapsedNodes.delete(node.id);
 
             // Find direct children
-            const childLinks = allLinks.filter(l => (l.source.id || l.source) === node.id);
+            const childLinks = allLinks.filter(l => {
+                const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                return sourceId === node.id;
+            });
             console.log(`  Found ${childLinks.length} child links for node ${node.id}`);
 
             const children = childLinks
                 .map(l => {
-                    const targetId = l.target.id || l.target;
+                    const targetId = typeof l.target === 'object' ? l.target.id : l.target;
                     const child = allNodes.find(n => n.id === targetId);
                     if (!child) {
                         console.warn(`  Could not find child node with ID: ${targetId}`);
@@ -680,22 +919,55 @@
         }
 
         function collapseNode(node) {
+            console.log(`Collapsing node: ${node.name}`);
             collapsedNodes.add(node.id);
 
-            // Hide all descendants recursively
-            function hideDescendants(parentId) {
-                const children = allLinks
-                    .filter(l => (l.source.id || l.source) === parentId)
-                    .map(l => l.target.id || l.target);
+            // Check if this is a root node
+            const isRootNode = !allLinks.some(l => {
+                const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                return targetId === node.id;
+            });
 
-                children.forEach(childId => {
-                    visibleNodes.delete(childId);
-                    collapsedNodes.delete(childId);
-                    hideDescendants(childId);
+            if (isRootNode) {
+                // Collapsing a root node - return to root-only view
+                console.log('  Collapsing root node - resetting to root view');
+
+                // Clear all visible nodes except root nodes
+                const rootNodes = allNodes.filter(n => {
+                    const hasIncomingLinks = allLinks.some(l => {
+                        const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                        return targetId === n.id;
+                    });
+                    return !hasIncomingLinks && n.type === 'directory';
                 });
-            }
 
-            hideDescendants(node.id);
+                visibleNodes.clear();
+                rootNodes.forEach(n => visibleNodes.add(n.id));
+
+                // Clear all collapsed states
+                collapsedNodes.clear();
+                // Re-add collapsed state to all root nodes
+                rootNodes.forEach(n => collapsedNodes.add(n.id));
+            } else {
+                // Non-root node - existing recursive collapse logic
+                // Hide all descendants recursively
+                function hideDescendants(parentId) {
+                    const children = allLinks
+                        .filter(l => {
+                            const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                            return sourceId === parentId;
+                        })
+                        .map(l => typeof l.target === 'object' ? l.target.id : l.target);
+
+                    children.forEach(childId => {
+                        visibleNodes.delete(childId);
+                        collapsedNodes.delete(childId);
+                        hideDescendants(childId);
+                    });
+                }
+
+                hideDescendants(node.id);
+            }
         }
 
         function showTooltip(event, d) {
@@ -769,10 +1041,47 @@
             }
         }
 
+        function findReferences(node) {
+            // Find all nodes that link TO this node (reverse lookup)
+            const incomingLinks = allLinks.filter(l => {
+                const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                return targetId === node.id;
+            });
+
+            const callers = incomingLinks.map(l => {
+                const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                return allNodes.find(n => n.id === sourceId);
+            }).filter(n => n);
+
+            return callers;
+        }
+
+        function findSemanticReferences(node) {
+            // For semantic search, we'd ideally use the MCP vector search
+            // For now, use simple heuristics based on name/content similarity
+
+            if (!node.content && !node.name) return [];
+
+            const searchTerms = node.name.toLowerCase().split(/[_\s]/);
+
+            const semanticMatches = allNodes.filter(other => {
+                if (other.id === node.id) return false;
+                if (!other.content && !other.name) return false;
+
+                const otherText = (other.content || other.name).toLowerCase();
+                return searchTerms.some(term => term.length > 2 && otherText.includes(term));
+            });
+
+            return semanticMatches.slice(0, 10); // Limit to top 10
+        }
+
         function showContentPane(node) {
-            // Highlight the node
+            // Track and highlight the node
+            currentNode = node;
             highlightedNode = node;
-            renderGraph();
+
+            // Enable focus button
+            document.getElementById('focus-button').disabled = false;
 
             // Populate content pane
             const pane = document.getElementById('content-pane');
@@ -819,99 +1128,711 @@
         }
 
         function showDirectoryContents(node, container) {
+            container.innerHTML = '';  // Clear first
+
+            // Add "Up" button if node has parent
+            const parentLinks = allLinks.filter(l => {
+                const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                return targetId === node.id;
+            });
+
+            if (parentLinks.length > 0) {
+                const parentId = typeof parentLinks[0].source === 'object'
+                    ? parentLinks[0].source.id
+                    : parentLinks[0].source;
+                const parent = allNodes.find(n => n.id === parentId);
+
+                if (parent) {
+                    const upButton = document.createElement('div');
+                    upButton.style.cssText = 'margin-bottom: 15px; padding: 8px 12px; background-color: #21262d; border-radius: 6px; border: 1px solid #30363d; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: background-color 0.2s;';
+
+                    const upArrow = document.createElement('span');
+                    upArrow.textContent = '↑';
+                    upArrow.style.cssText = 'font-size: 20px; color: #58a6ff;';
+
+                    const upText = document.createElement('span');
+                    upText.textContent = `Up to ${parent.name}`;
+                    upText.style.color = '#c9d1d9';
+
+                    upButton.appendChild(upArrow);
+                    upButton.appendChild(upText);
+
+                    upButton.addEventListener('mouseover', function() {
+                        this.style.backgroundColor = '#30363d';
+                    });
+                    upButton.addEventListener('mouseout', function() {
+                        this.style.backgroundColor = '#21262d';
+                    });
+                    upButton.addEventListener('click', () => {
+                        showContentPane(parent);
+                        updateGraphForNode(parent);
+                    });
+
+                    container.appendChild(upButton);
+                }
+            }
+
             // Find all direct children of this directory
             const children = allLinks
-                .filter(l => (l.source.id || l.source) === node.id)
-                .map(l => allNodes.find(n => n.id === (l.target.id || l.target)))
+                .filter(l => {
+                    const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                    return sourceId === node.id;
+                })
+                .map(l => {
+                    const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                    return allNodes.find(n => n.id === targetId);
+                })
                 .filter(n => n);
 
+            // Re-find siblings (already found parentLinks above)
+            // const parentLinks = allLinks.filter(l => {
+            //     const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+            //     return targetId === node.id;
+            // });
+
+            let siblings = [];
+            if (parentLinks.length > 0) {
+                const parentId = typeof parentLinks[0].source === 'object'
+                    ? parentLinks[0].source.id
+                    : parentLinks[0].source;
+
+                const siblingLinks = allLinks.filter(l => {
+                    const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                    return sourceId === parentId;
+                });
+
+                siblings = siblingLinks
+                    .map(l => {
+                        const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                        return allNodes.find(n => n.id === targetId);
+                    })
+                    .filter(n => n && n.id !== node.id);  // Exclude self
+            }
+
+            // Display siblings first if they exist
+            if (siblings.length > 0) {
+                const siblingsHeader = document.createElement('h4');
+                siblingsHeader.textContent = 'Siblings';
+                siblingsHeader.style.color = '#8b949e';
+                siblingsHeader.style.marginTop = '0';
+                container.appendChild(siblingsHeader);
+
+                const siblingsList = document.createElement('ul');
+                siblingsList.className = 'directory-list';
+
+                siblings.forEach(sibling => {
+                    const listItem = document.createElement('li');
+                    listItem.style.cursor = 'pointer';
+                    listItem.style.transition = 'background-color 0.2s';
+
+                    const icon = sibling.type === 'directory' ? '📁' : sibling.type === 'file' ? '📄' : '📝';
+                    listItem.innerHTML = `
+                        <span class="item-icon">${icon}</span>
+                        ${sibling.name}
+                        <span class="item-type">${sibling.type}</span>
+                    `;
+
+                    listItem.addEventListener('mouseover', function() {
+                        this.style.backgroundColor = '#30363d';
+                    });
+                    listItem.addEventListener('mouseout', function() {
+                        this.style.backgroundColor = 'transparent';
+                    });
+                    listItem.addEventListener('click', function(event) {
+                        event.stopPropagation();
+                        if (hasChildren(sibling)) {
+                            if (collapsedNodes.has(sibling.id)) {
+                                expandNode(sibling);
+                            } else {
+                                collapseNode(sibling);
+                            }
+                            renderGraph();
+                        }
+                        showContentPane(sibling);
+                        updateGraphForNode(sibling);
+                    });
+
+                    siblingsList.appendChild(listItem);
+                });
+
+                container.appendChild(siblingsList);
+            }
+
+            // Add references section for applicable node types
+            if (node.type === 'function' || node.type === 'class' || node.type === 'method' || node.type === 'code') {
+                const directCallers = findReferences(node);
+                const semanticRefs = findSemanticReferences(node);
+
+                if (directCallers.length > 0 || semanticRefs.length > 0) {
+                    const refsHeader = document.createElement('h4');
+                    refsHeader.textContent = 'References';
+                    refsHeader.style.color = '#8b949e';
+                    refsHeader.style.marginTop = siblings.length > 0 ? '20px' : '0';
+                    container.appendChild(refsHeader);
+
+                    if (directCallers.length > 0) {
+                        const callersSubheader = document.createElement('h5');
+                        callersSubheader.textContent = 'Direct Callers (AST)';
+                        callersSubheader.style.color = '#58a6ff';
+                        callersSubheader.style.fontSize = '14px';
+                        callersSubheader.style.marginTop = '10px';
+                        container.appendChild(callersSubheader);
+
+                        const callersList = document.createElement('ul');
+                        callersList.className = 'directory-list';
+
+                        directCallers.forEach(caller => {
+                            const listItem = document.createElement('li');
+                            listItem.style.cursor = 'pointer';
+                            listItem.style.transition = 'background-color 0.2s';
+                            listItem.innerHTML = `
+                                <span class="item-icon">🔗</span>
+                                ${caller.name}
+                                <span class="item-type">${caller.type}</span>
+                            `;
+
+                            listItem.addEventListener('mouseover', function() {
+                                this.style.backgroundColor = '#30363d';
+                            });
+                            listItem.addEventListener('mouseout', function() {
+                                this.style.backgroundColor = 'transparent';
+                            });
+                            listItem.addEventListener('click', () => {
+                                showContentPane(caller);
+                                updateGraphForNode(caller);
+                            });
+
+                            callersList.appendChild(listItem);
+                        });
+
+                        container.appendChild(callersList);
+                    }
+
+                    if (semanticRefs.length > 0) {
+                        const semanticSubheader = document.createElement('h5');
+                        semanticSubheader.textContent = 'Semantic References';
+                        semanticSubheader.style.color = '#a371f7';
+                        semanticSubheader.style.fontSize = '14px';
+                        semanticSubheader.style.marginTop = '10px';
+                        container.appendChild(semanticSubheader);
+
+                        const semanticList = document.createElement('ul');
+                        semanticList.className = 'directory-list';
+
+                        semanticRefs.forEach(ref => {
+                            const listItem = document.createElement('li');
+                            listItem.style.cursor = 'pointer';
+                            listItem.style.transition = 'background-color 0.2s';
+                            listItem.style.borderLeft = '2px dotted #a371f7';
+                            listItem.style.paddingLeft = '10px';
+                            listItem.innerHTML = `
+                                <span class="item-icon">🔗</span>
+                                ${ref.name}
+                                <span class="item-type">${ref.type}</span>
+                            `;
+
+                            listItem.addEventListener('mouseover', function() {
+                                this.style.backgroundColor = '#30363d';
+                            });
+                            listItem.addEventListener('mouseout', function() {
+                                this.style.backgroundColor = 'transparent';
+                            });
+                            listItem.addEventListener('click', () => {
+                                showContentPane(ref);
+                                updateGraphForNode(ref);
+                            });
+
+                            semanticList.appendChild(listItem);
+                        });
+
+                        container.appendChild(semanticList);
+                    }
+                }
+            }
+
+            // Display children
             if (children.length === 0) {
-                container.innerHTML = '<p style="color: #8b949e;">Empty directory</p>';
+                const emptyMsg = document.createElement('p');
+                emptyMsg.textContent = 'Empty directory';
+                emptyMsg.style.color = '#8b949e';
+                container.appendChild(emptyMsg);
                 return;
             }
+
+            const childrenHeader = document.createElement('h4');
+            childrenHeader.textContent = 'Contents';
+            childrenHeader.style.color = '#8b949e';
+            if (siblings.length > 0) {
+                childrenHeader.style.marginTop = '20px';
+            } else {
+                childrenHeader.style.marginTop = '0';
+            }
+            container.appendChild(childrenHeader);
 
             // Group by type
             const files = children.filter(n => n.type === 'file');
             const subdirs = children.filter(n => n.type === 'directory');
             const chunks = children.filter(n => n.type !== 'file' && n.type !== 'directory');
 
-            let html = '<ul class="directory-list">';
+            const childrenList = document.createElement('ul');
+            childrenList.className = 'directory-list';
 
             // Show subdirectories first
             subdirs.forEach(child => {
-                html += `
-                    <li>
-                        <span class="item-icon">📁</span>
-                        ${child.name}
-                        <span class="item-type">directory</span>
-                    </li>
+                const listItem = document.createElement('li');
+                listItem.style.cursor = 'pointer';
+                listItem.style.transition = 'background-color 0.2s';
+                listItem.innerHTML = `
+                    <span class="item-icon">📁</span>
+                    ${child.name}
+                    <span class="item-type">directory</span>
                 `;
+
+                listItem.addEventListener('mouseover', function() {
+                    this.style.backgroundColor = '#30363d';
+                });
+                listItem.addEventListener('mouseout', function() {
+                    this.style.backgroundColor = 'transparent';
+                });
+                listItem.addEventListener('click', function(event) {
+                    event.stopPropagation();
+                    if (hasChildren(child)) {
+                        if (collapsedNodes.has(child.id)) {
+                            expandNode(child);
+                        } else {
+                            collapseNode(child);
+                        }
+                        renderGraph();
+                    }
+                    showContentPane(child);
+                    updateGraphForNode(child);
+                });
+
+                childrenList.appendChild(listItem);
             });
 
             // Then files
             files.forEach(child => {
-                html += `
-                    <li>
-                        <span class="item-icon">📄</span>
-                        ${child.name}
-                        <span class="item-type">file</span>
-                    </li>
+                const listItem = document.createElement('li');
+                listItem.style.cursor = 'pointer';
+                listItem.style.transition = 'background-color 0.2s';
+                listItem.innerHTML = `
+                    <span class="item-icon">📄</span>
+                    ${child.name}
+                    <span class="item-type">file</span>
                 `;
+
+                listItem.addEventListener('mouseover', function() {
+                    this.style.backgroundColor = '#30363d';
+                });
+                listItem.addEventListener('mouseout', function() {
+                    this.style.backgroundColor = 'transparent';
+                });
+                listItem.addEventListener('click', function(event) {
+                    event.stopPropagation();
+                    if (hasChildren(child)) {
+                        if (collapsedNodes.has(child.id)) {
+                            expandNode(child);
+                        } else {
+                            collapseNode(child);
+                        }
+                        renderGraph();
+                    }
+                    showContentPane(child);
+                    updateGraphForNode(child);
+                });
+
+                childrenList.appendChild(listItem);
             });
 
             // Then code chunks
             chunks.forEach(child => {
                 const icon = child.type === 'class' ? '🔷' : child.type === 'function' ? '⚡' : '📝';
-                html += `
-                    <li>
-                        <span class="item-icon">${icon}</span>
-                        ${child.name}
-                        <span class="item-type">${child.type}</span>
-                    </li>
+                const listItem = document.createElement('li');
+                listItem.style.cursor = 'pointer';
+                listItem.style.transition = 'background-color 0.2s';
+
+                // Improve display name for text chunks
+                let displayName = child.name;
+                if (child.type === 'text' && child.content) {
+                    // For text chunks, show first line of content as preview
+                    const firstLine = child.content.split('\n')[0].trim();
+                    if (firstLine.length > 0) {
+                        displayName = firstLine.length > 50 ? firstLine.substring(0, 47) + '...' : firstLine;
+                    }
+                }
+
+                listItem.innerHTML = `
+                    <span class="item-icon">${icon}</span>
+                    ${displayName}
+                    <span class="item-type">${child.type}</span>
                 `;
+
+                listItem.addEventListener('mouseover', function() {
+                    this.style.backgroundColor = '#30363d';
+                });
+                listItem.addEventListener('mouseout', function() {
+                    this.style.backgroundColor = 'transparent';
+                });
+                listItem.addEventListener('click', function(event) {
+                    event.stopPropagation();
+                    if (hasChildren(child)) {
+                        if (collapsedNodes.has(child.id)) {
+                            expandNode(child);
+                        } else {
+                            collapseNode(child);
+                        }
+                        renderGraph();
+                    }
+                    showContentPane(child);
+                    updateGraphForNode(child);
+                });
+
+                childrenList.appendChild(listItem);
             });
 
-            html += '</ul>';
+            container.appendChild(childrenList);
 
             // Add summary
-            const summary = `<p style="color: #8b949e; font-size: 11px; margin-top: 16px;">
-                Total: ${children.length} items (${subdirs.length} directories, ${files.length} files, ${chunks.length} code chunks)
-            </p>`;
-
-            container.innerHTML = html + summary;
+            const summary = document.createElement('p');
+            summary.style.color = '#8b949e';
+            summary.style.fontSize = '11px';
+            summary.style.marginTop = '16px';
+            summary.textContent = `Total: ${children.length} items (${subdirs.length} directories, ${files.length} files, ${chunks.length} code chunks)`;
+            container.appendChild(summary);
         }
 
         function showFileContents(node, container) {
+            container.innerHTML = '';  // Clear first
+
+            // Add "Up" button if node has parent
+            const parentLinks = allLinks.filter(l => {
+                const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                return targetId === node.id;
+            });
+
+            if (parentLinks.length > 0) {
+                const parentId = typeof parentLinks[0].source === 'object'
+                    ? parentLinks[0].source.id
+                    : parentLinks[0].source;
+                const parent = allNodes.find(n => n.id === parentId);
+
+                if (parent) {
+                    const upButton = document.createElement('div');
+                    upButton.style.cssText = 'margin-bottom: 15px; padding: 8px 12px; background-color: #21262d; border-radius: 6px; border: 1px solid #30363d; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: background-color 0.2s;';
+
+                    const upArrow = document.createElement('span');
+                    upArrow.textContent = '↑';
+                    upArrow.style.cssText = 'font-size: 20px; color: #58a6ff;';
+
+                    const upText = document.createElement('span');
+                    upText.textContent = `Up to ${parent.name}`;
+                    upText.style.color = '#c9d1d9';
+
+                    upButton.appendChild(upArrow);
+                    upButton.appendChild(upText);
+
+                    upButton.addEventListener('mouseover', function() {
+                        this.style.backgroundColor = '#30363d';
+                    });
+                    upButton.addEventListener('mouseout', function() {
+                        this.style.backgroundColor = '#21262d';
+                    });
+                    upButton.addEventListener('click', () => {
+                        showContentPane(parent);
+                        updateGraphForNode(parent);
+                    });
+
+                    container.appendChild(upButton);
+                }
+            }
+
+            // Re-find siblings (already found parentLinks above)
+            // const parentLinks = allLinks.filter(l => {
+            //     const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+            //     return targetId === node.id;
+            // });
+
+            let siblings = [];
+            if (parentLinks.length > 0) {
+                const parentId = typeof parentLinks[0].source === 'object'
+                    ? parentLinks[0].source.id
+                    : parentLinks[0].source;
+
+                const siblingLinks = allLinks.filter(l => {
+                    const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                    return sourceId === parentId;
+                });
+
+                siblings = siblingLinks
+                    .map(l => {
+                        const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                        return allNodes.find(n => n.id === targetId);
+                    })
+                    .filter(n => n && n.id !== node.id);  // Exclude self
+            }
+
+            // Display siblings first if they exist
+            if (siblings.length > 0) {
+                const siblingsHeader = document.createElement('h4');
+                siblingsHeader.textContent = 'Siblings';
+                siblingsHeader.style.color = '#8b949e';
+                siblingsHeader.style.marginTop = '0';
+                container.appendChild(siblingsHeader);
+
+                const siblingsList = document.createElement('ul');
+                siblingsList.className = 'directory-list';
+
+                siblings.forEach(sibling => {
+                    const listItem = document.createElement('li');
+                    listItem.style.cursor = 'pointer';
+                    listItem.style.transition = 'background-color 0.2s';
+
+                    const icon = sibling.type === 'directory' ? '📁' : sibling.type === 'file' ? '📄' : '📝';
+                    listItem.innerHTML = `
+                        <span class="item-icon">${icon}</span>
+                        ${sibling.name}
+                        <span class="item-type">${sibling.type}</span>
+                    `;
+
+                    listItem.addEventListener('mouseover', function() {
+                        this.style.backgroundColor = '#30363d';
+                    });
+                    listItem.addEventListener('mouseout', function() {
+                        this.style.backgroundColor = 'transparent';
+                    });
+                    listItem.addEventListener('click', function(event) {
+                        event.stopPropagation();
+                        if (hasChildren(sibling)) {
+                            if (collapsedNodes.has(sibling.id)) {
+                                expandNode(sibling);
+                            } else {
+                                collapseNode(sibling);
+                            }
+                            renderGraph();
+                        }
+                        showContentPane(sibling);
+                        updateGraphForNode(sibling);
+                    });
+
+                    siblingsList.appendChild(listItem);
+                });
+
+                container.appendChild(siblingsList);
+            }
+
+            // Add references section for applicable node types
+            if (node.type === 'function' || node.type === 'class' || node.type === 'method' || node.type === 'code') {
+                const directCallers = findReferences(node);
+                const semanticRefs = findSemanticReferences(node);
+
+                if (directCallers.length > 0 || semanticRefs.length > 0) {
+                    const refsHeader = document.createElement('h4');
+                    refsHeader.textContent = 'References';
+                    refsHeader.style.color = '#8b949e';
+                    refsHeader.style.marginTop = siblings.length > 0 ? '20px' : '0';
+                    container.appendChild(refsHeader);
+
+                    if (directCallers.length > 0) {
+                        const callersSubheader = document.createElement('h5');
+                        callersSubheader.textContent = 'Direct Callers (AST)';
+                        callersSubheader.style.color = '#58a6ff';
+                        callersSubheader.style.fontSize = '14px';
+                        callersSubheader.style.marginTop = '10px';
+                        container.appendChild(callersSubheader);
+
+                        const callersList = document.createElement('ul');
+                        callersList.className = 'directory-list';
+
+                        directCallers.forEach(caller => {
+                            const listItem = document.createElement('li');
+                            listItem.style.cursor = 'pointer';
+                            listItem.style.transition = 'background-color 0.2s';
+                            listItem.innerHTML = `
+                                <span class="item-icon">🔗</span>
+                                ${caller.name}
+                                <span class="item-type">${caller.type}</span>
+                            `;
+
+                            listItem.addEventListener('mouseover', function() {
+                                this.style.backgroundColor = '#30363d';
+                            });
+                            listItem.addEventListener('mouseout', function() {
+                                this.style.backgroundColor = 'transparent';
+                            });
+                            listItem.addEventListener('click', () => {
+                                showContentPane(caller);
+                                updateGraphForNode(caller);
+                            });
+
+                            callersList.appendChild(listItem);
+                        });
+
+                        container.appendChild(callersList);
+                    }
+
+                    if (semanticRefs.length > 0) {
+                        const semanticSubheader = document.createElement('h5');
+                        semanticSubheader.textContent = 'Semantic References';
+                        semanticSubheader.style.color = '#a371f7';
+                        semanticSubheader.style.fontSize = '14px';
+                        semanticSubheader.style.marginTop = '10px';
+                        container.appendChild(semanticSubheader);
+
+                        const semanticList = document.createElement('ul');
+                        semanticList.className = 'directory-list';
+
+                        semanticRefs.forEach(ref => {
+                            const listItem = document.createElement('li');
+                            listItem.style.cursor = 'pointer';
+                            listItem.style.transition = 'background-color 0.2s';
+                            listItem.style.borderLeft = '2px dotted #a371f7';
+                            listItem.style.paddingLeft = '10px';
+                            listItem.innerHTML = `
+                                <span class="item-icon">🔗</span>
+                                ${ref.name}
+                                <span class="item-type">${ref.type}</span>
+                            `;
+
+                            listItem.addEventListener('mouseover', function() {
+                                this.style.backgroundColor = '#30363d';
+                            });
+                            listItem.addEventListener('mouseout', function() {
+                                this.style.backgroundColor = 'transparent';
+                            });
+                            listItem.addEventListener('click', () => {
+                                showContentPane(ref);
+                                updateGraphForNode(ref);
+                            });
+
+                            semanticList.appendChild(listItem);
+                        });
+
+                        container.appendChild(semanticList);
+                    }
+                }
+            }
+
             // Find all chunks in this file
             const fileChunks = allLinks
-                .filter(l => (l.source.id || l.source) === node.id)
-                .map(l => allNodes.find(n => n.id === (l.target.id || l.target)))
+                .filter(l => {
+                    const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                    return sourceId === node.id;
+                })
+                .map(l => {
+                    const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                    return allNodes.find(n => n.id === targetId);
+                })
                 .filter(n => n);
 
             if (fileChunks.length === 0) {
-                container.innerHTML = '<p style="color: #8b949e;">No code chunks found in this file</p>';
+                const emptyMsg = document.createElement('p');
+                emptyMsg.textContent = 'No code chunks found in this file';
+                emptyMsg.style.color = '#8b949e';
+                if (siblings.length > 0) {
+                    emptyMsg.style.marginTop = '20px';
+                }
+                container.appendChild(emptyMsg);
                 return;
             }
+
+            // Add chunks header
+            const chunksHeader = document.createElement('h4');
+            chunksHeader.textContent = 'Code Chunks';
+            chunksHeader.style.color = '#8b949e';
+            if (siblings.length > 0) {
+                chunksHeader.style.marginTop = '20px';
+            } else {
+                chunksHeader.style.marginTop = '0';
+            }
+            container.appendChild(chunksHeader);
+
+            // Create clickable list of chunks
+            const chunksList = document.createElement('ul');
+            chunksList.className = 'directory-list';
+
+            fileChunks.forEach(chunk => {
+                const icon = chunk.type === 'class' ? '🔷' :
+                            chunk.type === 'function' ? '⚡' :
+                            chunk.type === 'imports' ? '⇄' : '📝';
+                const listItem = document.createElement('li');
+                listItem.style.cursor = 'pointer';
+                listItem.style.transition = 'background-color 0.2s';
+
+                // Improve display name for text chunks
+                let displayName = chunk.name;
+                if (chunk.type === 'text' && chunk.content) {
+                    // For text chunks, show first line of content as preview
+                    const firstLine = chunk.content.split('\n')[0].trim();
+                    if (firstLine.length > 0) {
+                        displayName = firstLine.length > 50 ? firstLine.substring(0, 47) + '...' : firstLine;
+                    }
+                    if (chunk.start_line) {
+                        displayName += ` (L${chunk.start_line}-${chunk.end_line})`;
+                    }
+                } else if (chunk.start_line) {
+                    displayName += ` (L${chunk.start_line}-${chunk.end_line})`;
+                }
+
+                listItem.innerHTML = `
+                    <span class="item-icon">${icon}</span>
+                    ${displayName}
+                    <span class="item-type">${chunk.type}</span>
+                `;
+
+                listItem.addEventListener('mouseover', function() {
+                    this.style.backgroundColor = '#30363d';
+                });
+                listItem.addEventListener('mouseout', function() {
+                    this.style.backgroundColor = 'transparent';
+                });
+                listItem.addEventListener('click', function(event) {
+                    event.stopPropagation();
+                    if (hasChildren(chunk)) {
+                        if (collapsedNodes.has(chunk.id)) {
+                            expandNode(chunk);
+                        } else {
+                            collapseNode(chunk);
+                        }
+                        renderGraph();
+                    }
+                    showContentPane(chunk);
+                    updateGraphForNode(chunk);
+                });
+
+                chunksList.appendChild(listItem);
+            });
+
+            container.appendChild(chunksList);
 
             // Collect all content from chunks and sort by line number
             const sortedChunks = fileChunks
                 .filter(c => c.content)
                 .sort((a, b) => a.start_line - b.start_line);
 
-            if (sortedChunks.length === 0) {
-                container.innerHTML = '<p style="color: #8b949e;">File content not available</p>';
-                return;
+            if (sortedChunks.length > 0) {
+                // Add full content section
+                const contentHeader = document.createElement('h4');
+                contentHeader.textContent = 'Full File Content';
+                contentHeader.style.color = '#8b949e';
+                contentHeader.style.marginTop = '20px';
+                container.appendChild(contentHeader);
+
+                const contentInfo = document.createElement('p');
+                contentInfo.textContent = `Contains ${fileChunks.length} code chunks`;
+                contentInfo.style.color = '#8b949e';
+                contentInfo.style.fontSize = '11px';
+                contentInfo.style.marginBottom = '12px';
+                container.appendChild(contentInfo);
+
+                // Combine all chunks to show full file
+                const fullContent = sortedChunks.map(c => c.content).join('\n\n');
+                const pre = document.createElement('pre');
+                const code = document.createElement('code');
+                code.textContent = fullContent;
+                pre.appendChild(code);
+                container.appendChild(pre);
             }
-
-            // Combine all chunks to show full file
-            const fullContent = sortedChunks.map(c => c.content).join('\n\n');
-
-            container.innerHTML = `
-                <p style="color: #8b949e; font-size: 11px; margin-bottom: 12px;">
-                    Contains ${fileChunks.length} code chunks
-                </p>
-                <pre><code>${escapeHtml(fullContent)}</code></pre>
-            `;
         }
 
         function showImportDetails(node, container) {
@@ -944,25 +1865,141 @@
         }
 
         function showCodeContent(node, container) {
-            // Show code for function, class, method, or code chunks
-            let html = '';
+            container.innerHTML = '';  // Clear first
 
+            // Add references section for applicable node types
+            if (node.type === 'function' || node.type === 'class' || node.type === 'method' || node.type === 'code') {
+                const directCallers = findReferences(node);
+                const semanticRefs = findSemanticReferences(node);
+
+                if (directCallers.length > 0 || semanticRefs.length > 0) {
+                    const refsHeader = document.createElement('h4');
+                    refsHeader.textContent = 'References';
+                    refsHeader.style.color = '#8b949e';
+                    refsHeader.style.marginTop = '0';
+                    refsHeader.style.marginBottom = '10px';
+                    container.appendChild(refsHeader);
+
+                    if (directCallers.length > 0) {
+                        const callersSubheader = document.createElement('h5');
+                        callersSubheader.textContent = 'Direct Callers (AST)';
+                        callersSubheader.style.color = '#58a6ff';
+                        callersSubheader.style.fontSize = '14px';
+                        callersSubheader.style.marginTop = '10px';
+                        container.appendChild(callersSubheader);
+
+                        const callersList = document.createElement('ul');
+                        callersList.className = 'directory-list';
+
+                        directCallers.forEach(caller => {
+                            const listItem = document.createElement('li');
+                            listItem.style.cursor = 'pointer';
+                            listItem.style.transition = 'background-color 0.2s';
+                            listItem.innerHTML = `
+                                <span class="item-icon">🔗</span>
+                                ${caller.name}
+                                <span class="item-type">${caller.type}</span>
+                            `;
+
+                            listItem.addEventListener('mouseover', function() {
+                                this.style.backgroundColor = '#30363d';
+                            });
+                            listItem.addEventListener('mouseout', function() {
+                                this.style.backgroundColor = 'transparent';
+                            });
+                            listItem.addEventListener('click', () => {
+                                showContentPane(caller);
+                                updateGraphForNode(caller);
+                            });
+
+                            callersList.appendChild(listItem);
+                        });
+
+                        container.appendChild(callersList);
+                    }
+
+                    if (semanticRefs.length > 0) {
+                        const semanticSubheader = document.createElement('h5');
+                        semanticSubheader.textContent = 'Semantic References';
+                        semanticSubheader.style.color = '#a371f7';
+                        semanticSubheader.style.fontSize = '14px';
+                        semanticSubheader.style.marginTop = '10px';
+                        container.appendChild(semanticSubheader);
+
+                        const semanticList = document.createElement('ul');
+                        semanticList.className = 'directory-list';
+
+                        semanticRefs.forEach(ref => {
+                            const listItem = document.createElement('li');
+                            listItem.style.cursor = 'pointer';
+                            listItem.style.transition = 'background-color 0.2s';
+                            listItem.style.borderLeft = '2px dotted #a371f7';
+                            listItem.style.paddingLeft = '10px';
+                            listItem.innerHTML = `
+                                <span class="item-icon">🔗</span>
+                                ${ref.name}
+                                <span class="item-type">${ref.type}</span>
+                            `;
+
+                            listItem.addEventListener('mouseover', function() {
+                                this.style.backgroundColor = '#30363d';
+                            });
+                            listItem.addEventListener('mouseout', function() {
+                                this.style.backgroundColor = 'transparent';
+                            });
+                            listItem.addEventListener('click', () => {
+                                showContentPane(ref);
+                                updateGraphForNode(ref);
+                            });
+
+                            semanticList.appendChild(listItem);
+                        });
+
+                        container.appendChild(semanticList);
+                    }
+
+                    // Add separator
+                    const separator = document.createElement('h4');
+                    separator.textContent = 'Code Content';
+                    separator.style.color = '#8b949e';
+                    separator.style.marginTop = '20px';
+                    separator.style.marginBottom = '10px';
+                    container.appendChild(separator);
+                }
+            }
+
+            // Show code for function, class, method, or code chunks
             if (node.docstring) {
-                html += `
-                    <div style="margin-bottom: 16px; padding: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px;">
-                        <div style="font-size: 11px; color: #8b949e; margin-bottom: 8px; font-weight: 600;">DOCSTRING</div>
-                        <pre style="margin: 0; padding: 0; background: transparent; border: none;"><code>${escapeHtml(node.docstring)}</code></pre>
-                    </div>
-                `;
+                const docstringDiv = document.createElement('div');
+                docstringDiv.style.cssText = 'margin-bottom: 16px; padding: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px;';
+
+                const docLabel = document.createElement('div');
+                docLabel.textContent = 'DOCSTRING';
+                docLabel.style.cssText = 'font-size: 11px; color: #8b949e; margin-bottom: 8px; font-weight: 600;';
+
+                const docPre = document.createElement('pre');
+                docPre.style.cssText = 'margin: 0; padding: 0; background: transparent; border: none;';
+                const docCode = document.createElement('code');
+                docCode.textContent = node.docstring;
+                docPre.appendChild(docCode);
+
+                docstringDiv.appendChild(docLabel);
+                docstringDiv.appendChild(docPre);
+                container.appendChild(docstringDiv);
             }
 
             if (node.content) {
-                html += `<pre><code>${escapeHtml(node.content)}</code></pre>`;
+                const pre = document.createElement('pre');
+                const code = document.createElement('code');
+                code.textContent = node.content;
+                pre.appendChild(code);
+                container.appendChild(pre);
             } else {
-                html += '<p style="color: #8b949e;">No content available</p>';
+                const noContent = document.createElement('p');
+                noContent.textContent = 'No content available';
+                noContent.style.color = '#8b949e';
+                container.appendChild(noContent);
             }
-
-            container.innerHTML = html;
         }
 
         function escapeHtml(text) {
@@ -975,10 +2012,22 @@
             const pane = document.getElementById('content-pane');
             pane.classList.remove('visible');
 
-            // Remove highlight
+            // Remove highlight and current node
+            currentNode = null;
             highlightedNode = null;
+
+            // Disable focus button
+            document.getElementById('focus-button').disabled = true;
+
             renderGraph();
         }
+
+        // Wire up Focus button
+        document.getElementById('focus-button').addEventListener('click', () => {
+            if (currentNode) {
+                centerOnNode(currentNode);
+            }
+        });
 
         // Auto-load graph data on page load
         window.addEventListener('DOMContentLoaded', () => {
