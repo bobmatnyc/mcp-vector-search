@@ -2,6 +2,13 @@
 
 from pathlib import Path
 
+# Dotfiles that should NEVER be skipped (CI/CD configurations)
+ALLOWED_DOTFILES = {
+    ".github",      # GitHub workflows/actions
+    ".gitlab-ci",   # GitLab CI
+    ".circleci",    # CircleCI config
+}
+
 # Default file extensions to index (prioritize supported languages)
 DEFAULT_FILE_EXTENSIONS = [
     ".py",  # Python (fully supported)

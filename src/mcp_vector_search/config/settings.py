@@ -41,6 +41,14 @@ class ProjectConfig(BaseSettings):
         default=True,
         description="Automatically reindex when tool version is upgraded (minor/major versions)",
     )
+    skip_dotfiles: bool = Field(
+        default=True,
+        description="Skip files and directories starting with '.' (except whitelisted ones)",
+    )
+    respect_gitignore: bool = Field(
+        default=True,
+        description="Respect .gitignore patterns when indexing files",
+    )
 
     @field_validator("project_root", "index_path", mode="before")
     @classmethod

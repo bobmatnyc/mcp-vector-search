@@ -171,7 +171,7 @@ async def show_status(
         indexer = SemanticIndexer(
             database=database,
             project_root=project_root,
-            file_extensions=config.file_extensions,
+            config=config,
         )
 
         # Get indexing stats (using database stats only, no filesystem scan)

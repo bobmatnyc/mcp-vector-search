@@ -156,15 +156,16 @@ async def run_indexing(
     config = project_manager.load_config()
 
     # Override extensions if provided
-    file_extensions = config.file_extensions
     if extensions:
         file_extensions = [ext.strip() for ext in extensions.split(",")]
         file_extensions = [
             ext if ext.startswith(".") else f".{ext}" for ext in file_extensions
         ]
+        # Create a modified config copy with overridden extensions
+        config = config.model_copy(update={"file_extensions": file_extensions})
 
     print_info(f"Indexing project: {project_root}")
-    print_info(f"File extensions: {', '.join(file_extensions)}")
+    print_info(f"File extensions: {', '.join(config.file_extensions)}")
     print_info(f"Embedding model: {config.embedding_model}")
 
     # Setup embedding function and cache
@@ -187,7 +188,7 @@ async def run_indexing(
     indexer = SemanticIndexer(
         database=database,
         project_root=project_root,
-        file_extensions=file_extensions,
+        config=config,
         debug=debug,
     )
 
@@ -524,7 +525,7 @@ async def _reindex_entire_project(project_root: Path) -> None:
     indexer = SemanticIndexer(
         database=database,
         project_root=project_root,
-        file_extensions=config.file_extensions,
+        config=config,
     )
 
     try:
@@ -579,7 +580,7 @@ async def _reindex_single_file(project_root: Path, file_path: Path) -> None:
     indexer = SemanticIndexer(
         database=database,
         project_root=project_root,
-        file_extensions=config.file_extensions,
+        config=config,
     )
 
     async with database:

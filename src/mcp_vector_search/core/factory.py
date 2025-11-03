@@ -94,7 +94,7 @@ class ComponentFactory:
         return SemanticIndexer(
             database=database,
             project_root=project_root,
-            file_extensions=config.file_extensions,
+            config=config,
         )
 
     @staticmethod

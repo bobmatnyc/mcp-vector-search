@@ -117,7 +117,7 @@ async def _watch_async(project_root: Path, config_path: Path | None) -> None:
         indexer = SemanticIndexer(
             database=database,
             project_root=project_root,
-            file_extensions=config.file_extensions,
+            config=config,
         )
 
         print_info(f"Initialized database at {config.index_path}")

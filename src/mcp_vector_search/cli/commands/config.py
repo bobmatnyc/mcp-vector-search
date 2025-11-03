@@ -257,7 +257,7 @@ def list_keys() -> None:
 def _parse_config_value(key: str, value: str):
     """Parse configuration value based on key type."""
     # Boolean values
-    if key in ["cache_embeddings", "watch_files"]:
+    if key in ["cache_embeddings", "watch_files", "skip_dotfiles", "respect_gitignore", "auto_reindex_on_upgrade"]:
         return value.lower() in ("true", "yes", "1", "on")
 
     # Float values
@@ -319,6 +319,9 @@ def _get_default_value(key: str):
         "watch_files": False,
         "cache_embeddings": True,
         "max_cache_size": 1000,
+        "skip_dotfiles": True,
+        "respect_gitignore": True,
+        "auto_reindex_on_upgrade": True,
     }
 
     return defaults.get(key, "")
@@ -337,6 +340,9 @@ def _show_available_keys() -> None:
         ("watch_files", "Enable file watching", "boolean"),
         ("cache_embeddings", "Enable embedding caching", "boolean"),
         ("max_cache_size", "Maximum cache size", "integer"),
+        ("skip_dotfiles", "Skip dotfiles/directories (except whitelisted)", "boolean"),
+        ("respect_gitignore", "Respect .gitignore patterns", "boolean"),
+        ("auto_reindex_on_upgrade", "Auto-reindex on version upgrade", "boolean"),
     ]
 
     for key, description, value_type in keys_info:

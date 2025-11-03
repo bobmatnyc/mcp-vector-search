@@ -10,7 +10,8 @@ from loguru import logger
 from packaging import version
 
 from .. import __version__
-from ..config.defaults import DEFAULT_IGNORE_PATTERNS
+from ..config.defaults import ALLOWED_DOTFILES, DEFAULT_IGNORE_PATTERNS
+from ..config.settings import ProjectConfig
 from ..parsers.registry import get_parser_registry
 from ..utils.gitignore import create_gitignore_parser
 from ..utils.monorepo import MonorepoDetector
@@ -27,7 +28,8 @@ class SemanticIndexer:
         self,
         database: VectorDatabase,
         project_root: Path,
-        file_extensions: list[str],
+        file_extensions: list[str] | None = None,
+        config: ProjectConfig | None = None,
         max_workers: int | None = None,
         batch_size: int = 10,
         debug: bool = False,
@@ -37,14 +39,26 @@ class SemanticIndexer:
         Args:
             database: Vector database instance
             project_root: Project root directory
-            file_extensions: File extensions to index
+            file_extensions: File extensions to index (deprecated, use config)
+            config: Project configuration (preferred over file_extensions)
             max_workers: Maximum number of worker threads for parallel processing
             batch_size: Number of files to process in each batch
             debug: Enable debug output for hierarchy building
         """
         self.database = database
         self.project_root = project_root
-        self.file_extensions = {ext.lower() for ext in file_extensions}
+
+        # Store config for filtering behavior
+        self.config = config
+
+        # Handle backward compatibility: use config.file_extensions or fallback to parameter
+        if config is not None:
+            self.file_extensions = {ext.lower() for ext in config.file_extensions}
+        elif file_extensions is not None:
+            self.file_extensions = {ext.lower() for ext in file_extensions}
+        else:
+            raise ValueError("Either config or file_extensions must be provided")
+
         self.parser_registry = get_parser_registry()
         self._ignore_patterns = set(DEFAULT_IGNORE_PATTERNS)
         self.debug = debug
@@ -67,15 +81,19 @@ class SemanticIndexer:
         self._cache_timestamp: float = 0
         self._cache_ttl: float = 60.0  # 60 second TTL
 
-        # Initialize gitignore parser
-        try:
-            self.gitignore_parser = create_gitignore_parser(project_root)
-            logger.debug(
-                f"Loaded {len(self.gitignore_parser.patterns)} gitignore patterns"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to load gitignore patterns: {e}")
+        # Initialize gitignore parser (only if respect_gitignore is True)
+        if config is None or config.respect_gitignore:
+            try:
+                self.gitignore_parser = create_gitignore_parser(project_root)
+                logger.debug(
+                    f"Loaded {len(self.gitignore_parser.patterns)} gitignore patterns"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load gitignore patterns: {e}")
+                self.gitignore_parser = None
+        else:
             self.gitignore_parser = None
+            logger.debug("Gitignore filtering disabled by configuration")
 
         # Initialize monorepo detector
         self.monorepo_detector = MonorepoDetector(project_root)
@@ -551,18 +569,29 @@ class SemanticIndexer:
             True if path should be ignored
         """
         try:
-            # First check gitignore rules if available
-            # PERFORMANCE: Pass is_directory hint to avoid redundant stat() calls
-            if self.gitignore_parser and self.gitignore_parser.is_ignored(
-                file_path, is_directory=is_directory
-            ):
-                logger.debug(f"Path ignored by .gitignore: {file_path}")
-                return True
-
-            # Get relative path from project root
+            # Get relative path from project root for checking
             relative_path = file_path.relative_to(self.project_root)
 
-            # Check each part of the path against default ignore patterns
+            # 1. Check dotfile filtering (if enabled in config)
+            if self.config and self.config.skip_dotfiles:
+                for part in relative_path.parts:
+                    # Skip dotfiles unless they're in the whitelist
+                    if part.startswith(".") and part not in ALLOWED_DOTFILES:
+                        logger.debug(
+                            f"Path ignored by dotfile filter '{part}': {file_path}"
+                        )
+                        return True
+
+            # 2. Check gitignore rules if available and enabled
+            # PERFORMANCE: Pass is_directory hint to avoid redundant stat() calls
+            if self.config and self.config.respect_gitignore:
+                if self.gitignore_parser and self.gitignore_parser.is_ignored(
+                    file_path, is_directory=is_directory
+                ):
+                    logger.debug(f"Path ignored by .gitignore: {file_path}")
+                    return True
+
+            # 3. Check each part of the path against default ignore patterns
             for part in relative_path.parts:
                 if part in self._ignore_patterns:
                     logger.debug(
@@ -570,7 +599,7 @@ class SemanticIndexer:
                     )
                     return True
 
-            # Check if any parent directory should be ignored
+            # 4. Check if any parent directory should be ignored
             for parent in relative_path.parents:
                 for part in parent.parts:
                     if part in self._ignore_patterns:

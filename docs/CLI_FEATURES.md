@@ -247,3 +247,64 @@ If you prefer not to see suggestions, you can:
 - **Faster learning curve** - Discover commands through suggestions
 - **Reduced documentation lookup** - Get hints directly in the CLI
 - **Consistent with modern tools** - Similar to Git, Docker, etc.
+
+## Configuration Management
+
+MCP Vector Search provides flexible configuration options to customize indexing behavior and search settings.
+
+### Indexing Control
+
+**Skip Dotfiles** (`skip_dotfiles`):
+- Controls whether files and directories starting with "." are skipped during indexing
+- Default: `true` (recommended for most projects)
+- Whitelisted directories always indexed: `.github/`, `.gitlab-ci/`, `.circleci/`
+
+**Respect .gitignore** (`respect_gitignore`):
+- Controls whether `.gitignore` patterns are respected during indexing
+- Default: `true` (recommended for most projects)
+- Helps exclude build artifacts, dependencies, and temporary files
+
+### Quick Configuration Examples
+
+```bash
+# View all configuration
+mcp-vector-search config show
+
+# Get specific setting
+mcp-vector-search config get skip_dotfiles
+
+# Configure indexing behavior
+mcp-vector-search config set skip_dotfiles true
+mcp-vector-search config set respect_gitignore true
+
+# List all configuration keys
+mcp-vector-search config list-keys
+
+# Reset to defaults
+mcp-vector-search config reset
+```
+
+### Common Configuration Patterns
+
+**Default (Recommended)**:
+```bash
+# Skip dotfiles, respect .gitignore
+mcp-vector-search config set skip_dotfiles true
+mcp-vector-search config set respect_gitignore true
+```
+
+**Index Everything**:
+```bash
+# For deep code analysis
+mcp-vector-search config set skip_dotfiles false
+mcp-vector-search config set respect_gitignore false
+```
+
+**Configuration Files Only**:
+```bash
+# Index dotfiles but exclude gitignored files
+mcp-vector-search config set skip_dotfiles false
+mcp-vector-search config set respect_gitignore true
+```
+
+For comprehensive configuration documentation, see [CONFIGURATION.md](CONFIGURATION.md).

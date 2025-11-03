@@ -283,7 +283,7 @@ async def run_search(
     indexer = SemanticIndexer(
         database=database,
         project_root=project_root,
-        file_extensions=config.file_extensions,
+        config=config,
     )
 
     # Check if reindex is needed due to version upgrade

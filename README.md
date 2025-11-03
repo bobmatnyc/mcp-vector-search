@@ -297,8 +297,19 @@ mcp-vector-search config show
 mcp-vector-search config set similarity_threshold 0.8
 mcp-vector-search config set embedding_model microsoft/codebert-base
 
+# Configure indexing behavior
+mcp-vector-search config set skip_dotfiles true    # Skip dotfiles (default)
+mcp-vector-search config set respect_gitignore true # Respect .gitignore (default)
+
+# Get specific setting
+mcp-vector-search config get skip_dotfiles
+mcp-vector-search config get respect_gitignore
+
 # List available models
 mcp-vector-search config models
+
+# List all configuration keys
+mcp-vector-search config list-keys
 ```
 
 ## 🚀 Performance Features
@@ -346,8 +357,54 @@ Projects are configured via `.mcp-vector-search/config.json`:
   "similarity_threshold": 0.75,
   "languages": ["python", "javascript", "typescript"],
   "watch_files": true,
-  "cache_embeddings": true
+  "cache_embeddings": true,
+  "skip_dotfiles": true,
+  "respect_gitignore": true
 }
+```
+
+#### Indexing Configuration Options
+
+**`skip_dotfiles`** (default: `true`)
+- Controls whether files and directories starting with "." are skipped during indexing
+- **Whitelisted directories** are always indexed regardless of this setting:
+  - `.github/` - GitHub workflows and actions
+  - `.gitlab-ci/` - GitLab CI configuration
+  - `.circleci/` - CircleCI configuration
+- When `false`: All dotfiles are indexed (subject to gitignore rules if `respect_gitignore` is `true`)
+
+**`respect_gitignore`** (default: `true`)
+- Controls whether `.gitignore` patterns are respected during indexing
+- When `false`: Files in `.gitignore` are indexed (subject to `skip_dotfiles` if enabled)
+
+#### Configuration Use Cases
+
+**Default Behavior** (Recommended for most projects):
+```bash
+# Skip dotfiles AND respect .gitignore
+mcp-vector-search config set skip_dotfiles true
+mcp-vector-search config set respect_gitignore true
+```
+
+**Index Everything** (Useful for deep code analysis):
+```bash
+# Index all files including dotfiles and gitignored files
+mcp-vector-search config set skip_dotfiles false
+mcp-vector-search config set respect_gitignore false
+```
+
+**Index Dotfiles but Respect .gitignore**:
+```bash
+# Index configuration files but skip build artifacts
+mcp-vector-search config set skip_dotfiles false
+mcp-vector-search config set respect_gitignore true
+```
+
+**Skip Dotfiles but Ignore .gitignore**:
+```bash
+# Useful when you want to index files in .gitignore but skip hidden config files
+mcp-vector-search config set skip_dotfiles true
+mcp-vector-search config set respect_gitignore false
 ```
 
 ## 🏗️ Architecture
@@ -607,7 +664,9 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development instructions.
 For comprehensive documentation, see **[CLAUDE.md](CLAUDE.md)** - the main documentation index.
 
 ### Quick Links
+- **[Configuration Guide](docs/CONFIGURATION.md)** - Comprehensive configuration reference
 - **[Installation & Deployment](docs/DEPLOY.md)** - Setup and deployment guide
+- **[CLI Features](docs/CLI_FEATURES.md)** - Advanced CLI features and usage
 - **[Project Structure](docs/STRUCTURE.md)** - Architecture and file organization
 - **[Contributing Guidelines](docs/developer/CONTRIBUTING.md)** - How to contribute
 - **[API Reference](docs/developer/API.md)** - Internal API documentation

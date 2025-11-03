@@ -91,7 +91,7 @@ class MCPVectorSearchServer:
                 self.indexer = SemanticIndexer(
                     database=self.database,
                     project_root=self.project_root,
-                    file_extensions=config.file_extensions,
+                    config=config,
                 )
 
                 # Setup file watcher
