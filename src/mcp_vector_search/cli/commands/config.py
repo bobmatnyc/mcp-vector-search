@@ -257,7 +257,13 @@ def list_keys() -> None:
 def _parse_config_value(key: str, value: str):
     """Parse configuration value based on key type."""
     # Boolean values
-    if key in ["cache_embeddings", "watch_files", "skip_dotfiles", "respect_gitignore", "auto_reindex_on_upgrade"]:
+    if key in [
+        "cache_embeddings",
+        "watch_files",
+        "skip_dotfiles",
+        "respect_gitignore",
+        "auto_reindex_on_upgrade",
+    ]:
         return value.lower() in ("true", "yes", "1", "on")
 
     # Float values
