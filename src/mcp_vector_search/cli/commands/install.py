@@ -434,6 +434,9 @@ def main(
 
         print_next_steps(next_steps, title="Ready to Use")
 
+    except typer.Exit:
+        # Re-raise typer.Exit to allow proper exit handling
+        raise
     except ProjectInitializationError as e:
         print_error(f"Installation failed: {e}")
         raise typer.Exit(1)

@@ -439,8 +439,8 @@ def cli_with_suggestions():
     except click.Abort:
         # User interrupted (Ctrl+C)
         sys.exit(1)
-    except SystemExit:
-        # Re-raise system exits
+    except (SystemExit, click.exceptions.Exit):
+        # Re-raise system exits and typer.Exit
         raise
     except Exception as e:
         # For other exceptions, show error and exit if verbose logging is enabled
