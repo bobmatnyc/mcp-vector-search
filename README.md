@@ -136,7 +136,7 @@ $ mcp-vector-search indx
 No such command 'indx'. Did you mean 'index'?
 ```
 
-See [docs/CLI_FEATURES.md](docs/CLI_FEATURES.md) for more details.
+See [docs/guides/cli-usage.md](docs/guides/cli-usage.md) for more details.
 
 ## Versioning & Releasing
 
@@ -147,7 +147,7 @@ This project uses semantic versioning with an automated release workflow.
 - `make release-patch` - Create patch release
 - `make publish` - Publish to PyPI
 
-See [docs/VERSIONING_WORKFLOW.md](docs/VERSIONING_WORKFLOW.md) for complete documentation.
+See [docs/development/versioning.md](docs/development/versioning.md) for complete documentation.
 
 ## 📖 Documentation
 
@@ -661,19 +661,36 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development instructions.
 
 ## 📚 Documentation
 
-For comprehensive documentation, see **[CLAUDE.md](CLAUDE.md)** - the main documentation index.
+For comprehensive documentation, see **[docs/index.md](docs/index.md)** - the complete documentation hub.
 
-### Quick Links
-- **[Configuration Guide](docs/CONFIGURATION.md)** - Comprehensive configuration reference
-- **[Installation & Deployment](docs/DEPLOY.md)** - Setup and deployment guide
-- **[CLI Features](docs/CLI_FEATURES.md)** - Advanced CLI features and usage
-- **[Project Structure](docs/STRUCTURE.md)** - Architecture and file organization
-- **[Contributing Guidelines](docs/developer/CONTRIBUTING.md)** - How to contribute
-- **[API Reference](docs/developer/API.md)** - Internal API documentation
-- **[Testing Guide](docs/developer/TESTING.md)** - Testing strategies
-- **[Code Quality](docs/developer/LINTING.md)** - Linting and formatting
-- **[Versioning](docs/VERSIONING.md)** - Version management
-- **[Releases](docs/RELEASES.md)** - Release process
+### Getting Started
+- **[Installation Guide](docs/getting-started/installation.md)** - Complete installation instructions
+- **[First Steps](docs/getting-started/first-steps.md)** - Quick start tutorial
+- **[Configuration](docs/getting-started/configuration.md)** - Basic configuration
+
+### User Guides
+- **[Searching Guide](docs/guides/searching.md)** - Master semantic code search
+- **[Indexing Guide](docs/guides/indexing.md)** - Indexing strategies and optimization
+- **[CLI Usage](docs/guides/cli-usage.md)** - Advanced CLI features
+- **[MCP Integration](docs/guides/mcp-integration.md)** - AI tool integration
+- **[File Watching](docs/guides/file-watching.md)** - Real-time index updates
+
+### Reference
+- **[CLI Commands](docs/reference/cli-commands.md)** - Complete command reference
+- **[Configuration Options](docs/reference/configuration.md)** - All configuration settings
+- **[Features](docs/reference/features.md)** - Feature overview
+- **[Architecture](docs/reference/architecture.md)** - System architecture
+
+### Development
+- **[Contributing](docs/development/contributing.md)** - How to contribute
+- **[Testing](docs/development/testing.md)** - Testing guide
+- **[Code Quality](docs/development/code-quality.md)** - Linting and formatting
+- **[API Reference](docs/development/api.md)** - Internal API docs
+
+### Advanced
+- **[Troubleshooting](docs/advanced/troubleshooting.md)** - Common issues and solutions
+- **[Performance](docs/advanced/performance.md)** - Performance optimization
+- **[Extending](docs/advanced/extending.md)** - Adding new features
 
 ## 🤝 Contributing
 
