@@ -38,7 +38,16 @@ make version-major        # 4.0.3 → 5.0.0
 make release-patch        # Full release with patch bump
 make release-minor        # Full release with minor bump
 make release-major        # Full release with major bump
+make full-release        # Complete release including PyPI publish + Homebrew update
 ```
+
+**Note**: `make full-release` includes:
+- Version bump
+- Tests and linting
+- Package build
+- PyPI publishing
+- Homebrew formula update (if `HOMEBREW_TAP_TOKEN` is set)
+- Git push with tags
 
 ### Publish to PyPI
 ```bash
@@ -103,6 +112,13 @@ make changelog-update   # Update CHANGELOG.md with new version
 ```bash
 make publish           # Publish to PyPI
 make publish-test      # Publish to TestPyPI
+```
+
+### Homebrew Integration Commands
+```bash
+make homebrew-update           # Update Homebrew Formula manually
+make homebrew-update-dry-run   # Test Homebrew Formula update
+make homebrew-test             # Test Homebrew Formula locally
 ```
 
 ### Utility Commands
@@ -256,6 +272,51 @@ After release completion:
 1. **Publish**: Run `make publish` to upload to PyPI
 2. **Push**: Run `make git-push` to push commits and tags to remote
 3. **Verify**: Check PyPI and GitHub for successful publication
+4. **Homebrew Update** (Automatic): GitHub Actions automatically updates Homebrew formula
+
+### Homebrew Formula Automation
+
+**🤖 Automated via GitHub Actions** (`.github/workflows/update-homebrew.yml`)
+
+The Homebrew formula is **automatically updated** after successful PyPI publication:
+
+**Automatic Flow**:
+1. Tag pushed (`v0.12.9`) → CI/CD Pipeline runs
+2. PyPI publish succeeds → Homebrew updater triggered
+3. Formula updated automatically in tap repository
+4. Users can install immediately: `brew install bobmatnyc/mcp-vector-search/mcp-vector-search`
+
+**Manual Override** (if automation fails or for testing):
+```bash
+# Test update first
+make homebrew-update-dry-run
+
+# Perform actual update
+export HOMEBREW_TAP_TOKEN="ghp_your_token_here"
+make homebrew-update
+```
+
+**Required GitHub Secret**:
+- `HOMEBREW_TAP_TOKEN`: GitHub Personal Access Token for tap repository updates
+- Configure in: Repository Settings → Secrets and variables → Actions
+
+**Failure Handling**:
+- ❌ Automation failure → GitHub issue created automatically
+- Issue includes manual update instructions
+- Release continues successfully (non-blocking)
+
+**What's Automated**:
+- ✅ SHA256 hash calculation from PyPI package
+- ✅ Formula file updating
+- ✅ Syntax validation
+- ✅ Git commit and push to tap repository
+- ✅ Automatic rollback on failure
+
+**What's No Longer Needed**:
+- ❌ Manual SHA256 calculation
+- ❌ Manual formula editing
+- ❌ Manual git operations on tap repository
+- ❌ Manual formula syntax checking
 
 ## Migration from Old Scripts
 

@@ -160,12 +160,22 @@ git push origin main --tags
 
 ### 5. Release Creation
 ```bash
-# Publish to PyPI
-./scripts/publish.sh
+# Modern workflow: Use Makefile
+make publish             # Publish to PyPI
+
+# Or complete automated release
+make full-release        # Includes publish + Homebrew update + git push
+
+# Homebrew formula updates automatically via GitHub Actions
+# Manual override if needed:
+export HOMEBREW_TAP_TOKEN="ghp_your_token_here"
+make homebrew-update
 
 # Create GitHub release
 gh release create v0.0.4 --title "v0.0.4 - Bug Fixes" --notes-file RELEASE_NOTES.md
 ```
+
+**Note**: The Homebrew formula is now automatically updated via GitHub Actions (`.github/workflows/update-homebrew.yml`) after successful PyPI publish. Manual intervention is rarely needed.
 
 ---
 
@@ -242,14 +252,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [ ] Migration guide created (if needed)
 
 ### Release Process
+
+**Modern Makefile-based Workflow** (Recommended):
+```bash
+# 1. Automated version bump and release
+make release-patch        # For bug fixes (0.0.3 → 0.0.4)
+make release-minor        # For new features (0.0.3 → 0.1.0)
+make release-major        # For breaking changes (0.0.3 → 1.0.0)
+
+# 2. Complete release workflow (includes PyPI publish + Homebrew)
+export HOMEBREW_TAP_TOKEN="ghp_your_token_here"  # Optional
+make full-release         # Automated: build, test, publish, Homebrew update, push
+
+# 3. Create GitHub release
+gh release create v0.0.4 --generate-notes
+```
+
+**Legacy Manual Workflow** (Deprecated):
 ```bash
 # 1. Update version and changelog
 vim src/mcp_vector_search/__init__.py
 vim CHANGELOG.md
 
-# 2. Test release candidate
-./scripts/dev-test.sh
-./scripts/deploy-test.sh
+# 2. Run tests
+make test
 
 # 3. Commit and tag
 git add .
@@ -257,12 +283,26 @@ git commit -m "bump: version 0.0.4"
 git tag v0.0.4
 
 # 4. Publish
-./scripts/publish.sh
+make publish
 git push origin main --tags
 
-# 5. Create GitHub release
+# 5. Homebrew update (automated via GitHub Actions)
+# No manual action needed - GitHub Actions handles this automatically
+
+# 6. Create GitHub release
 gh release create v0.0.4 --generate-notes
 ```
+
+**Key Improvements**:
+- ✅ Automated version bumping via `make release-*`
+- ✅ Integrated testing and linting
+- ✅ Automated Homebrew formula updates via GitHub Actions
+- ✅ No manual SHA256 calculation needed
+- ✅ Single command for complete release: `make full-release`
+
+**See Also**:
+- [Complete Versioning Workflow](../VERSIONING_WORKFLOW.md)
+- [Homebrew Release Workflow](../../scripts/HOMEBREW_WORKFLOW.md)
 
 ---
 

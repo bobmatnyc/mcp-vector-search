@@ -4,13 +4,21 @@ End-to-end guide for releasing a new version of `mcp-vector-search` and updating
 
 ## Overview
 
-This workflow automates the entire release process:
+This workflow automates the entire release process with **GitHub Actions integration**:
 
 1. **Version Management**: Bump version using `version_manager.py`
 2. **Build & Test**: Create distribution packages
 3. **PyPI Publish**: Upload to Python Package Index
-4. **Formula Update**: Automatically update Homebrew tap
+4. **Formula Update**: 🤖 **Automatically** update Homebrew tap via GitHub Actions
 5. **Verification**: Test installation via Homebrew
+
+**Key Automation Features**:
+- ✅ Homebrew formula updates automatically after PyPI publish
+- ✅ No manual SHA256 calculation needed
+- ✅ No manual formula editing required
+- ✅ Automatic rollback on failure
+- ✅ GitHub issue created if update fails
+- ✅ Manual override available via `make homebrew-update`
 
 ## Prerequisites
 
@@ -107,14 +115,37 @@ twine upload dist/*
 # View at: https://pypi.org/project/mcp-vector-search/0.12.9/
 ```
 
-### Step 5: Update Homebrew Formula
+### Step 5: Homebrew Formula Update (AUTOMATED)
+
+**🤖 Automated via GitHub Actions**
+
+The Homebrew formula is now **automatically updated** after successful PyPI publication:
+
+1. **GitHub Actions Trigger**: `.github/workflows/update-homebrew.yml`
+   - Triggers after CI/CD pipeline completes successfully
+   - Only runs for tag pushes (e.g., `v0.12.9`)
+   - Waits for PyPI propagation automatically
+
+2. **Automatic Execution**:
+   ```bash
+   # GitHub Actions automatically runs:
+   python3 scripts/update_homebrew_formula.py --verbose
+   ```
+
+3. **Success Notification**:
+   - ✅ Console output shows successful update
+   - Users can install immediately with `brew install`
+
+4. **Failure Handling**:
+   - ❌ Creates GitHub issue with details
+   - Includes manual update instructions
+   - Non-blocking (won't fail the release)
+
+**Manual Override (if needed)**:
 
 ```bash
-# Wait 2-3 minutes for PyPI to propagate
-# Then update Homebrew formula
-
 # Test first with dry-run
-./scripts/update_homebrew_formula.py --dry-run --verbose
+make homebrew-update-dry-run
 
 # Output:
 # ============================================================
@@ -130,7 +161,10 @@ twine upload dist/*
 # ...
 
 # If dry-run looks good, run actual update
-./scripts/update_homebrew_formula.py
+make homebrew-update
+
+# Or use the script directly:
+./scripts/update_homebrew_formula.py --verbose
 
 # Output:
 # ============================================================
@@ -149,6 +183,16 @@ twine upload dist/*
 # ============================================================
 # ✓ Formula updated successfully!
 # ============================================================
+```
+
+**Prerequisites for Manual Update**:
+```bash
+# Required: GitHub Personal Access Token
+export HOMEBREW_TAP_TOKEN="ghp_your_token_here"
+
+# Must be set in GitHub Secrets for automation:
+# - Repository Settings → Secrets and variables → Actions
+# - Add secret: HOMEBREW_TAP_TOKEN
 ```
 
 ### Step 6: Verify Installation
@@ -227,10 +271,12 @@ fi
 echo "⏳ Waiting for PyPI propagation (30 seconds)..."
 sleep 30
 
-# Step 6: Update Homebrew formula
-echo "🍺 Updating Homebrew formula..."
-./scripts/update_homebrew_formula.py
-echo "✓ Formula updated"
+# Step 6: Update Homebrew formula (OPTIONAL - GitHub Actions does this automatically)
+echo "🍺 Homebrew formula will be updated automatically by GitHub Actions..."
+echo "⏭️  Skipping manual update (GitHub Actions handles this)"
+# Uncomment to force manual update:
+# ./scripts/update_homebrew_formula.py
+echo "✓ Formula update delegated to GitHub Actions"
 
 # Step 7: Test installation
 echo "🧪 Testing installation..."
@@ -405,11 +451,16 @@ After release:
 
 ## CI/CD Integration
 
-### GitHub Actions Workflow
+### GitHub Actions Workflows
+
+This project uses **two separate workflows** for robust automation:
+
+#### 1. Main CI/CD Pipeline (`.github/workflows/ci.yml`)
+Handles testing, building, and PyPI publishing:
 
 ```yaml
-# .github/workflows/release.yml
-name: Release
+# Triggered on: push to main, tags starting with 'v*'
+name: CI/CD Pipeline
 
 on:
   push:
@@ -421,37 +472,93 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
-        run: |
-          pip install build twine
-
+        run: pip install build twine
       - name: Build distribution
         run: python -m build
-
       - name: Publish to PyPI
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: twine upload dist/*
-
-      - name: Update Homebrew formula
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          python scripts/update_homebrew_formula.py
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           files: dist/*
           generate_release_notes: true
 ```
+
+#### 2. Homebrew Formula Updater (`.github/workflows/update-homebrew.yml`)
+**Automatically updates Homebrew formula** after successful PyPI publish:
+
+```yaml
+name: Update Homebrew Formula
+
+on:
+  workflow_run:
+    workflows: ["CI/CD Pipeline"]
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  update-formula:
+    name: Update Homebrew Formula
+    runs-on: ubuntu-latest
+    # Only run if the triggering workflow succeeded and it was a tag push
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'refs/tags/v')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Update Homebrew Formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          python3 scripts/update_homebrew_formula.py --verbose
+
+      - name: Create issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            # Creates a GitHub issue with manual update instructions
+            # if the automated update fails
+```
+
+**Workflow Sequence**:
+1. Push tag (`v0.12.9`)
+2. CI/CD Pipeline runs → publishes to PyPI
+3. CI/CD Pipeline succeeds
+4. **Homebrew Updater** triggers automatically
+5. Formula updated in tap repository
+6. Users can `brew install` immediately
+
+**Required Secrets**:
+- `PYPI_TOKEN`: For PyPI publishing (main workflow)
+- `HOMEBREW_TAP_TOKEN`: For formula updates (Homebrew workflow)
+
+**Failure Handling**:
+- If Homebrew update fails → GitHub issue created automatically
+- Issue includes manual update instructions
+- Release continues successfully (non-blocking)
 
 ## Support
 
