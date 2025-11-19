@@ -1,0 +1,121 @@
+name: Update Homebrew Formula
+
+on:
+  workflow_run:
+    workflows: ["CI/CD Pipeline"]
+    types:
+      - completed
+    branches:
+      - main
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  update-formula:
+    name: Update Homebrew Formula
+    runs-on: ubuntu-latest
+    # Only run if the triggering workflow succeeded and it was a tag push
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'refs/tags/v')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Update Homebrew Formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          echo "Updating Homebrew formula to version ${{ steps.version.outputs.version }}"
+          python3 scripts/update_homebrew_formula.py --verbose
+
+      - name: Create success notification
+        if: success()
+        run: |
+          echo "✅ Homebrew Formula updated successfully to v${{ steps.version.outputs.version }}"
+          echo "Users can now install with: brew install bobmatnyc/mcp-vector-search/mcp-vector-search"
+
+      - name: Create issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ steps.version.outputs.version }}';
+            const runUrl = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}';
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `❌ Homebrew Formula Update Failed for v${version}`,
+              body: `## Homebrew Formula Update Failed
+
+            The automated Homebrew formula update failed for version **v${version}**.
+
+            **Workflow Run:** ${runUrl}
+
+            ### Manual Update Required
+
+            Please update the formula manually:
+
+            \`\`\`bash
+            export HOMEBREW_TAP_TOKEN=<your-token>
+            make homebrew-update
+            \`\`\`
+
+            Or update directly in the tap repository:
+            https://github.com/bobmatnyc/homebrew-mcp-vector-search
+
+            ### Checklist
+
+            - [ ] Verify PyPI release is available
+            - [ ] Check HOMEBREW_TAP_TOKEN secret is valid
+            - [ ] Manually update formula if needed
+            - [ ] Close this issue when resolved
+            `,
+              labels: ['automation', 'homebrew', 'urgent']
+            });
+
+  notify-success:
+    name: Notify Success
+    runs-on: ubuntu-latest
+    needs: update-formula
+    if: success()
+
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Post success message
+        run: |
+          echo "════════════════════════════════════════════"
+          echo "✅ Homebrew Formula Updated Successfully"
+          echo "════════════════════════════════════════════"
+          echo ""
+          echo "Version: v${{ steps.version.outputs.version }}"
+          echo "Tap: bobmatnyc/mcp-vector-search"
+          echo ""
+          echo "Users can now install with:"
+          echo "  brew install bobmatnyc/mcp-vector-search/mcp-vector-search"
+          echo ""
+          echo "════════════════════════════════════════════"

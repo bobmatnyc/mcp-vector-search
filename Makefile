@@ -79,6 +79,10 @@ help: ## Show this help message
 	@grep -E '^publish.*:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
 	@echo ""
+	@echo "$(GREEN)Homebrew Integration:$(RESET)"
+	@grep -E '^homebrew-.*:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
+	@echo ""
 	@echo "$(YELLOW)Options:$(RESET)"
 	@echo "  DRY_RUN=1       Run in dry-run mode (no actual changes)"
 	@echo ""
@@ -478,6 +482,37 @@ publish-test: ## Publish to test PyPI
 		echo "$(YELLOW)[DRY RUN] Would publish to Test PyPI$(RESET)"; \
 	fi
 
+.PHONY: homebrew-update-dry-run
+homebrew-update-dry-run: ## Test Homebrew Formula update (dry-run)
+	@echo "$(BLUE)Testing Homebrew Formula update...$(RESET)"
+	@if [ -z "$(HOMEBREW_TAP_TOKEN)" ]; then \
+		echo "$(RED)✗ HOMEBREW_TAP_TOKEN not set$(RESET)"; \
+		exit 1; \
+	fi
+	$(PYTHON) $(SCRIPTS_DIR)/update_homebrew_formula.py --dry-run --verbose
+
+.PHONY: homebrew-update
+homebrew-update: ## Update Homebrew Formula with latest version
+	@echo "$(BLUE)Updating Homebrew Formula...$(RESET)"
+	@if [ -z "$(HOMEBREW_TAP_TOKEN)" ]; then \
+		echo "$(RED)✗ HOMEBREW_TAP_TOKEN not set. Please export HOMEBREW_TAP_TOKEN=<token>$(RESET)"; \
+		exit 1; \
+	fi
+	$(PYTHON) $(SCRIPTS_DIR)/update_homebrew_formula.py --verbose
+	@echo "$(GREEN)✓ Homebrew Formula updated$(RESET)"
+
+.PHONY: homebrew-test
+homebrew-test: ## Test Homebrew Formula locally
+	@echo "$(BLUE)Testing Homebrew Formula locally...$(RESET)"
+	@if ! command -v brew >/dev/null 2>&1; then \
+		echo "$(RED)✗ Homebrew not installed$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(YELLOW)This will install the formula locally - make sure you have the tap added:$(RESET)"
+	@echo "  brew tap bobmatnyc/mcp-vector-search"
+	@echo "  brew install --build-from-source mcp-vector-search"
+	@echo "$(GREEN)✓ Run the above commands to test$(RESET)"
+
 # ============================================================================
 # Utility Targets
 # ============================================================================
@@ -531,6 +566,11 @@ full-release: preflight-check ## Complete release workflow (build, test, publish
 	$(MAKE) release-patch
 	$(MAKE) integration-test
 	$(MAKE) publish
+	@if [ -n "$(HOMEBREW_TAP_TOKEN)" ]; then \
+		$(MAKE) homebrew-update; \
+	else \
+		echo "$(YELLOW)⚠️  Skipping Homebrew update (HOMEBREW_TAP_TOKEN not set)$(RESET)"; \
+	fi
 	$(MAKE) git-push
 	@echo "$(GREEN)═══════════════════════════════════════════════════════$(RESET)"
 	@echo "$(GREEN)  FULL release completed successfully!$(RESET)"
