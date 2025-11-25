@@ -172,7 +172,10 @@ def ensure_gitignore_entry(
             # - .mcp-vector-search
             # - .mcp-vector-search/*
             # - /.mcp-vector-search/
-            if normalized_line == normalized_pattern or normalized_line == normalized_pattern + "/*":
+            if (
+                normalized_line == normalized_pattern
+                or normalized_line == normalized_pattern + "/*"
+            ):
                 logger.debug(f"Pattern already exists in .gitignore: {stripped_line}")
                 return True
 
