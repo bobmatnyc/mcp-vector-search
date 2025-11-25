@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Automatic .gitignore Entry Management**: Project initialization now automatically adds `.mcp-vector-search/` to `.gitignore`
+  - Prevents accidental commits of local search index data to version control
+  - Activates during `mcp-vector-search init` and `install` commands
+  - Non-blocking operation - initialization continues even if update fails
+  - Intelligent pattern detection avoids duplicate entries
+  - Respects existing negation patterns (user intent to track directory)
+  - Only modifies `.gitignore` in git repositories (checks for `.git` directory)
+  - Handles edge cases: missing files, empty files, permission errors, encoding issues
+  - Comprehensive test coverage: 20 unit tests + 8 integration tests
+  - New utility module: `src/mcp_vector_search/utils/gitignore_updater.py`
+
 - **Indexing Configuration Options**: New configuration settings for fine-grained control over indexing behavior
   - `skip_dotfiles` (default: `true`) - Controls whether dotfiles are skipped during indexing
     - Whitelisted directories (`.github/`, `.gitlab-ci/`, `.circleci/`) are always indexed

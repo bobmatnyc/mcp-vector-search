@@ -107,6 +107,23 @@ class ProjectManager:
             index_path = get_default_index_path(self.project_root)
             index_path.mkdir(parents=True, exist_ok=True)
 
+            # Ensure .mcp-vector-search/ is in .gitignore
+            # This is a non-critical operation - failures are logged but don't block initialization
+            try:
+                from ..utils.gitignore_updater import ensure_gitignore_entry
+
+                ensure_gitignore_entry(
+                    self.project_root,
+                    pattern=".mcp-vector-search/",
+                    comment="MCP Vector Search index directory",
+                )
+            except Exception as e:
+                # Log warning but continue initialization
+                logger.warning(f"Could not update .gitignore: {e}")
+                logger.info(
+                    "Please manually add '.mcp-vector-search/' to your .gitignore file"
+                )
+
             # Detect languages and files
             detected_languages = self.detect_languages()
             file_count = self.count_indexable_files(

@@ -6,6 +6,7 @@ from .gitignore import (
     create_gitignore_parser,
     is_path_gitignored,
 )
+from .gitignore_updater import ensure_gitignore_entry
 from .timing import (
     PerformanceProfiler,
     SearchProfiler,
@@ -24,6 +25,7 @@ __all__ = [
     "GitignorePattern",
     "create_gitignore_parser",
     "is_path_gitignored",
+    "ensure_gitignore_entry",
     # Timing utilities
     "PerformanceProfiler",
     "TimingResult",
