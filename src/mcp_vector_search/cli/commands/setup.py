@@ -262,7 +262,9 @@ async def _run_smart_setup(ctx: typer.Context, force: bool, verbose: bool) -> No
         print_info("   Detecting languages...")
         languages = project_manager.detect_languages()
         if languages:
-            print_success(f"   ✅ Found {len(languages)} language(s): {', '.join(languages)}")
+            print_success(
+                f"   ✅ Found {len(languages)} language(s): {', '.join(languages)}"
+            )
         else:
             print_info("   No specific languages detected")
 
@@ -288,7 +290,9 @@ async def _run_smart_setup(ctx: typer.Context, force: bool, verbose: bool) -> No
 
     if detected_platforms:
         platform_names = list(detected_platforms.keys())
-        print_success(f"   ✅ Found {len(platform_names)} platform(s): {', '.join(platform_names)}")
+        print_success(
+            f"   ✅ Found {len(platform_names)} platform(s): {', '.join(platform_names)}"
+        )
         if verbose:
             for platform, path in detected_platforms.items():
                 print_info(f"      {platform}: {path}")
@@ -364,7 +368,9 @@ async def _run_smart_setup(ctx: typer.Context, force: bool, verbose: bool) -> No
     failed_platforms = []
 
     # Always configure at least Claude Code (project-scoped)
-    platforms_to_configure = detected_platforms if detected_platforms else ["claude-code"]
+    platforms_to_configure = (
+        detected_platforms if detected_platforms else ["claude-code"]
+    )
 
     for platform_name in platforms_to_configure:
         try:
@@ -405,10 +411,12 @@ async def _run_smart_setup(ctx: typer.Context, force: bool, verbose: bool) -> No
     # Show summary
     summary_items = []
     if not already_initialized or force:
-        summary_items.extend([
-            "Vector database initialized",
-            "Codebase indexed and searchable",
-        ])
+        summary_items.extend(
+            [
+                "Vector database initialized",
+                "Codebase indexed and searchable",
+            ]
+        )
 
     summary_items.append(f"{len(configured_platforms)} MCP platform(s) configured")
     summary_items.append("File watching enabled")

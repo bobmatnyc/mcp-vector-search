@@ -72,9 +72,7 @@ from .commands.visualize import app as visualize_app  # noqa: E402
 # ============================================================================
 
 # 0. SETUP - Smart zero-config setup (RECOMMENDED!)
-app.add_typer(
-    setup_app, name="setup", help="🚀 Smart zero-config setup (recommended)"
-)
+app.add_typer(setup_app, name="setup", help="🚀 Smart zero-config setup (recommended)")
 
 # 1. INSTALL - Install project and MCP integrations (NEW!)
 app.add_typer(
