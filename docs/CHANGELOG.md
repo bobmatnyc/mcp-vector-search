@@ -8,6 +8,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Zero-Config Setup Command**: New `mcp-vector-search setup` command for instant onboarding
+  - **Smart Auto-Detection**: Automatically detects project languages and file types
+  - **Comprehensive Setup**: Combines init + index + MCP configuration in one command
+  - **Multi-Platform MCP**: Configures all installed MCP platforms (Claude Code, Cursor, Windsurf, VS Code, Claude Desktop)
+  - **File Watching**: Sets up automatic reindexing via file watching
+  - **Timeout Protection**: Prevents hanging on large projects (2s scan timeout)
+  - **Idempotent**: Safe to run multiple times, won't break existing configuration
+  - **Zero User Input**: No questions asked, sensible defaults for everything
+  - **Team-Friendly**: Creates `.mcp.json` for committing to repos
+  - **Progress Reporting**: Clear, real-time feedback on each phase
+  - **Flags**: `--force` to re-setup, `--verbose` for detailed output
+  - **48 Comprehensive Tests**: Full test coverage including integration tests
+  - **Performance**: Completes setup in seconds even for large codebases
+
+  **Example Usage:**
+  ```bash
+  # One command to set everything up (recommended)
+  mcp-vector-search setup
+
+  # Force re-setup
+  mcp-vector-search setup --force
+
+  # Verbose debugging output
+  mcp-vector-search setup --verbose
+  ```
+
+  **What it does:**
+  1. Detects project languages (Python, JavaScript, TypeScript, etc.)
+  2. Scans for file types in use (with 2s timeout)
+  3. Selects optimal embedding model based on detected languages
+  4. Initializes vector database and configuration
+  5. Indexes entire codebase with progress reporting
+  6. Detects all installed MCP platforms
+  7. Configures each platform automatically
+  8. Enables file watching for automatic reindexing
+
+  **This is now the recommended way to get started** - replacing manual `init` + `index` + `install` workflows.
+
 - **Automatic .gitignore Entry Management**: Project initialization now automatically adds `.mcp-vector-search/` to `.gitignore`
   - Prevents accidental commits of local search index data to version control
   - Activates during `mcp-vector-search init` and `install` commands

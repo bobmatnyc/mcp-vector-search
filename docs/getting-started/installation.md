@@ -68,23 +68,49 @@ pip install -e .
 
 ---
 
-## ⚡ Complete Setup (One Command)
+## ⚡ Zero-Config Setup (Recommended)
 
-The **hierarchical install command** (v0.13.0) provides complete project setup and MCP integration management:
+The **setup command** provides intelligent, zero-configuration onboarding:
 
 ```bash
-# Quick setup (recommended)
-mcp-vector-search install
+# One command does everything (recommended)
+mcp-vector-search setup
 
-# This will:
-# 1. Initialize your project configuration
-# 2. Automatically index your codebase
-# 3. Provide next-step hints for MCP integration
+# This automatically:
+# 1. Detects project languages and file types
+# 2. Initializes vector database with optimal settings
+# 3. Indexes your entire codebase
+# 4. Configures ALL detected MCP platforms
+# 5. Sets up file watching for auto-reindex
 ```
 
-### Install Options
+**Key Features:**
+- ✅ Zero configuration needed
+- ✅ Smart language and platform detection
+- ✅ Idempotent (safe to re-run)
+- ✅ Fast with timeout protection
+- ✅ Team-friendly (creates `.mcp.json` for sharing)
+
+### Setup Options
 
 ```bash
+# Force re-setup (reindex and reconfigure)
+mcp-vector-search setup --force
+
+# Verbose debugging output
+mcp-vector-search setup --verbose
+```
+
+---
+
+## 🔧 Advanced Setup (Manual Control)
+
+For users needing fine-grained control over configuration:
+
+```bash
+# Manual setup with custom options
+mcp-vector-search install
+
 # Install with all MCP integrations at once
 mcp-vector-search install --with-mcp
 

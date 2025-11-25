@@ -28,14 +28,15 @@ Semantic search finds code by meaning, not just keywords. Perfect for exploring
 unfamiliar codebases, finding similar patterns, and integrating with AI tools.
 
 [bold cyan]Quick Start:[/bold cyan]
-  1. Initialize: [green]mcp-vector-search init[/green]
+  1. Zero-config setup: [green]mcp-vector-search setup[/green] [dim](recommended!)[/dim]
   2. Search code: [green]mcp-vector-search search "your query"[/green]
   3. Check status: [green]mcp-vector-search status[/green]
 
 [bold cyan]Main Commands:[/bold cyan]
+  setup      🚀 Smart zero-config setup (recommended)
   install    📦 Install project and MCP integrations
   uninstall  🗑️  Remove MCP integrations
-  init       🔧 Initialize project (simple)
+  init       🔧 Initialize project (advanced)
   demo       🎬 Run interactive demo
   doctor     🩺 Check system health
   status     📊 Show project status
@@ -61,6 +62,7 @@ from .commands.init import init_app  # noqa: E402
 from .commands.install import install_app  # noqa: E402
 from .commands.mcp import mcp_app  # noqa: E402
 from .commands.search import search_app, search_main  # noqa: E402, F401
+from .commands.setup import setup_app  # noqa: E402
 from .commands.status import main as status_main  # noqa: E402
 from .commands.uninstall import uninstall_app  # noqa: E402
 from .commands.visualize import app as visualize_app  # noqa: E402
@@ -68,6 +70,11 @@ from .commands.visualize import app as visualize_app  # noqa: E402
 # ============================================================================
 # MAIN COMMANDS - Clean hierarchy
 # ============================================================================
+
+# 0. SETUP - Smart zero-config setup (RECOMMENDED!)
+app.add_typer(
+    setup_app, name="setup", help="🚀 Smart zero-config setup (recommended)"
+)
 
 # 1. INSTALL - Install project and MCP integrations (NEW!)
 app.add_typer(

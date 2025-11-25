@@ -45,37 +45,66 @@ You should see output like: `mcp-vector-search version 0.12.6`
 
 ## Step 2: Initialize Your Project
 
-Navigate to your code project and initialize mcp-vector-search:
+Navigate to your code project and run the zero-config setup:
 
 ```bash
 cd /path/to/your/project
-mcp-vector-search install
+mcp-vector-search setup
 ```
 
-This single command will:
-1. ✅ Initialize the vector database
-2. ✅ Auto-detect file types and languages
-3. ✅ Index your entire codebase
-4. ✅ Create `.mcp-vector-search/` directory
+**This single command does EVERYTHING:**
+1. ✅ Detects your project's languages and file types
+2. ✅ Initializes the vector database
+3. ✅ Indexes your entire codebase
+4. ✅ Configures all installed MCP platforms (Claude Code, Cursor, etc.)
+5. ✅ Sets up automatic file watching
+6. ✅ Creates `.mcp-vector-search/` directory and `.mcp.json`
 
 **What's happening?**
-- mcp-vector-search scans your project for code files
+- Intelligently scans your project to detect languages and file types
+- Selects optimal embedding model based on your project
 - Parses code into semantic chunks (functions, classes, methods)
 - Generates embeddings for each chunk
 - Stores everything in a local vector database
+- Detects and configures all installed MCP platforms automatically
+- Sets up file watching for automatic reindexing
 
 **Expected output:**
 ```
-Initializing project at /path/to/your/project...
-✓ Configuration created
-✓ Vector database initialized
-Indexing codebase...
-✓ Indexed 150 files (847 code chunks) in 12.3s
-✓ Project setup complete!
+🚀 Smart Setup for mcp-vector-search
+🔍 Detecting project...
+   ✅ Found 3 language(s): Python, JavaScript, TypeScript
+   ✅ Detected 8 file type(s)
+   ✅ Found 2 platform(s): claude-code, cursor
+⚙️  Configuring...
+   ✅ Embedding model: sentence-transformers/all-MiniLM-L6-v2
+🚀 Initializing...
+   ✅ Vector database created
+   ✅ Configuration saved
+🔍 Indexing codebase...
+   ✅ Indexing completed in 12.3s
+🔗 Configuring MCP integrations...
+   ✅ Configured 2 platform(s)
+🎉 Setup Complete!
 
-Next steps:
-  1. Try searching: mcp-vector-search search "authentication logic"
-  2. Check status: mcp-vector-search status
+Ready to Use:
+  • Open Claude Code in this directory to use MCP tools
+  • mcp-vector-search search 'your query' - Search your code
+  • mcp-vector-search status - Check project status
+
+💡 Tip: Commit .mcp.json to share configuration with your team
+```
+
+**Advanced Options:**
+
+If you need more control over the setup process, you can use the manual commands:
+
+```bash
+# Manual setup (advanced users)
+mcp-vector-search install
+
+# Just initialize without indexing or MCP
+mcp-vector-search init
 ```
 
 ---
@@ -271,8 +300,9 @@ Now that you've completed the quick start, explore these guides:
 
 ```bash
 # Installation & Setup
-mcp-vector-search install              # Complete setup
-mcp-vector-search init                 # Initialize project
+mcp-vector-search setup                # Zero-config smart setup (recommended)
+mcp-vector-search install              # Manual setup with more control
+mcp-vector-search init                 # Just initialize (no indexing/MCP)
 mcp-vector-search index                # Index codebase
 
 # Searching

@@ -53,20 +53,57 @@ cd mcp-vector-search
 uv sync && uv pip install -e .
 ```
 
-### Complete Setup (One Command)
+### Zero-Config Setup (Recommended)
 
-The **hierarchical install command** (v0.13.0) provides complete project setup and MCP integration management:
+The fastest way to get started - **one command does everything**:
 
 ```bash
-# Quick setup (recommended)
-mcp-vector-search install
+# Smart zero-config setup (recommended)
+mcp-vector-search setup
+```
 
-# This will:
-# 1. Initialize your project configuration
-# 2. Automatically index your codebase
-# 3. Provide next-step hints for MCP integration
+**What `setup` does automatically:**
+- ✅ Detects your project's languages and file types
+- ✅ Initializes semantic search with optimal settings
+- ✅ Indexes your entire codebase
+- ✅ Configures ALL installed MCP platforms (Claude Code, Cursor, etc.)
+- ✅ Sets up file watching for auto-reindex
+- ✅ Zero user input required!
 
-# Install with all MCP integrations at once
+**Example output:**
+```
+🚀 Smart Setup for mcp-vector-search
+🔍 Detecting project...
+   ✅ Found 3 language(s): Python, JavaScript, TypeScript
+   ✅ Detected 8 file type(s)
+   ✅ Found 2 platform(s): claude-code, cursor
+⚙️  Configuring...
+   ✅ Embedding model: sentence-transformers/all-MiniLM-L6-v2
+🚀 Initializing...
+   ✅ Vector database created
+   ✅ Configuration saved
+🔍 Indexing codebase...
+   ✅ Indexing completed in 12.3s
+🔗 Configuring MCP integrations...
+   ✅ Configured 2 platform(s)
+🎉 Setup Complete!
+```
+
+**Options:**
+```bash
+# Force re-setup
+mcp-vector-search setup --force
+
+# Verbose output for debugging
+mcp-vector-search setup --verbose
+```
+
+### Advanced Setup Options
+
+For more control over the installation process:
+
+```bash
+# Manual setup with MCP integration
 mcp-vector-search install --with-mcp
 
 # Custom file extensions
@@ -74,6 +111,9 @@ mcp-vector-search install --extensions .py,.js,.ts,.dart
 
 # Skip automatic indexing
 mcp-vector-search install --no-auto-index
+
+# Just initialize (no indexing or MCP)
+mcp-vector-search init
 ```
 
 ### Add MCP Integration for AI Tools
@@ -113,7 +153,7 @@ mcp-vector-search search "authentication logic"
 mcp-vector-search search "database connection setup"
 mcp-vector-search search "error handling patterns"
 
-# Index your codebase (if not done during install)
+# Index your codebase (if not done during setup)
 mcp-vector-search index
 
 # Check project status
@@ -153,9 +193,43 @@ See [docs/development/versioning.md](docs/development/versioning.md) for complet
 
 ### Commands
 
-#### `install` - Install Project and MCP Integrations (v0.13.0)
+#### `setup` - Zero-Config Smart Setup (Recommended)
 ```bash
-# Quick setup (recommended)
+# One command to do everything (recommended)
+mcp-vector-search setup
+
+# What it does automatically:
+# - Detects project languages and file types
+# - Initializes semantic search
+# - Indexes entire codebase
+# - Configures all detected MCP platforms
+# - Sets up file watching
+# - Zero configuration needed!
+
+# Force re-setup
+mcp-vector-search setup --force
+
+# Verbose output for debugging
+mcp-vector-search setup --verbose
+```
+
+**Key Features:**
+- **Zero Configuration**: No user input required
+- **Smart Detection**: Automatically discovers languages and platforms
+- **Comprehensive**: Handles init + index + MCP setup in one command
+- **Idempotent**: Safe to run multiple times
+- **Fast**: Timeout-protected scanning (won't hang on large projects)
+- **Team-Friendly**: Commit `.mcp.json` to share configuration
+
+**When to use:**
+- ✅ First-time project setup
+- ✅ Team onboarding
+- ✅ Quick testing in new codebases
+- ✅ Setting up multiple MCP platforms at once
+
+#### `install` - Install Project and MCP Integrations (Advanced)
+```bash
+# Manual setup with more control
 mcp-vector-search install
 
 # Install with all MCP integrations
@@ -178,7 +252,11 @@ mcp-vector-search install vscode           # Global
 mcp-vector-search install list
 ```
 
-#### `uninstall` - Remove MCP Integrations (v0.13.0)
+**When to use:**
+- Use `install` when you need fine-grained control over extensions, models, or MCP platforms
+- Use `setup` for quick, zero-config onboarding (recommended)
+
+#### `uninstall` - Remove MCP Integrations
 ```bash
 # Remove specific platform
 mcp-vector-search uninstall claude-code
@@ -198,7 +276,7 @@ mcp-vector-search remove claude-code
 
 #### `init` - Initialize Project (Simple)
 ```bash
-# Basic initialization
+# Basic initialization (no indexing or MCP)
 mcp-vector-search init
 
 # Custom configuration
@@ -207,6 +285,8 @@ mcp-vector-search init --extensions .py,.js,.ts --embedding-model sentence-trans
 # Force re-initialization
 mcp-vector-search init --force
 ```
+
+**Note**: For most users, use `setup` instead of `init`. The `init` command is for advanced users who want manual control.
 
 #### `index` - Index Codebase
 ```bash

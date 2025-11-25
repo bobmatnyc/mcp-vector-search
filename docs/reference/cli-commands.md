@@ -19,7 +19,8 @@ Complete reference for all mcp-vector-search command-line interface commands.
 
 | Command | Purpose | When to Use |
 |---------|---------|-------------|
-| `install` | Complete project setup | First-time setup, add MCP integration |
+| `setup` | **Zero-config smart setup (recommended)** | First-time setup, team onboarding, quick setup |
+| `install` | Complete project setup (advanced) | Fine-grained control, add MCP integration |
 | `init` | Initialize project configuration | Manual setup, re-initialization |
 | `index` | Index codebase for search | After code changes, initial indexing |
 | `search` | Search code semantically | Find code by meaning or functionality |
@@ -45,7 +46,129 @@ Complete reference for all mcp-vector-search command-line interface commands.
 
 ## 🚀 Setup Commands
 
-### `install`
+### `setup` (Recommended)
+
+**Zero-config smart setup** - The fastest way to get started with mcp-vector-search.
+
+```bash
+# One command does everything (recommended)
+mcp-vector-search setup
+
+# Force re-setup (reindex and reconfigure)
+mcp-vector-search setup --force
+
+# Verbose output for debugging
+mcp-vector-search setup --verbose
+```
+
+**What it does automatically:**
+
+1. **Detects Project Characteristics**
+   - Scans for languages in use (Python, JavaScript, TypeScript, etc.)
+   - Discovers file types present in your codebase
+   - Detects installed MCP platforms (Claude Code, Cursor, Windsurf, VS Code, Claude Desktop)
+
+2. **Smart Configuration**
+   - Selects optimal embedding model based on detected languages
+   - Chooses appropriate file extensions to index
+   - Sets sensible defaults (similarity threshold, auto-indexing, etc.)
+
+3. **Initialization**
+   - Creates `.mcp-vector-search/` directory
+   - Initializes ChromaDB vector database
+   - Saves configuration to `config.json`
+
+4. **Indexing**
+   - Indexes entire codebase with progress reporting
+   - Parses code into semantic chunks
+   - Generates embeddings for searchability
+
+5. **MCP Integration**
+   - Configures all detected MCP platforms automatically
+   - Creates `.mcp.json` for project-scoped configuration
+   - Updates platform-specific config files (e.g., Claude Desktop settings)
+   - Enables file watching for automatic reindexing
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--force` / `-f` | Force re-initialization if already set up | `false` |
+| `--verbose` / `-v` | Show detailed progress information | `false` |
+
+**Key Features:**
+
+- ✅ **Zero Configuration**: No user input required
+- ✅ **Intelligent Detection**: Discovers languages, file types, and platforms
+- ✅ **All-in-One**: Combines init + index + MCP setup
+- ✅ **Idempotent**: Safe to run multiple times
+- ✅ **Fast**: Timeout protection prevents hanging (2s scan limit)
+- ✅ **Team-Friendly**: Creates `.mcp.json` for sharing with team
+
+**When to use:**
+
+- ✅ **First-time setup**: Getting started in any project
+- ✅ **Team onboarding**: New developers joining your team
+- ✅ **Quick testing**: Trying mcp-vector-search in a new codebase
+- ✅ **Multi-platform setup**: Configuring multiple MCP tools at once
+
+**Example output:**
+
+```
+🚀 Smart Setup for mcp-vector-search
+🔍 Detecting project...
+   ✅ Found 3 language(s): Python, JavaScript, TypeScript
+   ✅ Detected 8 file type(s)
+   ✅ Found 2 platform(s): claude-code, cursor
+⚙️  Configuring...
+   ✅ Embedding model: sentence-transformers/all-MiniLM-L6-v2
+🚀 Initializing...
+   ✅ Vector database created
+   ✅ Configuration saved
+🔍 Indexing codebase...
+   ✅ Indexing completed in 12.3s
+🔗 Configuring MCP integrations...
+   ✅ Configured 2 platform(s)
+🎉 Setup Complete!
+
+What was set up:
+  ✅ Vector database initialized
+  ✅ Codebase indexed and searchable
+  ✅ 2 MCP platform(s) configured
+  ✅ File watching enabled
+
+Ready to Use:
+  • Open Claude Code in this directory to use MCP tools
+  • mcp-vector-search search 'your query' - Search your code
+  • mcp-vector-search status - Check project status
+
+💡 Tip: Commit .mcp.json to share configuration with your team
+```
+
+**Comparison with other commands:**
+
+| Command | Init | Index | MCP Config | Auto-detect | Recommended For |
+|---------|------|-------|------------|-------------|-----------------|
+| `setup` | ✅ | ✅ | ✅ All platforms | ✅ | **Everyone (recommended)** |
+| `install` | ✅ | ✅ | ✅ Optional | ❌ | Advanced users needing control |
+| `init` | ✅ | ❌ | ❌ | ❌ | Manual configuration |
+
+**Next steps after setup:**
+
+```bash
+# Search your code
+mcp-vector-search search "authentication logic"
+
+# Check project status
+mcp-vector-search status
+
+# Start using MCP tools in Claude Code/Cursor/etc.
+# (Already configured automatically!)
+```
+
+---
+
+### `install` (Advanced)
 
 Complete project setup with optional MCP integration.
 
@@ -591,9 +714,10 @@ mcp-vector-search COMMAND --verbose
 ### Setup & Installation
 
 ```bash
-mcp-vector-search install               # All-in-one setup
-mcp-vector-search install claude-code   # With MCP integration
-mcp-vector-search init                  # Manual initialization
+mcp-vector-search setup                 # Zero-config smart setup (recommended)
+mcp-vector-search install               # Manual setup with more control
+mcp-vector-search install claude-code   # Add specific MCP platform
+mcp-vector-search init                  # Just initialize (advanced)
 mcp-vector-search uninstall claude-code # Remove MCP integration
 ```
 
@@ -628,10 +752,13 @@ mcp-vector-search config reset          # Reset configuration
 ### First-Time Setup
 
 ```bash
-# Option 1: One command (recommended)
+# Option 1: Zero-config smart setup (recommended)
+mcp-vector-search setup
+
+# Option 2: Manual setup with more control
 mcp-vector-search install
 
-# Option 2: Manual
+# Option 3: Completely manual (advanced)
 mcp-vector-search init
 mcp-vector-search index
 ```
@@ -656,10 +783,11 @@ mcp-vector-search status
 git clone <repo-url>
 cd <repo>
 
-# Initialize search
-mcp-vector-search install
+# Zero-config setup (recommended)
+mcp-vector-search setup
 
-# Set up auto-indexing
+# Or manual setup with auto-indexing
+mcp-vector-search install
 mcp-vector-search auto-index setup --method git-hooks
 ```
 
@@ -725,17 +853,18 @@ mcp-vector-search search "user authentication" --threshold 0.85
 ### Example 2: Set Up New Project
 
 ```bash
-# Complete setup
-mcp-vector-search install
+# Zero-config setup (recommended)
+mcp-vector-search setup
 
-# Verify
+# Verify (already done by setup, but you can check)
 mcp-vector-search status
-
-# Configure auto-indexing
-mcp-vector-search auto-index setup --method git-hooks
 
 # Test search
 mcp-vector-search search "test query"
+
+# Alternative: Manual setup with more control
+mcp-vector-search install
+mcp-vector-search auto-index setup --method git-hooks
 ```
 
 ### Example 3: Optimize for Large Codebase
@@ -771,13 +900,15 @@ mcp-vector-search search --similar src/utils/auth.py --limit 5
 ## 💡 Tips
 
 1. **Use `--help` liberally**: Every command has detailed help
-2. **Start with `install`**: Easiest way to get started
-3. **Enable auto-indexing**: Set it up once, forget about it
-4. **Use interactive search**: Great for exploratory searches
-5. **Configure exclusions**: Skip build directories and dependencies
-6. **Check status regularly**: Know what's indexed
-7. **Use `doctor` when troubleshooting**: First diagnostic step
-8. **Leverage filters**: Language and threshold for precise results
+2. **Start with `setup`**: Zero-config, fastest way to get started (recommended)
+3. **Use `install` for control**: When you need specific extensions or models
+4. **Enable auto-indexing**: File watching is set up by `setup` automatically
+5. **Use interactive search**: Great for exploratory searches
+6. **Configure exclusions**: Skip build directories and dependencies
+7. **Check status regularly**: Know what's indexed
+8. **Use `doctor` when troubleshooting**: First diagnostic step
+9. **Leverage filters**: Language and threshold for precise results
+10. **Commit `.mcp.json`**: Share MCP configuration with your team
 
 ---
 
