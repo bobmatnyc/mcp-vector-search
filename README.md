@@ -41,16 +41,26 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 ### Installation
 
 ```bash
-# Install from PyPI
+# Install from PyPI (recommended)
 pip install mcp-vector-search
 
-# Or with UV (recommended)
-uv add mcp-vector-search
+# Or with UV (faster)
+uv pip install mcp-vector-search
 
 # Or install from source
 git clone https://github.com/bobmatnyc/mcp-vector-search.git
 cd mcp-vector-search
 uv sync && uv pip install -e .
+```
+
+**Verify Installation:**
+```bash
+# Check that all dependencies are installed correctly
+mcp-vector-search doctor
+
+# Should show all ✓ marks
+# If you see missing dependencies, try:
+pip install --upgrade mcp-vector-search
 ```
 
 ### Zero-Config Setup (Recommended)

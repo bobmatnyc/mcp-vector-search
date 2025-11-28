@@ -519,12 +519,16 @@ async def check_mcp_integration(
 
 
 def check_dependencies() -> bool:
-    """Check if all required dependencies are available."""
+    """Check if all required dependencies are available.
+
+    Returns:
+        bool: True if all dependencies are available, False otherwise.
+    """
     dependencies = [
         ("chromadb", "ChromaDB"),
         ("sentence_transformers", "Sentence Transformers"),
         ("tree_sitter", "Tree-sitter"),
-        ("tree_sitter_languages", "Tree-sitter Languages"),
+        ("tree_sitter_language_pack", "Tree-sitter Languages"),
         ("typer", "Typer"),
         ("rich", "Rich"),
         ("pydantic", "Pydantic"),
@@ -533,6 +537,7 @@ def check_dependencies() -> bool:
     ]
 
     all_available = True
+    missing_deps = []
 
     for module_name, display_name in dependencies:
         try:
@@ -541,6 +546,36 @@ def check_dependencies() -> bool:
         except ImportError:
             print_dependency_status(display_name, False)
             all_available = False
+            missing_deps.append(module_name)
+
+    # Print helpful installation instructions if dependencies are missing
+    if not all_available:
+        console.print()
+        console.print("[yellow]💡 Installation Help:[/yellow]")
+        console.print()
+        console.print("[bold]To install missing dependencies:[/bold]")
+        console.print()
+        console.print("  [cyan]# Using pip (recommended):[/cyan]")
+        console.print("  pip install mcp-vector-search")
+        console.print()
+        console.print("  [cyan]# Using uv (faster):[/cyan]")
+        console.print("  uv pip install mcp-vector-search")
+        console.print()
+        console.print("  [cyan]# Install from source:[/cyan]")
+        console.print("  pip install -e .")
+        console.print()
+
+        if "tree_sitter_language_pack" in missing_deps:
+            console.print(
+                "[yellow]⚠️  Tree-sitter Language Pack Issue Detected[/yellow]"
+            )
+            console.print()
+            console.print("If you installed via Homebrew, you may need to reinstall:")
+            console.print("  brew reinstall mcp-vector-search")
+            console.print()
+            console.print("Or install the dependency manually:")
+            console.print("  pip install tree-sitter-language-pack")
+            console.print()
 
     return all_available
 
