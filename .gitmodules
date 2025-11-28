@@ -1,0 +1,3 @@
+[submodule "project-template"]
+	path = project-template
+	url = https://github.com/bobmatnyc/python-project-template.git

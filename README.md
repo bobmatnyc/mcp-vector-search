@@ -776,6 +776,7 @@ For comprehensive documentation, see **[docs/index.md](docs/index.md)** - the co
 - **[Testing](docs/development/testing.md)** - Testing guide
 - **[Code Quality](docs/development/code-quality.md)** - Linting and formatting
 - **[API Reference](docs/development/api.md)** - Internal API docs
+- **[Deployment](DEPLOYMENT.md)** - Release and deployment guide
 
 ### Advanced
 - **[Troubleshooting](docs/advanced/troubleshooting.md)** - Common issues and solutions
