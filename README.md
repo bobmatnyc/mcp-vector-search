@@ -65,7 +65,7 @@ pip install --upgrade mcp-vector-search
 
 ### Zero-Config Setup (Recommended)
 
-The fastest way to get started - **one command does everything**:
+The fastest way to get started - **completely hands-off, just one command**:
 
 ```bash
 # Smart zero-config setup (recommended)
@@ -77,8 +77,16 @@ mcp-vector-search setup
 - ✅ Initializes semantic search with optimal settings
 - ✅ Indexes your entire codebase
 - ✅ Configures ALL installed MCP platforms (Claude Code, Cursor, etc.)
+- ✅ **Uses native Claude CLI integration** (`claude mcp add`) when available
+- ✅ **Falls back to `.mcp.json`** if Claude CLI not available
 - ✅ Sets up file watching for auto-reindex
-- ✅ Zero user input required!
+- ✅ **Zero user input required!**
+
+**Behind the scenes:**
+- **Server name**: `mcp` (for consistency with other MCP projects)
+- **Command**: `uv run python -m mcp_vector_search.mcp.server {PROJECT_ROOT}`
+- **File watching**: Enabled via `MCP_ENABLE_FILE_WATCHING=true`
+- **Integration method**: Native `claude mcp add` (or `.mcp.json` fallback)
 
 **Example output:**
 ```
@@ -95,6 +103,8 @@ mcp-vector-search setup
 🔍 Indexing codebase...
    ✅ Indexing completed in 12.3s
 🔗 Configuring MCP integrations...
+   ✅ Using Claude CLI for automatic setup
+   ✅ Registered with Claude CLI
    ✅ Configured 2 platform(s)
 🎉 Setup Complete!
 ```
@@ -104,7 +114,7 @@ mcp-vector-search setup
 # Force re-setup
 mcp-vector-search setup --force
 
-# Verbose output for debugging
+# Verbose output for debugging (shows Claude CLI commands)
 mcp-vector-search setup --verbose
 ```
 
@@ -128,6 +138,13 @@ mcp-vector-search init
 
 ### Add MCP Integration for AI Tools
 
+**Automatic (Recommended):**
+```bash
+# One command sets up all detected platforms
+mcp-vector-search setup
+```
+
+**Manual Platform Installation:**
 ```bash
 # Add Claude Code integration (project-scoped)
 mcp-vector-search install claude-code
@@ -141,6 +158,8 @@ mcp-vector-search install claude-desktop
 # See all available platforms
 mcp-vector-search install list
 ```
+
+**Note**: The `setup` command uses native `claude mcp add` when Claude CLI is available, providing better integration than manual `.mcp.json` creation.
 
 ### Remove MCP Integrations
 

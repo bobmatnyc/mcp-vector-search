@@ -18,6 +18,7 @@ Examples:
 import asyncio
 import json
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,89 @@ install_app = create_enhanced_typer(
     invoke_without_command=True,
     no_args_is_help=False,
 )
+
+
+# ==============================================================================
+# Helper Functions for Claude CLI Integration
+# ==============================================================================
+
+
+def check_claude_cli_available() -> bool:
+    """Check if Claude CLI is available.
+
+    Returns:
+        True if claude CLI is installed and accessible
+    """
+    return shutil.which("claude") is not None
+
+
+def check_uv_available() -> bool:
+    """Check if uv is available.
+
+    Returns:
+        True if uv is installed and accessible
+    """
+    return shutil.which("uv") is not None
+
+
+def register_with_claude_cli(
+    project_root: Path,
+    enable_watch: bool = True,
+) -> bool:
+    """Register MCP server with Claude CLI using native 'claude mcp add' command.
+
+    Args:
+        project_root: Project root directory
+        enable_watch: Enable file watching
+
+    Returns:
+        True if registration was successful, False otherwise
+    """
+    try:
+        # Check if uv is available
+        if not check_uv_available():
+            logger.warning("uv not available, falling back to manual JSON configuration")
+            return False
+
+        # Build the command
+        cmd = [
+            "claude",
+            "mcp",
+            "add",
+            "--transport",
+            "stdio",
+            "mcp",
+            "--env",
+            f"MCP_ENABLE_FILE_WATCHING={'true' if enable_watch else 'false'}",
+            "--",
+            "uv",
+            "run",
+            "python",
+            "-m",
+            "mcp_vector_search.mcp.server",
+            str(project_root.absolute()),
+        ]
+
+        # Run the command
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode == 0:
+            return True
+        else:
+            logger.warning(f"Claude CLI registration failed: {result.stderr}")
+            return False
+
+    except subprocess.TimeoutExpired:
+        logger.warning("Claude CLI registration timed out")
+        return False
+    except Exception as e:
+        logger.warning(f"Claude CLI registration failed: {e}")
+        return False
 
 
 # ==============================================================================
@@ -468,22 +552,42 @@ def install_claude_code(
 ) -> None:
     """Install Claude Code MCP integration (project-scoped).
 
-    Creates .mcp.json in the project root for team sharing.
-    This file should be committed to version control.
+    Uses native 'claude mcp add' command if available, otherwise creates .mcp.json.
     """
     project_root = ctx.obj.get("project_root") or Path.cwd()
 
     console.print(
         Panel.fit(
             "[bold cyan]Installing Claude Code Integration[/bold cyan]\n"
-            "📁 Project-scoped configuration",
+            "🔧 Automatic setup with Claude CLI",
             border_style="cyan",
         )
     )
 
-    success = configure_platform(
-        "claude-code", project_root, enable_watch=enable_watch, force=force
-    )
+    # Try Claude CLI first
+    claude_cli_available = check_claude_cli_available()
+    success = False
+
+    if claude_cli_available:
+        print_info("Using Claude CLI for automatic setup...")
+        success = register_with_claude_cli(
+            project_root=project_root,
+            enable_watch=enable_watch,
+        )
+
+        if success:
+            print_success("✅ Registered with Claude CLI")
+        else:
+            print_warning("⚠️  Claude CLI registration failed, using manual JSON")
+
+    # Fall back to manual JSON if Claude CLI not available or failed
+    if not success:
+        if not claude_cli_available:
+            print_info("Claude CLI not available, creating .mcp.json manually...")
+
+        success = configure_platform(
+            "claude-code", project_root, enable_watch=enable_watch, force=force
+        )
 
     if success:
         console.print(
@@ -493,7 +597,13 @@ def install_claude_code(
         console.print("  1. Open Claude Code in this project directory")
         console.print("  2. The MCP server will be available automatically")
         console.print("  3. Try: 'Search my code for authentication functions'")
-        console.print("\n[dim]💡 Commit .mcp.json to share with your team[/dim]")
+
+        if not claude_cli_available:
+            console.print("\n[dim]💡 Commit .mcp.json to share with your team[/dim]")
+        else:
+            console.print(
+                "\n[dim]💡 Configuration managed by Claude CLI (project-scoped)[/dim]"
+            )
     else:
         raise typer.Exit(1)
 

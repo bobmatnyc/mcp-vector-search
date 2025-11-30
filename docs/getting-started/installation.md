@@ -70,7 +70,7 @@ pip install -e .
 
 ## ⚡ Zero-Config Setup (Recommended)
 
-The **setup command** provides intelligent, zero-configuration onboarding:
+The **setup command** provides intelligent, hands-off installation - just one command and you're done!
 
 ```bash
 # One command does everything (recommended)
@@ -80,16 +80,47 @@ mcp-vector-search setup
 # 1. Detects project languages and file types
 # 2. Initializes vector database with optimal settings
 # 3. Indexes your entire codebase
-# 4. Configures ALL detected MCP platforms
+# 4. Configures ALL detected MCP platforms (Claude Code, Cursor, etc.)
 # 5. Sets up file watching for auto-reindex
+# 6. Uses native Claude CLI integration when available
 ```
 
 **Key Features:**
-- ✅ Zero configuration needed
-- ✅ Smart language and platform detection
-- ✅ Idempotent (safe to re-run)
-- ✅ Fast with timeout protection
-- ✅ Team-friendly (creates `.mcp.json` for sharing)
+- ✅ **Truly hands-off** - Zero user input required
+- ✅ **Smart detection** - Automatically discovers languages and platforms
+- ✅ **Native integration** - Uses `claude mcp add` when Claude CLI is available
+- ✅ **Intelligent fallback** - Creates `.mcp.json` if native CLI unavailable
+- ✅ **Idempotent** - Safe to re-run multiple times
+- ✅ **Team-friendly** - Commit `.mcp.json` to share configuration
+
+### How It Works
+
+**Automatic MCP Registration:**
+- **With Claude CLI**: Uses native `claude mcp add` command for seamless integration
+- **Without Claude CLI**: Creates `.mcp.json` in project root automatically
+- **Command used**: `mcp` (not `mcp-vector-search` for consistency)
+- **Server module**: `python -m mcp_vector_search.mcp.server`
+
+**Example Output:**
+```
+🚀 Smart Setup for mcp-vector-search
+🔍 Detecting project...
+   ✅ Found 3 language(s): Python, JavaScript, TypeScript
+   ✅ Detected 8 file type(s)
+   ✅ Found 2 platform(s): claude-code, cursor
+⚙️  Configuring...
+   ✅ Embedding model: sentence-transformers/all-MiniLM-L6-v2
+🚀 Initializing...
+   ✅ Vector database created
+   ✅ Configuration saved
+🔍 Indexing codebase...
+   ✅ Indexing completed in 12.3s
+🔗 Configuring MCP integrations...
+   ✅ Using Claude CLI for automatic setup
+   ✅ Registered with Claude CLI
+   ✅ Configured 2 platform(s)
+🎉 Setup Complete!
+```
 
 ### Setup Options
 
@@ -97,9 +128,18 @@ mcp-vector-search setup
 # Force re-setup (reindex and reconfigure)
 mcp-vector-search setup --force
 
-# Verbose debugging output
+# Verbose debugging output (shows Claude CLI commands)
 mcp-vector-search setup --verbose
 ```
+
+### What Gets Created
+
+After running `setup`, your project will have:
+
+- **`.mcp-vector-search/`** - Vector database and configuration
+- **`.mcp.json`** - MCP platform configuration (if Claude CLI not available)
+- **Registered with Claude CLI** - Native integration (if Claude CLI available)
+- **Ready to use** - Open Claude Code and start using semantic search tools
 
 ---
 

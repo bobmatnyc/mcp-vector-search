@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Smart Auto-Detection**: Automatically detects project languages and file types
   - **Comprehensive Setup**: Combines init + index + MCP configuration in one command
   - **Multi-Platform MCP**: Configures all installed MCP platforms (Claude Code, Cursor, Windsurf, VS Code, Claude Desktop)
+  - **Native Claude CLI Integration**: Uses `claude mcp add` command when Claude CLI is available
+  - **Intelligent Fallback**: Creates `.mcp.json` automatically if Claude CLI unavailable
+  - **Consistent Server Naming**: MCP server registered as `mcp` (not `mcp-vector-search`) for consistency
   - **File Watching**: Sets up automatic reindexing via file watching
   - **Timeout Protection**: Prevents hanging on large projects (2s scan timeout)
   - **Idempotent**: Safe to run multiple times, won't break existing configuration
@@ -41,10 +44,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   4. Initializes vector database and configuration
   5. Indexes entire codebase with progress reporting
   6. Detects all installed MCP platforms
-  7. Configures each platform automatically
+  7. Configures each platform automatically (using `claude mcp add` when available)
   8. Enables file watching for automatic reindexing
 
+  **Behind the scenes (MCP Integration):**
+  - **Server name**: `mcp` (for consistency with other MCP projects)
+  - **Command**: `uv run python -m mcp_vector_search.mcp.server {PROJECT_ROOT}`
+  - **Primary method**: `claude mcp add --transport stdio mcp --env MCP_ENABLE_FILE_WATCHING=true -- uv run python -m mcp_vector_search.mcp.server {PROJECT_ROOT}`
+  - **Fallback method**: Manual `.mcp.json` creation if Claude CLI unavailable
+
   **This is now the recommended way to get started** - replacing manual `init` + `index` + `install` workflows.
+
+- **Enhanced Install Command with Native Claude CLI Support**: Updated `mcp-vector-search install` command with Claude CLI integration
+  - **Native Integration**: Uses `claude mcp add` when Claude CLI is available
+  - **Automatic Detection**: Checks for both `claude` and `uv` availability
+  - **Graceful Fallback**: Falls back to `.mcp.json` creation if CLI unavailable
+  - **Consistent Naming**: Registers server as `mcp` (not `mcp-vector-search`)
+  - **Environment Variables**: Properly sets `MCP_ENABLE_FILE_WATCHING=true`
+  - **Error Handling**: Comprehensive error handling with clear user feedback
+  - **Logging**: Detailed logging for debugging with `--verbose` flag
 
 - **Automatic .gitignore Entry Management**: Project initialization now automatically adds `.mcp-vector-search/` to `.gitignore`
   - Prevents accidental commits of local search index data to version control

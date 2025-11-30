@@ -23,6 +23,8 @@ Examples:
 """
 
 import asyncio
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -79,6 +81,101 @@ setup_app = create_enhanced_typer(
 # ==============================================================================
 # Helper Functions
 # ==============================================================================
+
+
+def check_claude_cli_available() -> bool:
+    """Check if Claude CLI is available.
+
+    Returns:
+        True if claude CLI is installed and accessible
+    """
+    return shutil.which("claude") is not None
+
+
+def check_uv_available() -> bool:
+    """Check if uv is available.
+
+    Returns:
+        True if uv is installed and accessible
+    """
+    return shutil.which("uv") is not None
+
+
+def register_with_claude_cli(
+    project_root: Path,
+    enable_watch: bool = True,
+    verbose: bool = False,
+) -> bool:
+    """Register MCP server with Claude CLI using native 'claude mcp add' command.
+
+    Args:
+        project_root: Project root directory
+        enable_watch: Enable file watching
+        verbose: Show verbose output
+
+    Returns:
+        True if registration was successful, False otherwise
+    """
+    try:
+        # Check if uv is available
+        if not check_uv_available():
+            if verbose:
+                print_warning("  ⚠️  uv not available, will use manual JSON configuration")
+            return False
+
+        # Build the command
+        # claude mcp add --transport stdio mcp \
+        #   --env MCP_ENABLE_FILE_WATCHING=true \
+        #   -- uv run python -m mcp_vector_search.mcp.server /project/root
+        cmd = [
+            "claude",
+            "mcp",
+            "add",
+            "--transport",
+            "stdio",
+            "mcp",
+            "--env",
+            f"MCP_ENABLE_FILE_WATCHING={'true' if enable_watch else 'false'}",
+            "--",
+            "uv",
+            "run",
+            "python",
+            "-m",
+            "mcp_vector_search.mcp.server",
+            str(project_root.absolute()),
+        ]
+
+        if verbose:
+            print_info(f"  Running: {' '.join(cmd)}")
+
+        # Run the command
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode == 0:
+            print_success("  ✅ Registered with Claude CLI")
+            if verbose:
+                print_info(f"     Command: claude mcp add mcp")
+            return True
+        else:
+            if verbose:
+                print_warning(f"  ⚠️  Claude CLI registration failed: {result.stderr}")
+            return False
+
+    except subprocess.TimeoutExpired:
+        logger.warning("Claude CLI registration timed out")
+        if verbose:
+            print_warning("  ⚠️  Claude CLI command timed out")
+        return False
+    except Exception as e:
+        logger.warning(f"Claude CLI registration failed: {e}")
+        if verbose:
+            print_warning(f"  ⚠️  Claude CLI error: {e}")
+        return False
 
 
 def scan_project_file_extensions(
@@ -367,12 +464,39 @@ async def _run_smart_setup(ctx: typer.Context, force: bool, verbose: bool) -> No
     configured_platforms = []
     failed_platforms = []
 
+    # Check if Claude CLI is available for enhanced setup
+    claude_cli_available = check_claude_cli_available()
+    if verbose and claude_cli_available:
+        print_info("   ✅ Claude CLI detected, using native integration")
+
     # Always configure at least Claude Code (project-scoped)
     platforms_to_configure = (
         detected_platforms if detected_platforms else ["claude-code"]
     )
 
+    # Try Claude CLI first if we're configuring claude-code
+    claude_code_configured = False
+    if "claude-code" in platforms_to_configure and claude_cli_available:
+        print_info("   Using Claude CLI for automatic setup...")
+        success = register_with_claude_cli(
+            project_root=project_root,
+            enable_watch=True,
+            verbose=verbose,
+        )
+        if success:
+            configured_platforms.append("claude-code")
+            claude_code_configured = True
+            # Remove from platforms to configure since we handled it
+            platforms_to_configure = [
+                p for p in platforms_to_configure if p != "claude-code"
+            ]
+
+    # Configure remaining platforms using manual JSON
     for platform_name in platforms_to_configure:
+        # Skip claude-code if already configured via CLI
+        if platform_name == "claude-code" and claude_code_configured:
+            continue
+
         try:
             success = configure_platform(
                 platform=platform_name,

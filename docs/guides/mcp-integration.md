@@ -13,26 +13,36 @@ The MCP integration allows you to use MCP Vector Search directly within Claude C
 
 ## Quick Start
 
-### One-Step Setup
+### One-Command Setup (Recommended)
 
-The fastest way to get started is using the enhanced `init` command:
+The fastest and easiest way to get started - completely hands-off:
 
 ```bash
-mcp-vector-search init main --auto-index --mcp
+mcp-vector-search setup
 ```
 
-This will:
-1. Initialize your project for vector search
-2. Index your codebase automatically
-3. Install the Claude Code MCP integration
+This **automatically**:
+1. Detects your project's languages and file types
+2. Initializes vector database with optimal settings
+3. Indexes your entire codebase
+4. Registers MCP server using native Claude CLI (or creates `.mcp.json` as fallback)
+5. Sets up file watching for automatic reindexing
+6. **No user input required!**
 
-### Manual Setup
+**What happens behind the scenes:**
+- If Claude CLI is available: Uses `claude mcp add` for native integration
+- If Claude CLI unavailable: Creates `.mcp.json` in project root
+- Server name: `mcp` (for consistency with other MCP tools)
+- Command: `uv run python -m mcp_vector_search.mcp.server {PROJECT_ROOT}`
+- File watching: Enabled via `MCP_ENABLE_FILE_WATCHING=true`
 
-If you prefer to set up step by step:
+### Manual Setup (Advanced)
+
+If you prefer step-by-step control:
 
 1. **Initialize your project:**
    ```bash
-   mcp-vector-search init main
+   mcp-vector-search init
    ```
 
 2. **Index your codebase:**
@@ -42,32 +52,109 @@ If you prefer to set up step by step:
 
 3. **Install MCP integration:**
    ```bash
-   mcp-vector-search mcp install
+   # For Claude Code (project-scoped)
+   mcp-vector-search install claude-code
+
+   # For other platforms
+   mcp-vector-search install cursor
+   mcp-vector-search install claude-desktop
    ```
 
-## MCP Commands
+## Claude CLI Integration
+
+### Automatic Registration (Preferred)
+
+The `setup` command automatically detects Claude CLI and uses native integration:
+
+```bash
+mcp-vector-search setup
+```
+
+**Behind the scenes, this runs:**
+```bash
+claude mcp add --transport stdio mcp \
+  --env MCP_ENABLE_FILE_WATCHING=true \
+  -- uv run python -m mcp_vector_search.mcp.server /path/to/project
+```
+
+**Why this is better:**
+- ✅ Native Claude CLI integration (more reliable)
+- ✅ Proper environment variable handling
+- ✅ Automatic server registration
+- ✅ No manual JSON editing required
+- ✅ Server name is `mcp` for consistency
+
+### Manual Claude CLI Registration
+
+If you prefer to register manually using Claude CLI:
+
+```bash
+# Navigate to your project
+cd /path/to/your/project
+
+# Register MCP server
+claude mcp add --transport stdio mcp \
+  --env MCP_ENABLE_FILE_WATCHING=true \
+  -- uv run python -m mcp_vector_search.mcp.server $(pwd)
+```
+
+**Command Structure:**
+- `--transport stdio` - Use local stdio transport
+- `mcp` - Server name (use this name in Claude Code)
+- `--env MCP_ENABLE_FILE_WATCHING=true` - Enable automatic reindexing
+- `--` - Separator between Claude options and server command
+- `uv run python -m mcp_vector_search.mcp.server` - Server module path
+- `$(pwd)` - Project root directory (absolute path)
+
+### Fallback: Manual `.mcp.json` Creation
+
+If Claude CLI is not available, `setup` automatically creates `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "mcp": {
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "-m",
+        "mcp_vector_search.mcp.server",
+        "/absolute/path/to/project"
+      ],
+      "env": {
+        "MCP_ENABLE_FILE_WATCHING": "true"
+      }
+    }
+  }
+}
+```
+
+## Platform-Specific Installation
 
 ### Install Integration
 
 ```bash
-mcp-vector-search mcp install [OPTIONS]
+mcp-vector-search install [PLATFORM]
 ```
 
-**Options:**
-- `--scope`: Installation scope (project only - user config not supported) - default: `project`
-- `--name`: Custom name for the MCP server - default: `mcp-vector-search`
-- `--force`: Force installation even if server already exists
+**Supported Platforms:**
+- `claude-code` - Claude Code (project-scoped, creates `.mcp.json`)
+- `claude-desktop` - Claude Desktop (global configuration)
+- `cursor` - Cursor IDE (global configuration)
+- `windsurf` - Windsurf (global configuration)
+- `vscode` - VS Code (global configuration)
 
 **Examples:**
 ```bash
-# Install with default settings (project scope)
-mcp-vector-search mcp install
+# Install for Claude Code (project-scoped)
+mcp-vector-search install claude-code
 
-# Install with custom name
-mcp-vector-search mcp install --name my-vector-search
+# Install for Cursor (global)
+mcp-vector-search install cursor
 
-# Force reinstall
-mcp-vector-search mcp install --force
+# List available platforms
+mcp-vector-search install list
 ```
 
 ### Test Integration
