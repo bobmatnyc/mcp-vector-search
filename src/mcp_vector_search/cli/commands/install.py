@@ -116,7 +116,9 @@ def register_with_claude_cli(
     try:
         # Check if uv is available
         if not check_uv_available():
-            logger.warning("uv not available, falling back to manual JSON configuration")
+            logger.warning(
+                "uv not available, falling back to manual JSON configuration"
+            )
             return False
 
         # Build the command

@@ -120,7 +120,9 @@ def register_with_claude_cli(
         # Check if uv is available
         if not check_uv_available():
             if verbose:
-                print_warning("  ⚠️  uv not available, will use manual JSON configuration")
+                print_warning(
+                    "  ⚠️  uv not available, will use manual JSON configuration"
+                )
             return False
 
         # Build the command
@@ -159,7 +161,7 @@ def register_with_claude_cli(
         if result.returncode == 0:
             print_success("  ✅ Registered with Claude CLI")
             if verbose:
-                print_info(f"     Command: claude mcp add mcp")
+                print_info("     Command: claude mcp add mcp")
             return True
         else:
             if verbose:
