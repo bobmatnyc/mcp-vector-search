@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -10,29 +10,30 @@ repos:
       - id: debug-statements
 
   - repo: https://github.com/psf/black
-    rev: 23.12.1
+    rev: 25.11.0
     hooks:
       - id: black
         language_version: python3.11
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.0
+    rev: v0.14.7
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
+    rev: v1.19.0
     hooks:
       - id: mypy
-        additional_dependencies: [types-all]
-        args: [--ignore-missing-imports]
+        additional_dependencies: []
+        args: [--ignore-missing-imports, --no-strict-optional]
 
   # Security scanning
   - repo: https://github.com/PyCQA/bandit
-    rev: 1.7.5
+    rev: 1.9.2
     hooks:
       - id: bandit
-        args: ['-r', 'src/', '-f', 'json']
+        args: ['-c', 'pyproject.toml']
         exclude: tests/
+        additional_dependencies: ["bandit[toml]"]

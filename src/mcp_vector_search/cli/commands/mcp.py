@@ -38,10 +38,49 @@ Each tool has its own configuration format and location.
   3. Test setup:     [green]mcp-vector-search mcp test[/green]
 
 [dim]Use --force to overwrite existing configurations[/dim]
-"""
+""",
+    no_args_is_help=False,  # Allow running without subcommand
+    invoke_without_command=True,  # Call callback even without subcommand
 )
 
 console = Console()
+
+
+@mcp_app.callback()
+def mcp_callback(ctx: typer.Context):
+    """MCP server management.
+
+    When invoked without a subcommand, starts the MCP server over stdio.
+    Use subcommands to configure MCP integration for different AI tools.
+    """
+    # Store context for subcommands
+    if not ctx.obj:
+        ctx.obj = {}
+
+    # If a subcommand was invoked, let it handle things (check this FIRST)
+    if ctx.invoked_subcommand is not None:
+        return
+
+    # No subcommand - start the MCP server
+    import asyncio
+    from pathlib import Path
+
+    from ...mcp.server import run_mcp_server
+
+    project_root = ctx.obj.get("project_root") if ctx.obj else None
+    if project_root is None:
+        project_root = Path.cwd()
+
+    # Start the MCP server over stdio
+    try:
+        asyncio.run(run_mcp_server(project_root))
+        raise typer.Exit(0)
+    except KeyboardInterrupt:
+        raise typer.Exit(0)
+    except Exception as e:
+        print(f"MCP server error: {e}", file=sys.stderr)
+        raise typer.Exit(1)
+
 
 # Supported AI tools and their configuration details
 SUPPORTED_TOOLS = {
@@ -123,6 +162,29 @@ def get_mcp_server_command(
     return f"{python_exe} -m mcp_vector_search.mcp.server{watch_flag} {project_root}"
 
 
+def detect_install_method() -> tuple[str, list[str]]:
+    """Detect how mcp-vector-search is installed and return appropriate command.
+
+    Returns:
+        Tuple of (command, args) for running mcp-vector-search mcp
+    """
+    # Check if we're in a uv-managed environment
+    # uv sets UV_PROJECT_ENVIRONMENT or has .venv structure
+    if os.environ.get("VIRTUAL_ENV") and ".venv" in os.environ.get("VIRTUAL_ENV", ""):
+        # Likely uv project environment
+        if shutil.which("uv"):
+            return ("uv", ["run", "mcp-vector-search", "mcp"])
+
+    # Check if mcp-vector-search is directly available in PATH
+    mcp_cmd = shutil.which("mcp-vector-search")
+    if mcp_cmd:
+        # Installed via pipx or pip - use direct command
+        return ("mcp-vector-search", ["mcp"])
+
+    # Fallback to uv run (development mode)
+    return ("uv", ["run", "mcp-vector-search", "mcp"])
+
+
 def get_mcp_server_config_for_tool(
     project_root: Path,
     tool_name: str,
@@ -130,9 +192,11 @@ def get_mcp_server_config_for_tool(
     enable_file_watching: bool = True,
 ) -> dict[str, Any]:
     """Generate MCP server configuration for a specific tool."""
+    command, args = detect_install_method()
+
     base_config = {
-        "command": "uv",
-        "args": ["run", "mcp-vector-search", "mcp"],
+        "command": command,
+        "args": args,
         "env": {
             "MCP_ENABLE_FILE_WATCHING": "true" if enable_file_watching else "false"
         },
@@ -183,11 +247,12 @@ def create_project_claude_config(
     if "mcpServers" not in config:
         config["mcpServers"] = {}
 
-    # Use uv for better compatibility, with proper args structure
+    # Detect installation method and use appropriate command
+    command, args = detect_install_method()
     config["mcpServers"][server_name] = {
         "type": "stdio",
-        "command": "uv",
-        "args": ["run", "mcp-vector-search", "mcp"],
+        "command": command,
+        "args": args,
         "env": {
             "MCP_ENABLE_FILE_WATCHING": "true" if enable_file_watching else "false"
         },
@@ -198,6 +263,13 @@ def create_project_claude_config(
         json.dump(config, f, indent=2)
 
     print_success("Created project-level .mcp.json with MCP server configuration")
+
+    # Show which command will be used
+    if command == "uv":
+        print_info(f"Using uv: {command} {' '.join(args)}")
+    else:
+        print_info(f"Using direct command: {command} {' '.join(args)}")
+
     if enable_file_watching:
         print_info("File watching is enabled for automatic reindexing")
     else:

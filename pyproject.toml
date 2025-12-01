@@ -76,6 +76,7 @@ Repository = "https://github.com/bobmatnyc/mcp-vector-search"
 
 [project.scripts]
 mcp-vector-search = "mcp_vector_search.cli.main:cli_with_suggestions"
+mcp-vector-search-mcp = "mcp_vector_search.mcp.__main__:main"
 
 [tool.hatch.version]
 path = "src/mcp_vector_search/__init__.py"
@@ -193,3 +194,7 @@ exclude_lines = [
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
 ]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "build", "dist"]
+skips = ["B404", "B603"]  # Skip subprocess import and call warnings (CLI tool needs these)
