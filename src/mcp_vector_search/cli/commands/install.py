@@ -121,7 +121,19 @@ def register_with_claude_cli(
             )
             return False
 
-        # Build the command
+        # First, try to remove existing server (safe to ignore if doesn't exist)
+        # This ensures clean registration when server already exists
+        remove_cmd = ["claude", "mcp", "remove", "mcp"]
+
+        subprocess.run(
+            remove_cmd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        # Ignore result - it's OK if server doesn't exist
+
+        # Build the add command
         cmd = [
             "claude",
             "mcp",
@@ -140,7 +152,7 @@ def register_with_claude_cli(
             str(project_root.absolute()),
         ]
 
-        # Run the command
+        # Run the add command
         result = subprocess.run(
             cmd,
             capture_output=True,

@@ -432,6 +432,19 @@ async def run_init_setup(
                 claude_cmd = get_claude_command()
                 server_command = get_mcp_server_command(project_root)
 
+                # First, try to remove existing server (safe to ignore if doesn't exist)
+                # This ensures clean registration when server already exists
+                print_info("Updating MCP server configuration...")
+                remove_cmd = [claude_cmd, "mcp", "remove", "mcp-vector-search"]
+
+                subprocess.run(
+                    remove_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                # Ignore result - it's OK if server doesn't exist
+
                 # Install MCP server with project scope for team sharing
                 cmd_args = [
                     claude_cmd,

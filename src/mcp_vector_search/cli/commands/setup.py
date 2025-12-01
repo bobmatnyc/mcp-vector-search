@@ -125,7 +125,22 @@ def register_with_claude_cli(
                 )
             return False
 
-        # Build the command
+        # First, try to remove existing server (safe to ignore if doesn't exist)
+        # This ensures clean registration when server already exists
+        remove_cmd = ["claude", "mcp", "remove", "mcp"]
+
+        if verbose:
+            print_info("  Checking for existing MCP server registration...")
+
+        subprocess.run(
+            remove_cmd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        # Ignore result - it's OK if server doesn't exist
+
+        # Build the add command
         # claude mcp add --transport stdio mcp \
         #   --env MCP_ENABLE_FILE_WATCHING=true \
         #   -- uv run python -m mcp_vector_search.mcp.server /project/root
@@ -150,7 +165,7 @@ def register_with_claude_cli(
         if verbose:
             print_info(f"  Running: {' '.join(cmd)}")
 
-        # Run the command
+        # Run the add command
         result = subprocess.run(
             cmd,
             capture_output=True,
