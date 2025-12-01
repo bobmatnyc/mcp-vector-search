@@ -102,28 +102,31 @@ def check_uv_available() -> bool:
 
 def register_with_claude_cli(
     project_root: Path,
+    server_name: str = "mcp-vector-search",
     enable_watch: bool = True,
 ) -> bool:
     """Register MCP server with Claude CLI using native 'claude mcp add' command.
 
     Args:
         project_root: Project root directory
+        server_name: Name for the MCP server entry (default: "mcp-vector-search")
         enable_watch: Enable file watching
 
     Returns:
         True if registration was successful, False otherwise
     """
     try:
-        # Check if uv is available
-        if not check_uv_available():
+        # Check if mcp-vector-search command is available first
+        # This ensures we work with pipx/homebrew installations, not just uv
+        if not shutil.which("mcp-vector-search"):
             logger.warning(
-                "uv not available, falling back to manual JSON configuration"
+                "mcp-vector-search command not in PATH, falling back to manual JSON configuration"
             )
             return False
 
         # First, try to remove existing server (safe to ignore if doesn't exist)
         # This ensures clean registration when server already exists
-        remove_cmd = ["claude", "mcp", "remove", "mcp"]
+        remove_cmd = ["claude", "mcp", "remove", server_name]
 
         subprocess.run(
             remove_cmd,
@@ -133,22 +136,20 @@ def register_with_claude_cli(
         )
         # Ignore result - it's OK if server doesn't exist
 
-        # Build the add command
+        # Build the add command using mcp-vector-search CLI
+        # This works for all installation methods: pipx, homebrew, and uv
         cmd = [
             "claude",
             "mcp",
             "add",
             "--transport",
             "stdio",
-            "mcp",
+            server_name,
             "--env",
             f"MCP_ENABLE_FILE_WATCHING={'true' if enable_watch else 'false'}",
             "--",
-            "uv",
-            "run",
-            "python",
-            "-m",
-            "mcp_vector_search.mcp.server",
+            "mcp-vector-search",
+            "mcp",
             str(project_root.absolute()),
         ]
 
@@ -586,6 +587,7 @@ def install_claude_code(
         print_info("Using Claude CLI for automatic setup...")
         success = register_with_claude_cli(
             project_root=project_root,
+            server_name="mcp-vector-search",
             enable_watch=enable_watch,
         )
 
