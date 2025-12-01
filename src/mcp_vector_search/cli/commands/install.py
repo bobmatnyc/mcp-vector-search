@@ -598,9 +598,12 @@ def install_claude_code(
     if not success:
         if not claude_cli_available:
             print_info("Claude CLI not available, creating .mcp.json manually...")
+        else:
+            print_info("Updating MCP server configuration...")
 
+        # When Claude CLI fails, automatically use force mode to update existing config
         success = configure_platform(
-            "claude-code", project_root, enable_watch=enable_watch, force=force
+            "claude-code", project_root, enable_watch=enable_watch, force=True
         )
 
     if success:

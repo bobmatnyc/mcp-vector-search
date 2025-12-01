@@ -38,7 +38,7 @@ ifdef DRY_RUN
 	ECHO_PREFIX := @echo "$(YELLOW)[DRY RUN]$(RESET) Would execute:"
 else
 	DRY_FLAG :=
-	ECHO_PREFIX := 
+	ECHO_PREFIX :=
 endif
 
 # ============================================================================
@@ -501,6 +501,13 @@ homebrew-update: ## Update Homebrew Formula with latest version
 	$(PYTHON) $(SCRIPTS_DIR)/update_homebrew_formula.py --verbose
 	@echo "$(GREEN)✓ Homebrew Formula updated$(RESET)"
 
+.PHONY: homebrew-update-wait
+homebrew-update-wait: ## Wait for PyPI and update Homebrew Formula (NON-BLOCKING)
+	@echo "$(BLUE)Waiting for PyPI package and updating Homebrew Formula...$(RESET)"
+	@VERSION=$$($(VERSION_MANAGER) --show --format simple); \
+	$(SCRIPTS_DIR)/wait_and_update_homebrew.sh $$VERSION || \
+	(echo "$(YELLOW)⚠️  Homebrew update failed (NON-BLOCKING)$(RESET)"; exit 0)
+
 .PHONY: homebrew-test
 homebrew-test: ## Test Homebrew Formula locally
 	@echo "$(BLUE)Testing Homebrew Formula locally...$(RESET)"
@@ -658,7 +665,7 @@ test-unit: ## 🔴 Run unit tests only
 .PHONY: test-integration
 test-integration: ## 🔴 Run integration tests only
 	@echo "$(GREEN)Running integration tests...$(RESET)"
-	$(UV) run pytest $(TEST_DIR) -v -m "integration" 
+	$(UV) run pytest $(TEST_DIR) -v -m "integration"
 	@echo "$(GREEN)✓ Integration tests completed$(RESET)"
 
 .PHONY: test-mcp
