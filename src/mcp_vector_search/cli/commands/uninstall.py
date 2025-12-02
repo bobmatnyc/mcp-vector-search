@@ -55,11 +55,10 @@ uninstall_app = create_enhanced_typer(
      [code]$ mcp-vector-search uninstall list[/code]
 
 [bold cyan]Supported Platforms:[/bold cyan]
-  • [green]claude-code[/green]     - Claude Code (project-scoped .mcp.json)
-  • [green]claude-desktop[/green]  - Claude Desktop (~/.claude/config.json)
-  • [green]cursor[/green]          - Cursor IDE (~/.cursor/mcp.json)
-  • [green]windsurf[/green]        - Windsurf IDE (~/.codeium/windsurf/mcp_config.json)
-  • [green]vscode[/green]          - VS Code (~/.vscode/mcp.json)
+  • [green]claude-code[/green]  - Claude Code (project-scoped .mcp.json)
+  • [green]cursor[/green]       - Cursor IDE (~/.cursor/mcp.json)
+  • [green]windsurf[/green]     - Windsurf IDE (~/.codeium/windsurf/mcp_config.json)
+  • [green]vscode[/green]       - VS Code (~/.vscode/mcp.json)
 
 [dim]💡 Alias: 'mcp-vector-search remove' works the same way[/dim]
 """,
@@ -77,11 +76,6 @@ SUPPORTED_PLATFORMS = {
         "name": "Claude Code",
         "config_path": ".mcp.json",
         "scope": "project",
-    },
-    "claude-desktop": {
-        "name": "Claude Desktop",
-        "config_path": "~/Library/Application Support/Claude/claude_desktop_config.json",
-        "scope": "global",
     },
     "cursor": {
         "name": "Cursor",
@@ -207,7 +201,7 @@ def find_configured_platforms(project_root: Path) -> dict[str, Path]:
             if "mcp-vector-search" in config.get("mcpServers", {}):
                 configured[platform] = config_path
 
-        except Exception:
+        except Exception:  # nosec B112
             # Ignore errors for individual platforms
             continue
 
@@ -381,33 +375,6 @@ def uninstall_windsurf(
     if success:
         console.print("\n[bold green]✅ Windsurf Integration Removed[/bold green]")
         console.print("\n[dim]💡 Restart Windsurf to apply changes[/dim]")
-    else:
-        raise typer.Exit(1)
-
-
-@uninstall_app.command("claude-desktop")
-def uninstall_claude_desktop(
-    ctx: typer.Context,
-    no_backup: bool = typer.Option(False, "--no-backup"),
-) -> None:
-    """Remove Claude Desktop MCP integration (global)."""
-    project_root = ctx.obj.get("project_root") or Path.cwd()
-
-    console.print(
-        Panel.fit(
-            "[bold yellow]Removing Claude Desktop Integration[/bold yellow]\n"
-            "🌐 Global configuration",
-            border_style="yellow",
-        )
-    )
-
-    success = unconfigure_platform("claude-desktop", project_root, backup=not no_backup)
-
-    if success:
-        console.print(
-            "\n[bold green]✅ Claude Desktop Integration Removed[/bold green]"
-        )
-        console.print("\n[dim]💡 Restart Claude Desktop to apply changes[/dim]")
     else:
         raise typer.Exit(1)
 

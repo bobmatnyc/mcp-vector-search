@@ -152,9 +152,6 @@ mcp-vector-search install claude-code
 # Add Cursor IDE integration (global)
 mcp-vector-search install cursor
 
-# Add Claude Desktop integration (global)
-mcp-vector-search install claude-desktop
-
 # See all available platforms
 mcp-vector-search install list
 ```
@@ -272,7 +269,6 @@ mcp-vector-search install --no-auto-index
 
 # Platform-specific MCP integration
 mcp-vector-search install claude-code      # Project-scoped
-mcp-vector-search install claude-desktop   # Global
 mcp-vector-search install cursor           # Global
 mcp-vector-search install windsurf         # Global
 mcp-vector-search install vscode           # Global

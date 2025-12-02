@@ -66,7 +66,7 @@ mcp-vector-search setup --verbose
 1. **Detects Project Characteristics**
    - Scans for languages in use (Python, JavaScript, TypeScript, etc.)
    - Discovers file types present in your codebase
-   - Detects installed MCP platforms (Claude Code, Cursor, Windsurf, VS Code, Claude Desktop)
+   - Detects installed MCP platforms (Claude Code, Cursor, Windsurf, VS Code)
 
 2. **Smart Configuration**
    - Selects optimal embedding model based on detected languages
@@ -86,7 +86,7 @@ mcp-vector-search setup --verbose
 5. **MCP Integration**
    - Configures all detected MCP platforms automatically
    - Creates `.mcp.json` for project-scoped configuration
-   - Updates platform-specific config files (e.g., Claude Desktop settings)
+   - Updates platform-specific config files for supported platforms
    - Enables file watching for automatic reindexing
 
 **Options:**
@@ -184,7 +184,6 @@ mcp-vector-search install --with-mcp
 # Setup specific MCP platform
 mcp-vector-search install claude-code
 mcp-vector-search install cursor
-mcp-vector-search install claude-desktop
 mcp-vector-search install windsurf
 
 # Custom configuration
@@ -226,7 +225,6 @@ mcp-vector-search install /path/to/project
 mcp-vector-search install claude-code
 
 # Global (updates system-wide config)
-mcp-vector-search install claude-desktop
 mcp-vector-search install cursor
 mcp-vector-search install windsurf
 mcp-vector-search install vscode
@@ -285,7 +283,6 @@ Remove MCP integration from platforms.
 ```bash
 # Remove from specific platform
 mcp-vector-search uninstall claude-code
-mcp-vector-search uninstall claude-desktop
 mcp-vector-search uninstall cursor
 
 # Remove from all platforms
@@ -918,4 +915,3 @@ mcp-vector-search search --similar src/utils/auth.py --limit 5
 - **[Indexing Guide](../guides/indexing.md)** - Optimize indexing
 - **[Configuration Guide](configuration.md)** - Advanced settings
 - **[Troubleshooting Guide](../advanced/troubleshooting.md)** - Solve common issues
-

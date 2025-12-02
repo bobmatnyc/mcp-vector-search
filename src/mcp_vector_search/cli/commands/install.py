@@ -64,11 +64,10 @@ install_app = create_enhanced_typer(
      [code]$ mcp-vector-search install --with-mcp[/code]
 
 [bold cyan]Supported Platforms:[/bold cyan]
-  • [green]claude-code[/green]     - Claude Code (project-scoped .mcp.json)
-  • [green]claude-desktop[/green]  - Claude Desktop (~/.claude/config.json)
-  • [green]cursor[/green]          - Cursor IDE (~/.cursor/mcp.json)
-  • [green]windsurf[/green]        - Windsurf IDE (~/.codeium/windsurf/mcp_config.json)
-  • [green]vscode[/green]          - VS Code (~/.vscode/mcp.json)
+  • [green]claude-code[/green]  - Claude Code (project-scoped .mcp.json)
+  • [green]cursor[/green]       - Cursor IDE (~/.cursor/mcp.json)
+  • [green]windsurf[/green]     - Windsurf IDE (~/.codeium/windsurf/mcp_config.json)
+  • [green]vscode[/green]       - VS Code (~/.vscode/mcp.json)
 
 [dim]💡 Use 'mcp-vector-search uninstall <platform>' to remove integrations[/dim]
 """,
@@ -185,12 +184,6 @@ SUPPORTED_PLATFORMS = {
         "config_path": ".mcp.json",  # Project-scoped
         "description": "Claude Code with project-scoped configuration",
         "scope": "project",
-    },
-    "claude-desktop": {
-        "name": "Claude Desktop",
-        "config_path": "~/Library/Application Support/Claude/claude_desktop_config.json",
-        "description": "Claude Desktop application",
-        "scope": "global",
     },
     "cursor": {
         "name": "Cursor",
@@ -685,39 +678,6 @@ def install_windsurf(
         console.print("  1. Restart Windsurf IDE")
         console.print("  2. Open this project in Windsurf")
         console.print("  3. MCP tools should be available")
-    else:
-        raise typer.Exit(1)
-
-
-@install_app.command("claude-desktop")
-def install_claude_desktop(
-    ctx: typer.Context,
-    enable_watch: bool = typer.Option(True, "--watch/--no-watch"),
-    force: bool = typer.Option(False, "--force", "-f"),
-) -> None:
-    """Install Claude Desktop MCP integration (global)."""
-    project_root = ctx.obj.get("project_root") or Path.cwd()
-
-    console.print(
-        Panel.fit(
-            "[bold cyan]Installing Claude Desktop Integration[/bold cyan]\n"
-            "🌐 Global configuration (~/.claude/config.json)",
-            border_style="cyan",
-        )
-    )
-
-    success = configure_platform(
-        "claude-desktop", project_root, enable_watch=enable_watch, force=force
-    )
-
-    if success:
-        console.print(
-            "\n[bold green]✨ Claude Desktop Integration Installed![/bold green]"
-        )
-        console.print("\n[bold blue]Next Steps:[/bold blue]")
-        console.print("  1. Restart Claude Desktop")
-        console.print("  2. The mcp-vector-search server will be available")
-        console.print("  3. Open conversations in the project directory")
     else:
         raise typer.Exit(1)
 

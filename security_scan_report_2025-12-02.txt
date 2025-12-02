@@ -1,0 +1,186 @@
+================================================================
+PRE-RELEASE SECURITY SCAN REPORT
+================================================================
+Date: 2025-12-02
+Project: mcp-vector-search
+Release: Patch release (removing Claude Desktop support)
+Scan Type: Comprehensive secret detection and security review
+================================================================
+
+SCAN SUMMARY
+================================================================
+Status: ✅ CLEAN - No secrets or credentials detected
+Risk Level: LOW
+Recommendation: APPROVED FOR RELEASE
+
+================================================================
+SCANNED AREAS
+================================================================
+
+1. GIT DIFF ANALYSIS (origin/main..HEAD)
+   - No commits ahead of origin/main
+   - Status: Clean working directory
+   - Modified files (unstaged): 6 files
+   - New research docs (untracked): 3 files
+
+2. MODIFIED FILES SCAN (Unstaged Changes)
+   Files scanned:
+   - README.md
+   - docs/getting-started/installation.md
+   - docs/guides/mcp-integration.md
+   - docs/reference/cli-commands.md
+   - src/mcp_vector_search/cli/commands/install.py
+   - src/mcp_vector_search/cli/commands/uninstall.py
+
+   Changes: Removal of Claude Desktop references only
+   Secrets found: NONE ✅
+
+3. ENVIRONMENT FILES CHECK
+   Found: .env.local
+   Git status: ✅ PROPERLY IGNORED (.gitignore:274:.env.*)
+   Tracking: ✅ NOT TRACKED in git
+   Classification: INFO - Secrets in properly ignored file (SAFE)
+
+4. SECRET PATTERN DETECTION
+   Patterns searched:
+   - API keys (api_key, apikey, api-key)
+   - GitHub tokens (ghp_, gho_, ghu_, ghs_, ghr_)
+   - AWS keys (AKIA, ASIA)
+   - Passwords (password=, passwd:, pwd=)
+   - Database URLs (postgres://, mysql://, mongodb://)
+   - Private keys (BEGIN PRIVATE KEY, BEGIN RSA PRIVATE KEY)
+   - Bearer tokens
+   - OAuth credentials
+
+   Results: ✅ NO HARDCODED SECRETS DETECTED
+
+   Note: Found references in code are:
+   - Documentation placeholders ("ghp_your_token_here")
+   - Test/demo code (password parameters in functions)
+   - Environment variable readers (os.getenv("HOMEBREW_TAP_TOKEN"))
+   - All legitimate and safe ✅
+
+5. PRIVATE KEY FILES SCAN
+   Found files:
+   - .venv-mcp/.../roots.pem (CA certificates)
+   - .venv/.../cacert.pem (CA certificates)
+
+   Classification: INFO - Standard CA certificates in virtualenv (SAFE)
+
+6. GITHUB WORKFLOWS SECURITY
+   Files: .github/workflows/ci.yml, update-homebrew.yml
+   Secret handling: ✅ PROPER USE OF GITHUB SECRETS
+   - PYPI_API_TOKEN: secrets.PYPI_API_TOKEN
+   - HOMEBREW_TAP_TOKEN: secrets.HOMEBREW_TAP_TOKEN
+   No hardcoded secrets: ✅ CONFIRMED
+
+7. .GITIGNORE VALIDATION
+   Coverage: ✅ COMPREHENSIVE
+   Patterns verified:
+   - .env.* (line 274)
+   - .secrets/ (line 260)
+   - credentials/ (line 275)
+   - *.key, *.pem, *.cert (lines 267-268)
+   - All dotfiles by default (line 2)
+
+   Security posture: ✅ STRONG
+
+8. TRACKED FILES AUDIT
+   Total tracked files: Checked all git ls-files
+   Hardcoded secrets search: ✅ NONE FOUND
+   Documentation files: Only contain placeholders
+   Configuration files: Only reference environment variables
+
+================================================================
+DETAILED FINDINGS
+================================================================
+
+✅ SAFE: Environment variable usage in scripts
+   - scripts/update_homebrew_formula.py: Uses os.getenv("HOMEBREW_TAP_TOKEN")
+   - No hardcoded token values present
+   - Proper error handling for missing token
+
+✅ SAFE: Documentation placeholders
+   - Files: docs/VERSIONING_WORKFLOW.md, docs/development/versioning.md
+   - Contains: "ghp_your_token_here" (placeholder)
+   - Classification: Documentation example (not real token)
+
+✅ SAFE: Test and demo code
+   - Files: test files and demo.py
+   - Contains: Password parameters and authentication functions
+   - Purpose: Example code for semantic search testing
+   - No real credentials present
+
+✅ SAFE: GitHub Actions workflows
+   - Properly uses GitHub Secrets
+   - No inline credentials
+   - Follows security best practices
+
+INFO: .env.local file exists and properly ignored
+   - Status: Not tracked in git
+   - .gitignore rule: Line 274 (.env.*)
+   - Action: None required (correct security practice)
+
+================================================================
+ATTACK VECTOR ANALYSIS
+================================================================
+
+SQL Injection: N/A (no database queries in changed files)
+XSS/CSRF: N/A (no web UI changes)
+Command Injection: ✅ No user input concatenation in shell commands
+Path Traversal: ✅ No file path manipulation vulnerabilities
+Secret Exposure: ✅ CLEAN - No secrets in tracked files
+Authentication Bypass: N/A (no auth changes)
+
+================================================================
+COMPLIANCE CHECK
+================================================================
+
+OWASP Top 10:
+- A01:2021 – Broken Access Control: N/A
+- A02:2021 – Cryptographic Failures: ✅ PASS (no secrets exposed)
+- A03:2021 – Injection: ✅ PASS (no injection vectors)
+- A04:2021 – Insecure Design: ✅ PASS
+- A05:2021 – Security Misconfiguration: ✅ PASS
+- A06:2021 – Vulnerable Components: N/A
+- A07:2021 – Identity/Auth Failures: N/A
+- A08:2021 – Software/Data Integrity: ✅ PASS
+- A09:2021 – Security Logging Failures: N/A
+- A10:2021 – SSRF: N/A
+
+================================================================
+RECOMMENDATIONS
+================================================================
+
+1. ✅ Release approved - No security blockers found
+2. ✅ .gitignore coverage is comprehensive
+3. ✅ GitHub Actions secrets properly configured
+4. ✅ No action required for .env.local (properly ignored)
+
+Optional improvements (non-blocking):
+- Consider adding .env.example template for new developers
+- Document secret management workflow in CONTRIBUTING.md
+
+================================================================
+SECURITY SCAN VERDICT: CLEAN ✅
+================================================================
+
+All modified files scanned: PASS
+No hardcoded secrets detected: PASS
+Environment files properly ignored: PASS
+GitHub workflows secure: PASS
+.gitignore coverage comprehensive: PASS
+
+RELEASE STATUS: ✅ APPROVED FOR RELEASE
+
+This patch release removing Claude Desktop support contains:
+- Documentation updates only
+- Code removal (no new functionality)
+- No security vulnerabilities
+- No credential exposure risks
+
+================================================================
+Scanned by: Security Agent
+Scan methodology: OWASP compliance, secret pattern detection,
+                  git tracking validation, attack vector analysis
+================================================================

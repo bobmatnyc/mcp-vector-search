@@ -57,7 +57,6 @@ If you prefer step-by-step control:
 
    # For other platforms
    mcp-vector-search install cursor
-   mcp-vector-search install claude-desktop
    ```
 
 ## Claude CLI Integration
@@ -140,7 +139,6 @@ mcp-vector-search install [PLATFORM]
 
 **Supported Platforms:**
 - `claude-code` - Claude Code (project-scoped, creates `.mcp.json`)
-- `claude-desktop` - Claude Desktop (global configuration)
 - `cursor` - Cursor IDE (global configuration)
 - `windsurf` - Windsurf (global configuration)
 - `vscode` - VS Code (global configuration)

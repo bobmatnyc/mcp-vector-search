@@ -195,9 +195,6 @@ mcp-vector-search install claude-code
 # Add Cursor IDE integration (global)
 mcp-vector-search install cursor
 
-# Add Claude Desktop integration (global)
-mcp-vector-search install claude-desktop
-
 # Add Windsurf integration (global)
 mcp-vector-search install windsurf
 
@@ -230,7 +227,7 @@ mcp-vector-search remove claude-code
 ### MCP Integration Types
 
 - **Project-scoped**: Claude Code (`.mcp.json` in project root)
-- **Global**: Claude Desktop, Cursor, Windsurf, VS Code (system-wide configuration)
+- **Global**: Cursor, Windsurf, VS Code (system-wide configuration)
 
 ---
 
