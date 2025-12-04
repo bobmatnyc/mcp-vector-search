@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Page Load</title>
+</head>
+<body>
+    <h1>Testing visualization...</h1>
+    <div id="status">Loading...</div>
+    <script>
+        console.log("Test page loaded");
+
+        // Try to fetch the visualization
+        fetch("http://localhost:8080")
+            .then(response => response.text())
+            .then(html => {
+                document.getElementById("status").innerHTML = "Main page fetched: " + html.length + " bytes";
+                console.log("HTML length:", html.length);
+
+                // Try to fetch the JSON
+                return fetch("http://localhost:8080/chunk-graph.json");
+            })
+            .then(response => response.json())
+            .then(data => {
+                const status = document.getElementById("status");
+                status.innerHTML += "<br>JSON loaded: " + data.nodes.length + " nodes, " + data.links.length + " links";
+                console.log("Data loaded:", data.nodes.length, "nodes");
+            })
+            .catch(error => {
+                document.getElementById("status").innerHTML += "<br>ERROR: " + error.message;
+                console.error("Error:", error);
+            });
+    </script>
+</body>
+</html>

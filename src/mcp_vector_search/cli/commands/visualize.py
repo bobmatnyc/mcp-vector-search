@@ -93,6 +93,10 @@ async def _export_chunks(
         console.print("[cyan]Fetching chunks from database...[/cyan]")
         chunks = await database.get_all_chunks()
 
+        # Store database reference for semantic search
+        # We'll pass it in metadata for the visualization
+        graph_database = database
+
         if len(chunks) == 0:
             console.print(
                 "[yellow]No chunks found in index. Run 'mcp-vector-search index' first.[/yellow]"
@@ -245,10 +249,219 @@ async def _export_chunks(
         for file_node in file_nodes.values():
             nodes.append(file_node)
 
+        # Compute semantic relationships for code chunks
+        console.print("[cyan]Computing semantic relationships...[/cyan]")
+        code_chunks = [
+            c for c in chunks if c.chunk_type in ["function", "method", "class"]
+        ]
+        semantic_links = []
+
+        # Pre-compute top 5 semantic relationships for each code chunk
+        for i, chunk in enumerate(code_chunks):
+            if i % 20 == 0:  # Progress indicator every 20 chunks
+                console.print(f"[dim]Processed {i}/{len(code_chunks)} chunks[/dim]")
+
+            try:
+                # Search for similar chunks using the chunk's content
+                similar_results = await graph_database.search(
+                    query=chunk.content[:500],  # Use first 500 chars for query
+                    limit=6,  # Get 6 (exclude self = 5)
+                    similarity_threshold=0.3,  # Lower threshold to catch more relationships
+                )
+
+                # Filter out self and create semantic links
+                for result in similar_results:
+                    # Construct target chunk_id from file_path and line numbers
+                    # This matches the chunk ID construction in the database
+                    target_chunk = next(
+                        (
+                            c
+                            for c in chunks
+                            if str(c.file_path) == str(result.file_path)
+                            and c.start_line == result.start_line
+                            and c.end_line == result.end_line
+                        ),
+                        None,
+                    )
+
+                    if not target_chunk:
+                        continue
+
+                    target_chunk_id = target_chunk.chunk_id or target_chunk.id
+
+                    # Skip self-references
+                    if target_chunk_id == (chunk.chunk_id or chunk.id):
+                        continue
+
+                    # Add semantic link with similarity score (use similarity_score from SearchResult)
+                    if result.similarity_score >= 0.2:
+                        semantic_links.append(
+                            {
+                                "source": chunk.chunk_id or chunk.id,
+                                "target": target_chunk_id,
+                                "type": "semantic",
+                                "similarity": result.similarity_score,
+                            }
+                        )
+
+                        # Only keep top 5
+                        if (
+                            len(
+                                [
+                                    link
+                                    for link in semantic_links
+                                    if link["source"] == (chunk.chunk_id or chunk.id)
+                                ]
+                            )
+                            >= 5
+                        ):
+                            break
+
+            except Exception as e:
+                logger.debug(
+                    f"Failed to compute semantic relationships for {chunk.chunk_id}: {e}"
+                )
+                continue
+
+        console.print(
+            f"[green]✓[/green] Computed {len(semantic_links)} semantic relationships"
+        )
+
+        # Compute external caller relationships
+        console.print("[cyan]Computing external caller relationships...[/cyan]")
+        caller_map = {}  # Map chunk_id -> list of caller info
+
+        for chunk in code_chunks:
+            chunk_id = chunk.chunk_id or chunk.id
+            file_path = str(chunk.file_path)
+            function_name = chunk.function_name or chunk.class_name
+
+            if not function_name:
+                continue
+
+            # Search for other chunks that reference this function/class name
+            for other_chunk in chunks:
+                other_file_path = str(other_chunk.file_path)
+
+                # Only track EXTERNAL callers (different file)
+                if other_file_path == file_path:
+                    continue
+
+                # Check if the other chunk's content mentions this function/class
+                if function_name in other_chunk.content:
+                    other_chunk_id = other_chunk.chunk_id or other_chunk.id
+                    other_name = (
+                        other_chunk.function_name
+                        or other_chunk.class_name
+                        or f"L{other_chunk.start_line}"
+                    )
+
+                    if chunk_id not in caller_map:
+                        caller_map[chunk_id] = []
+
+                    # Store caller information
+                    caller_map[chunk_id].append(
+                        {
+                            "file": other_file_path,
+                            "chunk_id": other_chunk_id,
+                            "name": other_name,
+                            "type": other_chunk.chunk_type,
+                        }
+                    )
+
+        # Count total caller relationships
+        total_callers = sum(len(callers) for callers in caller_map.values())
+        console.print(
+            f"[green]✓[/green] Found {total_callers} external caller relationships"
+        )
+
+        # Detect circular dependencies in caller relationships
+        console.print("[cyan]Detecting circular dependencies...[/cyan]")
+
+        def detect_cycles(nodes_list, links_list):
+            """Detect cycles in the call graph using DFS.
+
+            Returns:
+                List of cycles found, where each cycle is a list of node IDs in the cycle path.
+            """
+            cycles_found = []
+            visited = set()
+
+            def dfs(node_id, path, path_set):
+                """DFS traversal to detect cycles.
+
+                Args:
+                    node_id: Current node ID being visited
+                    path: List of node IDs in current path (for cycle reconstruction)
+                    path_set: Set of node IDs in current path (for O(1) cycle detection)
+
+                Returns:
+                    True if cycle detected in this path
+                """
+                if node_id in path_set:
+                    # Found a cycle! Record the cycle path
+                    cycle_start = path.index(node_id)
+                    cycle_nodes = path[cycle_start:]
+                    cycles_found.append(cycle_nodes)
+                    return True
+
+                if node_id in visited:
+                    return False
+
+                path.append(node_id)
+                path_set.add(node_id)
+                visited.add(node_id)
+
+                # Follow caller links (external callers create directed edges)
+                if node_id in caller_map:
+                    for caller_info in caller_map[node_id]:
+                        caller_id = caller_info["chunk_id"]
+                        dfs(caller_id, path, path_set)
+
+                path.pop()
+                path_set.remove(node_id)
+                return False
+
+            # Run DFS from each unvisited node
+            for node in nodes_list:
+                if node.chunk_id or node.id not in visited:
+                    chunk_id = node.chunk_id or node.id
+                    dfs(chunk_id, [], set())
+
+            return cycles_found
+
+        # Detect cycles
+        cycles = detect_cycles(chunks, [])
+
+        # Mark cycle links
+        cycle_links = []
+        if cycles:
+            console.print(
+                f"[yellow]⚠ Found {len(cycles)} circular dependencies[/yellow]"
+            )
+
+            # For each cycle, create links marking the cycle
+            for cycle in cycles:
+                # Create links for the cycle path: A → B → C → A
+                for i in range(len(cycle)):
+                    source = cycle[i]
+                    target = cycle[(i + 1) % len(cycle)]  # Wrap around to form cycle
+                    cycle_links.append(
+                        {
+                            "source": source,
+                            "target": target,
+                            "type": "caller",
+                            "is_cycle": True,
+                        }
+                    )
+        else:
+            console.print("[green]✓[/green] No circular dependencies detected")
+
         # Add chunk nodes
         for chunk in chunks:
+            chunk_id = chunk.chunk_id or chunk.id
             node = {
-                "id": chunk.chunk_id or chunk.id,
+                "id": chunk_id,
                 "name": chunk.function_name
                 or chunk.class_name
                 or f"L{chunk.start_line}",
@@ -263,6 +476,10 @@ async def _export_chunks(
                 "docstring": chunk.docstring,
                 "language": chunk.language,
             }
+
+            # Add caller information if available
+            if chunk_id in caller_map:
+                node["callers"] = caller_map[chunk_id]
 
             # Add subproject info for monorepos
             if chunk.subproject_name:
@@ -345,6 +562,12 @@ async def _export_chunks(
                     }
                 )
 
+        # Add semantic relationship links
+        links.extend(semantic_links)
+
+        # Add cycle links
+        links.extend(cycle_links)
+
         # Parse inter-project dependencies for monorepos
         if subprojects:
             console.print("[cyan]Parsing inter-project dependencies...[/cyan]")
@@ -381,11 +604,13 @@ async def _export_chunks(
         await database.close()
 
         console.print()
+        cycle_warning = f"[yellow]Cycles: {len(cycles)} ⚠️[/yellow]\n" if cycles else ""
         console.print(
             Panel.fit(
                 f"[green]✓[/green] Exported graph data to [cyan]{output}[/cyan]\n\n"
                 f"Nodes: {len(graph_data['nodes'])}\n"
                 f"Links: {len(graph_data['links'])}\n"
+                f"{cycle_warning}"
                 f"{'Subprojects: ' + str(len(subprojects)) if subprojects else ''}\n\n"
                 f"[dim]Next: Run 'mcp-vector-search visualize serve' to view[/dim]",
                 title="Export Complete",
@@ -538,11 +763,11 @@ def serve(
         )
         viz_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create index.html if it doesn't exist
-        html_file = viz_dir / "index.html"
-        if not html_file.exists():
-            console.print("[yellow]Creating visualization HTML file...[/yellow]")
-            _create_visualization_html(html_file)
+    # Always ensure index.html exists (regenerate if missing)
+    html_file = viz_dir / "index.html"
+    if not html_file.exists():
+        console.print("[yellow]Creating visualization HTML file...[/yellow]")
+        _create_visualization_html(html_file)
 
     # Check if we need to regenerate the graph file
     needs_regeneration = not graph_file.exists() or code_only
@@ -725,6 +950,14 @@ def _create_visualization_html(html_file: Path) -> None:
             pointer-events: all;
         }
 
+        /* File type icon styling */
+        .node path.file-icon {
+            fill: currentColor;
+            stroke: none;
+            pointer-events: all;
+            cursor: pointer;
+        }
+
         .node text {
             font-size: 14px;
             fill: #c9d1d9;
@@ -744,6 +977,32 @@ def _create_visualization_html(html_file: Path) -> None:
             stroke-opacity: 0.8;
             stroke-width: 2px;
             stroke-dasharray: 5,5;
+        }
+
+        /* Semantic relationship links - colored by similarity */
+        .link.semantic {
+            stroke-opacity: 0.7;
+            stroke-dasharray: 4,4;
+        }
+
+        .link.semantic.sim-high { stroke: #00ff00; stroke-width: 4px; }
+        .link.semantic.sim-medium-high { stroke: #88ff00; stroke-width: 3px; }
+        .link.semantic.sim-medium { stroke: #ffff00; stroke-width: 2.5px; }
+        .link.semantic.sim-low { stroke: #ffaa00; stroke-width: 2px; }
+        .link.semantic.sim-very-low { stroke: #ff0000; stroke-width: 1.5px; }
+
+        /* Circular dependency links - highest visual priority */
+        .link.cycle {
+            stroke: #ff4444 !important;
+            stroke-width: 3px !important;
+            stroke-dasharray: 8, 4;
+            stroke-opacity: 0.8;
+            animation: pulse-cycle 2s infinite;
+        }
+
+        @keyframes pulse-cycle {
+            0%, 100% { stroke-opacity: 0.8; }
+            50% { stroke-opacity: 1.0; }
         }
 
         .tooltip {
@@ -808,6 +1067,32 @@ def _create_visualization_html(html_file: Path) -> None:
             color: #8b949e;
         }
 
+        #content-pane .pane-footer {
+            position: sticky;
+            bottom: 0;
+            background: rgba(13, 17, 23, 0.98);
+            padding: 16px 20px;
+            border-top: 1px solid #30363d;
+            font-size: 11px;
+            color: #8b949e;
+            z-index: 1;
+        }
+
+        #content-pane .pane-footer .footer-item {
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        #content-pane .pane-footer .footer-label {
+            color: #c9d1d9;
+            font-weight: 600;
+            margin-right: 4px;
+        }
+
+        #content-pane .pane-footer .footer-value {
+            color: #8b949e;
+        }
+
         #content-pane .collapse-btn {
             position: absolute;
             top: 20px;
@@ -861,6 +1146,12 @@ def _create_visualization_html(html_file: Path) -> None:
             font-size: 12px;
             display: flex;
             align-items: center;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        #content-pane .directory-list li:hover {
+            background-color: rgba(255, 255, 255, 0.1);
         }
 
         #content-pane .directory-list .item-icon {
@@ -906,6 +1197,43 @@ def _create_visualization_html(html_file: Path) -> None:
             stroke-width: 3px;
             filter: drop-shadow(0 0 8px #f0e68c);
         }
+
+        .caller-link {
+            color: #58a6ff;
+            text-decoration: none;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+
+        .caller-link:hover {
+            color: #79c0ff;
+            text-decoration: underline;
+        }
+
+        #reset-view-btn {
+            position: fixed;
+            top: 20px;
+            right: 460px;
+            padding: 8px 16px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            z-index: 100;
+            transition: all 0.2s;
+        }
+
+        #reset-view-btn:hover {
+            background: #30363d;
+            border-color: #58a6ff;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
     </style>
 </head>
 <body>
@@ -922,10 +1250,10 @@ def _create_visualization_html(html_file: Path) -> None:
                 <span class="legend-color" style="background: #da3633;"></span> Subproject
             </div>
             <div class="legend-item">
-                <span class="legend-color" style="border: 2px dashed #79c0ff; border-radius: 50%; background: transparent;"></span> Directory
+                📁 Directory
             </div>
             <div class="legend-item">
-                <span class="legend-color" style="border: 2px dashed #58a6ff; border-radius: 50%; background: transparent;"></span> File
+                📄 File (.py 🐍 .js/.ts 📜 .md 📝 .json/.yaml ⚙️ .sh 💻)
             </div>
             <div class="legend-item">
                 <span class="legend-color" style="background: #238636;"></span> Module
@@ -953,6 +1281,19 @@ def _create_visualization_html(html_file: Path) -> None:
             </div>
         </div>
 
+        <h3>Relationships</h3>
+        <div class="legend">
+            <div class="legend-item" style="color: #ff4444;">
+                ⚠️ Circular Dependency (red pulsing)
+            </div>
+            <div class="legend-item" style="color: #00ff00;">
+                — Semantic (green-yellow gradient)
+            </div>
+            <div class="legend-item" style="color: #30363d;">
+                — Structural (gray)
+            </div>
+        </div>
+
         <div id="subprojects-legend" style="display: none;">
             <h3>Subprojects</h3>
             <div class="legend" id="subprojects-list"></div>
@@ -964,6 +1305,11 @@ def _create_visualization_html(html_file: Path) -> None:
     <svg id="graph"></svg>
     <div id="tooltip" class="tooltip"></div>
 
+    <button id="reset-view-btn" title="Reset to home view">
+        <span style="font-size: 18px;">🏠</span>
+        <span>Reset View</span>
+    </button>
+
     <div id="content-pane">
         <div class="pane-header">
             <button class="collapse-btn" onclick="closeContentPane()">×</button>
@@ -971,18 +1317,22 @@ def _create_visualization_html(html_file: Path) -> None:
             <div class="pane-meta" id="pane-meta"></div>
         </div>
         <div class="pane-content" id="pane-content"></div>
+        <div class="pane-footer" id="pane-footer"></div>
     </div>
 
     <script>
         const width = window.innerWidth;
         const height = window.innerHeight;
 
+        // Create zoom behavior
+        const zoom = d3.zoom().on("zoom", (event) => {
+            g.attr("transform", event.transform);
+        });
+
         const svg = d3.select("#graph")
             .attr("width", width)
             .attr("height", height)
-            .call(d3.zoom().on("zoom", (event) => {
-                g.attr("transform", event.transform);
-            }));
+            .call(zoom);
 
         const g = svg.append("g");
         const tooltip = d3.select("#tooltip");
@@ -992,6 +1342,64 @@ def _create_visualization_html(html_file: Path) -> None:
         let visibleNodes = new Set();
         let collapsedNodes = new Set();
         let highlightedNode = null;
+
+        // Get file extension from path
+        function getFileExtension(filePath) {
+            if (!filePath) return '';
+            const match = filePath.match(/\\.([^.]+)$/);
+            return match ? match[1].toLowerCase() : '';
+        }
+
+        // Get SVG icon path for file type
+        function getFileTypeIcon(node) {
+            if (node.type === 'directory') {
+                // Folder icon
+                return 'M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z';
+            }
+            if (node.type === 'file') {
+                const ext = getFileExtension(node.file_path);
+
+                // Python files
+                if (ext === 'py') {
+                    return 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z';
+                }
+                // JavaScript/TypeScript
+                if (ext === 'js' || ext === 'jsx' || ext === 'ts' || ext === 'tsx') {
+                    return 'M3 3h18v18H3V3zm16 16V5H5v14h14zM7 7h2v2H7V7zm4 0h2v2h-2V7zm-4 4h2v2H7v-2zm4 0h6v2h-6v-2zm-4 4h10v2H7v-2z';
+                }
+                // Markdown
+                if (ext === 'md' || ext === 'markdown') {
+                    return 'M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6zm10-10h-3v2h3v2h-3v2h3v2h-7V8h7v2z';
+                }
+                // JSON/YAML/Config files
+                if (ext === 'json' || ext === 'yaml' || ext === 'yml' || ext === 'toml' || ext === 'ini' || ext === 'conf') {
+                    return 'M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm0 2l4 4h-4V4zM6 20V4h6v6h6v10H6zm4-4h4v2h-4v-2zm0-4h4v2h-4v-2z';
+                }
+                // Shell scripts
+                if (ext === 'sh' || ext === 'bash' || ext === 'zsh') {
+                    return 'M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zm-2-8h-2v2h2v-2zm0 4h-2v2h2v-2zM6 10h8v2H6v-2z';
+                }
+                // Generic code file
+                return 'M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm0 2l4 4h-4V4zM6 20V4h6v6h6v10H6zm3-4h6v2H9v-2zm0-4h6v2H9v-2z';
+            }
+            return null;
+        }
+
+        // Get color for file type icon
+        function getFileTypeColor(node) {
+            if (node.type === 'directory') return '#79c0ff';
+            if (node.type === 'file') {
+                const ext = getFileExtension(node.file_path);
+                if (ext === 'py') return '#3776ab';  // Python blue
+                if (ext === 'js' || ext === 'jsx') return '#f7df1e';  // JavaScript yellow
+                if (ext === 'ts' || ext === 'tsx') return '#3178c6';  // TypeScript blue
+                if (ext === 'md' || ext === 'markdown') return '#8b949e';  // Gray
+                if (ext === 'json' || ext === 'yaml' || ext === 'yml') return '#90a4ae';  // Config gray
+                if (ext === 'sh' || ext === 'bash' || ext === 'zsh') return '#4eaa25';  // Shell green
+                return '#58a6ff';  // Default file color
+            }
+            return null;
+        }
 
         function visualizeGraph(data) {
             g.selectAll("*").remove();
@@ -1063,7 +1471,24 @@ def _create_visualization_html(html_file: Path) -> None:
                 .selectAll("line")
                 .data(visibleLinks)
                 .join("line")
-                .attr("class", d => d.type === "dependency" ? "link dependency" : "link");
+                .attr("class", d => {
+                    // Cycle links have highest priority
+                    if (d.is_cycle) return "link cycle";
+                    if (d.type === "dependency") return "link dependency";
+                    if (d.type === "semantic") {
+                        // Color based on similarity score
+                        const sim = d.similarity || 0;
+                        let simClass = "sim-very-low";
+                        if (sim >= 0.8) simClass = "sim-high";
+                        else if (sim >= 0.6) simClass = "sim-medium-high";
+                        else if (sim >= 0.4) simClass = "sim-medium";
+                        else if (sim >= 0.2) simClass = "sim-low";
+                        return `link semantic ${simClass}`;
+                    }
+                    return "link";
+                })
+                .on("mouseover", showLinkTooltip)
+                .on("mouseout", hideTooltip);
 
             const node = g.append("g")
                 .selectAll("g")
@@ -1081,16 +1506,15 @@ def _create_visualization_html(html_file: Path) -> None:
                 .on("mouseover", showTooltip)
                 .on("mouseout", hideTooltip);
 
-            // Add shapes based on node type (circles for code, squares for docs)
+            // Add shapes based on node type
             const isDocNode = d => ['docstring', 'comment'].includes(d.type);
+            const isFileOrDir = d => d.type === 'file' || d.type === 'directory';
 
-            // Add circles for code nodes
-            node.filter(d => !isDocNode(d))
+            // Add circles for regular code nodes (not files/dirs/docs)
+            node.filter(d => !isDocNode(d) && !isFileOrDir(d))
                 .append("circle")
                 .attr("r", d => {
                     if (d.type === 'subproject') return 24;
-                    if (d.type === 'directory') return 40;  // Largest for directory containers
-                    if (d.type === 'file') return 30;  // Larger transparent circle for files
                     return d.complexity ? Math.min(12 + d.complexity * 2, 28) : 15;
                 })
                 .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
@@ -1122,13 +1546,31 @@ def _create_visualization_html(html_file: Path) -> None:
                 .attr("stroke-width", d => hasChildren(d) ? 2 : 0)
                 .style("fill", d => d.color || null);
 
-            // Add expand/collapse indicator
+            // Add SVG icons for file and directory nodes
+            node.filter(d => isFileOrDir(d))
+                .append("path")
+                .attr("class", "file-icon")
+                .attr("d", d => getFileTypeIcon(d))
+                .attr("transform", d => {
+                    const scale = d.type === 'directory' ? 1.8 : 1.5;
+                    return `translate(-12, -12) scale(${scale})`;
+                })
+                .style("color", d => getFileTypeColor(d))
+                .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
+                .attr("stroke-width", d => hasChildren(d) ? 1 : 0);
+
+            // Add expand/collapse indicator - positioned to the left of label
             node.filter(d => hasChildren(d))
                 .append("text")
                 .attr("class", "expand-indicator")
-                .attr("text-anchor", "middle")
-                .attr("dy", 6)
-                .style("font-size", "18px")
+                .attr("x", d => {
+                    const iconRadius = d.type === 'directory' ? 18 : (d.type === 'file' ? 15 : 15);
+                    return iconRadius + 5;  // Just right of the icon (slightly more spacing)
+                })
+                .attr("y", 0)  // Vertically center with icon
+                .attr("dy", "0.6em")  // Fine-tune vertical centering (shifted down)
+                .attr("text-anchor", "start")
+                .style("font-size", "14px")
                 .style("font-weight", "bold")
                 .style("fill", "#ffffff")
                 .style("pointer-events", "none")
@@ -1149,7 +1591,15 @@ def _create_visualization_html(html_file: Path) -> None:
                     }
                     return d.name;
                 })
-                .attr("dy", 30);
+                .attr("x", d => {
+                    const iconRadius = d.type === 'directory' ? 18 : (d.type === 'file' ? 15 : 15);
+                    const hasExpand = hasChildren(d);
+                    // Position after icon, plus expand indicator width if present (increased spacing)
+                    return iconRadius + 8 + (hasExpand ? 22 : 0);
+                })
+                .attr("y", 0)  // Vertically center with icon
+                .attr("dy", "0.6em")  // Fine-tune vertical centering (shifted down to match expand indicator)
+                .attr("text-anchor", "start");
 
             simulation.on("tick", () => {
                 link
@@ -1168,6 +1618,73 @@ def _create_visualization_html(html_file: Path) -> None:
             return allLinks.some(l => (l.source.id || l.source) === node.id);
         }
 
+        // Zoom to fit all visible nodes
+        function zoomToFit(duration = 750) {
+            const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
+            if (visibleNodesList.length === 0) return;
+
+            // Calculate bounding box of visible nodes
+            const padding = 100;
+            let minX = Infinity, minY = Infinity;
+            let maxX = -Infinity, maxY = -Infinity;
+
+            visibleNodesList.forEach(d => {
+                if (d.x !== undefined && d.y !== undefined) {
+                    minX = Math.min(minX, d.x);
+                    minY = Math.min(minY, d.y);
+                    maxX = Math.max(maxX, d.x);
+                    maxY = Math.max(maxY, d.y);
+                }
+            });
+
+            // Add padding
+            minX -= padding;
+            minY -= padding;
+            maxX += padding;
+            maxY += padding;
+
+            const boxWidth = maxX - minX;
+            const boxHeight = maxY - minY;
+
+            // Calculate scale to fit
+            const scale = Math.min(
+                width / boxWidth,
+                height / boxHeight,
+                2  // Max zoom level
+            ) * 0.9;  // Add 10% margin
+
+            // Calculate center translation
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+            const translateX = width / 2 - scale * centerX;
+            const translateY = height / 2 - scale * centerY;
+
+            // Apply zoom transform with animation
+            svg.transition()
+                .duration(duration)
+                .call(
+                    zoom.transform,
+                    d3.zoomIdentity
+                        .translate(translateX, translateY)
+                        .scale(scale)
+                );
+        }
+
+        function centerNode(node) {
+            // Get current transform to maintain zoom level
+            const transform = d3.zoomTransform(svg.node());
+
+            // Calculate translation to center the node in LEFT portion of viewport
+            // Position at 30% from left to avoid code pane on right side
+            const x = -node.x * transform.k + width * 0.3;
+            const y = -node.y * transform.k + height / 2;
+
+            // Apply smooth animation to center the node
+            svg.transition()
+                .duration(750)
+                .call(zoom.transform, d3.zoomIdentity.translate(x, y).scale(transform.k));
+        }
+
         function handleNodeClick(event, d) {
             event.stopPropagation();
 
@@ -1176,12 +1693,34 @@ def _create_visualization_html(html_file: Path) -> None:
 
             // If node has children, also toggle expansion
             if (hasChildren(d)) {
-                if (collapsedNodes.has(d.id)) {
+                const wasCollapsed = collapsedNodes.has(d.id);
+                if (wasCollapsed) {
                     expandNode(d);
                 } else {
                     collapseNode(d);
                 }
                 renderGraph();
+
+                // After rendering and nodes have positions, zoom to fit ONLY visible nodes
+                // Use a small delay to ensure D3 simulation has updated positions
+                if (!wasCollapsed) {
+                    // Wait for simulation to stabilize before zooming
+                    setTimeout(() => {
+                        // Stop simulation to get final positions
+                        simulation.alphaTarget(0);
+                        zoomToFit(750);
+                    }, 200);
+                } else {
+                    // For expansion, center the clicked node after a delay
+                    setTimeout(() => {
+                        centerNode(d);
+                    }, 200);
+                }
+            } else {
+                // For nodes without children, center immediately after a small delay
+                setTimeout(() => {
+                    centerNode(d);
+                }, 100);
             }
         }
 
@@ -1220,6 +1759,15 @@ def _create_visualization_html(html_file: Path) -> None:
         }
 
         function showTooltip(event, d) {
+            // Extract first 2-3 lines of docstring for preview
+            let docPreview = '';
+            if (d.docstring) {
+                const lines = d.docstring.split('\\n').filter(l => l.trim());
+                const previewLines = lines.slice(0, 3).join(' ');
+                const truncated = previewLines.length > 150 ? previewLines.substring(0, 147) + '...' : previewLines;
+                docPreview = `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; font-size: 11px; color: #8b949e; font-style: italic;">${truncated}</div>`;
+            }
+
             tooltip
                 .style("display", "block")
                 .style("left", (event.pageX + 10) + "px")
@@ -1230,7 +1778,41 @@ def _create_visualization_html(html_file: Path) -> None:
                     ${d.complexity ? `<div>Complexity: ${d.complexity.toFixed(1)}</div>` : ''}
                     ${d.start_line ? `<div>Lines: ${d.start_line}-${d.end_line}</div>` : ''}
                     <div>File: ${d.file_path}</div>
+                    ${docPreview}
                 `);
+        }
+
+        function showLinkTooltip(event, d) {
+            // Special tooltip for cycle links
+            if (d.is_cycle) {
+                const sourceName = allNodes.find(n => n.id === (d.source.id || d.source))?.name || 'Unknown';
+                const targetName = allNodes.find(n => n.id === (d.target.id || d.target))?.name || 'Unknown';
+
+                tooltip
+                    .style("display", "block")
+                    .style("left", (event.pageX + 10) + "px")
+                    .style("top", (event.pageY + 10) + "px")
+                    .html(`
+                        <div style="color: #ff4444;"><strong>⚠️ Circular Dependency Detected</strong></div>
+                        <div style="margin-top: 8px;">Path: ${sourceName} → ${targetName}</div>
+                        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; font-size: 11px; color: #8b949e; font-style: italic;">
+                            This indicates a circular call relationship that may lead to infinite recursion or tight coupling.
+                        </div>
+                    `);
+            } else if (d.type === "semantic") {
+                const sourceName = allNodes.find(n => n.id === (d.source.id || d.source))?.name || 'Unknown';
+                const targetName = allNodes.find(n => n.id === (d.target.id || d.target))?.name || 'Unknown';
+
+                tooltip
+                    .style("display", "block")
+                    .style("left", (event.pageX + 10) + "px")
+                    .style("top", (event.pageY + 10) + "px")
+                    .html(`
+                        <div><strong>Semantic Relationship</strong></div>
+                        <div>Similarity: ${(d.similarity * 100).toFixed(1)}%</div>
+                        <div>${sourceName} ↔ ${targetName}</div>
+                    `);
+            }
         }
 
         function hideTooltip() {
@@ -1300,6 +1882,7 @@ def _create_visualization_html(html_file: Path) -> None:
             const title = document.getElementById('pane-title');
             const meta = document.getElementById('pane-meta');
             const content = document.getElementById('pane-content');
+            const footer = document.getElementById('pane-footer');
 
             // Set title with actual import statement for L1 nodes
             if (node.depth === 1 && node.type !== 'directory' && node.type !== 'file') {
@@ -1313,19 +1896,23 @@ def _create_visualization_html(html_file: Path) -> None:
                 title.textContent = node.name;
             }
 
-            // Set metadata
-            let metaText = `${node.type} • ${node.file_path}`;
-            if (node.start_line) {
-                metaText += ` • Lines ${node.start_line}-${node.end_line}`;
-            }
+            // Set metadata (type only in header)
+            meta.textContent = node.type;
+
+            // Build footer with annotations
+            let footerHtml = '';
             if (node.language) {
-                metaText += ` • ${node.language}`;
+                footerHtml += `<span class="footer-item"><span class="footer-label">Language:</span> ${node.language}</span>`;
             }
-            meta.textContent = metaText;
+            footerHtml += `<span class="footer-item"><span class="footer-label">File:</span> ${node.file_path}</span>`;
+            if (node.start_line) {
+                footerHtml += `<span class="footer-item"><span class="footer-label">Location:</span> Lines ${node.start_line}-${node.end_line}</span>`;
+            }
+            footer.innerHTML = footerHtml;
 
             // Display content based on node type
             if (node.type === 'directory') {
-                showDirectoryContents(node, content);
+                showDirectoryContents(node, content, footer);
             } else if (node.type === 'file') {
                 showFileContents(node, content);
             } else if (node.depth === 1 && node.type !== 'directory' && node.type !== 'file') {
@@ -1339,7 +1926,7 @@ def _create_visualization_html(html_file: Path) -> None:
             pane.classList.add('visible');
         }
 
-        function showDirectoryContents(node, container) {
+        function showDirectoryContents(node, container, footer) {
             // Find all direct children of this directory
             const children = allLinks
                 .filter(l => (l.source.id || l.source) === node.id)
@@ -1348,6 +1935,8 @@ def _create_visualization_html(html_file: Path) -> None:
 
             if (children.length === 0) {
                 container.innerHTML = '<p style="color: #8b949e;">Empty directory</p>';
+                // Update footer with file path only
+                footer.innerHTML = `<span class="footer-item"><span class="footer-label">File:</span> ${node.file_path}</span>`;
                 return;
             }
 
@@ -1361,10 +1950,9 @@ def _create_visualization_html(html_file: Path) -> None:
             // Show subdirectories first
             subdirs.forEach(child => {
                 html += `
-                    <li>
+                    <li data-node-id="${child.id}">
                         <span class="item-icon">📁</span>
                         ${child.name}
-                        <span class="item-type">directory</span>
                     </li>
                 `;
             });
@@ -1372,10 +1960,9 @@ def _create_visualization_html(html_file: Path) -> None:
             // Then files
             files.forEach(child => {
                 html += `
-                    <li>
+                    <li data-node-id="${child.id}">
                         <span class="item-icon">📄</span>
                         ${child.name}
-                        <span class="item-type">file</span>
                     </li>
                 `;
             });
@@ -1384,22 +1971,34 @@ def _create_visualization_html(html_file: Path) -> None:
             chunks.forEach(child => {
                 const icon = child.type === 'class' ? '🔷' : child.type === 'function' ? '⚡' : '📝';
                 html += `
-                    <li>
+                    <li data-node-id="${child.id}">
                         <span class="item-icon">${icon}</span>
                         ${child.name}
-                        <span class="item-type">${child.type}</span>
                     </li>
                 `;
             });
 
             html += '</ul>';
 
-            // Add summary
-            const summary = `<p style="color: #8b949e; font-size: 11px; margin-top: 16px;">
-                Total: ${children.length} items (${subdirs.length} directories, ${files.length} files, ${chunks.length} code chunks)
-            </p>`;
+            container.innerHTML = html;
 
-            container.innerHTML = html + summary;
+            // Add click handlers to list items
+            const listItems = container.querySelectorAll('.directory-list li');
+            listItems.forEach(item => {
+                item.addEventListener('click', () => {
+                    const nodeId = item.getAttribute('data-node-id');
+                    const childNode = allNodes.find(n => n.id === nodeId);
+                    if (childNode) {
+                        showContentPane(childNode);
+                    }
+                });
+            });
+
+            // Update footer with file path and summary
+            footer.innerHTML = `
+                <span class="footer-item"><span class="footer-label">File:</span> ${node.file_path}</span>
+                <span class="footer-item"><span class="footer-label">Total:</span> ${children.length} items (${subdirs.length} directories, ${files.length} files, ${chunks.length} code chunks)</span>
+            `;
         }
 
         function showFileContents(node, container) {
@@ -1437,6 +2036,7 @@ def _create_visualization_html(html_file: Path) -> None:
 
         function showImportDetails(node, container) {
             // L1 nodes are import statements - show import content prominently
+            // Note: File, Location, and Language are now in the footer
             const importHtml = `
                 <div class="import-details">
                     ${node.content ? `
@@ -1445,34 +2045,60 @@ def _create_visualization_html(html_file: Path) -> None:
                             <pre><code>${escapeHtml(node.content)}</code></pre>
                         </div>
                     ` : '<p style="color: #8b949e;">No import content available</p>'}
-                    <div class="detail-row">
-                        <span class="detail-label">File:</span> ${node.file_path}
-                    </div>
-                    ${node.start_line ? `
-                        <div class="detail-row">
-                            <span class="detail-label">Location:</span> Lines ${node.start_line}-${node.end_line}
-                        </div>
-                    ` : ''}
-                    ${node.language ? `
-                        <div class="detail-row">
-                            <span class="detail-label">Language:</span> ${node.language}
-                        </div>
-                    ` : ''}
                 </div>
             `;
 
             container.innerHTML = importHtml;
         }
 
+        // Parse docstring sections (Args, Returns, Raises, etc.)
+        function parseDocstring(docstring) {
+            if (!docstring) return { brief: '', sections: {} };
+
+            const lines = docstring.split('\\n');
+            const sections = {};
+            let currentSection = 'brief';
+            let currentContent = [];
+
+            for (let line of lines) {
+                const trimmed = line.trim();
+                // Check for section headers (Args:, Returns:, Raises:, etc.)
+                const sectionMatch = trimmed.match(/^(Args?|Returns?|Yields?|Raises?|Note|Notes|Example|Examples|See Also|Docs?|Parameters?):?$/i);
+
+                if (sectionMatch) {
+                    // Save previous section
+                    if (currentContent.length > 0) {
+                        sections[currentSection] = currentContent.join('\\n').trim();
+                    }
+                    // Start new section
+                    currentSection = sectionMatch[1].toLowerCase();
+                    currentContent = [];
+                } else {
+                    currentContent.push(line);
+                }
+            }
+
+            // Save last section
+            if (currentContent.length > 0) {
+                sections[currentSection] = currentContent.join('\\n').trim();
+            }
+
+            return { brief: sections.brief || '', sections };
+        }
+
         function showCodeContent(node, container) {
             // Show code for function, class, method, or code chunks
             let html = '';
 
-            if (node.docstring) {
+            // Parse docstring to extract sections
+            const docInfo = parseDocstring(node.docstring);
+
+            // Show brief description (non-sectioned part) in content area
+            if (docInfo.brief && docInfo.brief.trim()) {
                 html += `
                     <div style="margin-bottom: 16px; padding: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px;">
-                        <div style="font-size: 11px; color: #8b949e; margin-bottom: 8px; font-weight: 600;">DOCSTRING</div>
-                        <pre style="margin: 0; padding: 0; background: transparent; border: none;"><code>${escapeHtml(node.docstring)}</code></pre>
+                        <div style="font-size: 11px; color: #8b949e; margin-bottom: 8px; font-weight: 600;">DESCRIPTION</div>
+                        <pre style="margin: 0; padding: 0; background: transparent; border: none; white-space: pre-wrap;"><code>${escapeHtml(docInfo.brief)}</code></pre>
                     </div>
                 `;
             }
@@ -1484,12 +2110,155 @@ def _create_visualization_html(html_file: Path) -> None:
             }
 
             container.innerHTML = html;
+
+            // Update footer with docstring sections
+            const footer = document.getElementById('pane-footer');
+            let footerHtml = '';
+
+            // Add existing footer items
+            if (node.language) {
+                footerHtml += `<div class="footer-item"><span class="footer-label">Language:</span> <span class="footer-value">${node.language}</span></div>`;
+            }
+            footerHtml += `<div class="footer-item"><span class="footer-label">File:</span> <span class="footer-value">${node.file_path}</span></div>`;
+            if (node.start_line) {
+                footerHtml += `<div class="footer-item"><span class="footer-label">Lines:</span> <span class="footer-value">${node.start_line}-${node.end_line}</span></div>`;
+            }
+
+            // Add "Called By" section for external callers
+            if (node.callers && node.callers.length > 0) {
+                footerHtml += `<div class="footer-item" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d;">`;
+                footerHtml += `<span class="footer-label">Called By:</span><br/>`;
+                node.callers.forEach(caller => {
+                    const fileName = caller.file.split('/').pop();
+                    const callerDisplay = `${fileName}::${caller.name}`;
+                    footerHtml += `<span class="footer-value" style="display: block; margin-left: 8px; margin-top: 4px;">
+                        <a href="#" class="caller-link" data-chunk-id="${caller.chunk_id}" style="color: #58a6ff; text-decoration: none; cursor: pointer;">
+                            • ${escapeHtml(callerDisplay)}
+                        </a>
+                    </span>`;
+                });
+                footerHtml += `</div>`;
+            } else if (node.type === 'function' || node.type === 'method' || node.type === 'class') {
+                // Only show "no callers" message for callable entities
+                footerHtml += `<div class="footer-item" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d;">`;
+                footerHtml += `<span class="footer-label">Called By:</span> <span class="footer-value" style="font-style: italic; color: #6e7681;">(No external callers found)</span>`;
+                footerHtml += `</div>`;
+            }
+
+            // Add docstring sections to footer
+            const sectionLabels = {
+                'docs': 'Docs',
+                'doc': 'Docs',
+                'args': 'Args',
+                'arg': 'Args',
+                'parameters': 'Args',
+                'parameter': 'Args',
+                'returns': 'Returns',
+                'return': 'Returns',
+                'yields': 'Yields',
+                'yield': 'Yields',
+                'raises': 'Raises',
+                'raise': 'Raises',
+                'note': 'Note',
+                'notes': 'Note',
+                'example': 'Example',
+                'examples': 'Example',
+            };
+
+            for (let [key, content] of Object.entries(docInfo.sections)) {
+                if (key === 'brief') continue; // Already shown above
+
+                const label = sectionLabels[key] || key.charAt(0).toUpperCase() + key.slice(1);
+                // Truncate long sections for footer
+                const truncated = content.length > 200 ? content.substring(0, 197) + '...' : content;
+
+                footerHtml += `<div class="footer-item"><span class="footer-label">${label}:</span> <span class="footer-value">${escapeHtml(truncated)}</span></div>`;
+            }
+
+            footer.innerHTML = footerHtml;
+
+            // Add click handlers to caller links
+            const callerLinks = footer.querySelectorAll('.caller-link');
+            callerLinks.forEach(link => {
+                link.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const chunkId = link.getAttribute('data-chunk-id');
+                    const callerNode = allNodes.find(n => n.id === chunkId);
+                    if (callerNode) {
+                        // Navigate to the caller node
+                        navigateToNode(callerNode);
+                    }
+                });
+            });
         }
 
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function navigateToNode(targetNode) {
+            // Ensure the node is visible in the graph
+            if (!visibleNodes.has(targetNode.id)) {
+                // Expand parent nodes to make this node visible
+                expandParentsToNode(targetNode);
+                renderGraph();
+            }
+
+            // Show the content pane for this node
+            showContentPane(targetNode);
+
+            // Zoom to the target node
+            setTimeout(() => {
+                // Find the node's position
+                if (targetNode.x !== undefined && targetNode.y !== undefined) {
+                    const scale = 1.5;  // Zoom level
+                    // Position at 30% from left to avoid code pane on right side
+                    const translateX = width * 0.3 - scale * targetNode.x;
+                    const translateY = height / 2 - scale * targetNode.y;
+
+                    svg.transition()
+                        .duration(750)
+                        .call(
+                            zoom.transform,
+                            d3.zoomIdentity
+                                .translate(translateX, translateY)
+                                .scale(scale)
+                        );
+                }
+            }, 200);
+        }
+
+        function expandParentsToNode(targetNode) {
+            // Build a path from root to target node
+            const path = [];
+            let current = targetNode;
+
+            while (current) {
+                path.unshift(current);
+                // Find parent
+                const parentLink = allLinks.find(l =>
+                    (l.target.id || l.target) === current.id &&
+                    (l.type !== 'semantic' && l.type !== 'dependency')
+                );
+                if (parentLink) {
+                    const parentId = parentLink.source.id || parentLink.source;
+                    current = allNodes.find(n => n.id === parentId);
+                } else {
+                    break;
+                }
+            }
+
+            // Expand all nodes in the path
+            path.forEach(node => {
+                if (!visibleNodes.has(node.id)) {
+                    visibleNodes.add(node.id);
+                }
+                if (collapsedNodes.has(node.id)) {
+                    expandNode(node);
+                }
+            });
         }
 
         function closeContentPane() {
@@ -1523,6 +2292,11 @@ def _create_visualization_html(html_file: Path) -> None:
                                          `<small style="color: #8b949e;">Run: mcp-vector-search visualize export</small>`;
                     console.error("Failed to load graph:", err);
                 });
+        });
+
+        // Reset view button event handler
+        document.getElementById('reset-view-btn').addEventListener('click', () => {
+            zoomToFit(750);
         });
     </script>
 </body>
