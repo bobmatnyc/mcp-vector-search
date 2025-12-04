@@ -1083,7 +1083,7 @@ def _create_visualization_html(html_file: Path) -> None:
                     if (d.depth === 1 && d.type !== 'directory' && d.type !== 'file') {
                         if (d.content) {
                             // Extract first line of import statement
-                            const importLine = d.content.split('\n')[0].trim();
+                            const importLine = d.content.split('\\n')[0].trim();
                             // Truncate if too long (max 60 chars)
                             return importLine.length > 60 ? importLine.substring(0, 57) + '...' : importLine;
                         }
@@ -1246,7 +1246,7 @@ def _create_visualization_html(html_file: Path) -> None:
             // Set title with actual import statement for L1 nodes
             if (node.depth === 1 && node.type !== 'directory' && node.type !== 'file') {
                 if (node.content) {
-                    const importLine = node.content.split('\n')[0].trim();
+                    const importLine = node.content.split('\\n')[0].trim();
                     title.textContent = importLine;
                 } else {
                     title.textContent = `Import: ${node.name}`;
