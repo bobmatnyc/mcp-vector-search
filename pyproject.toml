@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "mcp-vector-search"
 dynamic = ["version"]
-description = "CLI-first semantic code search with MCP integration"
+description = "CLI-first semantic code search with MCP integration and interactive D3.js visualization for exploring code relationships"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
@@ -19,8 +19,10 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Scientific/Engineering :: Visualization",
 ]
-keywords = ["semantic-search", "code-search", "mcp", "vector-database"]
+keywords = ["semantic-search", "code-search", "mcp", "vector-database", "visualization", "d3js", "code-graph", "interactive-graph", "force-layout"]
 requires-python = ">=3.11"
 dependencies = [
     "chromadb>=0.5.0",
