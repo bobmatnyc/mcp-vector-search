@@ -1044,10 +1044,10 @@ def _create_visualization_html(html_file: Path) -> None:
             );
 
             simulation = d3.forceSimulation(visibleNodesList)
-                .force("link", d3.forceLink(visibleLinks).id(d => d.id).distance(100))
-                .force("charge", d3.forceManyBody().strength(-400))
-                .force("center", d3.forceCenter(width / 2, height / 2))
-                .force("collision", d3.forceCollide().radius(45));
+                .force("link", d3.forceLink(visibleLinks).id(d => d.id).distance(50))
+                .force("charge", d3.forceManyBody().strength(-150))
+                .force("center", d3.forceCenter(width / 2, height / 2).strength(0.15))
+                .force("collision", d3.forceCollide().radius(35));
 
             g.selectAll("*").remove();
 
