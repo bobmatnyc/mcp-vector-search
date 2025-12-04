@@ -2270,25 +2270,108 @@ def _create_visualization_html(html_file: Path) -> None:
             renderGraph();
         }
 
-        // Auto-load graph data on page load
+        // Auto-load graph data on page load with progress tracking
         window.addEventListener('DOMContentLoaded', () => {
             const loadingEl = document.getElementById('loading');
 
-            fetch("chunk-graph.json")
+            // Show initial loading message
+            loadingEl.innerHTML = '<label style="color: #58a6ff;">⏳ Loading graph data...</label><br>' +
+                                 '<div style="margin-top: 8px; background: #21262d; border-radius: 4px; height: 20px; width: 250px; position: relative; overflow: hidden;">' +
+                                 '<div id="progress-bar" style="background: #238636; height: 100%; width: 0%; transition: width 0.3s;"></div>' +
+                                 '</div>' +
+                                 '<small id="progress-text" style="color: #8b949e; margin-top: 4px; display: block;">Connecting...</small>';
+
+            // Create abort controller for timeout
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout for large files
+
+            fetch("chunk-graph.json", { signal: controller.signal })
                 .then(response => {
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                     }
+
+                    const contentLength = response.headers.get('content-length');
+                    const total = contentLength ? parseInt(contentLength, 10) : 0;
+                    let loaded = 0;
+
+                    const progressBar = document.getElementById('progress-bar');
+                    const progressText = document.getElementById('progress-text');
+
+                    // Update progress text based on file size
+                    if (total > 0) {
+                        const sizeMB = (total / (1024 * 1024)).toFixed(1);
+                        progressText.textContent = `Downloading ${sizeMB}MB...`;
+                    } else {
+                        progressText.textContent = 'Downloading...';
+                    }
+
+                    // Create a new response with progress tracking
+                    const reader = response.body.getReader();
+                    const stream = new ReadableStream({
+                        start(controller) {
+                            function push() {
+                                reader.read().then(({ done, value }) => {
+                                    if (done) {
+                                        controller.close();
+                                        return;
+                                    }
+
+                                    loaded += value.byteLength;
+
+                                    // Update progress bar
+                                    if (total > 0) {
+                                        const percent = Math.round((loaded / total) * 100);
+                                        progressBar.style.width = percent + '%';
+                                        const loadedMB = (loaded / (1024 * 1024)).toFixed(1);
+                                        const totalMB = (total / (1024 * 1024)).toFixed(1);
+                                        progressText.textContent = `Downloaded ${loadedMB}MB / ${totalMB}MB (${percent}%)`;
+                                    } else {
+                                        const loadedMB = (loaded / (1024 * 1024)).toFixed(1);
+                                        progressText.textContent = `Downloaded ${loadedMB}MB...`;
+                                    }
+
+                                    controller.enqueue(value);
+                                    push();
+                                }).catch(err => {
+                                    console.error('Stream reading error:', err);
+                                    controller.error(err);
+                                });
+                            }
+                            push();
+                        }
+                    });
+
+                    return new Response(stream);
+                })
+                .then(response => {
+                    clearTimeout(timeout);
+
+                    // Update UI for parsing phase
+                    const progressText = document.getElementById('progress-text');
+                    const progressBar = document.getElementById('progress-bar');
+                    progressBar.style.width = '100%';
+                    progressText.textContent = 'Parsing JSON data...';
+
+                    // Parse JSON (this may take time for large files)
                     return response.json();
                 })
                 .then(data => {
+                    clearTimeout(timeout);
                     loadingEl.innerHTML = '<label style="color: #238636;">✓ Graph loaded successfully</label>';
                     setTimeout(() => loadingEl.style.display = 'none', 2000);
                     visualizeGraph(data);
                 })
                 .catch(err => {
+                    clearTimeout(timeout);
+
+                    let errorMsg = err.message;
+                    if (err.name === 'AbortError') {
+                        errorMsg = 'Loading timeout - file may be too large or server unresponsive';
+                    }
+
                     loadingEl.innerHTML = `<label style="color: #f85149;">✗ Failed to load graph data</label><br>` +
-                                         `<small style="color: #8b949e;">${err.message}</small><br>` +
+                                         `<small style="color: #8b949e;">${errorMsg}</small><br>` +
                                          `<small style="color: #8b949e;">Run: mcp-vector-search visualize export</small>`;
                     console.error("Failed to load graph:", err);
                 });
