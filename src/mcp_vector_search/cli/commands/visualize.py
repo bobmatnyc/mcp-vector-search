@@ -723,7 +723,7 @@ def _create_visualization_html(html_file: Path) -> None:
         }
 
         .node text {
-            font-size: 11px;
+            font-size: 14px;
             fill: #c9d1d9;
             text-anchor: middle;
             pointer-events: none;
@@ -1044,7 +1044,7 @@ def _create_visualization_html(html_file: Path) -> None:
                 .force("link", d3.forceLink(visibleLinks).id(d => d.id).distance(100))
                 .force("charge", d3.forceManyBody().strength(-400))
                 .force("center", d3.forceCenter(width / 2, height / 2))
-                .force("collision", d3.forceCollide().radius(40));
+                .force("collision", d3.forceCollide().radius(45));
 
             g.selectAll("*").remove();
 
@@ -1077,10 +1077,10 @@ def _create_visualization_html(html_file: Path) -> None:
             node.filter(d => !isDocNode(d))
                 .append("circle")
                 .attr("r", d => {
-                    if (d.type === 'subproject') return 20;
+                    if (d.type === 'subproject') return 24;
                     if (d.type === 'directory') return 40;  // Largest for directory containers
                     if (d.type === 'file') return 30;  // Larger transparent circle for files
-                    return d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    return d.complexity ? Math.min(12 + d.complexity * 2, 28) : 15;
                 })
                 .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
                 .attr("stroke-width", d => hasChildren(d) ? 2 : 0)
@@ -1090,19 +1090,19 @@ def _create_visualization_html(html_file: Path) -> None:
             node.filter(d => isDocNode(d))
                 .append("rect")
                 .attr("width", d => {
-                    const size = d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    const size = d.complexity ? Math.min(12 + d.complexity * 2, 28) : 15;
                     return size * 2;
                 })
                 .attr("height", d => {
-                    const size = d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    const size = d.complexity ? Math.min(12 + d.complexity * 2, 28) : 15;
                     return size * 2;
                 })
                 .attr("x", d => {
-                    const size = d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    const size = d.complexity ? Math.min(12 + d.complexity * 2, 28) : 15;
                     return -size;
                 })
                 .attr("y", d => {
-                    const size = d.complexity ? Math.min(8 + d.complexity * 2, 25) : 12;
+                    const size = d.complexity ? Math.min(12 + d.complexity * 2, 28) : 15;
                     return -size;
                 })
                 .attr("rx", 2)  // Rounded corners
@@ -1116,8 +1116,8 @@ def _create_visualization_html(html_file: Path) -> None:
                 .append("text")
                 .attr("class", "expand-indicator")
                 .attr("text-anchor", "middle")
-                .attr("dy", 5)
-                .style("font-size", "16px")
+                .attr("dy", 6)
+                .style("font-size", "18px")
                 .style("font-weight", "bold")
                 .style("fill", "#ffffff")
                 .style("pointer-events", "none")
