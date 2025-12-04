@@ -484,8 +484,15 @@ def serve(
             console.print(f"[red]✗ {e}[/red]")
             raise typer.Exit(1)
 
-    # Get visualization directory
-    viz_dir = Path(__file__).parent.parent.parent / "visualization"
+    # Get visualization directory - use project-local storage
+    project_manager = ProjectManager(Path.cwd())
+    if not project_manager.is_initialized():
+        console.print(
+            "[red]Project not initialized. Run 'mcp-vector-search init' first.[/red]"
+        )
+        raise typer.Exit(1)
+
+    viz_dir = project_manager.project_root / ".mcp-vector-search" / "visualization"
 
     if not viz_dir.exists():
         console.print(
