@@ -1414,7 +1414,7 @@ def _create_visualization_html(html_file: Path) -> None:
             }
 
             // Combine all chunks to show full file
-            const fullContent = sortedChunks.map(c => c.content).join('\n\n');
+            const fullContent = sortedChunks.map(c => c.content).join('\\n\\n');
 
             container.innerHTML = `
                 <p style="color: #8b949e; font-size: 11px; margin-bottom: 12px;">
