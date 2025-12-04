@@ -690,7 +690,8 @@ def _create_visualization_html(html_file: Path) -> None:
         .node circle {
             cursor: pointer;
             stroke: #c9d1d9;
-            stroke-width: 1.5px;
+            stroke-width: 2px;
+            pointer-events: all;
         }
 
         .node.module circle { fill: #238636; }
@@ -718,8 +719,10 @@ def _create_visualization_html(html_file: Path) -> None:
         .node.docstring rect { fill: #8b949e; }
         .node.comment rect { fill: #6e7681; }
         .node rect {
+            cursor: pointer;
             stroke: #c9d1d9;
-            stroke-width: 1.5px;
+            stroke-width: 2px;
+            pointer-events: all;
         }
 
         .node text {
