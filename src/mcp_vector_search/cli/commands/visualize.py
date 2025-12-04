@@ -1044,8 +1044,16 @@ def _create_visualization_html(html_file: Path) -> None:
             );
 
             simulation = d3.forceSimulation(visibleNodesList)
-                .force("link", d3.forceLink(visibleLinks).id(d => d.id).distance(50))
-                .force("charge", d3.forceManyBody().strength(-150))
+                .force("link", d3.forceLink(visibleLinks).id(d => d.id).distance(100))
+                .force("charge", d3.forceManyBody().strength(d => {
+                    // Check if node has any connections
+                    const hasConnections = allLinks.some(link =>
+                        link.source.id === d.id || link.target.id === d.id
+                    );
+                    // Connected nodes: spread out more (-200)
+                    // Unconnected nodes: cluster together (-50)
+                    return hasConnections ? -200 : -50;
+                }))
                 .force("center", d3.forceCenter(width / 2, height / 2).strength(0.15))
                 .force("collision", d3.forceCollide().radius(35));
 
