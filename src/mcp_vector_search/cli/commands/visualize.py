@@ -544,16 +544,25 @@ def serve(
             console.print("[yellow]Creating visualization HTML file...[/yellow]")
             _create_visualization_html(html_file)
 
-    # Copy graph file to visualization directory if it exists
-    if graph_file.exists():
+    # Check if we need to regenerate the graph file
+    needs_regeneration = not graph_file.exists() or code_only
+
+    if graph_file.exists() and not needs_regeneration:
+        # Use existing unfiltered file
         dest = viz_dir / "chunk-graph.json"
         shutil.copy(graph_file, dest)
         console.print(f"[green]✓[/green] Copied graph data to {dest}")
     else:
-        # Auto-generate graph file if it doesn't exist
-        console.print(
-            f"[yellow]Graph file {graph_file} not found. Generating it now...[/yellow]"
-        )
+        # Generate new file (with filter if requested)
+        if graph_file.exists() and code_only:
+            console.print(
+                "[yellow]Regenerating filtered graph data (--code-only)...[/yellow]"
+            )
+        elif not graph_file.exists():
+            console.print(
+                f"[yellow]Graph file {graph_file} not found. Generating it now...[/yellow]"
+            )
+
         asyncio.run(_export_chunks(graph_file, None, code_only))
         console.print()
 
