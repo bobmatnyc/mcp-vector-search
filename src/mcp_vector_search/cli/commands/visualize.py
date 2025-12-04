@@ -35,6 +35,11 @@ def export(
         "-f",
         help="Export only chunks from specific file (supports wildcards)",
     ),
+    code_only: bool = typer.Option(
+        False,
+        "--code-only",
+        help="Exclude documentation chunks (text, comment, docstring)",
+    ),
 ) -> None:
     """Export chunk relationships as JSON for D3.js visualization.
 
@@ -47,12 +52,23 @@ def export(
 
         # Custom output location
         mcp-vector-search visualize export -o graph.json
+
+        # Export only code chunks (exclude documentation)
+        mcp-vector-search visualize export --code-only
     """
-    asyncio.run(_export_chunks(output, file_path))
+    asyncio.run(_export_chunks(output, file_path, code_only))
 
 
-async def _export_chunks(output: Path, file_filter: str | None) -> None:
-    """Export chunk relationship data."""
+async def _export_chunks(
+    output: Path, file_filter: str | None, code_only: bool = False
+) -> None:
+    """Export chunk relationship data.
+
+    Args:
+        output: Path to output JSON file
+        file_filter: Optional file pattern to filter chunks
+        code_only: If True, exclude documentation chunks (text, comment, docstring)
+    """
     try:
         # Load project
         project_manager = ProjectManager(Path.cwd())
@@ -92,6 +108,20 @@ async def _export_chunks(output: Path, file_filter: str | None) -> None:
             chunks = [c for c in chunks if fnmatch(str(c.file_path), file_filter)]
             console.print(
                 f"[cyan]Filtered to {len(chunks)} chunks matching '{file_filter}'[/cyan]"
+            )
+
+        # Apply code-only filter if requested
+        if code_only:
+            original_count = len(chunks)
+            chunks = [
+                c
+                for c in chunks
+                if c.chunk_type not in ["text", "comment", "docstring"]
+            ]
+            filtered_count = len(chunks)
+            console.print(
+                f"[dim]Filtered out {original_count - filtered_count} documentation chunks "
+                f"({original_count} → {filtered_count} chunks)[/dim]"
             )
 
         # Collect subprojects for monorepo support
@@ -445,6 +475,11 @@ def serve(
         "-g",
         help="Graph JSON file to visualize",
     ),
+    code_only: bool = typer.Option(
+        False,
+        "--code-only",
+        help="Exclude documentation chunks (text, comment, docstring)",
+    ),
 ) -> None:
     """Start local HTTP server for D3.js visualization.
 
@@ -457,6 +492,9 @@ def serve(
 
         # Custom graph file
         mcp-vector-search visualize serve --graph my-graph.json
+
+        # Serve with code-only filter
+        mcp-vector-search visualize serve --code-only
     """
     import http.server
     import os
@@ -516,7 +554,7 @@ def serve(
         console.print(
             f"[yellow]Graph file {graph_file} not found. Generating it now...[/yellow]"
         )
-        asyncio.run(_export_chunks(graph_file, None))
+        asyncio.run(_export_chunks(graph_file, None, code_only))
         console.print()
 
         # Copy the newly generated graph to visualization directory
