@@ -1234,6 +1234,24 @@ def _create_visualization_html(html_file: Path) -> None:
             transform: translateY(-1px);
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
         }
+
+        /* Loading spinner animation */
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #30363d;
+            border-top-color: #58a6ff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
     </style>
 </head>
 <body>
@@ -1342,6 +1360,7 @@ def _create_visualization_html(html_file: Path) -> None:
         let visibleNodes = new Set();
         let collapsedNodes = new Set();
         let highlightedNode = null;
+        let rootNodes = [];  // NEW: Store root nodes for reset function
 
         // Get file extension from path
         function getFileExtension(filePath) {
@@ -1438,6 +1457,7 @@ def _create_visualization_html(html_file: Path) -> None:
             }
 
             // Start with only root nodes visible, all collapsed
+            rootNodes = rootNodes;  // Store for reset function
             visibleNodes = new Set(rootNodes.map(n => n.id));
             collapsedNodes = new Set(rootNodes.map(n => n.id));
 
@@ -1517,8 +1537,44 @@ def _create_visualization_html(html_file: Path) -> None:
                     if (d.type === 'subproject') return 24;
                     return d.complexity ? Math.min(12 + d.complexity * 2, 28) : 15;
                 })
-                .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
-                .attr("stroke-width", d => hasChildren(d) ? 2 : 0)
+                .attr("stroke", d => {
+                    // Check if node has incoming caller/imports edges (dead code detection)
+                    const hasIncoming = allLinks.some(l =>
+                        (l.target.id || l.target) === d.id &&
+                        (l.type === 'caller' || l.type === 'imports')
+                    );
+                    if (!hasIncoming && (d.type === 'function' || d.type === 'class' || d.type === 'method')) {
+                        // Check if it's not an entry point (main, test, cli files)
+                        const isEntryPoint = d.file_path && (
+                            d.file_path.includes('main.py') ||
+                            d.file_path.includes('__main__.py') ||
+                            d.file_path.includes('cli.py') ||
+                            d.file_path.includes('test_')
+                        );
+                        if (!isEntryPoint) {
+                            return "#ff6b6b"; // Red border for potentially dead code
+                        }
+                    }
+                    return hasChildren(d) ? "#ffffff" : "none";
+                })
+                .attr("stroke-width", d => {
+                    const hasIncoming = allLinks.some(l =>
+                        (l.target.id || l.target) === d.id &&
+                        (l.type === 'caller' || l.type === 'imports')
+                    );
+                    if (!hasIncoming && (d.type === 'function' || d.type === 'class' || d.type === 'method')) {
+                        const isEntryPoint = d.file_path && (
+                            d.file_path.includes('main.py') ||
+                            d.file_path.includes('__main__.py') ||
+                            d.file_path.includes('cli.py') ||
+                            d.file_path.includes('test_')
+                        );
+                        if (!isEntryPoint) {
+                            return 3; // Thicker red border
+                        }
+                    }
+                    return hasChildren(d) ? 2 : 0;
+                })
                 .style("fill", d => d.color || null);  // Use custom color if available
 
             // Add rectangles for document nodes
@@ -1685,6 +1741,21 @@ def _create_visualization_html(html_file: Path) -> None:
                 .call(zoom.transform, d3.zoomIdentity.translate(x, y).scale(transform.k));
         }
 
+        function resetView() {
+            // Reset to root level nodes only
+            visibleNodes = new Set(rootNodes.map(n => n.id));
+            collapsedNodes = new Set(rootNodes.map(n => n.id));
+            highlightedNode = null;
+
+            // Re-render graph
+            renderGraph();
+
+            // Zoom to fit after rendering
+            setTimeout(() => {
+                zoomToFit(750);
+            }, 200);
+        }
+
         function handleNodeClick(event, d) {
             event.stopPropagation();
 
@@ -1783,11 +1854,11 @@ def _create_visualization_html(html_file: Path) -> None:
         }
 
         function showLinkTooltip(event, d) {
+            const sourceName = allNodes.find(n => n.id === (d.source.id || d.source))?.name || 'Unknown';
+            const targetName = allNodes.find(n => n.id === (d.target.id || d.target))?.name || 'Unknown';
+
             // Special tooltip for cycle links
             if (d.is_cycle) {
-                const sourceName = allNodes.find(n => n.id === (d.source.id || d.source))?.name || 'Unknown';
-                const targetName = allNodes.find(n => n.id === (d.target.id || d.target))?.name || 'Unknown';
-
                 tooltip
                     .style("display", "block")
                     .style("left", (event.pageX + 10) + "px")
@@ -1799,20 +1870,77 @@ def _create_visualization_html(html_file: Path) -> None:
                             This indicates a circular call relationship that may lead to infinite recursion or tight coupling.
                         </div>
                     `);
-            } else if (d.type === "semantic") {
-                const sourceName = allNodes.find(n => n.id === (d.source.id || d.source))?.name || 'Unknown';
-                const targetName = allNodes.find(n => n.id === (d.target.id || d.target))?.name || 'Unknown';
-
-                tooltip
-                    .style("display", "block")
-                    .style("left", (event.pageX + 10) + "px")
-                    .style("top", (event.pageY + 10) + "px")
-                    .html(`
-                        <div><strong>Semantic Relationship</strong></div>
-                        <div>Similarity: ${(d.similarity * 100).toFixed(1)}%</div>
-                        <div>${sourceName} ↔ ${targetName}</div>
-                    `);
+                return;
             }
+
+            // Tooltip content based on link type
+            let typeLabel = '';
+            let typeDescription = '';
+            let extraInfo = '';
+
+            switch(d.type) {
+                case 'caller':
+                    typeLabel = '📞 Function Call';
+                    typeDescription = `${sourceName} calls ${targetName}`;
+                    extraInfo = 'This is a direct function call relationship, the most common type of code dependency.';
+                    break;
+                case 'semantic':
+                    typeLabel = '🔗 Semantic Similarity';
+                    typeDescription = `${(d.similarity * 100).toFixed(1)}% similar`;
+                    extraInfo = `These code chunks have similar meaning or purpose based on their content.`;
+                    break;
+                case 'imports':
+                    typeLabel = '📦 Import Dependency';
+                    typeDescription = `${sourceName} imports ${targetName}`;
+                    extraInfo = 'This is an explicit import/dependency declaration.';
+                    break;
+                case 'file_containment':
+                    typeLabel = '📄 File Contains';
+                    typeDescription = `${sourceName} contains ${targetName}`;
+                    extraInfo = 'This file contains the code chunk or function.';
+                    break;
+                case 'dir_containment':
+                    typeLabel = '📁 Directory Contains';
+                    typeDescription = `${sourceName} contains ${targetName}`;
+                    extraInfo = 'This directory contains the file or subdirectory.';
+                    break;
+                case 'dir_hierarchy':
+                    typeLabel = '🗂️ Directory Hierarchy';
+                    typeDescription = `${sourceName} → ${targetName}`;
+                    extraInfo = 'Parent-child directory structure relationship.';
+                    break;
+                case 'method':
+                    typeLabel = '⚙️ Method Relationship';
+                    typeDescription = `${sourceName} ↔ ${targetName}`;
+                    extraInfo = 'Class method relationship.';
+                    break;
+                case 'module':
+                    typeLabel = '📚 Module Relationship';
+                    typeDescription = `${sourceName} ↔ ${targetName}`;
+                    extraInfo = 'Module-level relationship.';
+                    break;
+                case 'dependency':
+                    typeLabel = '🔀 Dependency';
+                    typeDescription = `${sourceName} depends on ${targetName}`;
+                    extraInfo = 'General code dependency relationship.';
+                    break;
+                default:
+                    typeLabel = `🔗 ${d.type || 'Unknown'}`;
+                    typeDescription = `${sourceName} → ${targetName}`;
+                    extraInfo = 'Code relationship.';
+            }
+
+            tooltip
+                .style("display", "block")
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY + 10) + "px")
+                .html(`
+                    <div><strong>${typeLabel}</strong></div>
+                    <div style="margin-top: 4px;">${typeDescription}</div>
+                    <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; font-size: 11px; color: #8b949e; font-style: italic;">
+                        ${extraInfo}
+                    </div>
+                `);
         }
 
         function hideTooltip() {
@@ -1905,9 +2033,28 @@ def _create_visualization_html(html_file: Path) -> None:
                 footerHtml += `<span class="footer-item"><span class="footer-label">Language:</span> ${node.language}</span>`;
             }
             footerHtml += `<span class="footer-item"><span class="footer-label">File:</span> ${node.file_path}</span>`;
-            if (node.start_line) {
-                footerHtml += `<span class="footer-item"><span class="footer-label">Location:</span> Lines ${node.start_line}-${node.end_line}</span>`;
+
+            // Add line information and complexity
+            if (node.start_line !== undefined && node.end_line !== undefined) {
+                const totalLines = node.end_line - node.start_line + 1;
+
+                if (node.type === 'function' || node.type === 'class' || node.type === 'method') {
+                    // For functions/classes: show function lines
+                    footerHtml += `<span class="footer-item"><span class="footer-label">Lines:</span> ${node.start_line}-${node.end_line} (${totalLines} lines)</span>`;
+                } else if (node.type === 'file') {
+                    // For files: show file lines
+                    footerHtml += `<span class="footer-item"><span class="footer-label">File Lines:</span> ${totalLines}</span>`;
+                } else {
+                    // For other types: show location
+                    footerHtml += `<span class="footer-item"><span class="footer-label">Location:</span> Lines ${node.start_line}-${node.end_line}</span>`;
+                }
+
+                // Add cyclomatic complexity if available and > 0
+                if (node.complexity && node.complexity > 0) {
+                    footerHtml += `<span class="footer-item"><span class="footer-label">Complexity:</span> ${node.complexity}</span>`;
+                }
             }
+
             footer.innerHTML = footerHtml;
 
             // Display content based on node type
@@ -2275,7 +2422,7 @@ def _create_visualization_html(html_file: Path) -> None:
             const loadingEl = document.getElementById('loading');
 
             // Show initial loading message
-            loadingEl.innerHTML = '<label style="color: #58a6ff;">⏳ Loading graph data...</label><br>' +
+            loadingEl.innerHTML = '<label style="color: #58a6ff;"><span class="spinner"></span>Loading graph data...</label><br>' +
                                  '<div style="margin-top: 8px; background: #21262d; border-radius: 4px; height: 20px; width: 250px; position: relative; overflow: hidden;">' +
                                  '<div id="progress-bar" style="background: #238636; height: 100%; width: 0%; transition: width 0.3s;"></div>' +
                                  '</div>' +
@@ -2379,7 +2526,7 @@ def _create_visualization_html(html_file: Path) -> None:
 
         // Reset view button event handler
         document.getElementById('reset-view-btn').addEventListener('click', () => {
-            zoomToFit(750);
+            resetView();
         });
     </script>
 </body>

@@ -1,0 +1,177 @@
+{
+  "nodes": [
+    {
+      "id": "folder_0",
+      "name": "folder_0",
+      "type": "directory",
+      "file_path": "/test/folder_0",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_1",
+      "name": "folder_1",
+      "type": "directory",
+      "file_path": "/test/folder_1",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_2",
+      "name": "folder_2",
+      "type": "directory",
+      "file_path": "/test/folder_2",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_3",
+      "name": "folder_3",
+      "type": "directory",
+      "file_path": "/test/folder_3",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_4",
+      "name": "folder_4",
+      "type": "directory",
+      "file_path": "/test/folder_4",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_5",
+      "name": "folder_5",
+      "type": "directory",
+      "file_path": "/test/folder_5",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_6",
+      "name": "folder_6",
+      "type": "directory",
+      "file_path": "/test/folder_6",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_7",
+      "name": "folder_7",
+      "type": "directory",
+      "file_path": "/test/folder_7",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_8",
+      "name": "folder_8",
+      "type": "directory",
+      "file_path": "/test/folder_8",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_9",
+      "name": "folder_9",
+      "type": "directory",
+      "file_path": "/test/folder_9",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_10",
+      "name": "folder_10",
+      "type": "directory",
+      "file_path": "/test/folder_10",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_11",
+      "name": "folder_11",
+      "type": "directory",
+      "file_path": "/test/folder_11",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_12",
+      "name": "folder_12",
+      "type": "directory",
+      "file_path": "/test/folder_12",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_13",
+      "name": "folder_13",
+      "type": "directory",
+      "file_path": "/test/folder_13",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_14",
+      "name": "folder_14",
+      "type": "directory",
+      "file_path": "/test/folder_14",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_15",
+      "name": "folder_15",
+      "type": "directory",
+      "file_path": "/test/folder_15",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "file_in_folder_0",
+      "name": "test_file_0.py",
+      "type": "file",
+      "file_path": "/test/folder_0/test_file_0.py",
+      "depth": 1,
+      "color": "#58a6ff"
+    },
+    {
+      "id": "file_in_folder_1",
+      "name": "test_file_1.py",
+      "type": "file",
+      "file_path": "/test/folder_1/test_file_1.py",
+      "depth": 1,
+      "color": "#58a6ff"
+    },
+    {
+      "id": "file_in_folder_2",
+      "name": "test_file_2.py",
+      "type": "file",
+      "file_path": "/test/folder_2/test_file_2.py",
+      "depth": 1,
+      "color": "#58a6ff"
+    }
+  ],
+  "links": [
+    {
+      "source": "folder_0",
+      "target": "file_in_folder_0",
+      "type": "dir_containment"
+    },
+    {
+      "source": "folder_1",
+      "target": "file_in_folder_1",
+      "type": "dir_containment"
+    },
+    {
+      "source": "folder_2",
+      "target": "file_in_folder_2",
+      "type": "dir_containment"
+    }
+  ],
+  "metadata": {
+    "total_files": 3,
+    "is_monorepo": false
+  }
+}

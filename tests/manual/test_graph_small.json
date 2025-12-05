@@ -1,0 +1,81 @@
+{
+  "nodes": [
+    {
+      "id": "folder_0",
+      "name": "folder_0",
+      "type": "directory",
+      "file_path": "/test/folder_0",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_1",
+      "name": "folder_1",
+      "type": "directory",
+      "file_path": "/test/folder_1",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_2",
+      "name": "folder_2",
+      "type": "directory",
+      "file_path": "/test/folder_2",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "folder_3",
+      "name": "folder_3",
+      "type": "directory",
+      "file_path": "/test/folder_3",
+      "depth": 0,
+      "color": "#79c0ff"
+    },
+    {
+      "id": "file_in_folder_0",
+      "name": "test_file_0.py",
+      "type": "file",
+      "file_path": "/test/folder_0/test_file_0.py",
+      "depth": 1,
+      "color": "#58a6ff"
+    },
+    {
+      "id": "file_in_folder_1",
+      "name": "test_file_1.py",
+      "type": "file",
+      "file_path": "/test/folder_1/test_file_1.py",
+      "depth": 1,
+      "color": "#58a6ff"
+    },
+    {
+      "id": "file_in_folder_2",
+      "name": "test_file_2.py",
+      "type": "file",
+      "file_path": "/test/folder_2/test_file_2.py",
+      "depth": 1,
+      "color": "#58a6ff"
+    }
+  ],
+  "links": [
+    {
+      "source": "folder_0",
+      "target": "file_in_folder_0",
+      "type": "dir_containment"
+    },
+    {
+      "source": "folder_1",
+      "target": "file_in_folder_1",
+      "type": "dir_containment"
+    },
+    {
+      "source": "folder_2",
+      "target": "file_in_folder_2",
+      "type": "dir_containment"
+    }
+  ],
+  "metadata": {
+    "total_files": 3,
+    "is_monorepo": false
+  }
+}
