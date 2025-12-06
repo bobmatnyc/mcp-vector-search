@@ -2,28 +2,37 @@
 
 This module provides installation commands for:
 1. Project initialization (main command)
-2. Platform-specific MCP integrations (subcommands)
+2. Platform-specific MCP integrations using py-mcp-installer library
 
 Examples:
     # Install in current project
     $ mcp-vector-search install
 
-    # Install Claude Code integration
-    $ mcp-vector-search install claude-code
+    # Install MCP integration (auto-detect platforms)
+    $ mcp-vector-search install mcp
 
-    # Install all available integrations
-    $ mcp-vector-search install --all
+    # Install to specific platform
+    $ mcp-vector-search install mcp --platform cursor
+
+    # Install to all detected platforms
+    $ mcp-vector-search install mcp --all
 """
 
 import asyncio
-import json
-import shutil
-import subprocess
 from pathlib import Path
-from typing import Any
 
 import typer
 from loguru import logger
+
+# Import from py-mcp-installer library
+from py_mcp_installer import (
+    MCPInspector,
+    MCPInstaller,
+    MCPServerConfig,
+    Platform,
+    PlatformDetector,
+    PlatformInfo,
+)
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -54,22 +63,25 @@ install_app = create_enhanced_typer(
      [code]$ mcp-vector-search install[/code]
 
   [green]2. MCP Platform Integration[/green]
-     Add MCP integration for specific platforms:
-     [code]$ mcp-vector-search install claude-code[/code]
-     [code]$ mcp-vector-search install cursor[/code]
-     [code]$ mcp-vector-search install windsurf[/code]
+     Add MCP integration with auto-detection:
+     [code]$ mcp-vector-search install mcp[/code]
+     [code]$ mcp-vector-search install mcp --platform cursor[/code]
+     [code]$ mcp-vector-search install mcp --all[/code]
 
   [green]3. Complete Setup[/green]
      Install project + all MCP integrations:
      [code]$ mcp-vector-search install --with-mcp[/code]
 
 [bold cyan]Supported Platforms:[/bold cyan]
-  • [green]claude-code[/green]  - Claude Code (project-scoped .mcp.json)
-  • [green]cursor[/green]       - Cursor IDE (~/.cursor/mcp.json)
-  • [green]windsurf[/green]     - Windsurf IDE (~/.codeium/windsurf/mcp_config.json)
-  • [green]vscode[/green]       - VS Code (~/.vscode/mcp.json)
+  • [green]claude-code[/green]     - Claude Code
+  • [green]claude-desktop[/green]  - Claude Desktop
+  • [green]cursor[/green]          - Cursor IDE
+  • [green]auggie[/green]          - Auggie
+  • [green]codex[/green]           - Codex
+  • [green]windsurf[/green]        - Windsurf IDE
+  • [green]gemini-cli[/green]      - Gemini CLI
 
-[dim]💡 Use 'mcp-vector-search uninstall <platform>' to remove integrations[/dim]
+[dim]💡 Use 'mcp-vector-search uninstall mcp' to remove integrations[/dim]
 """,
     invoke_without_command=True,
     no_args_is_help=False,
@@ -77,282 +89,76 @@ install_app = create_enhanced_typer(
 
 
 # ==============================================================================
-# Helper Functions for Claude CLI Integration
+# Helper Functions
 # ==============================================================================
 
 
-def check_claude_cli_available() -> bool:
-    """Check if Claude CLI is available.
+def detect_all_platforms() -> list[PlatformInfo]:
+    """Detect all available platforms on the system.
 
     Returns:
-        True if claude CLI is installed and accessible
+        List of detected platforms with confidence scores
     """
-    return shutil.which("claude") is not None
+    detector = PlatformDetector()
+    detected_platforms = []
 
-
-def check_uv_available() -> bool:
-    """Check if uv is available.
-
-    Returns:
-        True if uv is installed and accessible
-    """
-    return shutil.which("uv") is not None
-
-
-def register_with_claude_cli(
-    project_root: Path,
-    server_name: str = "mcp-vector-search",
-    enable_watch: bool = True,
-) -> bool:
-    """Register MCP server with Claude CLI using native 'claude mcp add' command.
-
-    Args:
-        project_root: Project root directory
-        server_name: Name for the MCP server entry (default: "mcp-vector-search")
-        enable_watch: Enable file watching
-
-    Returns:
-        True if registration was successful, False otherwise
-    """
-    try:
-        # Check if mcp-vector-search command is available first
-        # This ensures we work with pipx/homebrew installations, not just uv
-        if not shutil.which("mcp-vector-search"):
-            logger.warning(
-                "mcp-vector-search command not in PATH, falling back to manual JSON configuration"
-            )
-            return False
-
-        # First, try to remove existing server (safe to ignore if doesn't exist)
-        # This ensures clean registration when server already exists
-        remove_cmd = ["claude", "mcp", "remove", server_name]
-
-        subprocess.run(
-            remove_cmd,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        # Ignore result - it's OK if server doesn't exist
-
-        # Build the add command using mcp-vector-search CLI
-        # This works for all installation methods: pipx, homebrew, and uv
-        cmd = [
-            "claude",
-            "mcp",
-            "add",
-            "--transport",
-            "stdio",
-            server_name,
-            "--env",
-            f"MCP_ENABLE_FILE_WATCHING={'true' if enable_watch else 'false'}",
-            "--",
-            "mcp-vector-search",
-            "mcp",
-            str(project_root.absolute()),
-        ]
-
-        # Run the add command
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode == 0:
-            return True
-        else:
-            logger.warning(f"Claude CLI registration failed: {result.stderr}")
-            return False
-
-    except subprocess.TimeoutExpired:
-        logger.warning("Claude CLI registration timed out")
-        return False
-    except Exception as e:
-        logger.warning(f"Claude CLI registration failed: {e}")
-        return False
-
-
-# ==============================================================================
-# Platform Configuration
-# ==============================================================================
-
-SUPPORTED_PLATFORMS = {
-    "claude-code": {
-        "name": "Claude Code",
-        "config_path": ".mcp.json",  # Project-scoped
-        "description": "Claude Code with project-scoped configuration",
-        "scope": "project",
-    },
-    "cursor": {
-        "name": "Cursor",
-        "config_path": "~/.cursor/mcp.json",
-        "description": "Cursor IDE",
-        "scope": "global",
-    },
-    "windsurf": {
-        "name": "Windsurf",
-        "config_path": "~/.codeium/windsurf/mcp_config.json",
-        "description": "Windsurf IDE",
-        "scope": "global",
-    },
-    "vscode": {
-        "name": "VS Code",
-        "config_path": "~/.vscode/mcp.json",
-        "description": "Visual Studio Code",
-        "scope": "global",
-    },
-}
-
-
-def get_platform_config_path(platform: str, project_root: Path) -> Path:
-    """Get the configuration file path for a platform.
-
-    Args:
-        platform: Platform name (e.g., "claude-code", "cursor")
-        project_root: Project root directory (for project-scoped configs)
-
-    Returns:
-        Path to the configuration file
-    """
-    if platform not in SUPPORTED_PLATFORMS:
-        raise ValueError(f"Unsupported platform: {platform}")
-
-    config_info = SUPPORTED_PLATFORMS[platform]
-    config_path_str = config_info["config_path"]
-
-    # Resolve project-scoped vs global paths
-    if config_info["scope"] == "project":
-        return project_root / config_path_str
-    else:
-        return Path(config_path_str).expanduser()
-
-
-def get_mcp_server_config(
-    project_root: Path,
-    platform: str,
-    enable_watch: bool = True,
-) -> dict[str, Any]:
-    """Generate MCP server configuration for a platform.
-
-    Args:
-        project_root: Project root directory
-        platform: Platform name
-        enable_watch: Whether to enable file watching
-
-    Returns:
-        Dictionary containing MCP server configuration
-    """
-    # Base configuration using uv for compatibility
-    config: dict[str, Any] = {
-        "command": "uv",
-        "args": ["run", "mcp-vector-search", "mcp"],
-        "env": {
-            "MCP_ENABLE_FILE_WATCHING": "true" if enable_watch else "false",
-        },
+    # Try to detect each platform
+    platform_detectors = {
+        Platform.CLAUDE_CODE: detector.detect_claude_code,
+        Platform.CLAUDE_DESKTOP: detector.detect_claude_desktop,
+        Platform.CURSOR: detector.detect_cursor,
+        Platform.AUGGIE: detector.detect_auggie,
+        Platform.CODEX: detector.detect_codex,
+        Platform.WINDSURF: detector.detect_windsurf,
+        Platform.GEMINI_CLI: detector.detect_gemini_cli,
     }
 
-    # Platform-specific adjustments
-    if platform in ("claude-code", "cursor", "windsurf", "vscode"):
-        # These platforms require "type": "stdio"
-        config["type"] = "stdio"
+    for platform_enum, detector_func in platform_detectors.items():
+        try:
+            confidence, config_path = detector_func()
+            if confidence > 0.0 and config_path:
+                # Determine CLI availability
+                cli_available = False
+                from py_mcp_installer.utils import resolve_command_path
 
-    # Only add cwd for global-scope platforms (not project-scoped)
-    if SUPPORTED_PLATFORMS[platform]["scope"] == "global":
-        config["cwd"] = str(project_root.absolute())
+                if platform_enum in (Platform.CLAUDE_CODE, Platform.CLAUDE_DESKTOP):
+                    cli_available = resolve_command_path("claude") is not None
+                elif platform_enum == Platform.CURSOR:
+                    cli_available = resolve_command_path("cursor") is not None
 
-    return config
-
-
-def detect_installed_platforms() -> dict[str, Path]:
-    """Detect which MCP platforms are installed on the system.
-
-    Returns:
-        Dictionary mapping platform names to their config paths
-    """
-    detected = {}
-
-    for platform, info in SUPPORTED_PLATFORMS.items():
-        # For project-scoped platforms, always include them
-        if info["scope"] == "project":
-            detected[platform] = Path(info["config_path"])
+                platform_info = PlatformInfo(
+                    platform=platform_enum,
+                    confidence=confidence,
+                    config_path=config_path,
+                    cli_available=cli_available,
+                )
+                detected_platforms.append(platform_info)
+        except Exception as e:
+            logger.debug(f"Failed to detect {platform_enum.value}: {e}")
             continue
 
-        # For global platforms, check if config directory exists
-        config_path = Path(info["config_path"]).expanduser()
-        if config_path.parent.exists():
-            detected[platform] = config_path
-
-    return detected
+    return detected_platforms
 
 
-def configure_platform(
-    platform: str,
-    project_root: Path,
-    server_name: str = "mcp-vector-search",
-    enable_watch: bool = True,
-    force: bool = False,
-) -> bool:
-    """Configure MCP integration for a specific platform.
+def platform_name_to_enum(name: str) -> Platform | None:
+    """Convert platform name to enum.
 
     Args:
-        platform: Platform name (e.g., "claude-code", "cursor")
-        project_root: Project root directory
-        server_name: Name for the MCP server entry
-        enable_watch: Whether to enable file watching
-        force: Whether to overwrite existing configuration
+        name: Platform name (e.g., "cursor", "claude-code")
 
     Returns:
-        True if configuration was successful, False otherwise
+        Platform enum or None if not found
     """
-    try:
-        config_path = get_platform_config_path(platform, project_root)
-
-        # Create backup if file exists
-        if config_path.exists():
-            backup_path = config_path.with_suffix(config_path.suffix + ".backup")
-            shutil.copy2(config_path, backup_path)
-
-            # Load existing config
-            with open(config_path) as f:
-                config = json.load(f)
-
-            # Check if server already exists
-            if "mcpServers" in config and server_name in config["mcpServers"]:
-                if not force:
-                    print_warning(
-                        f"  ⚠️  Server '{server_name}' already exists in {platform} config"
-                    )
-                    print_info("  Use --force to overwrite")
-                    return False
-        else:
-            # Create new config
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            config = {}
-
-        # Ensure mcpServers section exists
-        if "mcpServers" not in config:
-            config["mcpServers"] = {}
-
-        # Add server configuration
-        server_config = get_mcp_server_config(project_root, platform, enable_watch)
-        config["mcpServers"][server_name] = server_config
-
-        # Write configuration
-        with open(config_path, "w") as f:
-            json.dump(config, f, indent=2)
-
-        platform_name = SUPPORTED_PLATFORMS[platform]["name"]
-        print_success(f"  ✅ Configured {platform_name}")
-        print_info(f"     Config: {config_path}")
-
-        return True
-
-    except Exception as e:
-        logger.error(f"Failed to configure {platform}: {e}")
-        print_error(f"  ❌ Failed to configure {platform}: {e}")
-        return False
+    name_map = {
+        "claude-code": Platform.CLAUDE_CODE,
+        "claude-desktop": Platform.CLAUDE_DESKTOP,
+        "cursor": Platform.CURSOR,
+        "auggie": Platform.AUGGIE,
+        "codex": Platform.CODEX,
+        "windsurf": Platform.WINDSURF,
+        "gemini-cli": Platform.GEMINI_CLI,
+    }
+    return name_map.get(name.lower())
 
 
 # ==============================================================================
@@ -501,15 +307,15 @@ def main(
         # Install MCP integrations if requested
         if with_mcp:
             console.print("\n[bold blue]🔗 Installing MCP integrations...[/bold blue]")
-            detected = detect_installed_platforms()
+            detected = detect_all_platforms()
 
             if detected:
-                for platform in detected:
-                    configure_platform(platform, project_root, enable_watch=True)
+                for platform_info in detected:
+                    _install_to_platform(platform_info, project_root)
             else:
                 print_warning("No MCP platforms detected")
                 print_info("Install platforms manually using:")
-                print_info("  mcp-vector-search install <platform>")
+                print_info("  mcp-vector-search install mcp --platform <platform>")
 
         # Success message
         console.print("\n[bold green]🎉 Installation Complete![/bold green]")
@@ -521,7 +327,7 @@ def main(
 
         if not with_mcp:
             next_steps.append(
-                "[cyan]mcp-vector-search install claude-code[/cyan] - Add MCP integration"
+                "[cyan]mcp-vector-search install mcp[/cyan] - Add MCP integration"
             )
 
         print_next_steps(next_steps, title="Ready to Use")
@@ -539,228 +345,279 @@ def main(
 
 
 # ==============================================================================
-# Platform-Specific Installation Commands
+# MCP Installation Command
 # ==============================================================================
 
 
-@install_app.command("claude-code")
-def install_claude_code(
+def _install_to_platform(platform_info: PlatformInfo, project_root: Path) -> bool:
+    """Install to a specific platform.
+
+    Args:
+        platform_info: Platform information
+        project_root: Project root directory
+
+    Returns:
+        True if installation succeeded
+    """
+    try:
+        # Create installer for this platform
+        installer = MCPInstaller(platform=platform_info.platform)
+
+        # Create server configuration
+        server_config = MCPServerConfig(
+            name="mcp-vector-search",
+            command="uv",
+            args=["run", "--directory", str(project_root), "mcp-vector-search", "mcp"],
+            env={"PROJECT_ROOT": str(project_root)},
+            description="Semantic code search with vector embeddings",
+        )
+
+        # Install server
+        result = installer.install_server(
+            name=server_config.name,
+            command=server_config.command,
+            args=server_config.args,
+            env=server_config.env,
+            description=server_config.description,
+        )
+
+        if result.success:
+            print_success(f"  ✅ Installed to {platform_info.platform.value}")
+            if result.config_path:
+                print_info(f"     Config: {result.config_path}")
+
+            # Validate installation
+            inspector = MCPInspector(platform_info)
+            report = inspector.inspect()
+
+            if report.has_errors():
+                print_warning("  ⚠️  Configuration has issues:")
+                for issue in report.issues:
+                    if issue.severity == "error":
+                        print_warning(f"      • {issue.message}")
+
+            return True
+        else:
+            print_error(
+                f"  ❌ Failed to install to {platform_info.platform.value}: {result.message}"
+            )
+            return False
+
+    except Exception as e:
+        logger.exception(f"Installation to {platform_info.platform.value} failed")
+        print_error(f"  ❌ Installation failed: {e}")
+        return False
+
+
+@install_app.command(name="mcp")
+def install_mcp(
     ctx: typer.Context,
-    enable_watch: bool = typer.Option(
-        True,
-        "--watch/--no-watch",
-        help="Enable file watching for auto-reindex",
+    platform: str | None = typer.Option(
+        None,
+        "--platform",
+        "-p",
+        help="Specific platform to install to (e.g., cursor, claude-code)",
     ),
-    force: bool = typer.Option(
+    all_platforms: bool = typer.Option(
         False,
-        "--force",
-        "-f",
-        help="Force overwrite existing configuration",
+        "--all",
+        "-a",
+        help="Install to all detected platforms",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview changes without applying them",
     ),
 ) -> None:
-    """Install Claude Code MCP integration (project-scoped).
+    """Install MCP integration to platforms.
 
-    Uses native 'claude mcp add' command if available, otherwise creates .mcp.json.
+    Auto-detects available platforms and installs mcp-vector-search as an MCP server.
+    Supports multiple platforms simultaneously.
+
+    [bold cyan]Examples:[/bold cyan]
+
+      [green]Auto-detect and install:[/green]
+        $ mcp-vector-search install mcp
+
+      [green]Install to specific platform:[/green]
+        $ mcp-vector-search install mcp --platform cursor
+
+      [green]Install to all detected platforms:[/green]
+        $ mcp-vector-search install mcp --all
+
+      [green]Preview changes (dry run):[/green]
+        $ mcp-vector-search install mcp --dry-run
     """
     project_root = ctx.obj.get("project_root") or Path.cwd()
 
     console.print(
         Panel.fit(
-            "[bold cyan]Installing Claude Code Integration[/bold cyan]\n"
-            "🔧 Automatic setup with Claude CLI",
+            "[bold cyan]Installing MCP Integration[/bold cyan]\n"
+            f"📁 Project: {project_root}",
             border_style="cyan",
         )
     )
 
-    # Try Claude CLI first
-    claude_cli_available = check_claude_cli_available()
-    success = False
+    try:
+        # Detect available platforms
+        print_info("🔍 Detecting available MCP platforms...")
+        detected = detect_all_platforms()
 
-    if claude_cli_available:
-        print_info("Using Claude CLI for automatic setup...")
-        success = register_with_claude_cli(
-            project_root=project_root,
-            server_name="mcp-vector-search",
-            enable_watch=enable_watch,
-        )
+        if not detected:
+            print_warning("No MCP platforms detected.")
+            print_info(
+                "Supported platforms: claude-code, claude-desktop, cursor, auggie, codex, windsurf, gemini-cli"
+            )
+            raise typer.Exit(0)
 
-        if success:
-            print_success("✅ Registered with Claude CLI")
-        else:
-            print_warning("⚠️  Claude CLI registration failed, using manual JSON")
+        # Display detected platforms
+        table = Table(title="Detected MCP Platforms")
+        table.add_column("Platform", style="cyan")
+        table.add_column("Config Path", style="green")
+        table.add_column("Confidence", style="yellow")
+        table.add_column("CLI", style="magenta")
 
-    # Fall back to manual JSON if Claude CLI not available or failed
-    if not success:
-        if not claude_cli_available:
-            print_info("Claude CLI not available, creating .mcp.json manually...")
-        else:
-            print_info("Updating MCP server configuration...")
+        for p in detected:
+            table.add_row(
+                p.platform.value,
+                str(p.config_path) if p.config_path else "N/A",
+                f"{p.confidence:.2f}",
+                "✅" if p.cli_available else "❌",
+            )
 
-        # When Claude CLI fails, automatically use force mode to update existing config
-        success = configure_platform(
-            "claude-code", project_root, enable_watch=enable_watch, force=True
-        )
+        console.print(table)
 
-    if success:
-        console.print(
-            "\n[bold green]✨ Claude Code Integration Installed![/bold green]"
-        )
+        # Filter platforms
+        target_platforms = detected
+
+        if platform:
+            # Install to specific platform
+            platform_enum = platform_name_to_enum(platform)
+            if not platform_enum:
+                print_error(f"Unknown platform: {platform}")
+                print_info(
+                    "Supported: claude-code, claude-desktop, cursor, auggie, codex, windsurf, gemini-cli"
+                )
+                raise typer.Exit(1)
+
+            target_platforms = [p for p in detected if p.platform == platform_enum]
+
+            if not target_platforms:
+                print_error(f"Platform '{platform}' not detected on this system")
+                raise typer.Exit(1)
+
+        elif not all_platforms:
+            # By default, install to highest confidence platform only
+            if detected:
+                max_confidence_platform = max(detected, key=lambda p: p.confidence)
+                target_platforms = [max_confidence_platform]
+                print_info(
+                    f"Installing to highest confidence platform: {max_confidence_platform.platform.value}"
+                )
+                print_info("Use --all to install to all detected platforms")
+
+        # Show what will be installed
+        console.print("\n[bold]Target platforms:[/bold]")
+        for p in target_platforms:
+            console.print(f"  • {p.platform.value}")
+
+        if dry_run:
+            console.print("\n[bold yellow]🔍 DRY RUN MODE[/bold yellow]")
+            print_info("No changes will be applied")
+            return
+
+        # Install to each platform
+        console.print("\n[bold]Installing...[/bold]")
+        successful = 0
+        failed = 0
+
+        for platform_info in target_platforms:
+            if _install_to_platform(platform_info, project_root):
+                successful += 1
+            else:
+                failed += 1
+
+        # Summary
+        console.print("\n[bold green]✨ Installation Summary[/bold green]")
+        console.print(f"  ✅ Successful: {successful}")
+        if failed > 0:
+            console.print(f"  ❌ Failed: {failed}")
+
         console.print("\n[bold blue]Next Steps:[/bold blue]")
-        console.print("  1. Open Claude Code in this project directory")
+        console.print("  1. Restart your AI coding tool")
         console.print("  2. The MCP server will be available automatically")
         console.print("  3. Try: 'Search my code for authentication functions'")
 
-        if not claude_cli_available:
-            console.print("\n[dim]💡 Commit .mcp.json to share with your team[/dim]")
-        else:
-            console.print(
-                "\n[dim]💡 Configuration managed by Claude CLI (project-scoped)[/dim]"
-            )
-    else:
+    except typer.Exit:
+        raise
+    except Exception as e:
+        logger.exception("MCP installation failed")
+        print_error(f"Installation failed: {e}")
         raise typer.Exit(1)
 
 
-@install_app.command("cursor")
-def install_cursor(
-    ctx: typer.Context,
-    enable_watch: bool = typer.Option(True, "--watch/--no-watch"),
-    force: bool = typer.Option(False, "--force", "-f"),
-) -> None:
-    """Install Cursor IDE MCP integration (global)."""
-    project_root = ctx.obj.get("project_root") or Path.cwd()
-
-    console.print(
-        Panel.fit(
-            "[bold cyan]Installing Cursor Integration[/bold cyan]\n"
-            "🌐 Global configuration (~/.cursor/mcp.json)",
-            border_style="cyan",
-        )
-    )
-
-    success = configure_platform(
-        "cursor", project_root, enable_watch=enable_watch, force=force
-    )
-
-    if success:
-        console.print("\n[bold green]✨ Cursor Integration Installed![/bold green]")
-        console.print("\n[bold blue]Next Steps:[/bold blue]")
-        console.print("  1. Restart Cursor IDE")
-        console.print("  2. Open this project in Cursor")
-        console.print("  3. MCP tools should be available")
-    else:
-        raise typer.Exit(1)
+# ==============================================================================
+# List Platforms Command
+# ==============================================================================
 
 
-@install_app.command("windsurf")
-def install_windsurf(
-    ctx: typer.Context,
-    enable_watch: bool = typer.Option(True, "--watch/--no-watch"),
-    force: bool = typer.Option(False, "--force", "-f"),
-) -> None:
-    """Install Windsurf IDE MCP integration (global)."""
-    project_root = ctx.obj.get("project_root") or Path.cwd()
-
-    console.print(
-        Panel.fit(
-            "[bold cyan]Installing Windsurf Integration[/bold cyan]\n"
-            "🌐 Global configuration (~/.codeium/windsurf/mcp_config.json)",
-            border_style="cyan",
-        )
-    )
-
-    success = configure_platform(
-        "windsurf", project_root, enable_watch=enable_watch, force=force
-    )
-
-    if success:
-        console.print("\n[bold green]✨ Windsurf Integration Installed![/bold green]")
-        console.print("\n[bold blue]Next Steps:[/bold blue]")
-        console.print("  1. Restart Windsurf IDE")
-        console.print("  2. Open this project in Windsurf")
-        console.print("  3. MCP tools should be available")
-    else:
-        raise typer.Exit(1)
-
-
-@install_app.command("vscode")
-def install_vscode(
-    ctx: typer.Context,
-    enable_watch: bool = typer.Option(True, "--watch/--no-watch"),
-    force: bool = typer.Option(False, "--force", "-f"),
-) -> None:
-    """Install VS Code MCP integration (global)."""
-    project_root = ctx.obj.get("project_root") or Path.cwd()
-
-    console.print(
-        Panel.fit(
-            "[bold cyan]Installing VS Code Integration[/bold cyan]\n"
-            "🌐 Global configuration (~/.vscode/mcp.json)",
-            border_style="cyan",
-        )
-    )
-
-    success = configure_platform(
-        "vscode", project_root, enable_watch=enable_watch, force=force
-    )
-
-    if success:
-        console.print("\n[bold green]✨ VS Code Integration Installed![/bold green]")
-        console.print("\n[bold blue]Next Steps:[/bold blue]")
-        console.print("  1. Restart VS Code")
-        console.print("  2. Open this project in VS Code")
-        console.print("  3. MCP tools should be available")
-    else:
-        raise typer.Exit(1)
-
-
-@install_app.command("list")
+@install_app.command("list-platforms")
 def list_platforms(ctx: typer.Context) -> None:
-    """List all supported MCP platforms and their installation status."""
-    project_root = ctx.obj.get("project_root") or Path.cwd()
-
+    """List all detected MCP platforms and their status."""
     console.print(
         Panel.fit("[bold cyan]MCP Platform Status[/bold cyan]", border_style="cyan")
     )
 
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("Platform", style="cyan")
-    table.add_column("Name")
-    table.add_column("Status")
-    table.add_column("Config Location")
+    try:
+        detected = detect_all_platforms()
 
-    detected = detect_installed_platforms()
+        if not detected:
+            print_warning("No MCP platforms detected")
+            print_info(
+                "Supported platforms: claude-code, claude-desktop, cursor, auggie, codex, windsurf, gemini-cli"
+            )
+            return
 
-    for platform, info in SUPPORTED_PLATFORMS.items():
-        config_path = get_platform_config_path(platform, project_root)
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Platform", style="cyan")
+        table.add_column("Status", style="green")
+        table.add_column("Config Path")
+        table.add_column("Confidence", style="yellow")
 
-        # Check if configured
-        is_configured = False
-        if config_path.exists():
+        for platform_info in detected:
+            # Check if mcp-vector-search is configured
             try:
-                with open(config_path) as f:
-                    config = json.load(f)
-                is_configured = "mcp-vector-search" in config.get("mcpServers", {})
+                installer = MCPInstaller(platform=platform_info.platform)
+                server = installer.get_server("mcp-vector-search")
+                status = "✅ Configured" if server else "⚠️ Available"
             except Exception:
-                pass
+                status = "⚠️ Available"
 
-        status = (
-            "✅ Configured"
-            if is_configured
-            else ("⚠️ Available" if platform in detected else "❌ Not Found")
+            table.add_row(
+                platform_info.platform.value,
+                status,
+                str(platform_info.config_path) if platform_info.config_path else "N/A",
+                f"{platform_info.confidence:.2f}",
+            )
+
+        console.print(table)
+
+        console.print("\n[bold blue]Installation Commands:[/bold blue]")
+        console.print(
+            "  mcp-vector-search install mcp                    # Auto-detect"
+        )
+        console.print(
+            "  mcp-vector-search install mcp --platform <name>  # Specific platform"
+        )
+        console.print(
+            "  mcp-vector-search install mcp --all              # All platforms"
         )
 
-        table.add_row(
-            platform,
-            info["name"],
-            status,
-            str(config_path) if info["scope"] == "project" else info["config_path"],
-        )
-
-    console.print(table)
-
-    console.print("\n[bold blue]Installation Commands:[/bold blue]")
-    for platform in SUPPORTED_PLATFORMS:
-        console.print(f"  mcp-vector-search install {platform}")
+    except Exception as e:
+        logger.exception("Failed to list platforms")
+        print_error(f"Failed to list platforms: {e}")
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

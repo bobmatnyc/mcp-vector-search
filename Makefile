@@ -55,6 +55,10 @@ help: ## Show this help message
 	@grep -E '^(dev|test|lint|format|clean|install):.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
 	@echo ""
+	@echo "$(GREEN)Git Submodules:$(RESET)"
+	@grep -E '^submodule-.*:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
+	@echo ""
 	@echo "$(GREEN)Version Management:$(RESET)"
 	@grep -E '^version-.*:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
@@ -161,6 +165,44 @@ clean: ## Clean build artifacts
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
 	@echo "$(GREEN)✓ Build artifacts cleaned$(RESET)"
+
+.PHONY: clean-submodules
+clean-submodules: ## Clean submodule build artifacts
+	@echo "$(GREEN)Cleaning submodule artifacts...$(RESET)"
+	@if [ -d "vendor/py-mcp-installer-service" ]; then \
+		cd vendor/py-mcp-installer-service && \
+		rm -rf build/ dist/ *.egg-info .pytest_cache .ruff_cache .mypy_cache 2>/dev/null || true; \
+		find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true; \
+		find . -type f -name "*.pyc" -delete 2>/dev/null || true; \
+	fi
+	@echo "$(GREEN)✓ Submodule artifacts cleaned$(RESET)"
+
+# ============================================================================
+# Git Submodule Management
+# ============================================================================
+
+.PHONY: submodule-sync
+submodule-sync: ## Sync and update git submodules
+	@echo "$(GREEN)Syncing git submodules...$(RESET)"
+	@git submodule update --init --recursive
+	@echo "$(GREEN)✓ Submodules synced$(RESET)"
+
+.PHONY: submodule-update
+submodule-update: ## Update submodules to latest remote versions
+	@echo "$(GREEN)Updating git submodules to latest versions...$(RESET)"
+	@git submodule update --init --recursive
+	@git submodule update --remote vendor/py-mcp-installer-service
+	@echo "$(BLUE)Submodule status:$(RESET)"
+	@git submodule status
+	@echo "$(GREEN)✓ Submodules updated$(RESET)"
+	@echo "$(YELLOW)💡 To commit submodule updates:$(RESET)"
+	@echo "   git add vendor/py-mcp-installer-service"
+	@echo "   git commit -m 'chore: update py-mcp-installer-service submodule'"
+
+.PHONY: submodule-status
+submodule-status: ## Show git submodule status
+	@echo "$(BLUE)Git Submodule Status:$(RESET)"
+	@git submodule status
 
 # ============================================================================
 # Version Management Targets
@@ -284,7 +326,7 @@ build-increment: ## Increment build number only
 	fi
 
 .PHONY: build-package
-build-package: clean ## Build distribution packages
+build-package: clean submodule-sync ## Build distribution packages
 	@echo "$(GREEN)Building distribution packages...$(RESET)"
 	$(ECHO_PREFIX) $(UV) build
 	@if [ -z "$(DRY_RUN)" ]; then \
@@ -299,6 +341,19 @@ build-package: clean ## Build distribution packages
 .PHONY: preflight-check
 preflight-check:
 	@echo "$(BLUE)Running pre-flight checks...$(RESET)"
+	@# Check and sync git submodules
+	@echo "$(BLUE)Checking git submodules...$(RESET)"
+	@if [ -z "$(DRY_RUN)" ]; then \
+		$(MAKE) submodule-sync; \
+		if [ -d "vendor/py-mcp-installer-service/.git" ]; then \
+			echo "$(GREEN)✓ Git submodules synced$(RESET)"; \
+		else \
+			echo "$(RED)✗ Submodule sync failed$(RESET)"; \
+			exit 1; \
+		fi; \
+	else \
+		echo "$(YELLOW)[DRY RUN] Skipping submodule sync$(RESET)"; \
+	fi
 	@# Check git status
 	@if [ -z "$(DRY_RUN)" ]; then \
 		if [ -n "$$(git status --porcelain)" ]; then \

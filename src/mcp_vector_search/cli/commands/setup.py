@@ -48,7 +48,9 @@ from ..output import (
     print_success,
     print_warning,
 )
-from .install import configure_platform, detect_installed_platforms
+
+# Import functions from refactored install module
+from .install import _install_to_platform, detect_all_platforms
 
 # Create console for rich output
 console = Console()
@@ -401,16 +403,18 @@ async def _run_smart_setup(ctx: typer.Context, force: bool, verbose: bool) -> No
 
     # Detect installed MCP platforms
     print_info("   Detecting MCP platforms...")
-    detected_platforms = detect_installed_platforms()
+    detected_platforms_list = detect_all_platforms()
 
-    if detected_platforms:
-        platform_names = list(detected_platforms.keys())
+    if detected_platforms_list:
+        platform_names = [p.platform.value for p in detected_platforms_list]
         print_success(
             f"   ✅ Found {len(platform_names)} platform(s): {', '.join(platform_names)}"
         )
         if verbose:
-            for platform, path in detected_platforms.items():
-                print_info(f"      {platform}: {path}")
+            for platform_info in detected_platforms_list:
+                print_info(
+                    f"      {platform_info.platform.value}: {platform_info.config_path}"
+                )
     else:
         print_info("   No MCP platforms detected (will configure Claude Code)")
 
@@ -487,52 +491,23 @@ async def _run_smart_setup(ctx: typer.Context, force: bool, verbose: bool) -> No
     if verbose and claude_cli_available:
         print_info("   ✅ Claude CLI detected, using native integration")
 
-    # Always configure at least Claude Code (project-scoped)
-    platforms_to_configure = (
-        detected_platforms if detected_platforms else ["claude-code"]
-    )
+    # Use detected platforms or default to empty list
+    platforms_to_configure = detected_platforms_list if detected_platforms_list else []
 
-    # Try Claude CLI first if we're configuring claude-code
-    claude_code_configured = False
-    if "claude-code" in platforms_to_configure and claude_cli_available:
-        print_info("   Using Claude CLI for automatic setup...")
-        success = register_with_claude_cli(
-            project_root=project_root,
-            server_name="mcp-vector-search",
-            enable_watch=True,
-            verbose=verbose,
-        )
-        if success:
-            configured_platforms.append("claude-code")
-            claude_code_configured = True
-            # Remove from platforms to configure since we handled it
-            platforms_to_configure = [
-                p for p in platforms_to_configure if p != "claude-code"
-            ]
-
-    # Configure remaining platforms using manual JSON
-    for platform_name in platforms_to_configure:
-        # Skip claude-code if already configured via CLI
-        if platform_name == "claude-code" and claude_code_configured:
-            continue
-
+    # Configure all detected platforms using new library
+    for platform_info in platforms_to_configure:
         try:
-            success = configure_platform(
-                platform=platform_name,
-                project_root=project_root,
-                enable_watch=True,
-                force=force,
-            )
+            success = _install_to_platform(platform_info, project_root)
 
             if success:
-                configured_platforms.append(platform_name)
+                configured_platforms.append(platform_info.platform.value)
             else:
-                failed_platforms.append(platform_name)
+                failed_platforms.append(platform_info.platform.value)
 
         except Exception as e:
-            logger.warning(f"Failed to configure {platform_name}: {e}")
-            print_warning(f"   ⚠️  {platform_name}: {e}")
-            failed_platforms.append(platform_name)
+            logger.warning(f"Failed to configure {platform_info.platform.value}: {e}")
+            print_warning(f"   ⚠️  {platform_info.platform.value}: {e}")
+            failed_platforms.append(platform_info.platform.value)
 
     # Summary of MCP configuration
     if configured_platforms:

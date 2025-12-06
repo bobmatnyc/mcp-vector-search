@@ -1146,6 +1146,7 @@ dependencies = [
     { name = "loguru" },
     { name = "mcp" },
     { name = "packaging" },
+    { name = "py-mcp-installer" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "rich" },
@@ -1193,6 +1194,7 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7.0" },
     { name = "mcp", specifier = ">=1.12.4" },
     { name = "packaging", specifier = ">=23.0" },
+    { name = "py-mcp-installer", editable = "vendor/py-mcp-installer-service" },
     { name = "pydantic", specifier = ">=2.5.0" },
     { name = "pydantic-settings", specifier = ">=2.1.0" },
     { name = "rich", specifier = ">=13.0.0" },
@@ -2067,6 +2069,27 @@ sdist = { url = "https://files.pythonhosted.org/packages/37/a8/d832f7293ebb21690
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e0/a9/023730ba63db1e494a271cb018dcd361bd2c917ba7004c3e49d5daf795a2/py_cpuinfo-9.0.0-py3-none-any.whl", hash = "sha256:859625bc251f64e21f077d099d4162689c762b5d6a4c3c97553d56241c9674d5", size = 22335, upload-time = "2022-10-25T20:38:27.636Z" },
 ]
+
+[[package]]
+name = "py-mcp-installer"
+version = "0.1.0"
+source = { editable = "vendor/py-mcp-installer-service" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "typing-extensions" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "typing-extensions", specifier = ">=4.0.0" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "pyasn1"

@@ -42,6 +42,7 @@ dependencies = [
     "packaging>=23.0",
     "authlib>=1.6.4",
     "starlette>=0.49.1",
+    "py-mcp-installer",
 ]
 
 [dependency-groups]
@@ -88,6 +89,9 @@ packages = ["src/mcp_vector_search"]
 
 # UV-specific configuration
 # Note: dev-dependencies moved to [dependency-groups] section above
+
+[tool.uv.sources]
+py-mcp-installer = { path = "vendor/py-mcp-installer-service", editable = true }
 
 # Development tools configuration
 [tool.black]
