@@ -1,0 +1,56 @@
+{
+  "console_messages": [
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+      "location": {
+        "url": "http://localhost:8082/favicon.ico",
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    }
+  ],
+  "errors": [
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+      "location": {
+        "url": "http://localhost:8082/favicon.ico",
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    }
+  ],
+  "network_requests": [
+    {
+      "url": "http://localhost:8082/",
+      "method": "GET",
+      "resource_type": "document"
+    },
+    {
+      "url": "https://d3js.org/d3.v7.min.js",
+      "method": "GET",
+      "resource_type": "script"
+    },
+    {
+      "url": "https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js",
+      "method": "GET",
+      "resource_type": "script"
+    },
+    {
+      "url": "https://unpkg.com/dagre@0.8.5/dist/dagre.min.js",
+      "method": "GET",
+      "resource_type": "script"
+    },
+    {
+      "url": "https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js",
+      "method": "GET",
+      "resource_type": "script"
+    },
+    {
+      "url": "http://localhost:8082/chunk-graph.json",
+      "method": "GET",
+      "resource_type": "fetch"
+    }
+  ],
+  "test_timestamp":

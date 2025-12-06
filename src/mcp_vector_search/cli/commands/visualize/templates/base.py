@@ -19,7 +19,11 @@ def generate_html_template() -> str:
 <head>
     <meta charset="utf-8">
     <title>Code Chunk Relationship Graph</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+    <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+    <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
     <style>
 {get_all_styles()}
     </style>
@@ -30,6 +34,41 @@ def generate_html_template() -> str:
 
         <div class="control-group" id="loading">
             <label>⏳ Loading graph data...</label>
+        </div>
+
+        <div class="control-group" id="layout-controls" style="display: none;">
+            <h3 style="margin: 12px 0 8px 0;">Layout</h3>
+            <select id="layoutSelector" style="width: 100%; padding: 6px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 12px;">
+                <option value="force">Force-Directed</option>
+                <option value="dagre">Hierarchical (Dagre)</option>
+                <option value="circle">Circular</option>
+            </select>
+        </div>
+
+        <div class="control-group" id="edge-filters" style="display: none;">
+            <h3 style="margin: 12px 0 8px 0;">Edge Filters</h3>
+            <div style="font-size: 12px;">
+                <label style="display: block; margin-bottom: 6px; cursor: pointer;">
+                    <input type="checkbox" id="filter-containment" checked style="margin-right: 6px;">
+                    Containment (dir/file)
+                </label>
+                <label style="display: block; margin-bottom: 6px; cursor: pointer;">
+                    <input type="checkbox" id="filter-calls" checked style="margin-right: 6px;">
+                    Function Calls
+                </label>
+                <label style="display: block; margin-bottom: 6px; cursor: pointer;">
+                    <input type="checkbox" id="filter-imports" style="margin-right: 6px;">
+                    Imports
+                </label>
+                <label style="display: block; margin-bottom: 6px; cursor: pointer;">
+                    <input type="checkbox" id="filter-semantic" style="margin-right: 6px;">
+                    Semantic Links
+                </label>
+                <label style="display: block; margin-bottom: 6px; cursor: pointer;">
+                    <input type="checkbox" id="filter-cycles" checked style="margin-right: 6px;">
+                    Circular Dependencies
+                </label>
+            </div>
         </div>
 
         <h3>Legend</h3>
@@ -124,6 +163,19 @@ def generate_html_template() -> str:
     <div id="content-pane">
         <div class="pane-header">
             <button class="collapse-btn" onclick="closeContentPane()">×</button>
+            <div class="code-viewer-nav">
+                <button id="navBack" disabled title="Back (Alt+Left)">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z"></path>
+                    </svg>
+                </button>
+                <button id="navForward" disabled title="Forward (Alt+Right)">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z"></path>
+                    </svg>
+                </button>
+                <span id="navPosition"></span>
+            </div>
             <div class="pane-title" id="pane-title"></div>
             <div class="pane-meta" id="pane-meta"></div>
         </div>

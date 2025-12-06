@@ -1,0 +1,38 @@
+{
+  "initial_breadcrumb": "ERROR: Page.wait_for_selector: Timeout 5000ms exceeded.\nCall log:\n  - waiting for locator(\".breadcrumb-nav, .breadcrumb-root\") to be visible\n",
+  "node_navigation_results": [
+    {
+      "node_label": "+",
+      "breadcrumb": "\ud83c\udfe0 Root / tests / manual",
+      "breadcrumb_parts": [
+        "\ud83c\udfe0 Root",
+        "tests",
+        "manual"
+      ]
+    },
+    {
+      "node_label": "manual",
+      "breadcrumb": "\ud83c\udfe0 Root / tests / manual",
+      "breadcrumb_parts": [
+        "\ud83c\udfe0 Root",
+        "tests",
+        "manual"
+      ]
+    }
+  ],
+  "root_button_works": true,
+  "console_errors": [
+    {
+      "type": "page_error",
+      "text": "Maximum call stack size exceeded",
+      "location": null
+    }
+  ],
+  "screenshots": [
+    "/Users/masa/Projects/mcp-vector-search/tests/manual/screenshots/01_initial_load.png",
+    "/Users/masa/Projects/mcp-vector-search/tests/manual/screenshots/02_node_click_1.png",
+    "/Users/masa/Projects/mcp-vector-search/tests/manual/screenshots/02_node_click_2.png",
+    "/Users/masa/Projects/mcp-vector-search/tests/manual/screenshots/03_root_button_click.png"
+  ],
+  "passed": false
+}

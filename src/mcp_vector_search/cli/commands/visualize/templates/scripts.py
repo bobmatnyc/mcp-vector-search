@@ -36,6 +36,15 @@ def get_d3_initialization() -> str:
         let collapsedNodes = new Set();
         let highlightedNode = null;
         let rootNodes = [];  // Store root nodes for reset function
+        let currentLayout = 'force';  // Track current layout type
+        let cy = null;  // Cytoscape instance
+        let edgeFilters = {
+            containment: true,
+            calls: true,
+            imports: false,
+            semantic: false,
+            cycles: true
+        };
     """
 
 
@@ -380,7 +389,8 @@ def get_graph_visualization_functions() -> str:
 
         function renderGraph() {
             const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
-            const visibleLinks = allLinks.filter(l =>
+            const filteredLinks = getFilteredLinks();
+            const visibleLinks = filteredLinks.filter(l =>
                 visibleNodes.has(l.source.id || l.source) &&
                 visibleNodes.has(l.target.id || l.target)
             );
@@ -1033,19 +1043,8 @@ def get_breadcrumb_functions() -> str:
         function generateBreadcrumbs(node) {
             if (!node.file_path) return '';
 
-            let nodePath = node.file_path;
-
-            // Strip project root prefix to show relative paths
-            // Look for 'mcp-vector-search' directory and strip everything before it
-            const projectRootIndex = nodePath.indexOf('mcp-vector-search');
-            if (projectRootIndex >= 0) {
-                // Find the first '/' after 'mcp-vector-search' and take everything after it
-                const afterProjectRoot = nodePath.indexOf('/', projectRootIndex);
-                if (afterProjectRoot >= 0) {
-                    nodePath = nodePath.substring(afterProjectRoot + 1);
-                }
-            }
-
+            // File paths are already relative to project root, use them directly
+            const nodePath = node.file_path;
             const segments = nodePath.split('/').filter(s => s.length > 0);
 
             if (segments.length === 0) return '';
@@ -1201,7 +1200,12 @@ def get_content_pane_functions() -> str:
         JavaScript string for content pane
     """
     return """
-        function showContentPane(node) {
+        function showContentPane(node, addToHistory = true) {
+            // Add to navigation stack if requested
+            if (addToHistory) {
+                viewStack.push(node.id);
+            }
+
             // Highlight the node
             highlightedNode = node;
             renderGraph();
@@ -1684,6 +1688,349 @@ def get_content_pane_functions() -> str:
     """
 
 
+def get_navigation_stack_logic() -> str:
+    """Get navigation stack for back/forward functionality.
+
+    Returns:
+        JavaScript string for navigation stack management
+    """
+    return """
+        // Navigation stack for back/forward functionality
+        const viewStack = {
+            stack: [],
+            currentIndex: -1,
+
+            push(chunkId) {
+                // Don't add duplicates if clicking same node
+                if (this.stack.length > 0 && this.stack[this.currentIndex] === chunkId) {
+                    return;
+                }
+
+                // Remove forward history if we're not at the end
+                this.stack = this.stack.slice(0, this.currentIndex + 1);
+                this.stack.push(chunkId);
+                this.currentIndex++;
+                this.updateButtons();
+            },
+
+            canGoBack() {
+                return this.currentIndex > 0;
+            },
+
+            canGoForward() {
+                return this.currentIndex < this.stack.length - 1;
+            },
+
+            back() {
+                if (this.canGoBack()) {
+                    this.currentIndex--;
+                    this.updateButtons();
+                    return this.stack[this.currentIndex];
+                }
+                return null;
+            },
+
+            forward() {
+                if (this.canGoForward()) {
+                    this.currentIndex++;
+                    this.updateButtons();
+                    return this.stack[this.currentIndex];
+                }
+                return null;
+            },
+
+            updateButtons() {
+                const backBtn = document.getElementById('navBack');
+                const forwardBtn = document.getElementById('navForward');
+                const positionSpan = document.getElementById('navPosition');
+
+                if (backBtn) backBtn.disabled = !this.canGoBack();
+                if (forwardBtn) forwardBtn.disabled = !this.canGoForward();
+                if (positionSpan && this.stack.length > 0) {
+                    positionSpan.textContent = `${this.currentIndex + 1} of ${this.stack.length}`;
+                }
+            },
+
+            clear() {
+                this.stack = [];
+                this.currentIndex = -1;
+                this.updateButtons();
+            }
+        };
+
+        // Add keyboard shortcuts for navigation
+        document.addEventListener('keydown', (e) => {
+            if (e.altKey && e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const chunkId = viewStack.back();
+                if (chunkId) {
+                    const node = allNodes.find(n => n.id === chunkId);
+                    if (node) showContentPane(node, false); // false = don't add to history
+                }
+            } else if (e.altKey && e.key === 'ArrowRight') {
+                e.preventDefault();
+                const chunkId = viewStack.forward();
+                if (chunkId) {
+                    const node = allNodes.find(n => n.id === chunkId);
+                    if (node) showContentPane(node, false);
+                }
+            }
+        });
+
+        // Add click handlers for navigation buttons
+        document.addEventListener('DOMContentLoaded', () => {
+            const backBtn = document.getElementById('navBack');
+            const forwardBtn = document.getElementById('navForward');
+
+            if (backBtn) {
+                backBtn.addEventListener('click', () => {
+                    const chunkId = viewStack.back();
+                    if (chunkId) {
+                        const node = allNodes.find(n => n.id === chunkId);
+                        if (node) showContentPane(node, false);
+                    }
+                });
+            }
+
+            if (forwardBtn) {
+                forwardBtn.addEventListener('click', () => {
+                    const chunkId = viewStack.forward();
+                    if (chunkId) {
+                        const node = allNodes.find(n => n.id === chunkId);
+                        if (node) showContentPane(node, false);
+                    }
+                });
+            }
+        });
+    """
+
+
+def get_layout_switching_logic() -> str:
+    """Get layout switching functionality for Dagre/Force/Circle layouts.
+
+    Returns:
+        JavaScript string for layout switching
+    """
+    return """
+        // Filter edges based on current filter settings
+        function getFilteredLinks() {
+            return allLinks.filter(link => {
+                const linkType = link.type || 'unknown';
+
+                // Containment edges
+                if (linkType === 'dir_containment' || linkType === 'dir_hierarchy' || linkType === 'file_containment') {
+                    return edgeFilters.containment;
+                }
+
+                // Call edges
+                if (linkType === 'caller') {
+                    return edgeFilters.calls;
+                }
+
+                // Import edges
+                if (linkType === 'imports') {
+                    return edgeFilters.imports;
+                }
+
+                // Semantic edges
+                if (linkType === 'semantic') {
+                    return edgeFilters.semantic;
+                }
+
+                // Cycle edges
+                if (link.is_cycle) {
+                    return edgeFilters.cycles;
+                }
+
+                // Default: show other edge types
+                return true;
+            });
+        }
+
+        // Switch to Cytoscape layout (Dagre or Circle)
+        function switchToCytoscapeLayout(layoutName) {
+            if (currentLayout === layoutName && cy) return; // Already in this layout
+
+            currentLayout = layoutName;
+
+            // Hide D3 SVG
+            svg.style('display', 'none');
+
+            // Create Cytoscape container if doesn't exist
+            let cyContainer = document.getElementById('cy-container');
+            if (!cyContainer) {
+                cyContainer = document.createElement('div');
+                cyContainer.id = 'cy-container';
+                cyContainer.style.width = '100vw';
+                cyContainer.style.height = '100vh';
+                cyContainer.style.position = 'absolute';
+                cyContainer.style.top = '0';
+                cyContainer.style.left = '0';
+                document.body.insertBefore(cyContainer, document.body.firstChild);
+            }
+            cyContainer.style.display = 'block';
+
+            // Get visible nodes and filtered links
+            const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
+            const filteredLinks = getFilteredLinks();
+            const visibleLinks = filteredLinks.filter(l =>
+                visibleNodes.has(l.source.id || l.source) &&
+                visibleNodes.has(l.target.id || l.target)
+            );
+
+            // Convert to Cytoscape format
+            const cyElements = [];
+
+            // Add nodes
+            visibleNodesList.forEach(node => {
+                cyElements.push({
+                    data: {
+                        id: node.id,
+                        label: node.name,
+                        nodeType: node.type,
+                        color: node.color,
+                        ...node
+                    }
+                });
+            });
+
+            // Add edges
+            visibleLinks.forEach(link => {
+                const sourceId = link.source.id || link.source;
+                const targetId = link.target.id || link.target;
+                cyElements.push({
+                    data: {
+                        ...link,
+                        source: sourceId,
+                        target: targetId,
+                        linkType: link.type,
+                        isCycle: link.is_cycle
+                    }
+                });
+            });
+
+            // Initialize or update Cytoscape
+            if (cy) {
+                cy.destroy();
+            }
+
+            cy = cytoscape({
+                container: cyContainer,
+                elements: cyElements,
+                style: [
+                    {
+                        selector: 'node',
+                        style: {
+                            'label': 'data(label)',
+                            'background-color': 'data(color)',
+                            'color': '#c9d1d9',
+                            'font-size': '11px',
+                            'text-valign': 'center',
+                            'text-halign': 'right',
+                            'text-margin-x': '5px',
+                            'width': d => d.data('type') === 'directory' ? 35 : 25,
+                            'height': d => d.data('type') === 'directory' ? 35 : 25,
+                        }
+                    },
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': 2,
+                            'line-color': '#30363d',
+                            'target-arrow-color': '#30363d',
+                            'target-arrow-shape': 'triangle',
+                            'curve-style': 'bezier'
+                        }
+                    },
+                    {
+                        selector: 'edge[isCycle]',
+                        style: {
+                            'line-color': '#ff4444',
+                            'width': 3,
+                            'line-style': 'dashed'
+                        }
+                    }
+                ],
+                layout: {
+                    name: layoutName === 'dagre' ? 'dagre' : 'circle',
+                    rankDir: 'TB',
+                    rankSep: 150,
+                    nodeSep: 80,
+                    ranker: 'network-simplex',
+                    spacingFactor: 1.2
+                }
+            });
+
+            // Add click handler
+            cy.on('tap', 'node', function(evt) {
+                const nodeData = evt.target.data();
+                const node = allNodes.find(n => n.id === nodeData.id);
+                if (node) {
+                    showContentPane(node);
+                }
+            });
+        }
+
+        // Switch to D3 force-directed layout
+        function switchToForceLayout() {
+            if (currentLayout === 'force') return; // Already in force layout
+
+            currentLayout = 'force';
+
+            // Hide Cytoscape
+            const cyContainer = document.getElementById('cy-container');
+            if (cyContainer) {
+                cyContainer.style.display = 'none';
+            }
+
+            // Show D3 SVG
+            svg.style('display', 'block');
+
+            // Re-render with D3
+            renderGraph();
+        }
+
+        // Handle layout selector change
+        document.addEventListener('DOMContentLoaded', () => {
+            const layoutSelector = document.getElementById('layoutSelector');
+            if (layoutSelector) {
+                layoutSelector.addEventListener('change', (e) => {
+                    const layout = e.target.value;
+                    if (layout === 'force') {
+                        switchToForceLayout();
+                    } else if (layout === 'dagre' || layout === 'circle') {
+                        switchToCytoscapeLayout(layout);
+                    }
+                });
+            }
+
+            // Handle edge filter checkboxes
+            const filterCheckboxes = {
+                'filter-containment': 'containment',
+                'filter-calls': 'calls',
+                'filter-imports': 'imports',
+                'filter-semantic': 'semantic',
+                'filter-cycles': 'cycles'
+            };
+
+            Object.entries(filterCheckboxes).forEach(([id, filterKey]) => {
+                const checkbox = document.getElementById(id);
+                if (checkbox) {
+                    checkbox.addEventListener('change', (e) => {
+                        edgeFilters[filterKey] = e.target.checked;
+                        // Re-render current layout with new filters
+                        if (currentLayout === 'force') {
+                            renderGraph();
+                        } else {
+                            switchToCytoscapeLayout(currentLayout);
+                        }
+                    });
+                }
+            });
+        });
+    """
+
+
 def get_data_loading_logic() -> str:
     """Get data loading logic with progress indicators.
 
@@ -1777,7 +2124,28 @@ def get_data_loading_logic() -> str:
                     clearTimeout(timeout);
                     loadingEl.innerHTML = '<label style="color: #238636;">✓ Graph loaded successfully</label>';
                     setTimeout(() => loadingEl.style.display = 'none', 2000);
+
+                    // Show controls
+                    const layoutControls = document.getElementById('layout-controls');
+                    const edgeFilters = document.getElementById('edge-filters');
+                    if (layoutControls) layoutControls.style.display = 'block';
+                    if (edgeFilters) edgeFilters.style.display = 'block';
+
+                    // CRITICAL: Always initialize data arrays first
+                    // These are required by both visualizeGraph() and switchToCytoscapeLayout()
+                    allNodes = data.nodes;
+                    allLinks = data.links;
+
+                    // ALWAYS initialize through visualizeGraph first
+                    // This sets up visibleNodes, filteredLinks, and root nodes
                     visualizeGraph(data);
+
+                    // Then switch to Dagre for large graphs (if needed)
+                    const layoutSelector = document.getElementById('layoutSelector');
+                    if (layoutSelector && data.nodes && data.nodes.length > 500) {
+                        layoutSelector.value = 'dagre';
+                        switchToCytoscapeLayout('dagre');
+                    }
                 })
                 .catch(err => {
                     clearTimeout(timeout);
@@ -1801,6 +2169,1168 @@ def get_data_loading_logic() -> str:
     """
 
 
+def get_state_management() -> str:
+    """Get visualization V2.0 state management JavaScript.
+
+    Implements the VisualizationStateManager class for hierarchical
+    list-based navigation with expansion paths and sibling exclusivity.
+
+    Returns:
+        JavaScript string for state management
+    """
+    return """
+        /**
+         * Visualization State Manager for V2.0 Architecture
+         *
+         * Manages expansion paths, node visibility, and view modes.
+         * Enforces sibling exclusivity: only one child expanded per depth.
+         *
+         * View Modes (Tree-based):
+         *   - tree_root: Vertical list of root nodes, NO edges shown
+         *   - tree_expanded: Rightward tree expansion of directories, NO edges shown
+         *   - file_detail: File with AST chunks, function call edges shown
+         *
+         * Reference: docs/development/VISUALIZATION_ARCHITECTURE_V2.md
+         */
+        class VisualizationStateManager {
+            constructor(initialState = null) {
+                // View mode: "tree_root", "tree_expanded", or "file_detail"
+                this.viewMode = initialState?.view_mode || "tree_root";
+
+                // Handle old view mode names (backward compatibility)
+                if (this.viewMode === "list") this.viewMode = "tree_root";
+                if (this.viewMode === "directory_fan") this.viewMode = "tree_expanded";
+                if (this.viewMode === "file_fan") this.viewMode = "file_detail";
+
+                // Expansion path: ordered array of expanded node IDs (root to current)
+                this.expansionPath = initialState?.expansion_path || [];
+
+                // Node states: map of node_id -> {expanded, visible, children_visible}
+                this.nodeStates = new Map();
+
+                // Visible edges: set of [source_id, target_id] tuples
+                this.visibleEdges = new Set();
+
+                // Event listeners for state changes
+                this.listeners = [];
+
+                // Initialize from initial state if provided
+                if (initialState?.node_states) {
+                    for (const [nodeId, state] of Object.entries(initialState.node_states)) {
+                        this.nodeStates.set(nodeId, {
+                            expanded: state.expanded || false,
+                            visible: state.visible || true,
+                            childrenVisible: state.children_visible || false,
+                            positionOverride: state.position_override || null
+                        });
+                    }
+                }
+
+                console.log('[StateManager] Initialized with mode:', this.viewMode);
+            }
+
+            /**
+             * Get or create node state
+             */
+            _getOrCreateState(nodeId) {
+                if (!this.nodeStates.has(nodeId)) {
+                    this.nodeStates.set(nodeId, {
+                        expanded: false,
+                        visible: true,
+                        childrenVisible: false,
+                        positionOverride: null
+                    });
+                }
+                return this.nodeStates.get(nodeId);
+            }
+
+            /**
+             * Expand a node (directory or file)
+             *
+             * Enforces sibling exclusivity: if another sibling is expanded
+             * at the same depth, it is collapsed first.
+             */
+            expandNode(nodeId, nodeType, children = []) {
+                console.log(`[StateManager] Expanding ${nodeType} node:`, nodeId, 'with', children.length, 'children');
+
+                const nodeState = this._getOrCreateState(nodeId);
+
+                // Calculate depth
+                const depth = this.expansionPath.length;
+
+                // Sibling exclusivity: check if another sibling is expanded at this depth
+                if (depth < this.expansionPath.length) {
+                    const oldSibling = this.expansionPath[depth];
+                    if (oldSibling !== nodeId) {
+                        console.log(`[StateManager] Sibling exclusivity: collapsing ${oldSibling}`);
+                        // Collapse old path from this depth onward
+                        const nodesToCollapse = this.expansionPath.slice(depth);
+                        this.expansionPath = this.expansionPath.slice(0, depth);
+                        for (const oldNode of nodesToCollapse) {
+                            this._collapseNodeInternal(oldNode);
+                        }
+                    }
+                }
+
+                // Mark node as expanded
+                nodeState.expanded = true;
+                nodeState.childrenVisible = true;
+
+                // Add to expansion path
+                if (!this.expansionPath.includes(nodeId)) {
+                    this.expansionPath.push(nodeId);
+                }
+
+                // Make children visible
+                for (const childId of children) {
+                    const childState = this._getOrCreateState(childId);
+                    childState.visible = true;
+                }
+
+                // Update view mode
+                if (nodeType === 'directory') {
+                    this.viewMode = 'tree_expanded';
+                } else if (nodeType === 'file') {
+                    this.viewMode = 'file_detail';
+                }
+
+                console.log('[StateManager] Expansion path:', this.expansionPath.join(' > '));
+                console.log('[StateManager] View mode:', this.viewMode);
+
+                // Notify listeners
+                this._notifyListeners();
+            }
+
+            /**
+             * Internal collapse (without path manipulation)
+             */
+            _collapseNodeInternal(nodeId) {
+                const nodeState = this.nodeStates.get(nodeId);
+                if (!nodeState) return;
+
+                nodeState.expanded = false;
+                nodeState.childrenVisible = false;
+            }
+
+            /**
+             * Collapse a node and hide all descendants
+             */
+            collapseNode(nodeId) {
+                console.log('[StateManager] Collapsing node:', nodeId);
+
+                // Remove from expansion path
+                const pathIndex = this.expansionPath.indexOf(nodeId);
+                if (pathIndex !== -1) {
+                    this.expansionPath = this.expansionPath.slice(0, pathIndex);
+                }
+
+                // Mark as collapsed
+                this._collapseNodeInternal(nodeId);
+
+                // Update view mode if path is empty
+                if (this.expansionPath.length === 0) {
+                    this.viewMode = 'tree_root';
+                    console.log('[StateManager] Collapsed to root, switching to TREE_ROOT view');
+                }
+
+                // Notify listeners
+                this._notifyListeners();
+            }
+
+            /**
+             * Reset state to initial list view
+             */
+            reset() {
+                console.log('[StateManager] Resetting to initial state');
+
+                // Collapse all nodes in expansion path
+                const nodesToCollapse = [...this.expansionPath];
+                for (const nodeId of nodesToCollapse) {
+                    this._collapseNodeInternal(nodeId);
+                }
+
+                // Clear expansion path
+                this.expansionPath = [];
+
+                // Reset view mode to tree_root
+                this.viewMode = 'tree_root';
+
+                // Make only root nodes visible
+                for (const [nodeId, state] of this.nodeStates.entries()) {
+                    // Keep only nodes that have no parent (root nodes)
+                    // This will be determined by the allLinks data
+                    // For now, mark all non-root nodes as invisible
+                    // The renderGraphV2 function will handle visibility correctly
+                }
+
+                // Notify listeners
+                this._notifyListeners();
+            }
+
+            /**
+             * Get list of visible node IDs
+             */
+            getVisibleNodes() {
+                const visible = [];
+                for (const [nodeId, state] of this.nodeStates.entries()) {
+                    if (state.visible) {
+                        visible.push(nodeId);
+                    }
+                }
+                return visible;
+            }
+
+            /**
+             * Get visible edges (AST calls only in FILE_FAN mode)
+             */
+            getVisibleEdges() {
+                return Array.from(this.visibleEdges);
+            }
+
+            /**
+             * Subscribe to state changes
+             */
+            subscribe(listener) {
+                this.listeners.push(listener);
+            }
+
+            /**
+             * Notify all listeners of state change
+             */
+            _notifyListeners() {
+                for (const listener of this.listeners) {
+                    listener(this.toDict());
+                }
+            }
+
+            /**
+             * Serialize state to plain object
+             */
+            toDict() {
+                const nodeStatesObj = {};
+                for (const [nodeId, state] of this.nodeStates.entries()) {
+                    nodeStatesObj[nodeId] = {
+                        expanded: state.expanded,
+                        visible: state.visible,
+                        children_visible: state.childrenVisible,
+                        position_override: state.positionOverride
+                    };
+                }
+
+                return {
+                    view_mode: this.viewMode,
+                    expansion_path: [...this.expansionPath],
+                    visible_nodes: this.getVisibleNodes(),
+                    visible_edges: this.getVisibleEdges(),
+                    node_states: nodeStatesObj
+                };
+            }
+        }
+
+        // Global state manager instance (initialized in visualizeGraph)
+        let stateManager = null;
+    """
+
+
+def get_layout_algorithms_v2() -> str:
+    """Get V2.0 layout algorithms (list and fan layouts).
+
+    Returns:
+        JavaScript string for layout calculation functions
+    """
+    return """
+        /**
+         * Calculate vertical list layout positions for nodes.
+         *
+         * Positions nodes in a vertical list with fixed spacing,
+         * sorted alphabetically with directories before files.
+         *
+         * @param {Array} nodes - Array of node objects
+         * @param {Number} canvasWidth - SVG viewport width
+         * @param {Number} canvasHeight - SVG viewport height
+         * @returns {Map} Map of nodeId -> {x, y} positions
+         */
+        function calculateListLayout(nodes, canvasWidth, canvasHeight) {
+            if (!nodes || nodes.length === 0) {
+                console.debug('[Layout] No nodes to layout');
+                return new Map();
+            }
+
+            // Sort alphabetically (directories first, then files)
+            const sortedNodes = nodes.slice().sort((a, b) => {
+                // Directories first
+                const aIsDir = a.type === 'directory' ? 0 : 1;
+                const bIsDir = b.type === 'directory' ? 0 : 1;
+                if (aIsDir !== bIsDir) return aIsDir - bIsDir;
+
+                // Then alphabetical by name
+                const aName = (a.name || '').toLowerCase();
+                const bName = (b.name || '').toLowerCase();
+                return aName.localeCompare(bName);
+            });
+
+            // Layout parameters
+            const nodeHeight = 50;  // Vertical space per node
+            const xPosition = 100;  // Left margin
+            const totalHeight = sortedNodes.length * nodeHeight;
+
+            // Center vertically in viewport
+            const startY = (canvasHeight - totalHeight) / 2;
+
+            // Calculate positions
+            const positions = new Map();
+            sortedNodes.forEach((node, i) => {
+                if (!node.id) {
+                    console.warn('[Layout] Node missing id:', node);
+                    return;
+                }
+
+                const yPosition = startY + (i * nodeHeight);
+                positions.set(node.id, { x: xPosition, y: yPosition });
+            });
+
+            console.debug(
+                `[Layout] List: ${positions.size} nodes, ` +
+                `height=${totalHeight}px, startY=${startY.toFixed(1)}`
+            );
+
+            return positions;
+        }
+
+        /**
+         * Calculate horizontal fan layout positions for child nodes.
+         *
+         * Arranges children in a 180° arc (horizontal fan) from parent node.
+         * Radius adapts to child count (200-400px range).
+         *
+         * @param {Object} parentPos - {x, y} coordinates of parent
+         * @param {Array} children - Array of child node objects
+         * @param {Number} canvasWidth - SVG viewport width
+         * @param {Number} canvasHeight - SVG viewport height
+         * @returns {Map} Map of childId -> {x, y} positions
+         */
+        function calculateFanLayout(parentPos, children, canvasWidth, canvasHeight) {
+            if (!children || children.length === 0) {
+                console.debug('[Layout] No children to layout in fan');
+                return new Map();
+            }
+
+            const parentX = parentPos.x;
+            const parentY = parentPos.y;
+
+            // Calculate adaptive radius based on child count
+            const baseRadius = 200;  // Minimum radius
+            const maxRadius = 400;   // Maximum radius
+            const spacingPerChild = 60;  // Horizontal space per child
+
+            // Arc length = radius * π (for 180° arc)
+            // We want: arc_length >= num_children * spacingPerChild
+            // Therefore: radius >= (num_children * spacingPerChild) / π
+            const calculatedRadius = (children.length * spacingPerChild) / Math.PI;
+            const radius = Math.max(baseRadius, Math.min(calculatedRadius, maxRadius));
+
+            // Horizontal fan: 180° arc from left to right
+            const startAngle = Math.PI;  // Left (180°)
+            const endAngle = 0;          // Right (0°)
+            const angleRange = startAngle - endAngle;
+
+            // Sort children (directories first, then alphabetical)
+            const sortedChildren = children.slice().sort((a, b) => {
+                const aIsDir = a.type === 'directory' ? 0 : 1;
+                const bIsDir = b.type === 'directory' ? 0 : 1;
+                if (aIsDir !== bIsDir) return aIsDir - bIsDir;
+
+                const aName = (a.name || '').toLowerCase();
+                const bName = (b.name || '').toLowerCase();
+                return aName.localeCompare(bName);
+            });
+
+            // Calculate positions
+            const positions = new Map();
+            const numChildren = sortedChildren.length;
+
+            sortedChildren.forEach((child, i) => {
+                if (!child.id) {
+                    console.warn('[Layout] Child missing id:', child);
+                    return;
+                }
+
+                // Calculate angle for this child
+                let angle;
+                if (numChildren === 1) {
+                    // Single child: center of arc (90°)
+                    angle = Math.PI / 2;
+                } else {
+                    // Distribute evenly across arc
+                    const progress = i / (numChildren - 1);
+                    angle = startAngle - (progress * angleRange);
+                }
+
+                // Convert polar to cartesian coordinates
+                const x = parentX + radius * Math.cos(angle);
+                const y = parentY + radius * Math.sin(angle);
+
+                positions.set(child.id, { x, y });
+            });
+
+            console.debug(
+                `[Layout] Fan: ${positions.size} children, ` +
+                `radius=${radius.toFixed(1)}px, ` +
+                `arc=${(angleRange * 180 / Math.PI).toFixed(0)}°`
+            );
+
+            return positions;
+        }
+
+        /**
+         * Calculate tree layout for directory navigation (rightward expansion).
+         *
+         * Arranges children vertically to the right of parent node,
+         * creating a hierarchical tree structure similar to file explorers.
+         *
+         * Design Decision: Tree layout for directory navigation
+         *
+         * Rationale: Selected rightward tree layout to match familiar file explorer
+         * UX (Finder, Explorer). Provides clear parent-child relationships and
+         * efficient use of horizontal space for deep hierarchies.
+         *
+         * Trade-offs:
+         * - Clarity: Clear hierarchical structure vs. fan's compact radial layout
+         * - Space: Grows rightward (scrollable) vs. fan's fixed radius
+         * - Familiarity: Matches file explorer metaphor vs. novel visualization
+         *
+         * @param {Object} parentPos - {x, y} coordinates of parent
+         * @param {Array} children - Array of child node objects
+         * @param {Number} canvasWidth - SVG viewport width
+         * @param {Number} canvasHeight - SVG viewport height
+         * @returns {Map} Map of childId -> {x, y} positions
+         */
+        function calculateTreeLayout(parentPos, children, canvasWidth, canvasHeight) {
+            if (!children || children.length === 0) {
+                console.debug('[Layout] No children for tree layout');
+                return new Map();
+            }
+
+            const parentX = parentPos.x;
+            const parentY = parentPos.y;
+
+            // Tree layout parameters
+            const horizontalOffset = 800;  // Fixed horizontal spacing from parent
+            const verticalSpacing = 50;    // Vertical spacing between children
+
+            // Sort children (directories first, then alphabetical)
+            const sortedChildren = children.slice().sort((a, b) => {
+                const aIsDir = a.type === 'directory' ? 0 : 1;
+                const bIsDir = b.type === 'directory' ? 0 : 1;
+                if (aIsDir !== bIsDir) return aIsDir - bIsDir;
+
+                const aName = (a.name || '').toLowerCase();
+                const bName = (b.name || '').toLowerCase();
+                return aName.localeCompare(bName);
+            });
+
+            // Calculate vertical centering
+            const totalHeight = sortedChildren.length * verticalSpacing;
+            const startY = parentY - (totalHeight / 2);
+
+            // Calculate positions
+            const positions = new Map();
+            sortedChildren.forEach((child, i) => {
+                if (!child.id) {
+                    console.warn('[Layout] Child missing id:', child);
+                    return;
+                }
+
+                const x = parentX + horizontalOffset;
+                const y = startY + (i * verticalSpacing);
+
+                positions.set(child.id, { x, y });
+            });
+
+            console.debug(
+                `[Layout] Tree: ${positions.size} children, ` +
+                `offset=${horizontalOffset}px, spacing=${verticalSpacing}px`
+            );
+
+            return positions;
+        }
+
+        /**
+         * Calculate hybrid layout for file detail view.
+         *
+         * Combines vertical tree positioning for AST chunks with
+         * force-directed layout for function call relationships.
+         *
+         * Design Decision: Vertical tree + function call edges
+         *
+         * Rationale: AST chunks within a file have natural top-to-bottom order
+         * (by line number). Vertical tree preserves this order while function
+         * call edges show actual code dependencies.
+         *
+         * Trade-offs:
+         * - Readability: Preserves code order vs. force layout's organic grouping
+         * - Performance: Simple O(n) tree vs. O(n²) force simulation
+         * - Edges: Shows only AST calls (clear) vs. all relationships (cluttered)
+         *
+         * @param {Object} parentPos - {x, y} coordinates of parent file node
+         * @param {Array} chunks - Array of AST chunk node objects
+         * @param {Array} edges - Array of function call edges
+         * @param {Number} canvasWidth - SVG viewport width
+         * @param {Number} canvasHeight - SVG viewport height
+         * @returns {Map} Map of chunkId -> {x, y} positions
+         */
+        function calculateHybridCodeLayout(parentPos, chunks, edges, canvasWidth, canvasHeight) {
+            if (!chunks || chunks.length === 0) {
+                console.debug('[Layout] No chunks for hybrid code layout');
+                return new Map();
+            }
+
+            // Use tree layout for initial positioning (preserves code order)
+            // For file detail view, we show chunks in vertical order
+            const positions = calculateTreeLayout(parentPos, chunks, canvasWidth, canvasHeight);
+
+            // Note: Force-directed refinement can be added later if needed
+            // For now, simple tree layout preserves line number order
+
+            console.debug(
+                `[Layout] Hybrid code: ${positions.size} chunks positioned in tree layout`
+            );
+
+            return positions;
+        }
+
+        /**
+         * @deprecated Use calculateTreeLayout instead
+         * Legacy function name for backward compatibility
+         */
+        function calculateCompactFolderLayout(parentPos, children, canvasWidth, canvasHeight) {
+            return calculateTreeLayout(parentPos, children, canvasWidth, canvasHeight);
+        }
+    """
+
+
+def get_interaction_handlers_v2() -> str:
+    """Get V2.0 interaction handlers (expand, collapse, click).
+
+    Returns:
+        JavaScript string for interaction handling
+    """
+    return """
+        /**
+         * Handle node click events for V2.0 navigation.
+         *
+         * Behavior (Tree-based):
+         * - Directory: Expand/collapse with rightward tree layout
+         * - File: Expand/collapse AST chunks with tree layout + call edges
+         * - AST Chunk: Show in content pane, no expansion
+         *
+         * Design Decision: Tree navigation with sibling exclusivity
+         *
+         * When clicking a sibling at the same depth, the previously expanded
+         * sibling is automatically collapsed to maintain focus and reduce clutter.
+         */
+        function handleNodeClickV2(event, nodeData) {
+            event.stopPropagation();
+
+            const node = allNodes.find(n => n.id === nodeData.id);
+            if (!node) {
+                console.warn('[Click] Node not found:', nodeData.id);
+                return;
+            }
+
+            console.log('[Click] Node clicked:', node.type, node.name);
+
+            // Always show content pane
+            showContentPane(node);
+
+            // Handle expansion based on node type
+            if (node.type === 'directory' || node.type === 'file') {
+                if (!stateManager) {
+                    console.error('[Click] State manager not initialized');
+                    return;
+                }
+
+                const isExpanded = stateManager.nodeStates.get(node.id)?.expanded || false;
+
+                if (isExpanded) {
+                    // Collapse node
+                    collapseNodeV2(node.id);
+                } else {
+                    // Expand node
+                    expandNodeV2(node.id, node.type);
+                }
+            }
+            // AST chunks (function, class, method) don't expand
+        }
+
+        /**
+         * Expand a node (directory or file) in V2.0 mode.
+         *
+         * Triggers state update and re-render with animation.
+         */
+        function expandNodeV2(nodeId, nodeType) {
+            if (!stateManager) {
+                console.error('[Expand] State manager not initialized');
+                return;
+            }
+
+            const node = allNodes.find(n => n.id === nodeId);
+            if (!node) {
+                console.warn('[Expand] Node not found:', nodeId);
+                return;
+            }
+
+            // Find direct children
+            const children = allLinks
+                .filter(link => {
+                    const sourceId = link.source.id || link.source;
+                    const linkType = link.type;
+                    return sourceId === nodeId &&
+                           (linkType === 'dir_containment' ||
+                            linkType === 'file_containment' ||
+                            linkType === 'dir_hierarchy');
+                })
+                .map(link => {
+                    const targetId = link.target.id || link.target;
+                    return allNodes.find(n => n.id === targetId);
+                })
+                .filter(n => n);
+
+            const childIds = children.map(c => c.id);
+
+            console.log('[Expand] Expanding node:', nodeId, 'with', childIds.length, 'children');
+
+            // Update state
+            stateManager.expandNode(nodeId, nodeType, childIds);
+
+            // Re-render with animation
+            renderGraphV2();
+        }
+
+        /**
+         * Collapse a node and hide all its descendants.
+         */
+        function collapseNodeV2(nodeId) {
+            if (!stateManager) {
+                console.error('[Collapse] State manager not initialized');
+                return;
+            }
+
+            console.log('[Collapse] Collapsing node:', nodeId);
+
+            // Update state (recursively hides descendants)
+            stateManager.collapseNode(nodeId, allNodes);
+
+            // Re-render with animation
+            renderGraphV2();
+        }
+
+        /**
+         * Reset to initial list view.
+         */
+        function resetToListViewV2() {
+            if (!stateManager) {
+                console.error('[Reset] State manager not initialized');
+                return;
+            }
+
+            console.log('[Reset] Resetting to list view');
+
+            // Collapse all nodes
+            stateManager.reset();
+
+            // Clear selection
+            highlightedNode = null;
+
+            // Close content pane
+            closeContentPane();
+
+            // Re-render
+            renderGraphV2();
+        }
+
+        /**
+         * Navigate to a node in the expansion path (breadcrumb click).
+         */
+        function navigateToNodeInPath(nodeId) {
+            if (!stateManager) {
+                console.error('[Navigate] State manager not initialized');
+                return;
+            }
+
+            const pathIndex = stateManager.expansionPath.indexOf(nodeId);
+            if (pathIndex === -1) {
+                console.warn('[Navigate] Node not in expansion path:', nodeId);
+                return;
+            }
+
+            console.log('[Navigate] Navigating to node in path:', nodeId);
+
+            // Collapse all nodes after this one in the path
+            const nodesToCollapse = stateManager.expansionPath.slice(pathIndex + 1);
+            nodesToCollapse.forEach(id => collapseNodeV2(id));
+
+            // Show the node in content pane
+            const node = allNodes.find(n => n.id === nodeId);
+            if (node) {
+                showContentPane(node);
+            }
+        }
+    """
+
+
+def get_rendering_v2() -> str:
+    """Get V2.0 rendering functions with transitions.
+
+    Returns:
+        JavaScript string for D3.js rendering with animations
+    """
+    return """
+        /**
+         * Main rendering function for V2.0 with transition animations.
+         *
+         * Renders visible nodes with smooth 750ms transitions between layouts.
+         */
+        function renderGraphV2(duration = 750) {
+            if (!stateManager) {
+                console.error('[Render] State manager not initialized');
+                return;
+            }
+
+            console.log('[Render] Rendering graph, mode:', stateManager.viewMode);
+
+            // 1. Get visible nodes
+            const visibleNodeIds = stateManager.getVisibleNodes();
+            const visibleNodesList = visibleNodeIds
+                .map(id => allNodes.find(n => n.id === id))
+                .filter(n => n);
+
+            console.log('[Render] Visible nodes:', visibleNodesList.length);
+
+            // 2. Calculate layout positions (Tree-based)
+            const positions = new Map();
+
+            if (stateManager.viewMode === 'tree_root') {
+                // Vertical list layout for root nodes only
+                const listPos = calculateListLayout(visibleNodesList, width, height);
+                listPos.forEach((pos, nodeId) => positions.set(nodeId, pos));
+
+                console.debug('[Render] TREE_ROOT: Vertical list with', positions.size, 'root nodes');
+            } else if (stateManager.viewMode === 'tree_expanded' || stateManager.viewMode === 'file_detail') {
+                // Tree layout: rightward expansion for directories/files
+                stateManager.expansionPath.forEach((expandedId, depth) => {
+                    const expandedNode = allNodes.find(n => n.id === expandedId);
+                    if (!expandedNode) return;
+
+                    // Position expanded node
+                    if (depth === 0) {
+                        // Root level - use list layout position
+                        const rootNodes = allNodes.filter(n => {
+                            const parentLinks = allLinks.filter(l =>
+                                (l.target.id || l.target) === n.id &&
+                                (l.type === 'dir_containment' || l.type === 'file_containment')
+                            );
+                            return parentLinks.length === 0;
+                        });
+                        const listPos = calculateListLayout(rootNodes, width, height);
+                        const pos = listPos.get(expandedId);
+                        if (pos) positions.set(expandedId, pos);
+                    } else {
+                        // Child node - should already have position from parent's tree
+                        if (!positions.has(expandedId)) {
+                            // Fallback to center-left
+                            positions.set(expandedId, { x: width * 0.3, y: height / 2 });
+                        }
+                    }
+
+                    // Calculate tree layout for children (rightward expansion)
+                    const children = allLinks
+                        .filter(link => {
+                            const sourceId = link.source.id || link.source;
+                            return sourceId === expandedId;
+                        })
+                        .map(link => {
+                            const targetId = link.target.id || link.target;
+                            return allNodes.find(n => n.id === targetId);
+                        })
+                        .filter(n => n && visibleNodeIds.includes(n.id));
+
+                    if (children.length > 0) {
+                        const parentPos = positions.get(expandedId) || { x: width * 0.3, y: height / 2 };
+
+                        // Use tree layout for rightward expansion
+                        const treePos = calculateTreeLayout(parentPos, children, width, height);
+                        treePos.forEach((pos, childId) => positions.set(childId, pos));
+                    }
+                });
+
+                console.debug(
+                    `[Render] ${stateManager.viewMode.toUpperCase()}: ` +
+                    `Tree layout with ${positions.size} nodes, ` +
+                    `depth ${stateManager.expansionPath.length}`
+                );
+            }
+
+            console.log('[Render] Calculated positions for', positions.size, 'nodes');
+
+            // 3. Filter edges
+            const visibleLinks = getFilteredLinksForCurrentViewV2();
+
+            console.log('[Render] Visible links:', visibleLinks.length);
+
+            // 4. D3 rendering with transitions
+
+            // --- LINKS ---
+            const linkSelection = g.selectAll('.link')
+                .data(visibleLinks, d => `${d.source.id || d.source}-${d.target.id || d.target}`);
+
+            // ENTER: New links
+            linkSelection.enter()
+                .append('line')
+                .attr('class', d => `link ${d.type}`)
+                .attr('x1', d => {
+                    const sourceId = d.source.id || d.source;
+                    const pos = positions.get(sourceId);
+                    return pos ? pos.x : (d.source.x || 0);
+                })
+                .attr('y1', d => {
+                    const sourceId = d.source.id || d.source;
+                    const pos = positions.get(sourceId);
+                    return pos ? pos.y : (d.source.y || 0);
+                })
+                .attr('x2', d => {
+                    const targetId = d.target.id || d.target;
+                    const pos = positions.get(targetId);
+                    return pos ? pos.x : (d.target.x || 0);
+                })
+                .attr('y2', d => {
+                    const targetId = d.target.id || d.target;
+                    const pos = positions.get(targetId);
+                    return pos ? pos.y : (d.target.y || 0);
+                })
+                .style('opacity', 0)
+                .transition()
+                .duration(duration)
+                .style('opacity', 1);
+
+            // UPDATE: Existing links
+            linkSelection.transition()
+                .duration(duration)
+                .attr('x1', d => {
+                    const sourceId = d.source.id || d.source;
+                    const pos = positions.get(sourceId);
+                    return pos ? pos.x : (d.source.x || 0);
+                })
+                .attr('y1', d => {
+                    const sourceId = d.source.id || d.source;
+                    const pos = positions.get(sourceId);
+                    return pos ? pos.y : (d.source.y || 0);
+                })
+                .attr('x2', d => {
+                    const targetId = d.target.id || d.target;
+                    const pos = positions.get(targetId);
+                    return pos ? pos.x : (d.target.x || 0);
+                })
+                .attr('y2', d => {
+                    const targetId = d.target.id || d.target;
+                    const pos = positions.get(targetId);
+                    return pos ? pos.y : (d.target.y || 0);
+                });
+
+            // EXIT: Remove links
+            linkSelection.exit()
+                .transition()
+                .duration(duration)
+                .style('opacity', 0)
+                .remove();
+
+            // --- NODES ---
+            const nodeSelection = g.selectAll('.node')
+                .data(visibleNodesList, d => d.id);
+
+            // ENTER: New nodes
+            const nodeEnter = nodeSelection.enter()
+                .append('g')
+                .attr('class', d => `node ${d.type}`)
+                .attr('transform', d => {
+                    // Start at calculated position or center
+                    const pos = positions.get(d.id);
+                    if (pos) {
+                        return `translate(${pos.x}, ${pos.y})`;
+                    }
+                    return `translate(${width / 2}, ${height / 2})`;
+                })
+                .style('opacity', 0)
+                .on('click', handleNodeClickV2)
+                .on('mouseover', (event, d) => showTooltip(event, d))
+                .on('mouseout', () => hideTooltip());
+
+            // Add node visuals (reuse existing rendering functions)
+            addNodeVisuals(nodeEnter);
+
+            // Fade in new nodes
+            nodeEnter.transition()
+                .duration(duration)
+                .style('opacity', 1);
+
+            // UPDATE: Existing nodes with transition
+            nodeSelection.transition()
+                .duration(duration)
+                .attr('transform', d => {
+                    const pos = positions.get(d.id);
+                    if (pos) {
+                        // Update stored position for force layout compatibility
+                        d.x = pos.x;
+                        d.y = pos.y;
+                        return `translate(${pos.x}, ${pos.y})`;
+                    }
+                    return `translate(${d.x || width / 2}, ${d.y || height / 2})`;
+                });
+
+            // Update expand/collapse indicators
+            nodeSelection.selectAll('.expand-indicator')
+                .text(d => {
+                    if (!hasChildren(d)) return '';
+                    const state = stateManager.nodeStates.get(d.id);
+                    return state?.expanded ? '−' : '+';
+                });
+
+            // EXIT: Remove nodes
+            nodeSelection.exit()
+                .transition()
+                .duration(duration)
+                .style('opacity', 0)
+                .remove();
+
+            // 5. Post-render updates
+            updateBreadcrumbsV2();
+            updateStats();
+        }
+
+        /**
+         * Filter links for current view mode (V2.0).
+         *
+         * Rules (Tree-based):
+         * - TREE_ROOT mode: NO edges shown (vertical list only)
+         * - TREE_EXPANDED mode: NO edges shown (directory tree only)
+         * - FILE_DETAIL mode: Only AST call edges within expanded file
+         *
+         * Design Decision: No edges during navigation
+         *
+         * Rationale: Edges are hidden during directory navigation to reduce
+         * visual clutter and maintain focus on hierarchy. Only function call
+         * edges are shown in file detail view where they provide value.
+         *
+         * Error Handling:
+         * - Returns empty array if state manager not initialized
+         * - Returns empty array if no file expanded in FILE_DETAIL mode
+         * - Filters out edges where source or target nodes are not visible
+         */
+        function getFilteredLinksForCurrentViewV2() {
+            if (!stateManager) {
+                console.warn('[EdgeFilter] State manager not initialized');
+                return [];
+            }
+
+            // No edges in tree navigation modes
+            if (stateManager.viewMode === 'tree_root' || stateManager.viewMode === 'tree_expanded') {
+                return [];
+            }
+
+            // FILE_DETAIL mode: Show AST call edges within file
+            if (stateManager.viewMode === 'file_detail') {
+                // Find expanded file in path
+                const expandedFileId = stateManager.expansionPath.find(nodeId => {
+                    const node = allNodes.find(n => n.id === nodeId);
+                    return node && node.type === 'file';
+                });
+
+                if (!expandedFileId) {
+                    console.debug('[EdgeFilter] No file expanded in FILE_DETAIL mode');
+                    return [];
+                }
+
+                const expandedFile = allNodes.find(n => n.id === expandedFileId);
+                if (!expandedFile) {
+                    console.warn('[EdgeFilter] Expanded file node not found:', expandedFileId);
+                    return [];
+                }
+
+                // Show only caller edges within this file
+                const filteredLinks = allLinks.filter(link => {
+                    // Must be caller relationship
+                    if (link.type !== 'caller') return false;
+
+                    // Both source and target must be AST chunks of the expanded file
+                    const sourceId = link.source.id || link.source;
+                    const targetId = link.target.id || link.target;
+
+                    const source = allNodes.find(n => n.id === sourceId);
+                    const target = allNodes.find(n => n.id === targetId);
+
+                    if (!source || !target) return false;
+
+                    // Both must be in the same file and visible
+                    return source.file_path === expandedFile.file_path &&
+                           target.file_path === expandedFile.file_path &&
+                           stateManager.getVisibleNodes().includes(sourceId) &&
+                           stateManager.getVisibleNodes().includes(targetId);
+                });
+
+                console.debug(
+                    `[EdgeFilter] FILE_DETAIL mode: ${filteredLinks.length} call edges ` +
+                    `in file ${expandedFile.name}`
+                );
+
+                return filteredLinks;
+            }
+
+            // Unknown view mode
+            console.warn('[EdgeFilter] Unknown view mode:', stateManager.viewMode);
+            return [];
+        }
+
+        /**
+         * Update breadcrumbs for V2.0 navigation.
+         */
+        function updateBreadcrumbsV2() {
+            if (!stateManager) return;
+
+            const breadcrumbEl = document.querySelector('.breadcrumb-nav');
+            if (!breadcrumbEl) return;
+
+            const parts = ['<span class="breadcrumb-root" onclick="resetToListViewV2()" style="cursor:pointer;">🏠 Root</span>'];
+
+            stateManager.expansionPath.forEach((nodeId, index) => {
+                const node = allNodes.find(n => n.id === nodeId);
+                if (!node) return;
+
+                const isLast = (index === stateManager.expansionPath.length - 1);
+
+                parts.push(' / ');
+
+                if (isLast) {
+                    // Current node: not clickable, highlighted
+                    parts.push(`<span class="breadcrumb-current" style="color: #ffffff; font-weight: 600;">${escapeHtml(node.name)}</span>`);
+                } else {
+                    // Parent nodes: clickable
+                    parts.push(
+                        `<span class="breadcrumb-link" onclick="navigateToNodeInPath('${node.id}')" ` +
+                        `style="color: #58a6ff; cursor: pointer; text-decoration: none;">` +
+                        `${escapeHtml(node.name)}</span>`
+                    );
+                }
+            });
+
+            breadcrumbEl.innerHTML = parts.join('');
+        }
+
+        /**
+         * Helper function to add node visuals (reused from existing code).
+         */
+        function addNodeVisuals(nodeEnter) {
+            // This function should call existing node rendering logic
+            // For now, we'll add basic shapes
+
+            // Add circles for code nodes
+            nodeEnter.filter(d => !isFileOrDir(d) && !isDocNode(d))
+                .append('circle')
+                .attr('r', d => d.complexity ? Math.min(15 + d.complexity * 2.5, 32) : 18)
+                .style('fill', d => d.color || '#58a6ff')
+                .attr('stroke', d => hasChildren(d) ? '#ffffff' : 'none')
+                .attr('stroke-width', d => hasChildren(d) ? 2 : 0);
+
+            // Add SVG icons for file and directory nodes
+            nodeEnter.filter(d => isFileOrDir(d))
+                .append('path')
+                .attr('class', 'file-icon')
+                .attr('d', d => getFileTypeIcon(d))
+                .attr('transform', d => {
+                    const scale = d.type === 'directory' ? 2.2 : 1.8;
+                    return `translate(-12, -12) scale(${scale})`;
+                })
+                .style('color', d => getFileTypeColor(d))
+                .attr('stroke', d => hasChildren(d) ? '#ffffff' : 'none')
+                .attr('stroke-width', d => hasChildren(d) ? 1.5 : 0);
+
+            // Add expand/collapse indicator
+            nodeEnter.filter(d => hasChildren(d))
+                .append('text')
+                .attr('class', 'expand-indicator')
+                .attr('x', d => {
+                    const iconRadius = d.type === 'directory' ? 22 : 18;
+                    return iconRadius + 5;
+                })
+                .attr('y', 0)
+                .attr('dy', '0.6em')
+                .attr('text-anchor', 'start')
+                .style('fill', '#ffffff')
+                .style('font-size', '16px')
+                .style('font-weight', 'bold')
+                .style('pointer-events', 'none')
+                .text(d => {
+                    if (!stateManager) return '+';
+                    const state = stateManager.nodeStates.get(d.id);
+                    return state?.expanded ? '−' : '+';
+                });
+
+            // Add labels
+            nodeEnter.append('text')
+                .attr('class', 'node-label')
+                .attr('x', d => {
+                    if (isFileOrDir(d)) {
+                        const iconRadius = d.type === 'directory' ? 22 : 18;
+                        return iconRadius + 25;  // After icon and indicator
+                    }
+                    return 0;
+                })
+                .attr('y', d => isFileOrDir(d) ? 0 : 0)
+                .attr('dy', d => isFileOrDir(d) ? '0.35em' : '2.5em')
+                .attr('text-anchor', d => isFileOrDir(d) ? 'start' : 'middle')
+                .style('fill', '#ffffff')
+                .style('font-size', '14px')
+                .style('pointer-events', 'none')
+                .text(d => d.name || 'Unknown');
+        }
+
+        /**
+         * Helper function to check if node is file or directory.
+         */
+        function isFileOrDir(node) {
+            return node.type === 'file' || node.type === 'directory';
+        }
+
+        /**
+         * Helper function to check if node is a document node.
+         */
+        function isDocNode(node) {
+            return node.type === 'document' || node.type === 'section';
+        }
+
+        /**
+         * Helper function to check if node has children.
+         */
+        function hasChildren(node) {
+            return allLinks.some(link => {
+                const sourceId = link.source.id || link.source;
+                return sourceId === node.id &&
+                       (link.type === 'dir_containment' ||
+                        link.type === 'file_containment' ||
+                        link.type === 'dir_hierarchy');
+            });
+        }
+
+        /**
+         * Helper function to escape HTML in strings.
+         */
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    """
+
+
 def get_all_scripts() -> str:
     """Get all JavaScript code combined.
 
@@ -1810,9 +3340,15 @@ def get_all_scripts() -> str:
     return "".join(
         [
             get_d3_initialization(),
+            get_state_management(),  # NEW: V2.0 state management
+            get_layout_algorithms_v2(),  # NEW: V2.0 layout algorithms
+            get_interaction_handlers_v2(),  # NEW: V2.0 interaction handlers
+            get_rendering_v2(),  # NEW: V2.0 rendering with transitions
             get_file_type_functions(),
             get_spacing_calculation_functions(),
             get_loading_spinner_functions(),
+            get_navigation_stack_logic(),
+            get_layout_switching_logic(),
             get_graph_visualization_functions(),
             get_zoom_and_navigation_functions(),
             get_interaction_handlers(),

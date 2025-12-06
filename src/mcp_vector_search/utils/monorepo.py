@@ -6,6 +6,34 @@ from typing import NamedTuple
 
 from loguru import logger
 
+# Directories to exclude from subproject detection
+# These are typically test/example/docs directories, not actual subprojects
+EXCLUDED_SUBPROJECT_DIRS = {
+    "tests",
+    "test",
+    "examples",
+    "example",
+    "docs",
+    "doc",
+    "scripts",
+    "tools",
+    "benchmarks",
+    "benchmark",
+    "node_modules",
+    ".git",
+    ".github",
+    ".gitlab",
+    "build",
+    "dist",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "coverage",
+    ".coverage",
+    "htmlcov",
+}
+
 
 class Subproject(NamedTuple):
     """Represents a subproject in a monorepo."""
@@ -26,6 +54,23 @@ class MonorepoDetector:
         """
         self.project_root = project_root
         self._subprojects: list[Subproject] | None = None
+
+    def _is_excluded_path(self, path: Path) -> bool:
+        """Check if a path should be excluded from subproject detection.
+
+        Args:
+            path: Path to check (relative to project root)
+
+        Returns:
+            True if path should be excluded from subproject detection
+        """
+        try:
+            relative_path = path.relative_to(self.project_root)
+            # Check if any part of the path is in the excluded set
+            return any(part in EXCLUDED_SUBPROJECT_DIRS for part in relative_path.parts)
+        except ValueError:
+            # Path is not relative to project root
+            return True
 
     def is_monorepo(self) -> bool:
         """Check if project is a monorepo.
@@ -162,6 +207,13 @@ class MonorepoDetector:
             if base_path.exists():
                 for subdir in base_path.iterdir():
                     if subdir.is_dir() and not subdir.name.startswith("."):
+                        # Skip excluded directories
+                        if self._is_excluded_path(subdir):
+                            logger.debug(
+                                f"Skipping excluded nx workspace path: {subdir.relative_to(self.project_root)}"
+                            )
+                            continue
+
                         package_json = subdir / "package.json"
                         name = self._get_package_name(package_json) or subdir.name
                         relative = str(subdir.relative_to(self.project_root))
@@ -179,12 +231,15 @@ class MonorepoDetector:
 
         # Only search up to 3 levels deep
         for package_json in self.project_root.rglob("package.json"):
-            # Skip node_modules
-            if "node_modules" in package_json.parts:
-                continue
-
             # Skip root package.json
             if package_json.parent == self.project_root:
+                continue
+
+            # Skip excluded directories (tests, examples, docs, etc.)
+            if self._is_excluded_path(package_json.parent):
+                logger.debug(
+                    f"Skipping excluded path: {package_json.relative_to(self.project_root)}"
+                )
                 continue
 
             # Check depth
@@ -221,6 +276,13 @@ class MonorepoDetector:
                     continue
 
                 if path.name.startswith("."):
+                    continue
+
+                # Skip excluded directories (tests, examples, docs, etc.)
+                if self._is_excluded_path(path):
+                    logger.debug(
+                        f"Skipping excluded workspace path: {path.relative_to(self.project_root)}"
+                    )
                     continue
 
                 # Try to get name from package.json

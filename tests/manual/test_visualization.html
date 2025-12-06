@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Visualization Debug Test</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 20px;
+            background: #0d1117;
+            color: #c9d1d9;
+        }
+        .error { color: #f85149; }
+        .success { color: #238636; }
+        .warning { color: #d29922; }
+        pre {
+            background: #161b22;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Visualization Debug Test</h1>
+    <div id="results"></div>
+
+    <script>
+        const results = document.getElementById('results');
+
+        function log(message, type = 'info') {
+            const p = document.createElement('p');
+            p.className = type;
+            p.textContent = message;
+            results.appendChild(p);
+        }
+
+        // Simulate the problematic code path
+        log('=== Simulating Large Graph Loading ===');
+
+        // This simulates what happens in the actual code
+        let allNodes = [];
+        let allLinks = [];
+        let visibleNodes = new Set();  // Never initialized!
+
+        // Simulate data loading
+        fetch("http://localhost:8082/chunk-graph.json")
+            .then(response => response.json())
+            .then(data => {
+                log(`Loaded ${data.nodes.length} nodes and ${data.links.length} links`, 'success');
+
+                // This happens at line 2759-2760
+                allNodes = data.nodes;
+                allLinks = data.links;
+
+                log(`allNodes.length = ${allNodes.length}`, 'success');
+                log(`allLinks.length = ${allLinks.length}`, 'success');
+
+                // This is what happens at line 2766 for large graphs
+                log('Graph has > 500 nodes, skipping visualizeGraph(), calling switchToCytoscapeLayout()...', 'warning');
+
+                // This is line 1164 in switchToCytoscapeLayout()
+                log(`visibleNodes.size = ${visibleNodes.size}`, 'error');
+                log(`visibleNodes was NEVER initialized!`, 'error');
+
+                const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
+                log(`visibleNodesList.length = ${visibleNodesList.length}`, 'error');
+
+                if (visibleNodesList.length === 0) {
+                    log('❌ NO NODES WILL BE RENDERED!', 'error');
+                    log('', 'info');
+                    log('ROOT CAUSE:', 'error');
+                    log('When nodes > 500, code skips visualizeGraph() which initializes visibleNodes', 'error');
+                    log('Then switchToCytoscapeLayout() filters with empty visibleNodes Set', 'error');
+                    log('Result: zero nodes passed to Cytoscape!', 'error');
+                    log('', 'info');
+                    log('FIX REQUIRED:', 'warning');
+                    log('Initialize visibleNodes before calling switchToCytoscapeLayout()', 'warning');
+                }
+
+                // Show what SHOULD happen
+                log('', 'info');
+                log('=== What SHOULD happen ===', 'success');
+
+                // Find root nodes (same logic as visualizeGraph)
+                let rootNodes = [];
+                if (data.metadata && data.metadata.is_monorepo) {
+                    rootNodes = allNodes.filter(n => n.type === 'subproject');
+                } else {
+                    const dirNodes = allNodes.filter(n => n.type === 'directory');
+                    const fileNodes = allNodes.filter(n => n.type === 'file');
+                    const minDirDepth = dirNodes.length > 0 ? Math.min(...dirNodes.map(n => n.depth)) : Infinity;
+                    const minFileDepth = fileNodes.length > 0 ? Math.min(...fileNodes.map(n => n.depth)) : Infinity;
+                    rootNodes = [
+                        ...dirNodes.filter(n => n.depth === minDirDepth),
+                        ...fileNodes.filter(n => n.depth === minFileDepth)
+                    ];
+                    if (rootNodes.length === 0) {
+                        rootNodes = fileNodes;
+                    }
+                }
+
+                log(`Found ${rootNodes.length} root nodes`, 'success');
+
+                // Initialize visibleNodes properly
+                visibleNodes = new Set(rootNodes.map(n => n.id));
+                log(`visibleNodes.size = ${visibleNodes.size}`, 'success');
+
+                const correctedVisibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
+                log(`correctedVisibleNodesList.length = ${correctedVisibleNodesList.length}`, 'success');
+                log('✅ NOW NODES WILL RENDER!', 'success');
+            })
+            .catch(err => {
+                log(`Error: ${err.message}`, 'error');
+            });
+    </script>
+</body>
+</html>

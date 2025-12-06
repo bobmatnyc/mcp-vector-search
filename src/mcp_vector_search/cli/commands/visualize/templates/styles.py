@@ -68,15 +68,13 @@ def get_controls_styles() -> str:
         }
 
         .legend {
-            position: absolute;
-            top: 70px;
-            right: 20px;
             background: #161b22;
             border: 1px solid #30363d;
             border-radius: 6px;
             padding: 12px;
             font-size: 13px;
             max-width: 300px;
+            margin-top: 16px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
         }
 
@@ -453,6 +451,43 @@ def get_content_pane_styles() -> str:
 
         #content-pane .collapse-btn:hover {
             color: #c9d1d9;
+        }
+
+        #content-pane .code-viewer-nav {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        #content-pane .code-viewer-nav button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        #content-pane .code-viewer-nav button:hover:not(:disabled) {
+            background: #30363d;
+            border-color: #58a6ff;
+        }
+
+        #content-pane .code-viewer-nav button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        #content-pane .code-viewer-nav #navPosition {
+            font-size: 11px;
+            color: #8b949e;
+            margin-left: 4px;
         }
 
         #content-pane .pane-content {

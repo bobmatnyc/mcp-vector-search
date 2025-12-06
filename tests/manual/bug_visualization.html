@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Bug Flow Visualization</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 40px;
+            background: #0d1117;
+            color: #c9d1d9;
+            line-height: 1.6;
+        }
+        h1 { color: #f85149; }
+        h2 { color: #58a6ff; margin-top: 40px; }
+        .flow {
+            background: #161b22;
+            border: 2px solid #30363d;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .step {
+            margin: 15px 0;
+            padding: 12px;
+            background: #0d1117;
+            border-left: 4px solid #238636;
+            border-radius: 4px;
+        }
+        .step.error {
+            border-left-color: #f85149;
+            background: #1c1416;
+        }
+        .step.warning {
+            border-left-color: #d29922;
+            background: #1c1816;
+        }
+        .code {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 13px;
+            overflow-x: auto;
+        }
+        .highlight {
+            background: #1c1416;
+            border-left: 3px solid #f85149;
+            padding: 2px 4px;
+        }
+        .success { color: #238636; }
+        .error-text { color: #f85149; }
+        .warning-text { color: #d29922; }
+        .arrow {
+            text-align: center;
+            font-size: 24px;
+            margin: 10px 0;
+            color: #58a6ff;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border: 1px solid #30363d;
+        }
+        th {
+            background: #161b22;
+            color: #58a6ff;
+        }
+        tr:nth-child(even) {
+            background: #161b22;
+        }
+    </style>
+</head>
+<body>
+    <h1>🚨 CRITICAL BUG: Empty Visualization</h1>
+    <p><strong>Issue:</strong> "I still see no nodes" despite data loading correctly</p>
+    <p><strong>Affected:</strong> All graphs with > 500 nodes (currently: 1449 nodes)</p>
+
+    <h2>Current Broken Flow</h2>
+    <div class="flow">
+        <div class="step">
+            <strong>Step 1:</strong> User opens visualization
+            <div class="code">window.addEventListener('DOMContentLoaded', ...)</div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <div class="step">
+            <strong>Step 2:</strong> Data loads successfully ✅
+            <div class="code">
+fetch("chunk-graph.json")
+  .then(data => {
+    <span class="success">allNodes = data.nodes;  // ✅ 1449 nodes</span>
+    <span class="success">allLinks = data.links;  // ✅ 360825 links</span>
+            </div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <div class="step warning">
+            <strong>Step 3:</strong> Branch based on node count ⚠️
+            <div class="code">
+if (data.nodes.length > 500) {
+    // 1449 > 500 → TRUE
+    layoutSelector.value = 'dagre';
+    <span class="warning-text">switchToCytoscapeLayout('dagre');</span>  // ⚠️ SKIP visualizeGraph()
+} else {
+    visualizeGraph(data);  // ← NEVER CALLED!
+}
+            </div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <div class="step error">
+            <strong>Step 4:</strong> switchToCytoscapeLayout() runs ❌
+            <div class="code">
+function switchToCytoscapeLayout(layoutName) {
+    // ...
+    <span class="highlight">const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));</span>
+    //                                                         ↑
+    //                                    visibleNodes.size = 0 (NEVER INITIALIZED!)
+    //                                    Result: visibleNodesList = [] ❌
+            </div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <div class="step error">
+            <strong>Step 5:</strong> No nodes added to Cytoscape ❌
+            <div class="code">
+visibleNodesList.forEach(node => {  // <span class="error-text">Empty array - NEVER EXECUTES!</span>
+    cyElements.push({
+        data: { id: node.id, ... }
+    });
+});
+            </div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <div class="step error">
+            <strong>Step 6:</strong> Cytoscape renders empty graph ❌
+            <div class="code">
+cy = cytoscape({
+    container: cyContainer,
+    elements: cyElements,  // <span class="error-text">[] - EMPTY!</span>
+    ...
+});
+            </div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <div class="step error">
+            <strong>Result:</strong> <span class="error-text">User sees blank screen 🚨</span>
+        </div>
+    </div>
+
+    <h2>The Missing Initialization</h2>
+    <div class="code">
+// In visualizeGraph() - line 1417-1418 (NEVER CALLED for large graphs)
+function visualizeGraph(data) {
+    // ...
+    <span class="success">visibleNodes = new Set(rootNodes.map(n => n.id));</span>  // ← THIS IS SKIPPED!
+    collapsedNodes = new Set(rootNodes.map(n => n.id));
+    // ...
+}
+    </div>
+
+    <h2>State Comparison</h2>
+    <table>
+        <tr>
+            <th>Variable</th>
+            <th>Expected (< 500 nodes)</th>
+            <th>Actual (> 500 nodes)</th>
+        </tr>
+        <tr>
+            <td><code>allNodes.length</code></td>
+            <td class="success">1449 ✅</td>
+            <td class="success">1449 ✅</td>
+        </tr>
+        <tr>
+            <td><code>allLinks.length</code></td>
+            <td class="success">360825 ✅</td>
+            <td class="success">360825 ✅</td>
+        </tr>
+        <tr>
+            <td><code>visibleNodes.size</code></td>
+            <td class="success">~50 (root nodes) ✅</td>
+            <td class="error-text">0 ❌</td>
+        </tr>
+        <tr>
+            <td><code>visibleNodesList.length</code></td>
+            <td class="success">~50 ✅</td>
+            <td class="error-text">0 ❌</td>
+        </tr>
+        <tr>
+            <td><code>cyElements.length</code></td>
+            <td class="success">~100 (nodes + edges) ✅</td>
+            <td class="error-text">0 ❌</td>
+        </tr>
+        <tr>
+            <td><code>cy.nodes().length</code></td>
+            <td class="success">~50 ✅</td>
+            <td class="error-text">0 ❌</td>
+        </tr>
+    </table>
+
+    <h2>The Fix (Option 3 - Simplest)</h2>
+    <div class="code">
+// Line 2762-2769 - AFTER FIX
+const layoutSelector = document.getElementById('layoutSelector');
+
+<span class="success">// ALWAYS initialize through visualizeGraph</span>
+<span class="success">visualizeGraph(data);  // ✅ Initializes visibleNodes, collapsedNodes, rootNodes</span>
+
+// Then switch to Dagre for large graphs
+if (layoutSelector && data.nodes && data.nodes.length > 500) {
+    layoutSelector.value = 'dagre';
+    switchToCytoscapeLayout('dagre');  // ✅ NOW visibleNodes is initialized!
+}
+    </div>
+
+    <h2>Why This Fix Works</h2>
+    <div class="flow">
+        <div class="step">
+            ✅ <strong>Consistent initialization path</strong> - all graphs go through visualizeGraph()
+        </div>
+        <div class="step">
+            ✅ <strong>No code duplication</strong> - root node logic stays in one place
+        </div>
+        <div class="step">
+            ✅ <strong>visibleNodes always initialized</strong> - works for all graph sizes
+        </div>
+        <div class="step">
+            ✅ <strong>Graceful layout switching</strong> - D3 → Cytoscape for large graphs
+        </div>
+        <div class="step">
+            ✅ <strong>Minimal performance impact</strong> - visualizeGraph is fast, Dagre overwrites layout
+        </div>
+    </div>
+
+    <h2>Testing Checklist</h2>
+    <div class="flow">
+        <div class="step">☐ Test with < 500 nodes (should still work)</div>
+        <div class="step">☐ Test with > 500 nodes (currently broken, should fix)</div>
+        <div class="step">☐ Test with 1449 nodes (user's actual case)</div>
+        <div class="step">☐ Verify Dagre layout shows root nodes</div>
+        <div class="step">☐ Verify node expansion/collapse still works</div>
+        <div class="step">☐ Verify layout switching (force ↔ dagre ↔ circle)</div>
+        <div class="step">☐ Check browser console for errors</div>
+    </div>
+
+    <div style="margin-top: 60px; padding: 20px; background: #1c1416; border: 2px solid #f85149; border-radius: 8px;">
+        <h3 style="margin-top: 0; color: #f85149;">🚨 Impact Assessment</h3>
+        <p><strong>Severity:</strong> CRITICAL</p>
+        <p><strong>Users Affected:</strong> 100% of users with > 500 nodes (medium-to-large projects)</p>
+        <p><strong>Symptoms:</strong> Blank visualization, no error message</p>
+        <p><strong>Data Loss:</strong> None (data loads correctly, just not displayed)</p>
+        <p><strong>Fix Complexity:</strong> LOW (3 line change)</p>
+        <p><strong>Recommended Action:</strong> Apply fix immediately and test</p>
+    </div>
+</body>
+</html>

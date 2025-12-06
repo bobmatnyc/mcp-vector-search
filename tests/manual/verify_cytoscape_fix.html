@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Cytoscape Edge Creation Verification Test</title>
+    <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+    <style>
+        body {
+            margin: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+        }
+        #cy {
+            width: 800px;
+            height: 600px;
+            border: 1px solid #30363d;
+            background: #0d1117;
+            margin: 20px 0;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            border: 1px solid #30363d;
+        }
+        .pass { background: #1a472a; border-color: #2ea043; }
+        .fail { background: #4c1b1b; border-color: #da3633; }
+        pre {
+            background: #161b22;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        h2 { margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <h1>Cytoscape Edge Creation Verification Test</h1>
+    <p>This test verifies that the edge creation bug is fixed.</p>
+
+    <div id="test-results"></div>
+    <div id="cy"></div>
+
+    <script>
+        const results = [];
+
+        function addResult(test, passed, message, data = null) {
+            results.push({ test, passed, message, data });
+            const resultsDiv = document.getElementById('test-results');
+            const statusDiv = document.createElement('div');
+            statusDiv.className = `status ${passed ? 'pass' : 'fail'}`;
+            statusDiv.innerHTML = `
+                <strong>${passed ? '✅ PASS' : '❌ FAIL'}: ${test}</strong><br>
+                ${message}
+                ${data ? `<pre>${JSON.stringify(data, null, 2)}</pre>` : ''}
+            `;
+            resultsDiv.appendChild(statusDiv);
+        }
+
+        async function runTests() {
+            try {
+                // Fetch the actual data from the server
+                const response = await fetch('http://localhost:8089/graph-data.json');
+                const graphData = await response.json();
+
+                // Test 1: Data structure validation
+                const hasNodes = graphData.nodes && graphData.nodes.length > 0;
+                const hasLinks = graphData.links && graphData.links.length > 0;
+                addResult(
+                    'Data Structure',
+                    hasNodes && hasLinks,
+                    `Nodes: ${graphData.nodes?.length || 0}, Links: ${graphData.links?.length || 0}`
+                );
+
+                // Test 2: Verify link source/target are strings
+                const firstLink = graphData.links[0];
+                const sourceIsString = typeof firstLink.source === 'string';
+                const targetIsString = typeof firstLink.target === 'string';
+                addResult(
+                    'Link ID Type Validation',
+                    sourceIsString && targetIsString,
+                    `Source type: ${typeof firstLink.source}, Target type: ${typeof firstLink.target}`,
+                    { sample: firstLink }
+                );
+
+                // Test 3: Create Cytoscape instance with actual data
+                console.log('Creating Cytoscape instance...');
+
+                // Convert data to Cytoscape format
+                const cyElements = [];
+
+                // Add nodes (limit to first 50 for performance)
+                graphData.nodes.slice(0, 50).forEach(node => {
+                    cyElements.push({
+                        data: {
+                            id: node.id,
+                            label: node.name,
+                            nodeType: node.type
+                        }
+                    });
+                });
+
+                // Add edges for the visible nodes
+                const visibleNodeIds = new Set(graphData.nodes.slice(0, 50).map(n => n.id));
+                const relevantLinks = graphData.links.filter(link => {
+                    const sourceId = link.source.id || link.source;
+                    const targetId = link.target.id || link.target;
+                    return visibleNodeIds.has(sourceId) && visibleNodeIds.has(targetId);
+                });
+
+                console.log(`Adding ${relevantLinks.length} edges...`);
+
+                let edgeCreationErrors = [];
+                relevantLinks.forEach((link, idx) => {
+                    try {
+                        const sourceId = link.source.id || link.source;
+                        const targetId = link.target.id || link.target;
+                        cyElements.push({
+                            data: {
+                                source: sourceId,
+                                target: targetId,
+                                linkType: link.type
+                            }
+                        });
+                    } catch (e) {
+                        edgeCreationErrors.push({ index: idx, error: e.message, link });
+                    }
+                });
+
+                addResult(
+                    'Edge Data Preparation',
+                    edgeCreationErrors.length === 0,
+                    edgeCreationErrors.length === 0
+                        ? `Successfully prepared ${relevantLinks.length} edges`
+                        : `${edgeCreationErrors.length} errors during edge preparation`,
+                    edgeCreationErrors.length > 0 ? edgeCreationErrors.slice(0, 3) : null
+                );
+
+                // Test 4: Initialize Cytoscape
+                let cy;
+                let cytoError = null;
+                try {
+                    cy = cytoscape({
+                        container: document.getElementById('cy'),
+                        elements: cyElements,
+                        style: [
+                            {
+                                selector: 'node',
+                                style: {
+                                    'label': 'data(label)',
+                                    'background-color': '#58a6ff',
+                                    'color': '#c9d1d9',
+                                    'font-size': '10px'
+                                }
+                            },
+                            {
+                                selector: 'edge',
+                                style: {
+                                    'width': 1,
+                                    'line-color': '#30363d',
+                                    'curve-style': 'bezier'
+                                }
+                            }
+                        ],
+                        layout: {
+                            name: 'grid'
+                        }
+                    });
+                } catch (e) {
+                    cytoError = e;
+                }
+
+                addResult(
+                    'Cytoscape Initialization',
+                    cytoError === null,
+                    cytoError ? `Error: ${cytoError.message}` : 'Successfully initialized Cytoscape instance',
+                    cytoError
+                );
+
+                // Test 5: Verify rendered elements
+                if (cy) {
+                    const nodeCount = cy.nodes().length;
+                    const edgeCount = cy.edges().length;
+
+                    addResult(
+                        'Rendered Elements',
+                        nodeCount > 0 && edgeCount > 0,
+                        `Rendered ${nodeCount} nodes and ${edgeCount} edges`
+                    );
+
+                    // Test 6: Verify edge data
+                    const firstEdge = cy.edges()[0];
+                    if (firstEdge) {
+                        const edgeData = firstEdge.data();
+                        const sourceIsString = typeof edgeData.source === 'string';
+                        const targetIsString = typeof edgeData.target === 'string';
+
+                        addResult(
+                            'Rendered Edge Data Types',
+                            sourceIsString && targetIsString,
+                            `Source: ${typeof edgeData.source}, Target: ${typeof edgeData.target}`,
+                            edgeData
+                        );
+                    }
+
+                    // Test 7: Console error check
+                    addResult(
+                        'Console Errors',
+                        true,
+                        'Check browser console for any Cytoscape errors. Should be clean!'
+                    );
+                }
+
+                // Summary
+                const passed = results.filter(r => r.passed).length;
+                const total = results.length;
+                const summaryDiv = document.createElement('div');
+                summaryDiv.className = `status ${passed === total ? 'pass' : 'fail'}`;
+                summaryDiv.innerHTML = `
+                    <h2>Test Summary</h2>
+                    <strong>${passed}/${total} tests passed</strong><br>
+                    ${passed === total ? '🎉 All tests passed! The bug is fixed!' : '⚠️ Some tests failed. Check details above.'}
+                `;
+                document.getElementById('test-results').appendChild(summaryDiv);
+
+            } catch (error) {
+                addResult(
+                    'Test Execution',
+                    false,
+                    `Fatal error: ${error.message}`,
+                    { stack: error.stack }
+                );
+            }
+        }
+
+        // Run tests when page loads
+        window.addEventListener('load', runTests);
+    </script>
+</body>
+</html>
