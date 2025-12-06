@@ -93,6 +93,56 @@ install_app = create_enhanced_typer(
 # ==============================================================================
 
 
+def detect_project_root(start_path: Path | None = None) -> Path:
+    """Auto-detect project root directory.
+
+    Detection priority:
+    1. Directory with .mcp-vector-search/ (project initialized)
+    2. Git repository root
+    3. Current working directory (fallback)
+
+    Args:
+        start_path: Starting path for detection (default: current directory)
+
+    Returns:
+        Path to detected project root
+    """
+    current = start_path or Path.cwd()
+
+    # Check for .mcp-vector-search directory (initialized project)
+    if (current / ".mcp-vector-search").exists():
+        logger.debug(f"Detected project root via .mcp-vector-search: {current}")
+        return current
+
+    # Check if we're in a git repository
+    git_root = find_git_root(current)
+    if git_root and (git_root / ".mcp-vector-search").exists():
+        logger.debug(f"Detected project root via git + .mcp-vector-search: {git_root}")
+        return git_root
+
+    # Fallback to current directory
+    logger.debug(f"Using current directory as project root: {current}")
+    return current
+
+
+def find_git_root(path: Path) -> Path | None:
+    """Find git repository root by walking up directory tree.
+
+    Args:
+        path: Starting path
+
+    Returns:
+        Path to git root or None if not in a git repo
+    """
+    current = path.resolve()
+    while current != current.parent:
+        if (current / ".git").exists():
+            logger.debug(f"Found git root: {current}")
+            return current
+        current = current.parent
+    return None
+
+
 def detect_all_platforms() -> list[PlatformInfo]:
     """Detect all available platforms on the system.
 
@@ -363,13 +413,35 @@ def _install_to_platform(platform_info: PlatformInfo, project_root: Path) -> boo
         # Create installer for this platform
         installer = MCPInstaller(platform=platform_info.platform)
 
+        # Detect installation method (uv vs direct command)
+        import shutil
+
+        use_uv = shutil.which("uv") is not None
+        mcp_cmd = shutil.which("mcp-vector-search")
+
+        if use_uv:
+            # Development mode with uv
+            command = "uv"
+            args = ["run", "--directory", str(project_root), "mcp-vector-search", "mcp"]
+        elif mcp_cmd:
+            # Production mode with installed package
+            command = "mcp-vector-search"
+            args = ["mcp"]
+        else:
+            # Fallback to uv (will fail if not available)
+            command = "uv"
+            args = ["run", "mcp-vector-search", "mcp"]
+
         # Create server configuration
         server_config = MCPServerConfig(
             name="mcp-vector-search",
-            command="uv",
-            args=["run", "--directory", str(project_root), "mcp-vector-search", "mcp"],
-            env={"PROJECT_ROOT": str(project_root)},
-            description="Semantic code search with vector embeddings",
+            command=command,
+            args=args,
+            env={
+                "PROJECT_ROOT": str(project_root.resolve()),
+                "MCP_PROJECT_ROOT": str(project_root.resolve()),
+            },
+            description=f"Semantic code search for {project_root.name}",
         )
 
         # Install server
@@ -424,6 +496,11 @@ def install_mcp(
         "-a",
         help="Install to all detected platforms",
     ),
+    auto: bool = typer.Option(
+        True,
+        "--auto/--no-auto",
+        help="Auto-detect project root (default: enabled)",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -433,12 +510,13 @@ def install_mcp(
     """Install MCP integration to platforms.
 
     Auto-detects available platforms and installs mcp-vector-search as an MCP server.
-    Supports multiple platforms simultaneously.
+    Automatically detects project root from current directory or git repository.
 
     [bold cyan]Examples:[/bold cyan]
 
-      [green]Auto-detect and install:[/green]
+      [green]Auto-detect and install (recommended):[/green]
         $ mcp-vector-search install mcp
+        $ mcp-vector-search install mcp --auto
 
       [green]Install to specific platform:[/green]
         $ mcp-vector-search install mcp --platform cursor
@@ -448,8 +526,17 @@ def install_mcp(
 
       [green]Preview changes (dry run):[/green]
         $ mcp-vector-search install mcp --dry-run
+
+      [green]Use current directory as project root (no auto-detection):[/green]
+        $ mcp-vector-search install mcp --no-auto
     """
-    project_root = ctx.obj.get("project_root") or Path.cwd()
+    # Auto-detect project root if enabled
+    if auto:
+        project_root = detect_project_root()
+        console.print(f"[dim]🔍 Auto-detected project root: {project_root}[/dim]\n")
+    else:
+        project_root = ctx.obj.get("project_root") or Path.cwd()
+        console.print(f"[dim]📁 Using project root: {project_root}[/dim]\n")
 
     console.print(
         Panel.fit(
@@ -554,6 +641,106 @@ def install_mcp(
     except Exception as e:
         logger.exception("MCP installation failed")
         print_error(f"Installation failed: {e}")
+        raise typer.Exit(1)
+
+
+# ==============================================================================
+# MCP Status Command
+# ==============================================================================
+
+
+@install_app.command("mcp-status")
+def mcp_status(ctx: typer.Context) -> None:
+    """Show MCP integration status for all platforms.
+
+    Displays which platforms have mcp-vector-search configured,
+    the detected project root, and configuration details.
+
+    [bold cyan]Examples:[/bold cyan]
+
+      [green]Check status:[/green]
+        $ mcp-vector-search install mcp-status
+    """
+    # Auto-detect project root
+    project_root = detect_project_root()
+
+    console.print(
+        Panel.fit(
+            f"[bold cyan]MCP Integration Status[/bold cyan]\n"
+            f"📁 Detected Project: {project_root}",
+            border_style="cyan",
+        )
+    )
+
+    try:
+        # Detect all platforms
+        detected = detect_all_platforms()
+
+        if not detected:
+            print_warning("No MCP platforms detected")
+            return
+
+        # Create status table
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Platform", style="cyan")
+        table.add_column("Status", style="green")
+        table.add_column("Config Path")
+        table.add_column("Project Root")
+
+        for platform_info in detected:
+            try:
+                # Check if mcp-vector-search is configured
+                installer = MCPInstaller(platform=platform_info.platform)
+                server = installer.get_server("mcp-vector-search")
+
+                if server:
+                    status = "✅ Configured"
+                    # Extract project root from env
+                    env = server.get("env", {})
+                    configured_root = env.get("MCP_PROJECT_ROOT") or env.get(
+                        "PROJECT_ROOT", "N/A"
+                    )
+
+                    # Check if it matches current project
+                    if configured_root != "N/A":
+                        configured_path = Path(configured_root)
+                        if configured_path == project_root:
+                            status = "✅ Configured (current project)"
+                        else:
+                            status = "⚠️ Configured (different project)"
+                else:
+                    status = "❌ Not configured"
+                    configured_root = "N/A"
+
+            except Exception as e:
+                logger.debug(f"Failed to check {platform_info.platform.value}: {e}")
+                status = "❓ Unknown"
+                configured_root = "N/A"
+
+            table.add_row(
+                platform_info.platform.value,
+                status,
+                str(platform_info.config_path) if platform_info.config_path else "N/A",
+                configured_root,
+            )
+
+        console.print(table)
+
+        # Show next steps
+        console.print("\n[bold blue]Quick Actions:[/bold blue]")
+        console.print(
+            "  mcp-vector-search install mcp                    # Install to auto-detected platform"
+        )
+        console.print(
+            "  mcp-vector-search install mcp --all              # Install to all platforms"
+        )
+        console.print(
+            "  mcp-vector-search install mcp --platform <name>  # Install to specific platform"
+        )
+
+    except Exception as e:
+        logger.exception("Failed to check MCP status")
+        print_error(f"Status check failed: {e}")
         raise typer.Exit(1)
 
 

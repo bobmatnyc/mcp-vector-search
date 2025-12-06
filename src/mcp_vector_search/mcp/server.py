@@ -38,11 +38,28 @@ class MCPVectorSearchServer:
         """Initialize the MCP server.
 
         Args:
-            project_root: Project root directory. If None, will auto-detect.
+            project_root: Project root directory. If None, will auto-detect from:
+                         1. PROJECT_ROOT or MCP_PROJECT_ROOT environment variable
+                         2. Current working directory
             enable_file_watching: Enable file watching for automatic reindexing.
                                   If None, checks MCP_ENABLE_FILE_WATCHING env var (default: True).
         """
-        self.project_root = project_root or Path.cwd()
+        # Auto-detect project root from environment or current directory
+        if project_root is None:
+            # Priority 1: MCP_PROJECT_ROOT (new standard)
+            # Priority 2: PROJECT_ROOT (legacy)
+            # Priority 3: Current working directory
+            env_project_root = os.getenv("MCP_PROJECT_ROOT") or os.getenv(
+                "PROJECT_ROOT"
+            )
+            if env_project_root:
+                project_root = Path(env_project_root).resolve()
+                logger.info(f"Using project root from environment: {project_root}")
+            else:
+                project_root = Path.cwd()
+                logger.info(f"Using current directory as project root: {project_root}")
+
+        self.project_root = project_root
         self.project_manager = ProjectManager(self.project_root)
         self.search_engine: SemanticSearchEngine | None = None
         self.file_watcher: FileWatcher | None = None
@@ -397,9 +414,11 @@ class MCPVectorSearchServer:
                     "languages": config.languages,
                     "total_chunks": stats.total_chunks,
                     "total_files": stats.total_files,
-                    "index_size": f"{stats.index_size_mb:.2f} MB"
-                    if hasattr(stats, "index_size_mb")
-                    else "Unknown",
+                    "index_size": (
+                        f"{stats.index_size_mb:.2f} MB"
+                        if hasattr(stats, "index_size_mb")
+                        else "Unknown"
+                    ),
                 }
             else:
                 status_info = {
