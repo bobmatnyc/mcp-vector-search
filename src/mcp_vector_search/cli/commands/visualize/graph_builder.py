@@ -14,6 +14,7 @@ from rich.console import Console
 from ....core.database import ChromaVectorDatabase
 from ....core.directory_index import DirectoryIndex
 from ....core.project import ProjectManager
+from .state_manager import VisualizationState
 
 console = Console()
 
@@ -363,6 +364,37 @@ async def build_graph_data(
         f"[green]✓[/green] Computed {len(semantic_links)} semantic relationships"
     )
 
+    def extract_function_calls(code: str) -> set[str]:
+        """Extract actual function calls from Python code using AST.
+
+        Returns set of function names that are actually called (not just mentioned).
+        Avoids false positives from comments, docstrings, and string literals.
+
+        Args:
+            code: Python source code to analyze
+
+        Returns:
+            Set of function names that are actually called in the code
+        """
+        import ast
+
+        calls = set()
+        try:
+            tree = ast.parse(code)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    # Handle direct calls: foo()
+                    if isinstance(node.func, ast.Name):
+                        calls.add(node.func.id)
+                    # Handle method calls: obj.foo() - extract 'foo'
+                    elif isinstance(node.func, ast.Attribute):
+                        calls.add(node.func.attr)
+            return calls
+        except SyntaxError:
+            # If code can't be parsed (incomplete, etc.), fall back to empty set
+            # This is safer than false positives from naive substring matching
+            return set()
+
     # Compute external caller relationships
     console.print("[cyan]Computing external caller relationships...[/cyan]")
     caller_map = {}  # Map chunk_id -> list of caller info
@@ -383,8 +415,11 @@ async def build_graph_data(
             if other_file_path == file_path:
                 continue
 
-            # Check if the other chunk's content mentions this function/class
-            if function_name in other_chunk.content:
+            # Extract actual function calls using AST (avoids false positives)
+            actual_calls = extract_function_calls(other_chunk.content)
+
+            # Check if this function is actually called (not just mentioned in comments)
+            if function_name in actual_calls:
                 other_chunk_id = other_chunk.chunk_id or other_chunk.id
                 other_name = (
                     other_chunk.function_name
@@ -403,6 +438,11 @@ async def build_graph_data(
                         "name": other_name,
                         "type": other_chunk.chunk_type,
                     }
+                )
+
+                logger.debug(
+                    f"Found actual call: {other_name} ({other_file_path}) -> "
+                    f"{function_name} ({file_path})"
                 )
 
     # Count total caller relationships
@@ -575,3 +615,75 @@ async def build_graph_data(
     }
 
     return graph_data
+
+
+def apply_state(graph_data: dict, state: VisualizationState) -> dict:
+    """Apply visualization state to graph data.
+
+    Filters nodes and edges based on current visualization state,
+    including visibility and AST-only edge filtering.
+
+    Args:
+        graph_data: Full graph data dictionary (nodes, links, metadata)
+        state: Current visualization state
+
+    Returns:
+        Filtered graph data with only visible nodes and edges
+
+    Example:
+        >>> state = VisualizationState()
+        >>> state.expand_node("dir1", "directory", ["file1", "file2"])
+        >>> filtered = apply_state(graph_data, state)
+        >>> len(filtered["nodes"]) < len(graph_data["nodes"])
+        True
+    """
+    # Get visible node IDs from state
+    visible_node_ids = set(state.get_visible_nodes())
+
+    # Filter nodes
+    filtered_nodes = [
+        node for node in graph_data["nodes"] if node["id"] in visible_node_ids
+    ]
+
+    # Build node ID to node data map for quick lookup
+    node_map = {node["id"]: node for node in graph_data["nodes"]}
+
+    # Get visible edges from state (AST calls only in FILE_FAN mode)
+    expanded_file_id = None
+    if state.view_mode.value == "file_fan" and state.expansion_path:
+        # Find the file node in expansion path
+        for node_id in reversed(state.expansion_path):
+            node = node_map.get(node_id)
+            if node and node.get("type") == "file":
+                expanded_file_id = node_id
+                break
+
+    visible_edge_ids = state.get_visible_edges(
+        graph_data["links"], expanded_file_id=expanded_file_id
+    )
+
+    # Filter links to only visible edges
+    filtered_links = []
+    for link in graph_data["links"]:
+        source_id = link.get("source")
+        target_id = link.get("target")
+
+        # Skip if either node not visible
+        if source_id not in visible_node_ids or target_id not in visible_node_ids:
+            continue
+
+        # In FILE_FAN mode, only show edges in visible_edge_ids
+        if state.view_mode.value == "file_fan":
+            if (source_id, target_id) in visible_edge_ids:
+                filtered_links.append(link)
+        elif state.view_mode.value in ("list", "directory_fan"):
+            # In list/directory modes, show containment edges only
+            if link.get("type") in ("dir_containment", "dir_hierarchy"):
+                filtered_links.append(link)
+
+    return {
+        "nodes": filtered_nodes,
+        "links": filtered_links,
+        "metadata": graph_data.get("metadata", {}),
+        "state": state.to_dict(),  # Include serialized state
+    }
