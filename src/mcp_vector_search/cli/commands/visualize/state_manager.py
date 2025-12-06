@@ -23,15 +23,26 @@ from loguru import logger
 class ViewMode(str, Enum):
     """View mode for visualization layout.
 
+    Design Decision: Tree-based view modes for file explorer metaphor
+
+    Rationale: Replaced fan-based modes with tree-based modes to match
+    traditional file system navigation (Finder, Explorer). Tree modes
+    provide clearer hierarchical relationships and familiar UX patterns.
+
     Attributes:
-        LIST: Root list view (vertical alphabetical list)
-        DIRECTORY_FAN: Directory children in horizontal fan layout
-        FILE_FAN: File AST chunks in horizontal fan layout
+        TREE_ROOT: Root list view (vertical alphabetical list, no edges)
+        TREE_EXPANDED: Tree with expanded directories (rightward expansion)
+        FILE_DETAIL: File with AST chunks (function call edges visible)
+
+    Migration from V1:
+        - LIST → TREE_ROOT (same behavior, clearer naming)
+        - DIRECTORY_FAN → TREE_EXPANDED (fan arc → tree levels)
+        - FILE_FAN → FILE_DETAIL (fan arc → rightward tree + edges)
     """
 
-    LIST = "list"
-    DIRECTORY_FAN = "directory_fan"
-    FILE_FAN = "file_fan"
+    TREE_ROOT = "tree_root"  # Vertical list of root nodes, no edges
+    TREE_EXPANDED = "tree_expanded"  # Tree with expanded nodes, hierarchical edges
+    FILE_DETAIL = "file_detail"  # File with AST chunks and call edges
 
 
 @dataclass
@@ -72,13 +83,13 @@ class VisualizationState:
         - Limitation: Cannot compare siblings side-by-side
 
     Attributes:
-        view_mode: Current view mode (list, directory_fan, file_fan)
+        view_mode: Current view mode (tree_root, tree_expanded, file_detail)
         expansion_path: Ordered list of expanded node IDs (root to current)
         node_states: Map of node ID to NodeState
         visible_edges: Set of visible AST call edges (source_id, target_id)
     """
 
-    view_mode: ViewMode = ViewMode.LIST
+    view_mode: ViewMode = ViewMode.TREE_ROOT
     expansion_path: list[str] = field(default_factory=list)
     node_states: dict[str, NodeState] = field(default_factory=dict)
     visible_edges: set[tuple[str, str]] = field(default_factory=set)
@@ -169,9 +180,9 @@ class VisualizationState:
 
         # Update view mode based on node type
         if node_type == "directory":
-            self.view_mode = ViewMode.DIRECTORY_FAN
+            self.view_mode = ViewMode.TREE_EXPANDED
         elif node_type == "file":
-            self.view_mode = ViewMode.FILE_FAN
+            self.view_mode = ViewMode.FILE_DETAIL
 
         logger.info(
             f"Expanded {node_type} {node_id}, "
@@ -250,8 +261,8 @@ class VisualizationState:
 
         # Update view mode if path is empty
         if len(self.expansion_path) == 0:
-            self.view_mode = ViewMode.LIST
-            logger.info("Collapsed to root, switching to LIST view")
+            self.view_mode = ViewMode.TREE_ROOT
+            logger.info("Collapsed to root, switching to TREE_ROOT view")
 
     def switch_sibling(
         self,
@@ -299,19 +310,19 @@ class VisualizationState:
         """Return set of visible edges (AST calls only).
 
         Edge Filtering Rules:
-            - LIST mode: No edges shown
-            - DIRECTORY_FAN mode: No edges shown
-            - FILE_FAN mode: Only AST call edges within expanded file
+            - TREE_ROOT mode: No edges shown
+            - TREE_EXPANDED mode: No edges shown
+            - FILE_DETAIL mode: Only AST call edges within expanded file
 
         Args:
             all_edges: List of all edge dictionaries
-            expanded_file_id: ID of currently expanded file (if in FILE_FAN mode)
+            expanded_file_id: ID of currently expanded file (if in FILE_DETAIL mode)
 
         Returns:
             Set of (source_id, target_id) tuples for visible edges
         """
-        if self.view_mode != ViewMode.FILE_FAN or not expanded_file_id:
-            # No edges in LIST or DIRECTORY_FAN modes
+        if self.view_mode != ViewMode.FILE_DETAIL or not expanded_file_id:
+            # No edges in TREE_ROOT or TREE_EXPANDED modes
             return set()
 
         visible = set()
@@ -381,7 +392,22 @@ class VisualizationState:
             Reconstructed VisualizationState instance
         """
         state = cls()
-        state.view_mode = ViewMode(data.get("view_mode", "list"))
+
+        # Handle view mode with backward compatibility
+        view_mode_str = data.get("view_mode", "tree_root")
+
+        # Map old view modes to new ones
+        view_mode_migration = {
+            "list": "tree_root",
+            "directory_fan": "tree_expanded",
+            "file_fan": "file_detail",
+        }
+
+        # Apply migration if needed
+        if view_mode_str in view_mode_migration:
+            view_mode_str = view_mode_migration[view_mode_str]
+
+        state.view_mode = ViewMode(view_mode_str)
         state.expansion_path = data.get("expansion_path", [])
 
         # Reconstruct node states

@@ -305,3 +305,165 @@ def calculate_compact_folder_layout(
     )
 
     return positions
+
+
+def calculate_tree_layout(
+    nodes: list[dict[str, Any]],
+    expansion_path: list[str],
+    canvas_width: int,
+    canvas_height: int,
+    level_spacing: int = 300,
+    node_spacing: int = 50,
+) -> dict[str, tuple[float, float]]:
+    """Calculate positions for rightward tree layout.
+
+    Design Decision: Rightward Tree Layout
+
+    Rationale: Traditional file explorer tree layout matches user expectations
+    for hierarchical file system navigation. Nodes expand horizontally to the
+    right (like Finder/Explorer) rather than radially, providing clear depth
+    visualization and natural left-to-right reading flow.
+
+    Trade-offs:
+        - Familiarity: Matches OS file explorers vs. novel graph layouts
+        - Depth visibility: Clear level separation vs. radial compactness
+        - Horizontal space: Requires wider viewport vs. vertical layouts
+        - Simplicity: No angle calculations vs. fan layouts
+
+    Args:
+        nodes: All nodes in the graph
+        expansion_path: List of expanded node IDs (root → current)
+        canvas_width: Canvas width
+        canvas_height: Canvas height
+        level_spacing: Horizontal distance between tree levels (default 300px)
+        node_spacing: Vertical distance between sibling nodes (default 50px)
+
+    Returns:
+        Dict mapping node_id → (x, y) position
+
+    Layout Logic:
+        - Root nodes: x=100, y=vertical list (50px spacing)
+        - Level 1 (children of expanded root): x=400, y=vertical under parent
+        - Level 2: x=700, etc.
+        - Center view by shifting all x positions left as tree grows
+
+    Time Complexity: O(n log n) where n = number of nodes (sorting)
+    Space Complexity: O(n) for position dictionary and level grouping
+
+    Example:
+        >>> nodes = [
+        ...     {'id': 'root1', 'name': 'src', 'type': 'directory', 'parent': None},
+        ...     {'id': 'child1', 'name': 'main.py', 'type': 'file', 'parent': 'root1'}
+        ... ]
+        >>> expansion_path = ['root1']
+        >>> positions = calculate_tree_layout(nodes, expansion_path, 1920, 1080)
+        >>> # root1 at x=100, child1 at x=400
+    """
+    if not nodes:
+        logger.debug("No nodes to layout in tree")
+        return {}
+
+    positions = {}
+
+    # Group nodes by depth level based on expansion path
+    levels = _build_tree_levels(nodes, expansion_path)
+
+    if not levels:
+        logger.warning("No levels built from expansion path")
+        return {}
+
+    # Calculate positions level by level
+    for level_index, level_nodes in enumerate(levels):
+        x = 100 + (level_index * level_spacing)
+
+        # Sort alphabetically (directories first)
+        sorted_nodes = sorted(
+            level_nodes,
+            key=lambda n: (
+                0 if n.get("type") == "directory" else 1,
+                (n.get("name") or "").lower(),
+            ),
+        )
+
+        # Position vertically
+        total_height = len(sorted_nodes) * node_spacing
+        start_y = (canvas_height - total_height) / 2
+
+        for i, node in enumerate(sorted_nodes):
+            node_id = node.get("id")
+            if not node_id:
+                logger.warning(f"Node missing 'id': {node}")
+                continue
+
+            y = start_y + (i * node_spacing)
+            positions[node_id] = (x, y)
+
+    # Center the view (shift left based on deepest level)
+    max_level = len(levels) - 1
+    shift_x = (max_level * level_spacing) // 2
+
+    for node_id in positions:
+        x, y = positions[node_id]
+        positions[node_id] = (x - shift_x, y)
+
+    logger.debug(
+        f"Tree layout: {len(positions)} nodes across {len(levels)} levels, "
+        f"shift_x={shift_x}px"
+    )
+
+    return positions
+
+
+def _build_tree_levels(
+    nodes: list[dict[str, Any]], expansion_path: list[str]
+) -> list[list[dict[str, Any]]]:
+    """Build tree levels based on expansion path.
+
+    Returns:
+        List of levels, where each level is a list of nodes
+        Level 0: Root nodes (no parent)
+        Level 1: Children of expanded root node
+        Level 2: Children of expanded level-1 node
+        etc.
+
+    Example:
+        >>> nodes = [
+        ...     {'id': 'a', 'parent': None},
+        ...     {'id': 'b', 'parent': 'a'},
+        ...     {'id': 'c', 'parent': 'a'}
+        ... ]
+        >>> expansion_path = ['a']
+        >>> levels = _build_tree_levels(nodes, expansion_path)
+        >>> len(levels)
+        2
+        >>> len(levels[0])  # Root level
+        1
+        >>> len(levels[1])  # Children of 'a'
+        2
+    """
+    levels: list[list[dict[str, Any]]] = []
+
+    # Build node ID to node map for quick lookup
+    node_map = {node.get("id"): node for node in nodes if node.get("id")}
+
+    # Level 0: Root nodes (no parent or parent not in graph)
+    root_nodes = [
+        node
+        for node in nodes
+        if not node.get("parent") or node.get("parent") not in node_map
+    ]
+    levels.append(root_nodes)
+
+    # Subsequent levels: Children of expanded nodes in expansion path
+    for expanded_node_id in expansion_path:
+        # Find children of this expanded node
+        children = [node for node in nodes if node.get("parent") == expanded_node_id]
+
+        if children:
+            levels.append(children)
+
+    logger.debug(
+        f"Built {len(levels)} tree levels from expansion path: {expansion_path}"
+    )
+
+    return levels

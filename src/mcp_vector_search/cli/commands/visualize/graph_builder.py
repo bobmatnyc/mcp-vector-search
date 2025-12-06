@@ -648,9 +648,9 @@ def apply_state(graph_data: dict, state: VisualizationState) -> dict:
     # Build node ID to node data map for quick lookup
     node_map = {node["id"]: node for node in graph_data["nodes"]}
 
-    # Get visible edges from state (AST calls only in FILE_FAN mode)
+    # Get visible edges from state (AST calls only in FILE_DETAIL mode)
     expanded_file_id = None
-    if state.view_mode.value == "file_fan" and state.expansion_path:
+    if state.view_mode.value == "file_detail" and state.expansion_path:
         # Find the file node in expansion path
         for node_id in reversed(state.expansion_path):
             node = node_map.get(node_id)
@@ -672,12 +672,12 @@ def apply_state(graph_data: dict, state: VisualizationState) -> dict:
         if source_id not in visible_node_ids or target_id not in visible_node_ids:
             continue
 
-        # In FILE_FAN mode, only show edges in visible_edge_ids
-        if state.view_mode.value == "file_fan":
+        # In FILE_DETAIL mode, only show edges in visible_edge_ids
+        if state.view_mode.value == "file_detail":
             if (source_id, target_id) in visible_edge_ids:
                 filtered_links.append(link)
-        elif state.view_mode.value in ("list", "directory_fan"):
-            # In list/directory modes, show containment edges only
+        elif state.view_mode.value in ("tree_root", "tree_expanded"):
+            # In tree modes, show containment edges only
             if link.get("type") in ("dir_containment", "dir_hierarchy"):
                 filtered_links.append(link)
 
