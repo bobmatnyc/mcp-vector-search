@@ -106,6 +106,159 @@ def get_file_type_functions() -> str:
     """
 
 
+def get_spacing_calculation_functions() -> str:
+    """Get automatic spacing calculation functions.
+
+    Returns:
+        JavaScript string for spacing calculations
+
+    Design Decision: Adaptive spacing based on graph density
+
+    Rationale: Hardcoded 800px spacing doesn't adapt to viewport size or node count.
+    Selected density-based formula (nodes/area) for automatic scaling across devices.
+
+    Trade-offs:
+    - Adaptability: Auto-scales for mobile to 4K displays vs. fixed spacing
+    - Complexity: Requires calculation but prevents manual tuning per graph size
+    - Performance: Minimal overhead (O(1) calculation) vs. simplicity of hardcoded value
+
+    Alternatives Considered:
+    1. Fixed spacing with manual overrides: Rejected - requires user intervention
+    2. Viewport-only scaling: Rejected - doesn't account for node count
+    3. Node-count-only scaling: Rejected - breaks on different screen sizes
+
+    Extension Points: Mode parameter ('tight', 'balanced', 'loose') allows future
+    customization. Bounds can be adjusted per graph size category if needed.
+
+    Performance:
+    - Time Complexity: O(1) - simple arithmetic operations
+    - Space Complexity: O(1) - no data structures allocated
+    - Expected Performance: <1ms per calculation on modern browsers
+
+    Error Handling:
+    - Zero nodes: Returns default 100px spacing
+    - Invalid mode: Falls back to 'balanced' mode
+    - Extreme viewports: Clamped by min/max bounds per size category
+    """
+    return """
+        // Calculate adaptive spacing based on graph density
+        function calculateAdaptiveSpacing(nodeCount, width, height, mode = 'balanced') {
+            if (nodeCount === 0) return 100; // Guard clause
+
+            const areaPerNode = (width * height) / nodeCount;
+            const baseSpacing = Math.sqrt(areaPerNode);
+
+            // Scale factors for different modes
+            const modeScales = {
+                'tight': 0.4,      // Dense packing
+                'balanced': 0.6,   // Good default
+                'loose': 0.8       // More breathing room
+            };
+
+            const scaleFactor = modeScales[mode] || 0.6;
+            const calculatedSpacing = baseSpacing * scaleFactor;
+
+            // Bounds based on graph size
+            let minBound, maxBound;
+            if (nodeCount < 50) {
+                minBound = 150; maxBound = 400;
+            } else if (nodeCount < 500) {
+                minBound = 100; maxBound = 250;
+            } else {
+                minBound = 60; maxBound = 150;
+            }
+
+            return Math.max(minBound, Math.min(maxBound, calculatedSpacing));
+        }
+
+        // Calculate coordinated force parameters
+        function calculateForceParameters(nodeCount, width, height, spacing) {
+            const k = Math.sqrt(nodeCount / (width * height));
+
+            return {
+                linkDistance: Math.max(30, spacing * 0.25),
+                chargeStrength: -10 / k,
+                collideRadius: 30,
+                centerStrength: 0.05 + (0.1 * k),
+                radialStrength: 0.05 + (0.15 * k)
+            };
+        }
+    """
+
+
+def get_loading_spinner_functions() -> str:
+    """Get loading spinner functions for async node operations.
+
+    Returns:
+        JavaScript string for loading spinner display
+
+    Usage Examples:
+        // Show spinner during async operation
+        showNodeLoading(nodeId);
+        try {
+            await fetchNodeData(nodeId);
+        } finally {
+            hideNodeLoading(nodeId);
+        }
+
+    Common Use Cases:
+    - Lazy-loading node data when expanding collapsed groups
+    - Fetching additional details from backend
+    - Loading file contents on demand
+    - Any async operation tied to a specific node
+
+    Error Case Handling:
+    - Missing nodeId: Silently returns (no error thrown)
+    - Invalid nodeId: Silently returns if node not found in DOM
+    - Multiple calls: Safe to call showNodeLoading multiple times (removes old spinner)
+
+    Performance:
+    - Time Complexity: O(n) where n = number of visible nodes (D3 selection filter)
+    - Space Complexity: O(1) - adds 2 SVG elements per node
+    - Animation: CSS-based, hardware-accelerated transform
+    """
+    return """
+        // Show loading spinner on a node
+        function showNodeLoading(nodeId) {
+            const node = svg.selectAll('.node')
+                .filter(d => d.id === nodeId);
+
+            if (node.empty()) return;
+
+            const nodeData = node.datum();
+            const x = nodeData.x || 0;
+            const y = nodeData.y || 0;
+            const radius = 30;
+
+            // Remove any existing spinner first
+            node.selectAll('.node-loading, .node-loading-overlay').remove();
+
+            // Add semi-transparent overlay
+            node.append('circle')
+                .attr('class', 'node-loading-overlay')
+                .attr('cx', x)
+                .attr('cy', y)
+                .attr('r', radius);
+
+            // Add spinning circle
+            node.append('circle')
+                .attr('class', 'node-loading')
+                .attr('cx', x)
+                .attr('cy', y)
+                .attr('r', radius * 0.7)
+                .style('transform-origin', `${x}px ${y}px`);
+        }
+
+        // Hide loading spinner from a node
+        function hideNodeLoading(nodeId) {
+            const node = svg.selectAll('.node')
+                .filter(d => d.id === nodeId);
+
+            node.selectAll('.node-loading, .node-loading-overlay').remove();
+        }
+    """
+
+
 def get_graph_visualization_functions() -> str:
     """Get main graph visualization functions.
 
@@ -130,31 +283,31 @@ def get_graph_visualization_functions() -> str:
             return hsl.toString();
         }
 
-        // Position ALL nodes in a very compact initial layout
+        // Position ALL nodes in an adaptive initial layout
         function positionNodesCompactly(nodes) {
             const folders = nodes.filter(n => n.type === 'directory');
             const outliers = nodes.filter(n => n.type !== 'directory');
 
-            // ULTRA-TIGHT spacing for folders
+            // Calculate adaptive spacing for folders (grid layout)
             if (folders.length > 0) {
+                const folderSpacing = calculateAdaptiveSpacing(folders.length, width, height, 'balanced');
                 const cols = Math.ceil(Math.sqrt(folders.length));
-                const spacing = 800; // Extreme spacing: prevent any overlap whatsoever
-                const startX = width / 2 - (cols * spacing) / 2;
-                const startY = height / 2 - (Math.ceil(folders.length / cols) * spacing) / 2;
+                const startX = width / 2 - (cols * folderSpacing) / 2;
+                const startY = height / 2 - (Math.ceil(folders.length / cols) * folderSpacing) / 2;
 
                 folders.forEach((folder, i) => {
                     const col = i % cols;
                     const row = Math.floor(i / cols);
-                    folder.x = startX + col * spacing;
-                    folder.y = startY + row * spacing;
+                    folder.x = startX + col * folderSpacing;
+                    folder.y = startY + row * folderSpacing;
                     folder.fx = folder.x; // Fix position initially
                     folder.fy = folder.y;
                 });
             }
 
-            // Position outliers in a VERY TIGHT cluster near center
+            // Calculate adaptive radius for outliers (spiral layout)
             if (outliers.length > 0) {
-                const clusterRadius = 800; // Very wide spiral: maximum room
+                const clusterRadius = calculateAdaptiveSpacing(outliers.length, width * 0.6, height * 0.6, 'tight') * 2;
                 outliers.forEach((node, i) => {
                     const angle = (i / outliers.length) * 2 * Math.PI;
                     const radius = clusterRadius * Math.sqrt(i / outliers.length);
@@ -570,6 +723,22 @@ def get_zoom_and_navigation_functions() -> str:
             collapsedNodes = new Set(rootNodes.map(n => n.id));
             highlightedNode = null;
 
+            // Clean up non-visible objects
+            const pane = document.querySelector('.content-pane');
+            if (pane) {
+                pane.classList.remove('visible');
+                // Clear pane content to free memory
+                const content = pane.querySelector('.content-container');
+                const footer = pane.querySelector('.footer-container');
+                if (content) content.innerHTML = '';
+                if (footer) footer.innerHTML = '';
+            }
+
+            // Remove any highlighted states
+            d3.selectAll('.node circle, .node rect')
+                .classed('highlighted', false)
+                .classed('selected', false);
+
             // Re-render graph
             renderGraph();
 
@@ -853,6 +1022,178 @@ def get_drag_and_stats_functions() -> str:
     """
 
 
+def get_breadcrumb_functions() -> str:
+    """Get breadcrumb navigation functions for file/directory paths.
+
+    Returns:
+        JavaScript string for breadcrumb generation and navigation
+    """
+    return """
+        // Generate breadcrumb navigation for a file/directory path
+        function generateBreadcrumbs(node) {
+            if (!node.file_path) return '';
+
+            let nodePath = node.file_path;
+
+            // Strip project root prefix to show relative paths
+            // Look for 'mcp-vector-search' directory and strip everything before it
+            const projectRootIndex = nodePath.indexOf('mcp-vector-search');
+            if (projectRootIndex >= 0) {
+                // Find the first '/' after 'mcp-vector-search' and take everything after it
+                const afterProjectRoot = nodePath.indexOf('/', projectRootIndex);
+                if (afterProjectRoot >= 0) {
+                    nodePath = nodePath.substring(afterProjectRoot + 1);
+                }
+            }
+
+            const segments = nodePath.split('/').filter(s => s.length > 0);
+
+            if (segments.length === 0) return '';
+
+            let breadcrumbHTML = '<div class="breadcrumb-nav">';
+            breadcrumbHTML += '<span class="breadcrumb-root" onclick="navigateToRoot()">🏠 Root</span>';
+
+            let currentPath = '';
+            segments.forEach((segment, index) => {
+                currentPath += (currentPath ? '/' : '') + segment;
+                const isLast = (index === segments.length - 1);
+
+                breadcrumbHTML += ' <span class="breadcrumb-separator">/</span> ';
+
+                if (!isLast) {
+                    // Parent directories are clickable
+                    breadcrumbHTML += `<span class="breadcrumb-link" onclick="navigateToBreadcrumb('${currentPath}')">${segment}</span>`;
+                } else {
+                    // Current file/directory is not clickable (highlighted)
+                    breadcrumbHTML += `<span class="breadcrumb-current">${segment}</span>`;
+                }
+            });
+
+            breadcrumbHTML += '</div>';
+            return breadcrumbHTML;
+        }
+
+        // Navigate to a breadcrumb link (find and highlight the node)
+        function navigateToBreadcrumb(path) {
+            // Try to find the directory node by path
+            const targetNode = allNodes.find(n => n.file_path === path || n.dir_path === path);
+
+            if (targetNode) {
+                navigateToNode(targetNode);
+            }
+        }
+
+        // Navigate to project root
+        function navigateToRoot() {
+            resetView();
+        }
+    """
+
+
+def get_code_chunks_functions() -> str:
+    """Get code chunks display functions for file viewer.
+
+    Returns:
+        JavaScript string for code chunks navigation
+
+    Design Decision: Clickable code chunks section for file detail pane
+
+    Rationale: Users need quick navigation to specific functions/classes within files.
+    Selected list-based UI with line ranges and type badges for clarity.
+
+    Trade-offs:
+    - Performance: O(n) filtering per file vs. pre-indexing (chose simplicity)
+    - UX: Shows all chunks vs. grouped by type (chose comprehensive view)
+    - Visual: Icons vs. badges (chose both for maximum clarity)
+
+    Alternatives Considered:
+    1. Tree structure (functions under classes): Rejected - adds complexity
+    2. Grouped by type: Rejected - line number order more intuitive
+    3. Separate tab: Rejected - want chunks visible by default
+
+    Extension Points: Can add filtering by chunk_type, search box, or grouping later.
+    """
+    return """
+        // Get all code chunks for a given file
+        function getCodeChunksForFile(filePath) {
+            if (!filePath) return [];
+
+            const chunks = allNodes.filter(n =>
+                n.type === 'code' ||
+                (n.file_path === filePath &&
+                 ['function', 'class', 'method'].includes(n.type))
+            ).filter(n => n.file_path === filePath || n.parent_file === filePath);
+
+            // Sort by start_line
+            return chunks.sort((a, b) =>
+                (a.start_line || 0) - (b.start_line || 0)
+            );
+        }
+
+        // Generate HTML for code chunks section
+        function generateCodeChunksSection(filePath) {
+            const chunks = getCodeChunksForFile(filePath);
+
+            if (chunks.length === 0) {
+                return ''; // No chunks, don't show section
+            }
+
+            let html = '<div class="code-chunks-section">';
+            html += '<h4 class="section-header">Code Chunks (' + chunks.length + ')</h4>';
+            html += '<div class="code-chunks-list">';
+
+            chunks.forEach(chunk => {
+                const icon = getChunkIcon(chunk.type);
+                const lineRange = chunk.start_line ?
+                    ` <span class="line-range">L${chunk.start_line}-${chunk.end_line || chunk.start_line}</span>` :
+                    '';
+
+                html += `
+                    <div class="code-chunk-item" data-type="${chunk.type}" onclick="navigateToChunk('${chunk.id}')">
+                        <span class="chunk-icon">${icon}</span>
+                        <span class="chunk-name">${escapeHtml(chunk.name || 'unnamed')}</span>
+                        ${lineRange}
+                        <span class="chunk-type">${chunk.type || 'code'}</span>
+                    </div>
+                `;
+            });
+
+            html += '</div></div>';
+            return html;
+        }
+
+        // Get icon for chunk type
+        function getChunkIcon(chunkType) {
+            const icons = {
+                'function': '⚡',
+                'class': '📦',
+                'method': '🔧',
+                'variable': '📊',
+                'import': '📥',
+                'export': '📤',
+                'code': '📄'
+            };
+            return icons[chunkType] || '📄';
+        }
+
+        // Navigate to a code chunk (highlight and show details)
+        function navigateToChunk(chunkId) {
+            const chunk = allNodes.find(n => n.id === chunkId);
+            if (chunk) {
+                navigateToNode(chunk);
+            }
+        }
+
+        // Navigate to a file by path (reload parent file view from code chunk)
+        function navigateToFile(filePath) {
+            const fileNode = allNodes.find(n => n.file_path === filePath && n.type === 'file');
+            if (fileNode) {
+                navigateToNode(fileNode);
+            }
+        }
+    """
+
+
 def get_content_pane_functions() -> str:
     """Get content pane display functions.
 
@@ -872,16 +1213,19 @@ def get_content_pane_functions() -> str:
             const content = document.getElementById('pane-content');
             const footer = document.getElementById('pane-footer');
 
+            // Generate and inject breadcrumbs at the top
+            const breadcrumbs = generateBreadcrumbs(node);
+
             // Set title with actual import statement for L1 nodes
             if (node.depth === 1 && node.type !== 'directory' && node.type !== 'file') {
                 if (node.content) {
                     const importLine = node.content.split('\\n')[0].trim();
-                    title.textContent = importLine;
+                    title.innerHTML = breadcrumbs + importLine;
                 } else {
-                    title.textContent = `Import: ${node.name}`;
+                    title.innerHTML = breadcrumbs + `Import: ${node.name}`;
                 }
             } else {
-                title.textContent = node.name;
+                title.innerHTML = breadcrumbs + node.name;
             }
 
             // Set metadata
@@ -1024,8 +1368,12 @@ def get_content_pane_functions() -> str:
 
             const fullContent = sortedChunks.map(c => c.content).join('\\n\\n');
 
+            // Generate code chunks section HTML
+            const codeChunksHtml = generateCodeChunksSection(node.file_path || node.id);
+
             container.innerHTML = `
-                <p style="color: #8b949e; font-size: 11px; margin-bottom: 12px;">
+                ${codeChunksHtml}
+                <p style="color: #8b949e; font-size: 11px; margin-bottom: 12px; ${codeChunksHtml ? 'margin-top: 20px;' : ''}">
                     Contains ${fileChunks.length} code chunks
                 </p>
                 <pre><code>${escapeHtml(fullContent)}</code></pre>
@@ -1207,7 +1555,7 @@ def get_content_pane_functions() -> str:
             if (node.language) {
                 footerHtml += `<div class="footer-item"><span class="footer-label">Language:</span> <span class="footer-value">${node.language}</span></div>`;
             }
-            footerHtml += `<div class="footer-item"><span class="footer-label">File:</span> <span class="footer-value">${node.file_path}</span></div>`;
+            footerHtml += `<div class="footer-item"><span class="footer-label">File:</span> <a href="#" class="file-path-link" onclick="navigateToFile('${node.file_path}'); return false;" style="color: #58a6ff; text-decoration: none; cursor: pointer;">${node.file_path}</a></div>`;
             if (node.start_line) {
                 footerHtml += `<div class="footer-item"><span class="footer-label">Lines:</span> <span class="footer-value">${node.start_line}-${node.end_line}</span></div>`;
             }
@@ -1463,11 +1811,15 @@ def get_all_scripts() -> str:
         [
             get_d3_initialization(),
             get_file_type_functions(),
+            get_spacing_calculation_functions(),
+            get_loading_spinner_functions(),
             get_graph_visualization_functions(),
             get_zoom_and_navigation_functions(),
             get_interaction_handlers(),
             get_tooltip_logic(),
             get_drag_and_stats_functions(),
+            get_breadcrumb_functions(),
+            get_code_chunks_functions(),
             get_content_pane_functions(),
             get_data_loading_logic(),
         ]

@@ -210,6 +210,19 @@ def get_node_styles() -> str:
             stroke-width: 3px;
             filter: drop-shadow(0 0 8px #f0e68c);
         }
+
+        /* Node loading spinner */
+        .node-loading {
+            stroke: #2196F3;
+            stroke-width: 3;
+            fill: none;
+            animation: spin 1s linear infinite;
+        }
+
+        .node-loading-overlay {
+            fill: rgba(255, 255, 255, 0.8);
+            pointer-events: none;
+        }
     """
 
 
@@ -291,6 +304,61 @@ def get_tooltip_styles() -> str:
         .caller-link:hover {
             color: #79c0ff;
             text-decoration: underline;
+        }
+    """
+
+
+def get_breadcrumb_styles() -> str:
+    """Get styles for breadcrumb navigation.
+
+    Returns:
+        CSS string for breadcrumb styling
+    """
+    return """
+        /* Breadcrumb navigation */
+        .breadcrumb-nav {
+            margin: 0 0 10px 0;
+            padding: 8px 12px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            font-size: 12px;
+            line-height: 1.6;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+
+        .breadcrumb-root {
+            color: #58a6ff;
+            cursor: pointer;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .breadcrumb-root:hover {
+            color: #79c0ff;
+            text-decoration: underline;
+        }
+
+        .breadcrumb-link {
+            color: #58a6ff;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+
+        .breadcrumb-link:hover {
+            color: #79c0ff;
+            text-decoration: underline;
+        }
+
+        .breadcrumb-separator {
+            color: #6e7681;
+            margin: 0 6px;
+        }
+
+        .breadcrumb-current {
+            color: #c9d1d9;
+            font-weight: 600;
         }
     """
 
@@ -488,6 +556,110 @@ def get_content_pane_styles() -> str:
     """
 
 
+def get_code_chunks_styles() -> str:
+    """Get styles for code chunks section in file viewer.
+
+    Returns:
+        CSS string for code chunks styling
+    """
+    return """
+        /* Code chunks section */
+        .code-chunks-section {
+            margin: 0 0 20px 0;
+            padding: 15px;
+            background: #161b22;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+        }
+
+        .section-header {
+            margin: 0 0 12px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: #c9d1d9;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .code-chunks-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .code-chunk-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .code-chunk-item:hover {
+            background: #21262d;
+            border-color: #58a6ff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .chunk-icon {
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .chunk-name {
+            flex: 1;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 13px;
+            color: #c9d1d9;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .line-range {
+            font-size: 11px;
+            color: #8b949e;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            background: #161b22;
+            padding: 2px 6px;
+            border-radius: 3px;
+            flex-shrink: 0;
+        }
+
+        .chunk-type {
+            font-size: 11px;
+            color: #ffffff;
+            background: #6e7681;
+            padding: 2px 8px;
+            border-radius: 12px;
+            text-transform: lowercase;
+            flex-shrink: 0;
+        }
+
+        /* Type-specific colors for chunk badges */
+        .code-chunk-item[data-type="function"] .chunk-type {
+            background: #d29922;
+        }
+
+        .code-chunk-item[data-type="class"] .chunk-type {
+            background: #1f6feb;
+        }
+
+        .code-chunk-item[data-type="method"] .chunk-type {
+            background: #8957e5;
+        }
+
+        .code-chunk-item[data-type="code"] .chunk-type {
+            background: #6e7681;
+        }
+    """
+
+
 def get_reset_button_styles() -> str:
     """Get styles for the reset view button.
 
@@ -563,7 +735,9 @@ def get_all_styles() -> str:
             get_node_styles(),
             get_link_styles(),
             get_tooltip_styles(),
+            get_breadcrumb_styles(),
             get_content_pane_styles(),
+            get_code_chunks_styles(),
             get_reset_button_styles(),
             get_spinner_styles(),
         ]
