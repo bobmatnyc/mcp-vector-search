@@ -2157,21 +2157,12 @@ def get_data_loading_logic() -> str:
                     loadingEl.innerHTML = '<label style="color: #238636;">✓ Graph loaded successfully</label>';
                     setTimeout(() => loadingEl.style.display = 'none', 2000);
 
-                    // CRITICAL: Always initialize data arrays first
-                    // These are required by both visualizeGraph() and switchToCytoscapeLayout()
-                    allNodes = data.nodes;
-                    allLinks = data.links;
+                    // Initialize V2.0 two-phase visualization system
+                    // Phase 1: Vertical list of root nodes (overview)
+                    // Phase 2: Tree expansion on click (rightward)
+                    initializeVisualizationV2(data);
 
-                    // ALWAYS initialize through visualizeGraph first
-                    // This sets up visibleNodes, filteredLinks, and root nodes
-                    visualizeGraph(data);
-
-                    // Then switch to Dagre for large graphs (if needed)
-                    const layoutSelector = document.getElementById('layoutSelector');
-                    if (layoutSelector && data.nodes && data.nodes.length > 500) {
-                        layoutSelector.value = 'dagre';
-                        switchToCytoscapeLayout('dagre');
-                    }
+                    console.log('[Data Load] V2 visualization initialized - Phase 1 active (vertical list)');
                 })
                 .catch(err => {
                     clearTimeout(timeout);
@@ -2189,9 +2180,9 @@ def get_data_loading_logic() -> str:
                 });
         });
 
-        // Reset view button event handler
+        // Reset view button event handler - return to Phase 1 (vertical list)
         document.getElementById('reset-view-btn').addEventListener('click', () => {
-            resetView();
+            resetToListViewV2();
         });
     """
 
@@ -2506,15 +2497,19 @@ def get_layout_algorithms_v2() -> str:
                 return aName.localeCompare(bName);
             });
 
-            // Layout parameters
-            const nodeHeight = 50;  // Vertical space per node
-            const xPosition = 100;  // Left margin
-            const totalHeight = sortedNodes.length * nodeHeight;
+            // Layout parameters for Phase 1 (Initial Overview) - Grid Layout
+            const cellWidth = 250;   // Horizontal space per node (250px for adequate label space)
+            const cellHeight = 150;  // Vertical space per node (150px spacing)
+            const startX = 100;      // Left margin (100px as per requirements)
+            const startY = 100;      // Top margin (100px as per requirements, fixed not centered)
 
-            // Center vertically in viewport
-            const startY = (canvasHeight - totalHeight) / 2;
+            // Calculate grid dimensions (roughly square layout)
+            const columnsPerRow = Math.ceil(Math.sqrt(sortedNodes.length));
+            const totalRows = Math.ceil(sortedNodes.length / columnsPerRow);
+            const totalWidth = columnsPerRow * cellWidth;
+            const totalHeight = totalRows * cellHeight;
 
-            // Calculate positions
+            // Calculate positions in grid
             const positions = new Map();
             sortedNodes.forEach((node, i) => {
                 if (!node.id) {
@@ -2522,13 +2517,17 @@ def get_layout_algorithms_v2() -> str:
                     return;
                 }
 
-                const yPosition = startY + (i * nodeHeight);
+                const col = i % columnsPerRow;
+                const row = Math.floor(i / columnsPerRow);
+                const xPosition = startX + (col * cellWidth);
+                const yPosition = startY + (row * cellHeight);
                 positions.set(node.id, { x: xPosition, y: yPosition });
             });
 
             console.debug(
-                `[Layout] List: ${positions.size} nodes, ` +
-                `height=${totalHeight}px, startY=${startY.toFixed(1)}`
+                `[Layout] Grid: ${positions.size} nodes, ` +
+                `${columnsPerRow} cols × ${totalRows} rows, ` +
+                `size=${totalWidth}×${totalHeight}px, start=(${startX},${startY})`
             );
 
             return positions;
@@ -2934,6 +2933,86 @@ def get_interaction_handlers_v2() -> str:
             if (node) {
                 showContentPane(node);
             }
+        }
+
+        /**
+         * Initialize V2.0 visualization with two-phase prescriptive layout.
+         *
+         * Phase 1 (Initial State):
+         * - Show only root nodes (nodes with no incoming containment edges)
+         * - Vertical list layout at x=100, y spaced every 100px starting at y=100
+         * - All nodes collapsed, NO edges visible
+         * - viewMode: 'tree_root'
+         *
+         * Design Decision: Prescriptive initialization
+         *
+         * Rationale: Always start in Phase 1 (overview) to provide consistent,
+         * predictable initial state. Users can explore from this clean starting point.
+         */
+        function initializeVisualizationV2(data) {
+            console.log('[Init V2] Starting two-phase visualization initialization');
+
+            // Store global data
+            allNodes = data.nodes;
+            allLinks = data.links;
+
+            // Find root nodes - nodes with no incoming containment edges
+            const rootNodesList = allNodes.filter(n => {
+                const hasParent = allLinks.some(link => {
+                    const targetId = link.target.id || link.target;
+                    return targetId === n.id &&
+                           (link.type === 'dir_containment' ||
+                            link.type === 'file_containment' ||
+                            link.type === 'dir_hierarchy');
+                });
+                return !hasParent;
+            });
+
+            console.log('[Init V2] Found', rootNodesList.length, 'root nodes');
+
+            // Store root nodes globally
+            rootNodes = rootNodesList;
+
+            // Initialize state manager in Phase 1 (tree_root mode)
+            stateManager = new VisualizationStateManager({
+                view_mode: 'tree_root',
+                expansion_path: [],
+                node_states: {}
+            });
+
+            // Initialize all root nodes as visible and collapsed
+            for (const rootNode of rootNodesList) {
+                stateManager.nodeStates.set(rootNode.id, {
+                    expanded: false,
+                    visible: true,
+                    childrenVisible: false,
+                    positionOverride: null
+                });
+            }
+
+            // All non-root nodes start invisible
+            for (const node of allNodes) {
+                if (!stateManager.nodeStates.has(node.id)) {
+                    stateManager.nodeStates.set(node.id, {
+                        expanded: false,
+                        visible: false,
+                        childrenVisible: false,
+                        positionOverride: null
+                    });
+                }
+            }
+
+            // Set initial overview flag
+            isInitialOverview = true;
+
+            console.log('[Init V2] State manager initialized');
+            console.log('[Init V2] View mode:', stateManager.viewMode);
+            console.log('[Init V2] Visible nodes:', stateManager.getVisibleNodes().length);
+
+            // Render Phase 1: vertical list of root nodes, no edges
+            renderGraphV2(750);
+
+            console.log('[Init V2] Phase 1 rendering complete - vertical list with', rootNodesList.length, 'root nodes');
         }
     """
 

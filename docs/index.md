@@ -35,6 +35,7 @@ Step-by-step guides for specific tasks.
 - [File Watching](guides/file-watching.md) - Auto-update your index
 - [Searching Code](guides/searching.md) - Search strategies and tips
 - [Indexing Code](guides/indexing.md) - Indexing strategies and best practices
+- [Chat Command](guides/chat-command.md) - LLM-powered intelligent code search
 
 ### Reference
 Technical reference documentation.
@@ -65,6 +66,21 @@ Design and architecture documentation.
 - [Performance](architecture/performance.md) - Performance optimizations
 - [Design Decisions](architecture/design-decisions.md) - Key architectural decisions
 
+### Deployment
+Release management and distribution.
+
+- [Release Process](deployment/RELEASES.md) - Release workflow and best practices
+- [Version History](deployment/CHANGELOG.md) - Complete changelog
+- [Versioning System](deployment/VERSIONING_WORKFLOW.md) - Version management
+- [Homebrew Integration](deployment/HOMEBREW_INTEGRATION.md) - Automated distribution
+
+### Configuration
+Configuration management and options.
+
+- [Configuration Reference](configuration/README.md) - Centralized configuration docs
+- [Project Settings](getting-started/configuration.md) - Basic configuration guide
+- [Advanced Configuration](reference/configuration-options.md) - Complete options reference
+
 ### Advanced Topics
 For power users and advanced use cases.
 
@@ -74,24 +90,35 @@ For power users and advanced use cases.
 - [Extending MCP Vector Search](advanced/extending.md) - Add languages, parsers, etc.
 
 ### Internal Documentation
-Historical and internal documentation.
+Analysis, reports, and development notes.
 
-- [Analysis Reports](internal/analysis-reports.md) - Search analysis and improvements
+- [Analysis Reports](internal/README.md) - Search analysis and improvements
 - [Improvements Summary](internal/improvements.md) - Development improvements
 - [Refactoring Analysis](internal/refactoring-analysis.md) - Code refactoring notes
 - [Install Enhancements](internal/install-enhancements.md) - Install command evolution
+
+### Research
+Research notes and investigations.
+
+- [Research Index](research/README.md) - Research documentation index
+- [Performance Studies](research/) - Performance analysis and optimization research
+- [Feature Research](research/) - New feature investigations and prototypes
 
 ---
 
 ## 🗂️ Other Resources
 
 ### Important Files
-- **[CHANGELOG](CHANGELOG.md)** - Version history and release notes
+- **[CHANGELOG](deployment/CHANGELOG.md)** - Version history and release notes
 - **[README](../README.md)** - Project overview (in repository root)
 - **[LICENSE](../LICENSE)** - MIT License
+- **[Documentation Standards](DOCUMENTATION-STANDARDS.md)** - Documentation organization standards
 
 ### Product Documentation
 - **[Product Requirements](prd/)** - Product specifications and requirements
+
+### Archive
+- **[Archived Documentation](_archive/)** - Historical and deprecated documentation
 
 ---
 

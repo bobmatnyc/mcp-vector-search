@@ -29,7 +29,7 @@ make info                 # Detailed project information
 ### Bump Version
 ```bash
 make version-patch        # 4.0.3 → 4.0.4
-make version-minor        # 4.0.3 → 4.1.0  
+make version-minor        # 4.0.3 → 4.1.0
 make version-major        # 4.0.3 → 5.0.0
 ```
 
@@ -139,7 +139,7 @@ python scripts/version_manager.py --show
 
 # Bump versions
 python scripts/version_manager.py --bump patch
-python scripts/version_manager.py --bump minor  
+python scripts/version_manager.py --bump minor
 python scripts/version_manager.py --bump major
 
 # Set specific version
@@ -237,7 +237,7 @@ DRY_RUN=1 make release-minor
 
 # Test specific components
 DRY_RUN=1 make version-minor
-DRY_RUN=1 make changelog-update  
+DRY_RUN=1 make changelog-update
 DRY_RUN=1 make git-commit-release
 DRY_RUN=1 make publish
 ```

@@ -72,7 +72,7 @@ __version__ = "0.0.4"
 - Resolved search result ordering issues
 - Improved error messages for invalid file types
 
-### 🚀 Improvements  
+### 🚀 Improvements
 - Enhanced file watching performance
 - Better memory usage during large indexing operations
 - Improved CLI output formatting

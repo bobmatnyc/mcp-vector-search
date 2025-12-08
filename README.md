@@ -588,22 +588,20 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 git clone https://github.com/bobmatnyc/mcp-vector-search.git
 cd mcp-vector-search
 
-# Install dependencies with UV
-uv sync
-
-# Install in development mode
-uv pip install -e .
+# Install development environment (includes dependencies + editable install)
+make dev
 
 # Test CLI from source (recommended during development)
 ./dev-mcp version        # Shows [DEV] indicator
 ./dev-mcp search "test"  # No reinstall needed after code changes
 
-# Run tests
-uv run pytest
+# Run tests and quality checks
+make test-unit           # Run unit tests
+make quality            # Run linting and type checking
+make fix                # Auto-fix formatting issues
 
-# Run linting
-uv run ruff check
-uv run mypy src/
+# View all available targets
+make help
 ```
 
 For detailed development workflow and `dev-mcp` usage, see the [Development](#-development) section below.
@@ -675,15 +673,18 @@ Please [open an issue](https://github.com/bobmatnyc/mcp-vector-search/issues) or
 **Stage A: Local Development & Testing**
 ```bash
 # Setup development environment
-uv sync && uv pip install -e .
+make dev
 
 # Run development tests
-./scripts/dev-test.sh
+make test-unit
 
 # Run CLI from source (recommended during development)
 ./dev-mcp version        # Visual [DEV] indicator
 ./dev-mcp status         # Any command works
 ./dev-mcp search "auth"  # Immediate feedback on changes
+
+# Run quality checks
+make quality
 
 # Alternative: use uv run directly
 uv run mcp-vector-search version
@@ -782,7 +783,7 @@ For comprehensive documentation, see **[docs/index.md](docs/index.md)** - the co
 
 ### Reference
 - **[CLI Commands](docs/reference/cli-commands.md)** - Complete command reference
-- **[Configuration Options](docs/reference/configuration.md)** - All configuration settings
+- **[Configuration Options](docs/reference/configuration-options.md)** - All configuration settings
 - **[Features](docs/reference/features.md)** - Feature overview
 - **[Architecture](docs/reference/architecture.md)** - System architecture
 
@@ -791,11 +792,11 @@ For comprehensive documentation, see **[docs/index.md](docs/index.md)** - the co
 - **[Testing](docs/development/testing.md)** - Testing guide
 - **[Code Quality](docs/development/code-quality.md)** - Linting and formatting
 - **[API Reference](docs/development/api.md)** - Internal API docs
-- **[Deployment](DEPLOYMENT.md)** - Release and deployment guide
+- **[Deployment](docs/deployment/README.md)** - Release and deployment guide
 
 ### Advanced
 - **[Troubleshooting](docs/advanced/troubleshooting.md)** - Common issues and solutions
-- **[Performance](docs/advanced/performance.md)** - Performance optimization
+- **[Performance](docs/architecture/performance.md)** - Performance optimization
 - **[Extending](docs/advanced/extending.md)** - Adding new features
 
 ## 🤝 Contributing

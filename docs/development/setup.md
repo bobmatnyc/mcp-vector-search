@@ -7,22 +7,45 @@
 
 #### Setup Development Environment
 ```bash
-# Install in development mode
-uv sync
-uv pip install -e .
+# Install in development mode (includes editable install)
+make dev
 
 # Install pre-commit hooks
 uv run pre-commit install
 
 # Run tests
-uv run pytest
+make test-unit
 
-# Run type checking
-uv run mypy src/
+# Run type checking and linting
+make quality
 
-# Format code
-uv run black src/ tests/
-uv run ruff check src/ tests/ --fix
+# Auto-fix formatting and linting issues
+make fix
+```
+
+#### Available Make Targets
+The project uses a modular Makefile system with 97+ targets:
+
+```bash
+# View all available targets
+make help
+
+# Development
+make dev                    # Install development environment
+make test-unit             # Run unit tests
+make test-integration      # Run integration tests
+make quality               # Run all quality checks (ruff + mypy)
+make fix                   # Auto-fix linting issues
+
+# Dependencies
+make lock-deps             # Lock dependencies (uv.lock)
+make lock-update           # Update dependencies
+make lock-info             # Show dependency information
+
+# Release
+make release-patch         # Create patch release
+make release-minor         # Create minor release
+make release-build         # Build distribution packages
 ```
 
 #### Development Commands
@@ -36,13 +59,24 @@ uv run mcp-vector-search init
 uv run mcp-vector-search index
 uv run mcp-vector-search search "semantic search"
 
-# Run comprehensive tests
-uv run pytest -v --cov=src/mcp_vector_search
+# Run comprehensive tests with coverage
+make test-coverage
+
+# Debug commands
+make debug-search QUERY="your search term"
+make debug-mcp
+make debug-health
 ```
 
 #### Pre-commit Workflow
 ```bash
-# Check before committing
+# Run quality checks before committing
+make quality
+
+# Auto-fix issues
+make fix
+
+# Run pre-commit hooks
 uv run pre-commit run --all-files
 
 # Commit changes

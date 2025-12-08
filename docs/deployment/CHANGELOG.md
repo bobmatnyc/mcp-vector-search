@@ -420,13 +420,13 @@ This release fixes the core search functionality that was completely broken in v
 ## [Unreleased]
 
 ### Added
-- 
+-
 
 ### Changed
-- 
+-
 
 ### Fixed
-- 
+-
 
 ## [0.0.3] - 2024-01-10
 
