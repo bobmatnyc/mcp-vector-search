@@ -1,6 +1,8 @@
 """Chat command for LLM-powered intelligent code search."""
 
 import asyncio
+import os
+from fnmatch import fnmatch
 from pathlib import Path
 
 import typer
@@ -82,6 +84,13 @@ def chat_main(
         help="Output results in JSON format",
         rich_help_panel="📊 Result Options",
     ),
+    files: str | None = typer.Option(
+        None,
+        "--files",
+        "-f",
+        help="Filter by file glob patterns (e.g., '*.py', 'src/*.js'). Matches basename or relative path.",
+        rich_help_panel="🔍 Filters",
+    ),
 ) -> None:
     """🤖 Ask questions about your code in natural language.
 
@@ -121,6 +130,10 @@ def chat_main(
 
     [bold cyan]Advanced:[/bold cyan]
 
+    [green]Filter by file pattern:[/green]
+        $ mcp-vector-search chat "how does validation work?" --files "*.py"
+        $ mcp-vector-search chat "find React components" --files "src/*.tsx"
+
     [green]Limit results:[/green]
         $ mcp-vector-search chat "find auth code" --limit 3
 
@@ -159,6 +172,7 @@ def chat_main(
                 provider=provider,
                 timeout=timeout,
                 json_output=json_output,
+                files=files,
             )
         )
 
@@ -176,6 +190,7 @@ async def run_chat_search(
     provider: str | None = None,
     timeout: float = 30.0,
     json_output: bool = False,
+    files: str | None = None,
 ) -> None:
     """Run LLM-powered chat search.
 
@@ -194,6 +209,7 @@ async def run_chat_search(
         provider: LLM provider ('openai' or 'openrouter', auto-detect if None)
         timeout: API timeout in seconds
         json_output: Whether to output JSON format
+        files: Optional glob pattern to filter files (e.g., '*.py', 'src/*.js')
     """
     # Check for API keys (environment variable or config file)
     from ...core.config_utils import (
@@ -334,6 +350,25 @@ async def run_chat_search(
                     similarity_threshold=config.similarity_threshold,
                     include_context=True,
                 )
+
+                # Post-filter results by file pattern if specified
+                if files and results:
+                    filtered_results = []
+                    for result in results:
+                        # Get relative path from project root
+                        try:
+                            rel_path = str(result.file_path.relative_to(project_root))
+                        except ValueError:
+                            # If file is outside project root, use absolute path
+                            rel_path = str(result.file_path)
+
+                        # Match against glob pattern (both full path and basename)
+                        if fnmatch(rel_path, files) or fnmatch(
+                            os.path.basename(rel_path), files
+                        ):
+                            filtered_results.append(result)
+                    results = filtered_results
+
                 search_results[search_query] = results
                 total_results += len(results)
 

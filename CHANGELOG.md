@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.9] - 2025-12-08
+
+### Added
+- **`--files` filter support for chat command**
+  - Filter chat results by file glob patterns (e.g., `--files "*.py"`)
+  - Works the same as the search command's `--files` option
+  - Examples: `chat "how does validation work?" --files "src/*.py"`
+
 ## [0.15.8] - 2025-12-08
 
 ### Fixed
