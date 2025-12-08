@@ -1,6 +1,7 @@
 """LLM client for intelligent code search using OpenRouter API."""
 
 import os
+import re
 from typing import Any
 
 import httpx
@@ -330,11 +331,25 @@ Select the top {top_n} most relevant results:"""
         for item in ranked[:top_n]:
             identifier = item.get("identifier", "")
 
-            # Parse identifier (e.g., "Query 1, Result 2")
+            # Parse identifier (e.g., "Query 1, Result 2" or "Query 1, Result 2 (filename.py)")
             try:
                 parts = identifier.split(",")
-                query_idx = int(parts[0].replace("Query", "").strip()) - 1
-                result_idx = int(parts[1].replace("Result", "").strip()) - 1
+                query_part = parts[0].replace("Query", "").strip()
+                result_part = parts[1].replace("Result", "").strip()
+
+                # Handle case where LLM includes filename in parentheses: "5 (config.py)"
+                # Extract just the number
+                query_match = re.match(r"(\d+)", query_part)
+                result_match = re.match(r"(\d+)", result_part)
+
+                if not query_match or not result_match:
+                    logger.warning(
+                        f"Could not extract numbers from identifier '{identifier}'"
+                    )
+                    continue
+
+                query_idx = int(query_match.group(1)) - 1
+                result_idx = int(result_match.group(1)) - 1
 
                 # Get corresponding query and result
                 queries = list(search_results.keys())
