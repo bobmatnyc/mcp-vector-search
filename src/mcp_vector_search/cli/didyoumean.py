@@ -212,6 +212,17 @@ COMMON_TYPOS = {
     "grep": "search",
     "s": "search",  # Single letter shortcut
     "f": "search",  # Alternative shortcut for find
+    # Chat command variations
+    "cht": "chat",
+    "caht": "chat",
+    "chta": "chat",
+    "ask": "chat",
+    "question": "chat",
+    "qa": "chat",
+    "llm": "chat",
+    "gpt": "chat",
+    "explain": "chat",
+    "answer": "chat",
     # Index command variations
     "indx": "index",
     "idx": "index",
@@ -333,9 +344,18 @@ COMMAND_INFO = {
         "examples": [
             'mcp-vector-search search "authentication function"',
             'mcp-vector-search search "error handling" --limit 5',
-            'mcp-vector-search find "database connection"',
+            'mcp-vector-search search --files "*.ts" "query"',
         ],
-        "related": ["search-similar", "search-context", "find", "interactive"],
+        "related": ["chat", "index", "status"],
+    },
+    "chat": {
+        "description": "Ask AI questions about your code (requires API key)",
+        "examples": [
+            'mcp-vector-search chat "where is the database configured?"',
+            'mcp-vector-search chat "how does authentication work?"',
+            'mcp-vector-search chat --limit 3 "explain error handling"',
+        ],
+        "related": ["search", "status", "index"],
     },
     "index": {
         "description": "Index codebase for semantic search",
