@@ -7,16 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2025-12-08
+
 ### Added
+- **LLM-powered `chat` command** for intelligent code Q&A using OpenRouter API
+  - Natural language questions about your codebase
+  - Automatic multi-query search and result ranking
+  - Configurable LLM model selection
+  - Default model: claude-3-haiku (fast and cost-effective)
 - OpenRouter API key setup guidance in `setup` command
 - Enhanced main help text with chat command examples and API setup instructions
 - Automatic detection and display of OpenRouter API key status during setup
 - Clear instructions for obtaining and configuring OpenRouter API keys
+- Chat command aliases for "did you mean" support (ask, qa, llm, gpt, etc.)
+- LLM benchmark script for testing model performance/cost trade-offs
+- Two-phase visualization layout with progressive disclosure
+- Visualization startup performance instrumentation
 
 ### Changed
 - Improved main CLI help text to highlight chat command and its requirements
 - Setup command now checks for OpenRouter API key and provides setup guidance
 - Enhanced user experience with clearer distinction between search and chat commands
+- Default LLM changed to claude-3-haiku for 4x faster responses at lower cost
+- Visualization cache-busting with no-cache headers for better development experience
+
+### Fixed
+- **Glob pattern matching** for `--files` filter now works correctly with patterns like `*.ts`
+- LLM result identifier parsing handles filenames in parentheses gracefully
 
 ## [0.14.6] - 2025-12-04
 
