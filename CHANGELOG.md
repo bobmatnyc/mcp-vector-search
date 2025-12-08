@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.3] - 2025-12-08
+
+### Fixed
+- **py-mcp-installer dependency now available from PyPI** - Users can install mcp-vector-search directly via pip
+  - Published py-mcp-installer v0.1.0 to PyPI
+  - Fixed dependency resolution that previously required local vendor directory
+  - Added version constraint `>=0.1.0` for compatibility
+
 ## [0.15.2] - 2025-12-08
 
 ### Changed
