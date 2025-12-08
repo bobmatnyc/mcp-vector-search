@@ -286,11 +286,34 @@ def select_optimal_embedding_model(languages: list[str]) -> str:
     return DEFAULT_EMBEDDING_MODELS["code"]
 
 
+def _obfuscate_api_key(api_key: str) -> str:
+    """Obfuscate API key for display.
+
+    Shows first 6 characters + "..." + last 4 characters.
+    For short keys (<10 chars), shows "****...1234".
+
+    Args:
+        api_key: API key to obfuscate
+
+    Returns:
+        Obfuscated string like "sk-or-...abc1234" or "****...1234"
+    """
+    if not api_key:
+        return "****"
+
+    if len(api_key) < 10:
+        # Short key - show masked prefix
+        return f"****...{api_key[-4:]}"
+
+    # Full key - show first 6 + last 4
+    return f"{api_key[:6]}...{api_key[-4:]}"
+
+
 def setup_openrouter_api_key(project_root: Path, interactive: bool = True) -> bool:
     """Check and optionally set up OpenRouter API key for chat command.
 
     This function checks for API key in environment and config file.
-    If not found and interactive mode is enabled, prompts user to save one.
+    In interactive mode, always prompts user with existing value as default.
 
     Args:
         project_root: Project root directory
@@ -300,6 +323,7 @@ def setup_openrouter_api_key(project_root: Path, interactive: bool = True) -> bo
         True if API key is configured, False otherwise
     """
     from ...core.config_utils import (
+        delete_openrouter_api_key,
         get_config_file_path,
         get_openrouter_api_key,
         save_openrouter_api_key,
@@ -308,13 +332,18 @@ def setup_openrouter_api_key(project_root: Path, interactive: bool = True) -> bo
     config_dir = project_root / ".mcp-vector-search"
 
     # Check if API key is already available
-    api_key = get_openrouter_api_key(config_dir)
+    existing_api_key = get_openrouter_api_key(config_dir)
+    is_from_env = bool(os.environ.get("OPENROUTER_API_KEY"))
 
-    if api_key:
-        print_success(f"   ✅ OpenRouter API key found (ends with {api_key[-4:]})")
+    # Show current status
+    if existing_api_key and not interactive:
+        # Non-interactive: just report status
+        print_success(
+            f"   ✅ OpenRouter API key found (ends with {existing_api_key[-4:]})"
+        )
 
         # Check where it came from
-        if os.environ.get("OPENROUTER_API_KEY"):
+        if is_from_env:
             print_info("      Source: Environment variable")
         else:
             config_path = get_config_file_path(config_dir)
@@ -323,59 +352,134 @@ def setup_openrouter_api_key(project_root: Path, interactive: bool = True) -> bo
         print_info("      Chat command is ready to use!")
         return True
 
-    # API key not found - show setup instructions
-    print_info("   ℹ️  OpenRouter API key not found")
-    print_info("")
-    print_info("   The 'chat' command uses AI to answer questions about your code.")
-    print_info("   It requires an OpenRouter API key (free tier available).")
-    print_info("")
-
     if not interactive:
+        # No key found and not interactive
+        print_info("   ℹ️  OpenRouter API key not found")
+        print_info("")
+        print_info("   The 'chat' command uses AI to answer questions about your code.")
+        print_info("   It requires an OpenRouter API key (free tier available).")
+        print_info("")
         print_info("   [bold cyan]To enable the chat command:[/bold cyan]")
         print_info("   1. Get a free API key: [cyan]https://openrouter.ai/keys[/cyan]")
         print_info("   2. Option A - Environment variable (recommended for security):")
         print_info("      [yellow]export OPENROUTER_API_KEY='your-key-here'[/yellow]")
         print_info("   3. Option B - Save to local config (convenient):")
-        print_info("      [yellow]mcp-vector-search setup --save-api-key[/yellow]")
+        print_info("      [yellow]mcp-vector-search setup[/yellow]")
         print_info("")
         print_info("   [dim]💡 You can skip this for now - search still works![/dim]")
         return False
 
-    # Interactive mode - prompt to save key
-    print_info("   [bold cyan]Would you like to save an API key now?[/bold cyan]")
+    # Interactive mode - always prompt with existing value as default
     print_info("")
-    print_info("   1. Get a free API key: [cyan]https://openrouter.ai/keys[/cyan]")
-    print_info("   2. Paste it below (it will be saved securely)")
+    print_info("   [bold cyan]OpenRouter API Key Setup[/bold cyan]")
     print_info("")
-    print_info("   [dim]Press Enter to skip (you can set it up later)[/dim]")
+    print_info("   The 'chat' command uses AI to answer questions about your code.")
+    print_info("   It requires an OpenRouter API key (free tier available).")
+    print_info("")
+
+    if not existing_api_key:
+        print_info("   Get a free API key: [cyan]https://openrouter.ai/keys[/cyan]")
+
+    # Show current status
+    if existing_api_key:
+        obfuscated = _obfuscate_api_key(existing_api_key)
+        if is_from_env:
+            print_info(
+                f"   Current: {obfuscated} [dim](from environment variable)[/dim]"
+            )
+            print_info(
+                "   [dim]Note: Environment variable takes precedence over config file[/dim]"
+            )
+        else:
+            print_info(f"   Current: {obfuscated} [dim](from config file)[/dim]")
+
+    print_info("")
+    print_info("   [dim]Options:[/dim]")
+    print_info(
+        "   [dim]• Press Enter to keep existing key (no change)[/dim]"
+        if existing_api_key
+        else "   [dim]• Press Enter to skip[/dim]"
+    )
+    print_info("   [dim]• Enter new key to update[/dim]")
+    if existing_api_key and not is_from_env:
+        print_info("   [dim]• Type 'clear' or 'delete' to remove from config[/dim]")
     print_info("")
 
     try:
-        # Prompt for API key
+        # Prompt for API key with obfuscated default
         from ..output import console
 
-        user_input = console.input(
-            "   [yellow]Enter API key (or press Enter to skip): [/yellow]"
-        )
+        if existing_api_key:
+            obfuscated = _obfuscate_api_key(existing_api_key)
+            prompt_text = f"   [yellow]OpenRouter API key [{obfuscated}]: [/yellow]"
+        else:
+            prompt_text = (
+                "   [yellow]OpenRouter API key (press Enter to skip): [/yellow]"
+            )
 
-        if user_input and user_input.strip():
-            # Save the API key
+        user_input = console.input(prompt_text).strip()
+
+        # Handle different inputs
+        if not user_input:
+            # Empty input - keep existing or skip
+            if existing_api_key:
+                print_info("   ⏭️  Keeping existing API key (no change)")
+                return True
+            else:
+                print_info("   ⏭️  Skipped API key setup")
+                print_info("")
+                print_info("   [dim]You can set it up later by running:[/dim]")
+                print_info("   [cyan]mcp-vector-search setup[/cyan]")
+                return False
+
+        elif user_input.lower() in ("clear", "delete", "remove"):
+            # Clear the API key
+            if not existing_api_key:
+                print_warning("   ⚠️  No API key to clear")
+                return False
+
+            if is_from_env:
+                print_warning("   ⚠️  Cannot clear environment variable from config")
+                print_info(
+                    "   [dim]To remove, unset the OPENROUTER_API_KEY environment variable[/dim]"
+                )
+                return True
+
+            # Delete from config file
             try:
-                save_openrouter_api_key(user_input.strip(), config_dir)
+                deleted = delete_openrouter_api_key(config_dir)
+                if deleted:
+                    print_success("   ✅ API key removed from config")
+                    return False
+                else:
+                    print_warning("   ⚠️  API key not found in config")
+                    return False
+            except Exception as e:
+                print_error(f"   ❌ Failed to delete API key: {e}")
+                return False
+
+        else:
+            # New API key provided
+            try:
+                save_openrouter_api_key(user_input, config_dir)
                 config_path = get_config_file_path(config_dir)
                 print_success(f"   ✅ API key saved to {config_path}")
-                print_info(f"      Last 4 characters: {user_input.strip()[-4:]}")
+                print_info(f"      Last 4 characters: {user_input[-4:]}")
                 print_info("      Chat command is now ready to use!")
+
+                if is_from_env:
+                    print_warning("")
+                    print_warning(
+                        "   ⚠️  Note: Environment variable will still take precedence"
+                    )
+                    print_warning(
+                        "      To use the config file key, unset OPENROUTER_API_KEY"
+                    )
+
                 return True
             except Exception as e:
                 print_error(f"   ❌ Failed to save API key: {e}")
                 return False
-        else:
-            print_info("   ⏭️  Skipped API key setup")
-            print_info("")
-            print_info("   [dim]You can set it up later with:[/dim]")
-            print_info("   [cyan]mcp-vector-search setup --save-api-key[/cyan]")
-            return False
 
     except KeyboardInterrupt:
         print_info("\n   ⏭️  API key setup cancelled")
@@ -634,9 +738,10 @@ async def _run_smart_setup(
     # Phase 6: OpenRouter API Key Setup (Optional)
     # ===========================================================================
     console.print("\n[bold blue]🤖 Chat Command Setup (Optional)...[/bold blue]")
-    # Use interactive mode if --save-api-key flag is set or running full setup
+    # Always prompt interactively during setup - user can press Enter to skip/keep
+    # The save_api_key flag is now deprecated but kept for backward compatibility
     openrouter_configured = setup_openrouter_api_key(
-        project_root=project_root, interactive=save_api_key
+        project_root=project_root, interactive=True
     )
 
     # ===========================================================================
