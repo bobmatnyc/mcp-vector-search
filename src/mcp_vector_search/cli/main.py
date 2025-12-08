@@ -41,6 +41,7 @@ unfamiliar codebases, finding similar patterns, and integrating with AI tools.
   doctor     🩺 Check system health
   status     📊 Show project status
   search     🔍 Search code semantically
+  chat       🤖 Ask questions about code with LLM
   index      📇 Index codebase
   mcp        🔌 MCP server operations
   config     ⚙️  Configure settings
@@ -55,6 +56,7 @@ unfamiliar codebases, finding similar patterns, and integrating with AI tools.
 )
 
 # Import command modules
+from .commands.chat import chat_app  # noqa: E402
 from .commands.config import config_app  # noqa: E402
 from .commands.demo import demo_app  # noqa: E402
 from .commands.index import index_app  # noqa: E402
@@ -99,6 +101,9 @@ app.command("status", help="📊 Show project status and statistics")(status_mai
 # 7. SEARCH - Search code
 # Register search as both a command and a typer group
 app.add_typer(search_app, name="search", help="🔍 Search code semantically")
+
+# 7.5. CHAT - LLM-powered intelligent search
+app.add_typer(chat_app, name="chat", help="🤖 Ask questions about code with LLM")
 
 # 8. INDEX - Index codebase
 app.add_typer(index_app, name="index", help="📇 Index codebase for semantic search")
