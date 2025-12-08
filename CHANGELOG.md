@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- OpenRouter API key setup guidance in `setup` command
+- Enhanced main help text with chat command examples and API setup instructions
+- Automatic detection and display of OpenRouter API key status during setup
+- Clear instructions for obtaining and configuring OpenRouter API keys
+
+### Changed
+- Improved main CLI help text to highlight chat command and its requirements
+- Setup command now checks for OpenRouter API key and provides setup guidance
+- Enhanced user experience with clearer distinction between search and chat commands
+
 ## [0.14.6] - 2025-12-04
 
 ### Added

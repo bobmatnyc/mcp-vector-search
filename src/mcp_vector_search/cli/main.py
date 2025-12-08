@@ -22,34 +22,47 @@ console = Console()
 app = create_enhanced_typer(
     name="mcp-vector-search",
     help="""
-🔍 [bold]CLI-first semantic code search with MCP integration[/bold]
+🔍 [bold]MCP Vector Search - Semantic Code Search CLI[/bold]
 
-Semantic search finds code by meaning, not just keywords. Perfect for exploring
-unfamiliar codebases, finding similar patterns, and integrating with AI tools.
+Search your codebase by meaning, not just keywords. Find similar code patterns,
+explore unfamiliar projects, and integrate with AI coding tools via MCP.
 
-[bold cyan]Quick Start:[/bold cyan]
-  1. Zero-config setup: [green]mcp-vector-search setup[/green] [dim](recommended!)[/dim]
-  2. Search code: [green]mcp-vector-search search "your query"[/green]
-  3. Check status: [green]mcp-vector-search status[/green]
+[bold cyan]QUICK START:[/bold cyan]
+  mcp-vector-search setup           # One-time setup (recommended)
+  mcp-vector-search search "query"  # Search by meaning
+  mcp-vector-search chat "question" # Ask AI about your code
 
-[bold cyan]Main Commands:[/bold cyan]
-  setup      🚀 Smart zero-config setup (recommended)
+[bold cyan]MAIN COMMANDS:[/bold cyan]
+  setup     🚀 Zero-config setup (indexes + configures MCP)
+  search    🔍 Semantic search (finds code by meaning)
+  chat      🤖 LLM-powered Q&A about your code (needs API key)
+  status    📊 Show project status
+  visualize 📊 Interactive code graph
+
+[bold cyan]AI CHAT SETUP:[/bold cyan]
+  The 'chat' command requires an OpenRouter API key:
+  1. Get key: [cyan]https://openrouter.ai/keys[/cyan]
+  2. Set: [yellow]export OPENROUTER_API_KEY='your-key'[/yellow]
+
+[bold cyan]EXAMPLES:[/bold cyan]
+  mcp-vector-search search "error handling"
+  mcp-vector-search search --files "*.ts" "authentication"
+  mcp-vector-search chat "where is the database configured?"
+  mcp-vector-search chat "how does auth work in this project?"
+
+[bold cyan]MORE COMMANDS:[/bold cyan]
   install    📦 Install project and MCP integrations
   uninstall  🗑️  Remove MCP integrations
   init       🔧 Initialize project (advanced)
   demo       🎬 Run interactive demo
   doctor     🩺 Check system health
-  status     📊 Show project status
-  search     🔍 Search code semantically
-  chat       🤖 Ask questions about code with LLM
   index      📇 Index codebase
   mcp        🔌 MCP server operations
   config     ⚙️  Configure settings
-  visualize  📊 Visualize code relationships
   help       ❓ Get help
   version    ℹ️  Show version
 
-[dim]For detailed help: [cyan]mcp-vector-search COMMAND --help[/cyan][/dim]
+[dim]For more: [cyan]mcp-vector-search COMMAND --help[/cyan][/dim]
     """,
     add_completion=False,
     rich_markup_mode="rich",

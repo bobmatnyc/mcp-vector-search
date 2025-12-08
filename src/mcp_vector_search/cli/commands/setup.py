@@ -23,6 +23,7 @@ Examples:
 """
 
 import asyncio
+import os
 import shutil
 import subprocess
 import time
@@ -285,6 +286,39 @@ def select_optimal_embedding_model(languages: list[str]) -> str:
     return DEFAULT_EMBEDDING_MODELS["code"]
 
 
+def setup_openrouter_api_key() -> bool:
+    """Check and optionally set up OpenRouter API key for chat command.
+
+    This function checks if OPENROUTER_API_KEY is set in the environment.
+    If not, it provides helpful instructions for setting it up.
+
+    Returns:
+        True if API key is configured, False otherwise
+    """
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+
+    if api_key:
+        print_success("   ✅ OpenRouter API key found")
+        print_info("      Chat command is ready to use!")
+        return True
+
+    # API key not found - show setup instructions
+    print_info("   ℹ️  OpenRouter API key not found")
+    print_info("")
+    print_info("   The 'chat' command uses AI to answer questions about your code.")
+    print_info("   It requires an OpenRouter API key (free tier available).")
+    print_info("")
+    print_info("   [bold cyan]To enable the chat command:[/bold cyan]")
+    print_info("   1. Get a free API key: [cyan]https://openrouter.ai/keys[/cyan]")
+    print_info("   2. Add to your shell profile (~/.bashrc, ~/.zshrc, etc.):")
+    print_info("      [yellow]export OPENROUTER_API_KEY='your-key-here'[/yellow]")
+    print_info("   3. Reload your shell: [yellow]source ~/.bashrc[/yellow]")
+    print_info("")
+    print_info("   [dim]💡 You can skip this for now - search still works![/dim]")
+
+    return False
+
+
 # ==============================================================================
 # Main Setup Command
 # ==============================================================================
@@ -522,7 +556,13 @@ async def _run_smart_setup(ctx: typer.Context, force: bool, verbose: bool) -> No
             print_info(f"   • {platform}")
 
     # ===========================================================================
-    # Phase 6: Completion
+    # Phase 6: OpenRouter API Key Setup (Optional)
+    # ===========================================================================
+    console.print("\n[bold blue]🤖 Chat Command Setup (Optional)...[/bold blue]")
+    openrouter_configured = setup_openrouter_api_key()
+
+    # ===========================================================================
+    # Phase 7: Completion
     # ===========================================================================
     console.print("\n[bold green]🎉 Setup Complete![/bold green]")
 
@@ -538,6 +578,8 @@ async def _run_smart_setup(ctx: typer.Context, force: bool, verbose: bool) -> No
 
     summary_items.append(f"{len(configured_platforms)} MCP platform(s) configured")
     summary_items.append("File watching enabled")
+    if openrouter_configured:
+        summary_items.append("OpenRouter API configured for chat command")
 
     console.print("\n[bold]What was set up:[/bold]")
     for item in summary_items:
@@ -548,6 +590,11 @@ async def _run_smart_setup(ctx: typer.Context, force: bool, verbose: bool) -> No
         "[cyan]mcp-vector-search search 'your query'[/cyan] - Search your code",
         "[cyan]mcp-vector-search status[/cyan] - Check project status",
     ]
+
+    if openrouter_configured:
+        next_steps.insert(
+            1, "[cyan]mcp-vector-search chat 'question'[/cyan] - Ask AI about your code"
+        )
 
     if "claude-code" in configured_platforms:
         next_steps.insert(0, "Open Claude Code in this directory to use MCP tools")
