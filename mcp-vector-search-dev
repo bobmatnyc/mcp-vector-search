@@ -1,0 +1,15 @@
+#!/bin/bash
+# mcp-vector-search-dev - Run mcp-vector-search from source with uv
+# This script loads environment variables and runs the CLI in development mode
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load environment variables if .env.local exists
+if [[ -f "$SCRIPT_DIR/.env.local" ]]; then
+    set -a
+    source "$SCRIPT_DIR/.env.local"
+    set +a
+fi
+
+# Run the CLI with uv
+exec uv run mcp-vector-search "$@"
