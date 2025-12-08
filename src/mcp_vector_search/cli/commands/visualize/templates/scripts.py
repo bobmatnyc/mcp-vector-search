@@ -3075,6 +3075,11 @@ def get_rendering_v2() -> str:
                     if (depth === 0) {
                         // Root level - use list layout position
                         const rootNodes = allNodes.filter(n => {
+                            // Phase 1: Only show directories and files (exclude code chunks)
+                            // This prevents hundreds of functions/classes from cluttering the initial view
+                            const isDirectoryOrFile = n.type === 'directory' || n.type === 'file' || n.type === 'subproject';
+                            if (!isDirectoryOrFile) return false;
+
                             const parentLinks = allLinks.filter(l =>
                                 (l.target.id || l.target) === n.id &&
                                 (l.type === 'dir_containment' || l.type === 'file_containment')
