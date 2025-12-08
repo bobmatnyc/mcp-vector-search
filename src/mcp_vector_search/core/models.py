@@ -147,6 +147,9 @@ class SearchResult(BaseModel):
     context_before: list[str] = Field(default=[], description="Lines before the match")
     context_after: list[str] = Field(default=[], description="Lines after the match")
     highlights: list[str] = Field(default=[], description="Highlighted terms")
+    file_missing: bool = Field(
+        default=False, description="True if file no longer exists (stale index)"
+    )
 
     class Config:
         arbitrary_types_allowed = True

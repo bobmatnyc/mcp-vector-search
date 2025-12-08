@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.8] - 2025-12-08
+
+### Fixed
+- **Graceful handling of missing files during search**
+  - Changed noisy WARNING logs to silent DEBUG level for missing files
+  - Files deleted since indexing no longer spam warnings
+  - Added `file_missing` flag to SearchResult for optional filtering
+  - Hint: Use `mcp-vector-search index --force` to refresh stale index
+
 ## [0.15.7] - 2025-12-08
 
 ### Fixed

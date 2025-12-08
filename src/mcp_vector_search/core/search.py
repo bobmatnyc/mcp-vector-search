@@ -470,6 +470,11 @@ class SemanticSearchEngine:
             result.context_before = context_before
             result.context_after = context_after
 
+        except FileNotFoundError:
+            # File was deleted since indexing - silently skip context
+            # This is normal when index is stale; use --force to reindex
+            logger.debug(f"File no longer exists (stale index): {result.file_path}")
+            result.file_missing = True  # Mark for potential filtering
         except Exception as e:
             logger.warning(f"Failed to get context for {result.file_path}: {e}")
 
