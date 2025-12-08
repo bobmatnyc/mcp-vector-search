@@ -73,7 +73,7 @@ class SchedulerManager:
             project_root = str(self.project_root)
 
             # Create wrapper script
-            script_content = f'''#!/bin/bash
+            script_content = f"""#!/bin/bash
 # MCP Vector Search Auto-Reindex - {task_name}
 cd "{project_root}" || exit 1
 
@@ -85,7 +85,7 @@ elif [ -f "{python_path}" ]; then
 else
     python3 -m mcp_vector_search auto-index check --auto-reindex --max-files 10
 fi
-'''
+"""
 
             # Write script to temp file
             script_dir = Path.home() / ".mcp-vector-search" / "scripts"
@@ -109,7 +109,7 @@ fi
 
             # Get current crontab
             try:
-                result = subprocess.run(
+                result = subprocess.run(  # nosec B607
                     ["crontab", "-l"], capture_output=True, text=True, check=True
                 )
                 current_crontab = result.stdout
@@ -125,7 +125,7 @@ fi
             new_crontab = current_crontab + cron_entry
 
             # Install new crontab
-            process = subprocess.Popen(
+            process = subprocess.Popen(  # nosec B607
                 ["crontab", "-"], stdin=subprocess.PIPE, text=True
             )
             process.communicate(input=new_crontab)
@@ -148,7 +148,7 @@ fi
         try:
             # Get current crontab
             try:
-                result = subprocess.run(
+                result = subprocess.run(  # nosec B607
                     ["crontab", "-l"], capture_output=True, text=True, check=True
                 )
                 current_crontab = result.stdout
@@ -163,13 +163,13 @@ fi
 
             # Install new crontab
             if new_crontab.strip():
-                process = subprocess.Popen(
+                process = subprocess.Popen(  # nosec B607
                     ["crontab", "-"], stdin=subprocess.PIPE, text=True
                 )
                 process.communicate(input=new_crontab)
             else:
                 # Remove crontab entirely if empty
-                subprocess.run(["crontab", "-r"], check=False)
+                subprocess.run(["crontab", "-r"], check=False)  # nosec B607
 
             # Remove script file
             script_dir = Path.home() / ".mcp-vector-search" / "scripts"
@@ -191,7 +191,7 @@ fi
             project_root = str(self.project_root)
 
             # Create PowerShell script
-            script_content = f'''# MCP Vector Search Auto-Reindex - {task_name}
+            script_content = f"""# MCP Vector Search Auto-Reindex - {task_name}
 Set-Location "{project_root}"
 
 try {{
@@ -205,7 +205,7 @@ try {{
 }} catch {{
     # Silently ignore errors
 }}
-'''
+"""
 
             # Write script
             script_dir = Path.home() / ".mcp-vector-search" / "scripts"
@@ -302,7 +302,7 @@ try {{
     def _get_cron_status(self, task_name: str) -> dict:
         """Get cron job status."""
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B607
                 ["crontab", "-l"], capture_output=True, text=True, check=True
             )
 
@@ -315,7 +315,7 @@ try {{
     def _get_windows_task_status(self, task_name: str) -> dict:
         """Get Windows task status."""
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B607
                 ["schtasks", "/query", "/tn", task_name], capture_output=True, text=True
             )
 

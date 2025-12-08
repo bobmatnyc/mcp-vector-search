@@ -142,12 +142,16 @@ class PerformanceProfiler:
             "min": min(durations),
             "max": max(durations),
             "std_dev": statistics.stdev(durations) if len(durations) > 1 else 0.0,
-            "p95": statistics.quantiles(durations, n=20)[18]
-            if len(durations) >= 20
-            else max(durations),
-            "p99": statistics.quantiles(durations, n=100)[98]
-            if len(durations) >= 100
-            else max(durations),
+            "p95": (
+                statistics.quantiles(durations, n=20)[18]
+                if len(durations) >= 20
+                else max(durations)
+            ),
+            "p99": (
+                statistics.quantiles(durations, n=100)[98]
+                if len(durations) >= 100
+                else max(durations)
+            ),
         }
 
     def get_operation_breakdown(self) -> dict[str, dict[str, Any]]:

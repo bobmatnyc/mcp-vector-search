@@ -578,7 +578,8 @@ def demo(
             demo_dir.mkdir()
 
             # Create sample files
-            (demo_dir / "main.py").write_text("""
+            (demo_dir / "main.py").write_text(
+                """
 def main():
     '''Main entry point for the application.'''
     print("Hello, World!")
@@ -600,9 +601,11 @@ class UserService:
 
 if __name__ == "__main__":
     main()
-""")
+"""
+            )
 
-            (demo_dir / "utils.py").write_text("""
+            (demo_dir / "utils.py").write_text(
+                """
 import json
 from typing import Dict, Any
 
@@ -619,7 +622,8 @@ def hash_password(password: str) -> str:
     '''Hash password for secure storage.'''
     import hashlib
     return hashlib.sha256(password.encode()).hexdigest()
-""")
+"""
+            )
 
             console.print(
                 f"\n[bold blue]📁 Created demo project at:[/bold blue] {demo_dir}"

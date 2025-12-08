@@ -192,9 +192,9 @@ class AutoIndexer:
                 "staleness_seconds": staleness_seconds,
                 "is_stale": staleness_seconds > self.staleness_threshold,
                 "newest_file_time": newest_file_time,
-                "oldest_index_time": oldest_index_time
-                if oldest_index_time != float("inf")
-                else 0,
+                "oldest_index_time": (
+                    oldest_index_time if oldest_index_time != float("inf") else 0
+                ),
             }
 
         except Exception as e:

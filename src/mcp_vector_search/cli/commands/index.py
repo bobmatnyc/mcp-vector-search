@@ -567,9 +567,9 @@ async def _reindex_single_file(project_root: Path, file_path: Path) -> None:
     # Setup components
     embedding_function, cache = create_embedding_function(
         model_name=config.embedding_model,
-        cache_dir=get_default_cache_path(project_root)
-        if config.cache_embeddings
-        else None,
+        cache_dir=(
+            get_default_cache_path(project_root) if config.cache_embeddings else None
+        ),
     )
 
     database = ChromaVectorDatabase(

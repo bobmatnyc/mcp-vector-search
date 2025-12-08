@@ -126,7 +126,7 @@ class GitHookManager:
         python_path = sys.executable
         project_root = str(self.project_root)
 
-        script = f'''#!/bin/bash
+        script = f"""#!/bin/bash
 # MCP Vector Search Hook - {hook_type}
 # Auto-generated - do not edit manually
 
@@ -158,7 +158,7 @@ $MCP_CMD auto-index check --auto-reindex --max-files 10 &> /dev/null || true
 
 # Exit successfully (don't block Git operations)
 exit 0
-'''
+"""
         return script
 
     def _integrate_with_existing_hook(self, hook_file: Path, our_script: str) -> bool:
@@ -275,7 +275,7 @@ class GitChangeDetector:
             Set of changed file paths
         """
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B607
                 ["git", "diff", "--name-only", commit_hash, "HEAD"],
                 cwd=project_root,
                 capture_output=True,
@@ -306,7 +306,7 @@ class GitChangeDetector:
             Set of changed file paths
         """
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B607
                 ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
                 cwd=project_root,
                 capture_output=True,

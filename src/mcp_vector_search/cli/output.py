@@ -97,9 +97,11 @@ def print_project_info(project_info: ProjectInfo) -> None:
     table.add_row("Initialized", "✓" if project_info.is_initialized else "✗")
     table.add_row(
         "Languages",
-        ", ".join(project_info.languages)
-        if project_info.languages
-        else "None detected",
+        (
+            ", ".join(project_info.languages)
+            if project_info.languages
+            else "None detected"
+        ),
     )
     table.add_row("Indexable Files", str(project_info.file_count))
 
