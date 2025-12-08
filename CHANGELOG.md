@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.7] - 2025-12-08
+
+### Fixed
+- **Index command crash: "name 'project_root' is not defined"**
+  - Fixed undefined variable reference in "Ready to Search" panel code
+  - Changed `project_root` to `indexer.project_root`
+
 ## [0.15.6] - 2025-12-08
 
 ### Added

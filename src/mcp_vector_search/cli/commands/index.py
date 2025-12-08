@@ -396,7 +396,7 @@ async def _run_batch_indexing(
             get_openrouter_api_key,
         )
 
-        config_dir = project_root / ".mcp-vector-search"
+        config_dir = indexer.project_root / ".mcp-vector-search"
         has_openai = get_openai_api_key(config_dir) is not None
         has_openrouter = get_openrouter_api_key(config_dir) is not None
         llm_configured = has_openai or has_openrouter
