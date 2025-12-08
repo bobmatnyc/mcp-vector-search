@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2025-12-08
+
+### Added
+- **Secure local API key storage** - Store OpenRouter API key in `.mcp-vector-search/config.json`
+  - File permissions set to 0600 (owner read/write only)
+  - Priority: Environment variable > Config file
+  - Config directory already gitignored for security
+- New `--save-api-key` flag for `setup` command to interactively save API key
+- New `config_utils` module for secure configuration management
+- API key storage user guide in `docs/guides/api-key-storage.md`
+
+### Changed
+- Chat command now checks both environment variable and config file for API key
+- Setup command shows API key source (env var or config file) when found
+
 ## [0.15.0] - 2025-12-08
 
 ### Added
