@@ -4,6 +4,8 @@ This module combines CSS and JavaScript from other template modules
 to generate the complete HTML page for the D3.js visualization.
 """
 
+import time
+
 from .scripts import get_all_scripts
 from .styles import get_all_styles
 
@@ -14,11 +16,18 @@ def generate_html_template() -> str:
     Returns:
         Complete HTML string with embedded CSS and JavaScript
     """
+    # Add timestamp for cache busting
+    build_timestamp = int(time.time())
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
     <title>Code Chunk Relationship Graph</title>
+    <meta http-cache="no-cache, no-store, must-revalidate">
+    <meta http-pragma="no-cache">
+    <meta http-expires="0">
+    <!-- Build: {build_timestamp} -->
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>

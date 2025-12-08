@@ -302,3 +302,6 @@ tmp/
 
 # MCP Ticketer
 .mcp-ticketer/
+
+# MCP configuration (contains tokens)
+.mcp.json

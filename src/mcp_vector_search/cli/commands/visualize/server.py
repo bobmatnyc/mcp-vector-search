@@ -127,8 +127,15 @@ def create_app(viz_dir: Path) -> FastAPI:
 
     @app.get("/")
     async def serve_index() -> FileResponse:
-        """Serve index.html."""
-        return FileResponse(viz_dir / "index.html")
+        """Serve index.html with no-cache headers to prevent stale content."""
+        return FileResponse(
+            viz_dir / "index.html",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     # Mount static files (favicon, etc.)
     app.mount("/", StaticFiles(directory=str(viz_dir), html=True), name="static")

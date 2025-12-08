@@ -2157,12 +2157,6 @@ def get_data_loading_logic() -> str:
                     loadingEl.innerHTML = '<label style="color: #238636;">✓ Graph loaded successfully</label>';
                     setTimeout(() => loadingEl.style.display = 'none', 2000);
 
-                    // Show controls
-                    const layoutControls = document.getElementById('layout-controls');
-                    const edgeFilters = document.getElementById('edge-filters');
-                    if (layoutControls) layoutControls.style.display = 'block';
-                    if (edgeFilters) edgeFilters.style.display = 'block';
-
                     // CRITICAL: Always initialize data arrays first
                     // These are required by both visualizeGraph() and switchToCytoscapeLayout()
                     allNodes = data.nodes;
