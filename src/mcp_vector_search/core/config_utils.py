@@ -27,7 +27,7 @@ from loguru import logger
 CONFIG_FILENAME = "config.json"
 
 # Sensitive keys that should never be logged in full
-SENSITIVE_KEYS = {"openrouter_api_key", "api_key", "token", "secret"}
+SENSITIVE_KEYS = {"openrouter_api_key", "openai_api_key", "api_key", "token", "secret"}
 
 
 class ConfigManager:
@@ -267,6 +267,117 @@ def delete_openrouter_api_key(config_dir: Path) -> bool:
     """
     manager = ConfigManager(config_dir)
     return manager.delete_value("openrouter_api_key")
+
+
+def get_openai_api_key(config_dir: Path | None = None) -> str | None:
+    """Get OpenAI API key from environment or config file.
+
+    Priority order:
+    1. OPENAI_API_KEY environment variable
+    2. openai_api_key in config file
+
+    Args:
+        config_dir: Config directory path (uses .mcp-vector-search in cwd if None)
+
+    Returns:
+        API key if found, None otherwise
+    """
+    # Check environment variable first (highest priority)
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if api_key:
+        logger.debug("Using OpenAI API key from environment variable")
+        return api_key
+
+    # Check config file
+    if config_dir is None:
+        config_dir = Path.cwd() / ".mcp-vector-search"
+
+    if not config_dir.exists():
+        logger.debug(f"Config directory not found: {config_dir}")
+        return None
+
+    manager = ConfigManager(config_dir)
+    api_key = manager.get_value("openai_api_key")
+
+    if api_key:
+        logger.debug("Using OpenAI API key from config file")
+        return api_key
+
+    logger.debug("OpenAI API key not found in environment or config")
+    return None
+
+
+def save_openai_api_key(api_key: str, config_dir: Path) -> None:
+    """Save OpenAI API key to config file.
+
+    Args:
+        api_key: API key to save
+        config_dir: Config directory path
+
+    Raises:
+        ValueError: If api_key is empty
+        OSError: If file write fails
+    """
+    if not api_key or not api_key.strip():
+        raise ValueError("API key cannot be empty")
+
+    manager = ConfigManager(config_dir)
+    manager.set_value("openai_api_key", api_key.strip())
+
+    logger.info(
+        f"Saved OpenAI API key to {manager.config_file} (last 4 chars: {api_key[-4:]})"
+    )
+
+
+def delete_openai_api_key(config_dir: Path) -> bool:
+    """Delete OpenAI API key from config file.
+
+    Args:
+        config_dir: Config directory path
+
+    Returns:
+        True if key was deleted, False if not found
+    """
+    manager = ConfigManager(config_dir)
+    return manager.delete_value("openai_api_key")
+
+
+def get_preferred_llm_provider(config_dir: Path | None = None) -> str | None:
+    """Get preferred LLM provider from config file.
+
+    Args:
+        config_dir: Config directory path (uses .mcp-vector-search in cwd if None)
+
+    Returns:
+        Provider name ('openai' or 'openrouter') if set, None otherwise
+    """
+    if config_dir is None:
+        config_dir = Path.cwd() / ".mcp-vector-search"
+
+    if not config_dir.exists():
+        return None
+
+    manager = ConfigManager(config_dir)
+    return manager.get_value("preferred_llm_provider")
+
+
+def save_preferred_llm_provider(provider: str, config_dir: Path) -> None:
+    """Save preferred LLM provider to config file.
+
+    Args:
+        provider: Provider name ('openai' or 'openrouter')
+        config_dir: Config directory path
+
+    Raises:
+        ValueError: If provider is not valid
+    """
+    if provider not in ("openai", "openrouter"):
+        raise ValueError(
+            f"Invalid provider: {provider}. Must be 'openai' or 'openrouter'"
+        )
+
+    manager = ConfigManager(config_dir)
+    manager.set_value("preferred_llm_provider", provider)
 
 
 def get_config_file_path(config_dir: Path | None = None) -> Path:

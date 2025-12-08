@@ -53,6 +53,14 @@ class ProjectConfig(BaseSettings):
         default=None,
         description="OpenRouter API key for chat command (optional, can also use env var)",
     )
+    openai_api_key: str | None = Field(
+        default=None,
+        description="OpenAI API key for chat command (optional, can also use env var)",
+    )
+    preferred_llm_provider: str | None = Field(
+        default=None,
+        description="Preferred LLM provider: 'openai' or 'openrouter' (auto-detect if not set)",
+    )
 
     @field_validator("project_root", "index_path", mode="before")
     @classmethod

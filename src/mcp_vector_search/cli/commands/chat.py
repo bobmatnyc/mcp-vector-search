@@ -59,7 +59,13 @@ def chat_main(
         None,
         "--model",
         "-m",
-        help="OpenRouter model to use (default: claude-3-haiku, or claude-3.5-sonnet for higher quality)",
+        help="Model to use (defaults based on provider: gpt-4o-mini for OpenAI, claude-3-haiku for OpenRouter)",
+        rich_help_panel="🤖 LLM Options",
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="LLM provider to use: 'openai' or 'openrouter' (auto-detect if not specified)",
         rich_help_panel="🤖 LLM Options",
     ),
     timeout: float | None = typer.Option(
@@ -79,15 +85,20 @@ def chat_main(
 ) -> None:
     """🤖 Ask questions about your code in natural language.
 
-    Uses LLM (via OpenRouter) to intelligently search your codebase and answer
+    Uses LLM (OpenAI or OpenRouter) to intelligently search your codebase and answer
     questions like "where is X defined?", "how does Y work?", etc.
 
     [bold cyan]Setup:[/bold cyan]
 
-    [green]Set your OpenRouter API key:[/green]
-        $ export OPENROUTER_API_KEY="your-key-here"
+    [green]Option A - OpenAI (recommended):[/green]
+        $ export OPENAI_API_KEY="your-key-here"
+        Get a key at: [cyan]https://platform.openai.com/api-keys[/cyan]
 
-    Get a key at: [cyan]https://openrouter.ai/keys[/cyan]
+    [green]Option B - OpenRouter:[/green]
+        $ export OPENROUTER_API_KEY="your-key-here"
+        Get a key at: [cyan]https://openrouter.ai/keys[/cyan]
+
+    [dim]Provider is auto-detected. OpenAI is preferred if both keys are set.[/dim]
 
     [bold cyan]Examples:[/bold cyan]
 
@@ -100,8 +111,13 @@ def chat_main(
     [green]Find implementation details:[/green]
         $ mcp-vector-search chat "show me the search ranking algorithm"
 
-    [green]Use a faster/cheaper model:[/green]
-        $ mcp-vector-search chat "quick question" --model anthropic/claude-3-haiku
+    [green]Force specific provider:[/green]
+        $ mcp-vector-search chat "question" --provider openai
+        $ mcp-vector-search chat "question" --provider openrouter
+
+    [green]Use custom model:[/green]
+        $ mcp-vector-search chat "question" --model gpt-4o
+        $ mcp-vector-search chat "question" --model anthropic/claude-3.5-sonnet
 
     [bold cyan]Advanced:[/bold cyan]
 
@@ -126,6 +142,13 @@ def chat_main(
     try:
         project_root = project_root or ctx.obj.get("project_root") or Path.cwd()
 
+        # Validate provider if specified
+        if provider and provider not in ("openai", "openrouter"):
+            print_error(
+                f"Invalid provider: {provider}. Must be 'openai' or 'openrouter'"
+            )
+            raise typer.Exit(1)
+
         # Run the chat search
         asyncio.run(
             run_chat_search(
@@ -133,6 +156,7 @@ def chat_main(
                 query=query,
                 limit=limit,
                 model=model,
+                provider=provider,
                 timeout=timeout,
                 json_output=json_output,
             )
@@ -149,6 +173,7 @@ async def run_chat_search(
     query: str,
     limit: int = 5,
     model: str | None = None,
+    provider: str | None = None,
     timeout: float = 30.0,
     json_output: bool = False,
 ) -> None:
@@ -165,33 +190,76 @@ async def run_chat_search(
         project_root: Project root directory
         query: Natural language query from user
         limit: Maximum number of results to return
-        model: OpenRouter model to use (optional)
+        model: Model to use (optional, defaults based on provider)
+        provider: LLM provider ('openai' or 'openrouter', auto-detect if None)
         timeout: API timeout in seconds
         json_output: Whether to output JSON format
     """
-    # Check for API key (environment variable or config file)
-    from ...core.config_utils import get_config_file_path, get_openrouter_api_key
+    # Check for API keys (environment variable or config file)
+    from ...core.config_utils import (
+        get_config_file_path,
+        get_openai_api_key,
+        get_openrouter_api_key,
+        get_preferred_llm_provider,
+    )
 
     config_dir = project_root / ".mcp-vector-search"
-    api_key = get_openrouter_api_key(config_dir)
+    openai_key = get_openai_api_key(config_dir)
+    openrouter_key = get_openrouter_api_key(config_dir)
 
-    if not api_key:
-        print_error("OpenRouter API key not found.")
-        print_info("\n[bold]To use the chat command:[/bold]")
-        print_info("1. Get an API key from [cyan]https://openrouter.ai/keys[/cyan]")
-        print_info("2. Save it using one of these methods:")
-        print_info("")
-        print_info(
-            "   [cyan]Option A - Environment variable (recommended for security):[/cyan]"
-        )
-        print_info("   [yellow]export OPENROUTER_API_KEY='your-key'[/yellow]")
-        print_info("")
-        print_info("   [cyan]Option B - Save to local config (convenient):[/cyan]")
-        print_info("   [yellow]mcp-vector-search setup --save-api-key[/yellow]")
-        print_info("")
-        config_path = get_config_file_path(config_dir)
-        print_info(f"   [dim]Config file location: {config_path}[/dim]\n")
-        raise typer.Exit(1)
+    # Determine which provider to use
+    if provider:
+        # Explicit provider specified
+        if provider == "openai" and not openai_key:
+            print_error("OpenAI API key not found.")
+            print_info("\n[bold]To use OpenAI:[/bold]")
+            print_info(
+                "1. Get an API key from [cyan]https://platform.openai.com/api-keys[/cyan]"
+            )
+            print_info("2. Set environment variable:")
+            print_info("   [yellow]export OPENAI_API_KEY='your-key'[/yellow]")
+            print_info("")
+            print_info("Or run: [cyan]mcp-vector-search setup[/cyan]")
+            raise typer.Exit(1)
+        elif provider == "openrouter" and not openrouter_key:
+            print_error("OpenRouter API key not found.")
+            print_info("\n[bold]To use OpenRouter:[/bold]")
+            print_info("1. Get an API key from [cyan]https://openrouter.ai/keys[/cyan]")
+            print_info("2. Set environment variable:")
+            print_info("   [yellow]export OPENROUTER_API_KEY='your-key'[/yellow]")
+            print_info("")
+            print_info("Or run: [cyan]mcp-vector-search setup[/cyan]")
+            raise typer.Exit(1)
+    else:
+        # Auto-detect provider
+        preferred_provider = get_preferred_llm_provider(config_dir)
+
+        if preferred_provider == "openai" and openai_key:
+            provider = "openai"
+        elif preferred_provider == "openrouter" and openrouter_key:
+            provider = "openrouter"
+        elif openai_key:
+            provider = "openai"
+        elif openrouter_key:
+            provider = "openrouter"
+        else:
+            print_error("No LLM API key found.")
+            print_info("\n[bold]To use the chat command, set up an API key:[/bold]")
+            print_info("")
+            print_info("[cyan]Option A - OpenAI (recommended):[/cyan]")
+            print_info(
+                "1. Get a key from [cyan]https://platform.openai.com/api-keys[/cyan]"
+            )
+            print_info("2. [yellow]export OPENAI_API_KEY='your-key'[/yellow]")
+            print_info("")
+            print_info("[cyan]Option B - OpenRouter:[/cyan]")
+            print_info("1. Get a key from [cyan]https://openrouter.ai/keys[/cyan]")
+            print_info("2. [yellow]export OPENROUTER_API_KEY='your-key'[/yellow]")
+            print_info("")
+            print_info("Or run: [cyan]mcp-vector-search setup[/cyan]")
+            config_path = get_config_file_path(config_dir)
+            print_info(f"\n[dim]Config file location: {config_path}[/dim]\n")
+            raise typer.Exit(1)
 
     # Load project configuration
     project_manager = ProjectManager(project_root)
@@ -205,8 +273,15 @@ async def run_chat_search(
 
     # Initialize LLM client
     try:
-        llm_client = LLMClient(api_key=api_key, model=model, timeout=timeout)
-        print_success(f"Connected to LLM: {llm_client.model}")
+        llm_client = LLMClient(
+            openai_api_key=openai_key,
+            openrouter_api_key=openrouter_key,
+            model=model,
+            provider=provider,
+            timeout=timeout,
+        )
+        provider_display = llm_client.provider.capitalize()
+        print_success(f"Connected to {provider_display}: {llm_client.model}")
     except ValueError as e:
         print_error(str(e))
         raise typer.Exit(1)

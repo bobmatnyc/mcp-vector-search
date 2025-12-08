@@ -1,26 +1,44 @@
-"""LLM client for intelligent code search using OpenRouter API."""
+"""LLM client for intelligent code search using OpenAI or OpenRouter API."""
 
 import os
 import re
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from loguru import logger
 
 from .exceptions import SearchError
 
+# Type alias for provider
+LLMProvider = Literal["openai", "openrouter"]
+
 
 class LLMClient:
     """Client for LLM-powered intelligent search orchestration.
 
-    Uses OpenRouter API to:
+    Supports both OpenAI and OpenRouter APIs:
     1. Generate multiple targeted search queries from natural language
     2. Analyze search results and select most relevant ones
     3. Provide contextual explanations for results
+
+    Provider Selection Priority:
+    1. Explicit provider parameter
+    2. Preferred provider from config
+    3. Auto-detect: OpenAI if available, otherwise OpenRouter
     """
 
-    DEFAULT_MODEL = "anthropic/claude-3-haiku"
-    API_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+    # Default models for each provider (comparable performance/cost)
+    DEFAULT_MODELS = {
+        "openai": "gpt-4o-mini",  # Fast, cheap, comparable to claude-3-haiku
+        "openrouter": "anthropic/claude-3-haiku",
+    }
+
+    # API endpoints
+    API_ENDPOINTS = {
+        "openai": "https://api.openai.com/v1/chat/completions",
+        "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+    }
+
     TIMEOUT_SECONDS = 30.0
 
     def __init__(
@@ -28,28 +46,76 @@ class LLMClient:
         api_key: str | None = None,
         model: str | None = None,
         timeout: float = TIMEOUT_SECONDS,
+        provider: LLMProvider | None = None,
+        openai_api_key: str | None = None,
+        openrouter_api_key: str | None = None,
     ) -> None:
         """Initialize LLM client.
 
         Args:
-            api_key: OpenRouter API key (defaults to OPENROUTER_API_KEY env var)
-            model: Model to use (defaults to claude-3-haiku)
+            api_key: API key (deprecated, use provider-specific keys)
+            model: Model to use (defaults based on provider)
             timeout: Request timeout in seconds
+            provider: Explicit provider ('openai' or 'openrouter')
+            openai_api_key: OpenAI API key (or use OPENAI_API_KEY env var)
+            openrouter_api_key: OpenRouter API key (or use OPENROUTER_API_KEY env var)
 
         Raises:
-            ValueError: If API key is not provided or found in environment
+            ValueError: If no API key is found for any provider
         """
-        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "OpenRouter API key not found. "
-                "Please set OPENROUTER_API_KEY environment variable or pass api_key parameter."
+        # Get API keys from environment or parameters
+        self.openai_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
+        self.openrouter_key = openrouter_api_key or os.environ.get("OPENROUTER_API_KEY")
+
+        # Support deprecated api_key parameter (assume OpenRouter for backward compatibility)
+        if api_key and not self.openrouter_key:
+            self.openrouter_key = api_key
+
+        # Determine which provider to use
+        if provider:
+            # Explicit provider specified
+            self.provider: LLMProvider = provider
+            if provider == "openai" and not self.openai_key:
+                raise ValueError(
+                    "OpenAI provider specified but OPENAI_API_KEY not found. "
+                    "Please set OPENAI_API_KEY environment variable."
+                )
+            elif provider == "openrouter" and not self.openrouter_key:
+                raise ValueError(
+                    "OpenRouter provider specified but OPENROUTER_API_KEY not found. "
+                    "Please set OPENROUTER_API_KEY environment variable."
+                )
+        else:
+            # Auto-detect provider (prefer OpenAI if both are available)
+            if self.openai_key:
+                self.provider = "openai"
+            elif self.openrouter_key:
+                self.provider = "openrouter"
+            else:
+                raise ValueError(
+                    "No API key found. Please set OPENAI_API_KEY or OPENROUTER_API_KEY "
+                    "environment variable, or pass openai_api_key or openrouter_api_key parameter."
+                )
+
+        # Set API key and endpoint based on provider
+        if self.provider == "openai":
+            self.api_key = self.openai_key
+            self.api_endpoint = self.API_ENDPOINTS["openai"]
+            self.model = model or os.environ.get(
+                "OPENAI_MODEL", self.DEFAULT_MODELS["openai"]
+            )
+        else:
+            self.api_key = self.openrouter_key
+            self.api_endpoint = self.API_ENDPOINTS["openrouter"]
+            self.model = model or os.environ.get(
+                "OPENROUTER_MODEL", self.DEFAULT_MODELS["openrouter"]
             )
 
-        self.model = model or os.environ.get("OPENROUTER_MODEL", self.DEFAULT_MODEL)
         self.timeout = timeout
 
-        logger.debug(f"Initialized LLM client with model: {self.model}")
+        logger.debug(
+            f"Initialized LLM client with provider: {self.provider}, model: {self.model}"
+        )
 
     async def generate_search_queries(
         self, natural_language_query: str, limit: int = 3
@@ -189,7 +255,7 @@ Select the top {top_n} most relevant results:"""
             raise SearchError(f"LLM analysis failed: {e}") from e
 
     async def _chat_completion(self, messages: list[dict[str, str]]) -> dict[str, Any]:
-        """Make chat completion request to OpenRouter API.
+        """Make chat completion request to OpenAI or OpenRouter API.
 
         Args:
             messages: List of message dictionaries with role and content
@@ -200,22 +266,28 @@ Select the top {top_n} most relevant results:"""
         Raises:
             SearchError: If API request fails
         """
+        # Build headers based on provider
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/bobmatnyc/mcp-vector-search",
-            "X-Title": "MCP Vector Search",
         }
+
+        # OpenRouter-specific headers
+        if self.provider == "openrouter":
+            headers["HTTP-Referer"] = "https://github.com/bobmatnyc/mcp-vector-search"
+            headers["X-Title"] = "MCP Vector Search"
 
         payload = {
             "model": self.model,
             "messages": messages,
         }
 
+        provider_name = self.provider.capitalize()
+
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
-                    self.API_ENDPOINT,
+                    self.api_endpoint,
                     headers=headers,
                     json=payload,
                 )
@@ -224,7 +296,7 @@ Select the top {top_n} most relevant results:"""
                 return response.json()
 
         except httpx.TimeoutException as e:
-            logger.error(f"OpenRouter API timeout after {self.timeout}s")
+            logger.error(f"{provider_name} API timeout after {self.timeout}s")
             raise SearchError(
                 f"LLM request timed out after {self.timeout} seconds. "
                 "Try a simpler query or check your network connection."
@@ -232,22 +304,25 @@ Select the top {top_n} most relevant results:"""
 
         except httpx.HTTPStatusError as e:
             status_code = e.response.status_code
-            error_msg = f"OpenRouter API error (HTTP {status_code})"
+            error_msg = f"{provider_name} API error (HTTP {status_code})"
 
             if status_code == 401:
-                error_msg = "Invalid OpenRouter API key. Please check OPENROUTER_API_KEY environment variable."
-            elif status_code == 429:
-                error_msg = (
-                    "OpenRouter API rate limit exceeded. Please wait and try again."
+                env_var = (
+                    "OPENAI_API_KEY"
+                    if self.provider == "openai"
+                    else "OPENROUTER_API_KEY"
                 )
+                error_msg = f"Invalid {provider_name} API key. Please check {env_var} environment variable."
+            elif status_code == 429:
+                error_msg = f"{provider_name} API rate limit exceeded. Please wait and try again."
             elif status_code >= 500:
-                error_msg = "OpenRouter API server error. Please try again later."
+                error_msg = f"{provider_name} API server error. Please try again later."
 
             logger.error(error_msg)
             raise SearchError(error_msg) from e
 
         except Exception as e:
-            logger.error(f"OpenRouter API request failed: {e}")
+            logger.error(f"{provider_name} API request failed: {e}")
             raise SearchError(f"LLM request failed: {e}") from e
 
     def _format_results_for_analysis(self, search_results: dict[str, list[Any]]) -> str:

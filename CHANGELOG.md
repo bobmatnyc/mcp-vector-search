@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.6] - 2025-12-08
+
+### Added
+- **Chat command shown in "Ready to Search" panel** after indexing completes
+  - Displays LLM configuration status (✓ OpenAI or ✓ OpenRouter when configured)
+  - Shows "(requires API key)" hint when no LLM is configured
+  - Helps users discover the chat feature immediately after setup
+
 ## [0.15.5] - 2025-12-08
 
 ### Fixed

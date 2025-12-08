@@ -309,6 +309,346 @@ def _obfuscate_api_key(api_key: str) -> str:
     return f"{api_key[:6]}...{api_key[-4:]}"
 
 
+def setup_llm_api_keys(project_root: Path, interactive: bool = True) -> bool:
+    """Check and optionally set up LLM API keys (OpenAI or OpenRouter) for chat command.
+
+    This function checks for API keys in environment and config file.
+    In interactive mode, prompts user to configure either provider.
+
+    Args:
+        project_root: Project root directory
+        interactive: Whether to prompt for API key input
+
+    Returns:
+        True if at least one API key is configured, False otherwise
+    """
+    from ...core.config_utils import (
+        delete_openai_api_key,
+        delete_openrouter_api_key,
+        get_config_file_path,
+        get_openai_api_key,
+        get_openrouter_api_key,
+        get_preferred_llm_provider,
+        save_openai_api_key,
+        save_openrouter_api_key,
+        save_preferred_llm_provider,
+    )
+
+    config_dir = project_root / ".mcp-vector-search"
+
+    # Check if API keys are already available
+    openai_key = get_openai_api_key(config_dir)
+    openrouter_key = get_openrouter_api_key(config_dir)
+    preferred_provider = get_preferred_llm_provider(config_dir)
+
+    openai_from_env = bool(os.environ.get("OPENAI_API_KEY"))
+    openrouter_from_env = bool(os.environ.get("OPENROUTER_API_KEY"))
+
+    has_any_key = bool(openai_key or openrouter_key)
+
+    # Non-interactive mode: just report status
+    if not interactive:
+        if has_any_key:
+            print_success("   ✅ LLM API key(s) found")
+            if openai_key:
+                source = (
+                    "Environment variable"
+                    if openai_from_env
+                    else f"Config file ({get_config_file_path(config_dir)})"
+                )
+                print_info(f"      OpenAI: ends with {openai_key[-4:]} ({source})")
+            if openrouter_key:
+                source = (
+                    "Environment variable"
+                    if openrouter_from_env
+                    else f"Config file ({get_config_file_path(config_dir)})"
+                )
+                print_info(
+                    f"      OpenRouter: ends with {openrouter_key[-4:]} ({source})"
+                )
+            if preferred_provider:
+                print_info(f"      Preferred provider: {preferred_provider}")
+            print_info("      Chat command is ready to use!")
+            return True
+        else:
+            print_info("   ℹ️  No LLM API keys found")
+            print_info("")
+            print_info(
+                "   The 'chat' command uses AI to answer questions about your code."
+            )
+            print_info("")
+            print_info("   [bold cyan]To enable the chat command:[/bold cyan]")
+            print_info("   [cyan]Option A - OpenAI (recommended):[/cyan]")
+            print_info(
+                "   1. Get a key: [cyan]https://platform.openai.com/api-keys[/cyan]"
+            )
+            print_info("   2. [yellow]export OPENAI_API_KEY='your-key'[/yellow]")
+            print_info("")
+            print_info("   [cyan]Option B - OpenRouter:[/cyan]")
+            print_info("   1. Get a key: [cyan]https://openrouter.ai/keys[/cyan]")
+            print_info("   2. [yellow]export OPENROUTER_API_KEY='your-key'[/yellow]")
+            print_info("")
+            print_info("   Or run: [yellow]mcp-vector-search setup[/yellow]")
+            print_info("")
+            print_info(
+                "   [dim]💡 You can skip this for now - search still works![/dim]"
+            )
+            return False
+
+    # Interactive mode - prompt for API key setup
+    print_info("")
+    print_info("   [bold cyan]LLM API Key Setup[/bold cyan]")
+    print_info("")
+    print_info("   The 'chat' command uses AI to answer questions about your code.")
+    print_info("   You can use OpenAI or OpenRouter (or both).")
+    print_info("")
+
+    # Show current status
+    if openai_key or openrouter_key:
+        print_info("   [bold]Current Configuration:[/bold]")
+        if openai_key:
+            obfuscated = _obfuscate_api_key(openai_key)
+            source = "environment variable" if openai_from_env else "config file"
+            print_info(f"   • OpenAI: {obfuscated} [dim]({source})[/dim]")
+        else:
+            print_info("   • OpenAI: [dim]not configured[/dim]")
+
+        if openrouter_key:
+            obfuscated = _obfuscate_api_key(openrouter_key)
+            source = "environment variable" if openrouter_from_env else "config file"
+            print_info(f"   • OpenRouter: {obfuscated} [dim]({source})[/dim]")
+        else:
+            print_info("   • OpenRouter: [dim]not configured[/dim]")
+
+        if preferred_provider:
+            print_info(f"   • Preferred: [cyan]{preferred_provider}[/cyan]")
+        print_info("")
+
+    print_info("   [bold cyan]Options:[/bold cyan]")
+    print_info("   1. Configure OpenAI (recommended, fast & cheap)")
+    print_info("   2. Configure OpenRouter")
+    print_info("   3. Set preferred provider")
+    print_info("   4. Skip / Keep current")
+    print_info("")
+
+    try:
+        from ..output import console
+
+        choice = console.input("   [yellow]Select option (1-4): [/yellow]").strip()
+
+        if choice == "1":
+            # Configure OpenAI
+            return _setup_single_provider(
+                provider="openai",
+                existing_key=openai_key,
+                is_from_env=openai_from_env,
+                config_dir=config_dir,
+                save_func=save_openai_api_key,
+                delete_func=delete_openai_api_key,
+                get_key_url="https://platform.openai.com/api-keys",
+            )
+
+        elif choice == "2":
+            # Configure OpenRouter
+            return _setup_single_provider(
+                provider="openrouter",
+                existing_key=openrouter_key,
+                is_from_env=openrouter_from_env,
+                config_dir=config_dir,
+                save_func=save_openrouter_api_key,
+                delete_func=delete_openrouter_api_key,
+                get_key_url="https://openrouter.ai/keys",
+            )
+
+        elif choice == "3":
+            # Set preferred provider
+            if not has_any_key:
+                print_warning("   ⚠️  Configure at least one API key first")
+                return False
+
+            print_info("")
+            print_info("   [bold]Select preferred provider:[/bold]")
+            providers = []
+            if openai_key:
+                providers.append("openai")
+                print_info("   1. OpenAI")
+            if openrouter_key:
+                providers.append("openrouter")
+                idx = len(providers)
+                print_info(f"   {idx}. OpenRouter")
+
+            pref_choice = console.input(
+                f"\n   [yellow]Select (1-{len(providers)}): [/yellow]"
+            ).strip()
+
+            try:
+                idx = int(pref_choice) - 1
+                if 0 <= idx < len(providers):
+                    selected_provider = providers[idx]
+                    save_preferred_llm_provider(selected_provider, config_dir)
+                    print_success(
+                        f"   ✅ Preferred provider set to: {selected_provider}"
+                    )
+                    return True
+                else:
+                    print_warning("   ⚠️  Invalid selection")
+                    return has_any_key
+            except ValueError:
+                print_warning("   ⚠️  Invalid input")
+                return has_any_key
+
+        elif choice == "4" or not choice:
+            # Skip / Keep current
+            if has_any_key:
+                print_info("   ⏭️  Keeping existing configuration")
+                return True
+            else:
+                print_info("   ⏭️  Skipped LLM API key setup")
+                return False
+
+        else:
+            print_warning("   ⚠️  Invalid option")
+            return has_any_key
+
+    except KeyboardInterrupt:
+        print_info("\n   ⏭️  API key setup cancelled")
+        return has_any_key
+    except Exception as e:
+        logger.error(f"Error during API key setup: {e}")
+        print_error(f"   ❌ Error: {e}")
+        return has_any_key
+
+
+def _setup_single_provider(
+    provider: str,
+    existing_key: str | None,
+    is_from_env: bool,
+    config_dir: Path,
+    save_func,
+    delete_func,
+    get_key_url: str,
+) -> bool:
+    """Helper function to set up a single LLM provider.
+
+    Args:
+        provider: Provider name ('openai' or 'openrouter')
+        existing_key: Existing API key if any
+        is_from_env: Whether existing key is from environment
+        config_dir: Config directory path
+        save_func: Function to save API key
+        delete_func: Function to delete API key
+        get_key_url: URL to get API key
+
+    Returns:
+        True if provider is configured, False otherwise
+    """
+    from ..output import console
+
+    provider_display = provider.capitalize()
+
+    print_info("")
+    print_info(f"   [bold cyan]{provider_display} API Key Setup[/bold cyan]")
+    print_info("")
+
+    if not existing_key:
+        print_info(f"   Get a key: [cyan]{get_key_url}[/cyan]")
+        print_info("")
+
+    # Show current status
+    if existing_key:
+        obfuscated = _obfuscate_api_key(existing_key)
+        source = "environment variable" if is_from_env else "config file"
+        print_info(f"   Current: {obfuscated} [dim]({source})[/dim]")
+        if is_from_env:
+            print_info("   [dim]Note: Environment variable takes precedence[/dim]")
+        print_info("")
+
+    print_info("   [dim]Options:[/dim]")
+    if existing_key:
+        print_info("   [dim]• Press Enter to keep existing key[/dim]")
+    else:
+        print_info("   [dim]• Press Enter to skip[/dim]")
+    print_info("   [dim]• Enter new key to update[/dim]")
+    if existing_key and not is_from_env:
+        print_info("   [dim]• Type 'clear' to remove from config[/dim]")
+    print_info("")
+
+    try:
+        if existing_key:
+            obfuscated = _obfuscate_api_key(existing_key)
+            prompt_text = (
+                f"   [yellow]{provider_display} API key [{obfuscated}]: [/yellow]"
+            )
+        else:
+            prompt_text = (
+                f"   [yellow]{provider_display} API key (Enter to skip): [/yellow]"
+            )
+
+        user_input = console.input(prompt_text).strip()
+
+        # Handle different inputs
+        if not user_input:
+            # Empty input - keep existing or skip
+            if existing_key:
+                print_info("   ⏭️  Keeping existing API key")
+                return True
+            else:
+                print_info("   ⏭️  Skipped")
+                return False
+
+        elif user_input.lower() in ("clear", "delete", "remove"):
+            # Clear the API key
+            if not existing_key:
+                print_warning("   ⚠️  No API key to clear")
+                return False
+
+            if is_from_env:
+                print_warning("   ⚠️  Cannot clear environment variable from config")
+                return True
+
+            # Delete from config file
+            try:
+                deleted = delete_func(config_dir)
+                if deleted:
+                    print_success("   ✅ API key removed from config")
+                    return False
+                else:
+                    print_warning("   ⚠️  API key not found in config")
+                    return False
+            except Exception as e:
+                print_error(f"   ❌ Failed to delete API key: {e}")
+                return False
+
+        else:
+            # New API key provided
+            try:
+                save_func(user_input, config_dir)
+                from ...core.config_utils import get_config_file_path
+
+                config_path = get_config_file_path(config_dir)
+                print_success(f"   ✅ API key saved to {config_path}")
+                print_info(f"      Last 4 characters: {user_input[-4:]}")
+
+                if is_from_env:
+                    print_warning("")
+                    print_warning(
+                        "   ⚠️  Note: Environment variable will still take precedence"
+                    )
+
+                return True
+            except Exception as e:
+                print_error(f"   ❌ Failed to save API key: {e}")
+                return False
+
+    except KeyboardInterrupt:
+        print_info("\n   ⏭️  Setup cancelled")
+        return bool(existing_key)
+    except Exception as e:
+        logger.error(f"Error during {provider} setup: {e}")
+        print_error(f"   ❌ Error: {e}")
+        return bool(existing_key)
+
+
 def setup_openrouter_api_key(project_root: Path, interactive: bool = True) -> bool:
     """Check and optionally set up OpenRouter API key for chat command.
 
@@ -735,14 +1075,12 @@ async def _run_smart_setup(
             print_info(f"   • {platform}")
 
     # ===========================================================================
-    # Phase 6: OpenRouter API Key Setup (Optional)
+    # Phase 6: LLM API Key Setup (Optional)
     # ===========================================================================
     console.print("\n[bold blue]🤖 Chat Command Setup (Optional)...[/bold blue]")
     # Always prompt interactively during setup - user can press Enter to skip/keep
     # The save_api_key flag is now deprecated but kept for backward compatibility
-    openrouter_configured = setup_openrouter_api_key(
-        project_root=project_root, interactive=True
-    )
+    llm_configured = setup_llm_api_keys(project_root=project_root, interactive=True)
 
     # ===========================================================================
     # Phase 7: Completion
@@ -761,8 +1099,8 @@ async def _run_smart_setup(
 
     summary_items.append(f"{len(configured_platforms)} MCP platform(s) configured")
     summary_items.append("File watching enabled")
-    if openrouter_configured:
-        summary_items.append("OpenRouter API configured for chat command")
+    if llm_configured:
+        summary_items.append("LLM API configured for chat command")
 
     console.print("\n[bold]What was set up:[/bold]")
     for item in summary_items:
@@ -774,7 +1112,7 @@ async def _run_smart_setup(
         "[cyan]mcp-vector-search status[/cyan] - Check project status",
     ]
 
-    if openrouter_configured:
+    if llm_configured:
         next_steps.insert(
             1, "[cyan]mcp-vector-search chat 'question'[/cyan] - Ask AI about your code"
         )
