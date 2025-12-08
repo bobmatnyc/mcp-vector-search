@@ -2,24 +2,19 @@
 
 import asyncio
 import tempfile
-import shutil
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
-from typing import Dict, List, Any, AsyncGenerator, Generator
-from unittest.mock import Mock, AsyncMock
+from typing import Any
 
 import pytest
 import pytest_asyncio
 
 # Import core modules for testing
-from mcp_vector_search.core.database import VectorDatabase, ChromaVectorDatabase
-from mcp_vector_search.core.indexer import SemanticIndexer
-from mcp_vector_search.core.search import SemanticSearchEngine
-from mcp_vector_search.core.project import ProjectManager
+from mcp_vector_search.core.database import VectorDatabase
 from mcp_vector_search.core.embeddings import create_embedding_function
-# from mcp_vector_search.core.factory import ComponentFactory, ComponentBundle  # TODO: Implement factory
-from mcp_vector_search.core.models import CodeChunk, SearchResult, IndexStats
-from mcp_vector_search.config.settings import ProjectConfig
 
+# from mcp_vector_search.core.factory import ComponentFactory, ComponentBundle  # TODO: Implement factory
+from mcp_vector_search.core.models import CodeChunk, IndexStats, SearchResult
 
 # Configure pytest-asyncio - asyncio_mode is set in pytest.ini
 
@@ -44,7 +39,7 @@ def temp_project_dir(temp_dir: Path) -> Path:
     """Create a temporary project directory with sample files."""
     project_dir = temp_dir / "test_project"
     project_dir.mkdir()
-    
+
     # Create sample Python files
     sample_files = {
         "main.py": '''
@@ -66,32 +61,32 @@ class User:
         self.id = id
         self.name = name
         self.email = email
-    
+
     def __repr__(self):
         return f"User(id={self.id}, name='{self.name}', email='{self.email}')"
 
 class UserService:
     def __init__(self):
         self.users = []
-    
+
     def create_user(self, name: str, email: str) -> User:
         """Create a new user."""
         user_id = len(self.users) + 1
         user = User(user_id, name, email)
         self.users.append(user)
         return user
-    
+
     def get_user_by_id(self, user_id: int) -> Optional[User]:
         """Get user by ID."""
         for user in self.users:
             if user.id == user_id:
                 return user
         return None
-    
+
     def get_all_users(self) -> List[User]:
         """Get all users."""
         return self.users.copy()
-    
+
     def delete_user(self, user_id: int) -> bool:
         """Delete user by ID."""
         for i, user in enumerate(self.users):
@@ -109,7 +104,7 @@ def load_config(config_path: Path) -> Dict[str, Any]:
     """Load configuration from JSON file."""
     if not config_path.exists():
         return {}
-    
+
     with open(config_path, 'r') as f:
         return json.load(f)
 
@@ -123,15 +118,15 @@ def calculate_similarity(text1: str, text2: str) -> float:
     """Calculate simple similarity between two texts."""
     words1 = set(text1.lower().split())
     words2 = set(text2.lower().split())
-    
+
     if not words1 and not words2:
         return 1.0
     if not words1 or not words2:
         return 0.0
-    
+
     intersection = words1.intersection(words2)
     union = words1.union(words2)
-    
+
     return len(intersection) / len(union)
 ''',
         "database.py": '''
@@ -143,53 +138,53 @@ class DatabaseConnection:
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self.connection: Optional[sqlite3.Connection] = None
-    
+
     def connect(self) -> None:
         """Establish database connection."""
         self.connection = sqlite3.connect(str(self.db_path))
         self.connection.row_factory = sqlite3.Row
-    
+
     def disconnect(self) -> None:
         """Close database connection."""
         if self.connection:
             self.connection.close()
             self.connection = None
-    
+
     def execute_query(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
         """Execute a SELECT query."""
         if not self.connection:
             self.connect()
-        
+
         cursor = self.connection.cursor()
         cursor.execute(query, params)
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
-    
+
     def execute_update(self, query: str, params: tuple = ()) -> int:
         """Execute an INSERT/UPDATE/DELETE query."""
         if not self.connection:
             self.connect()
-        
+
         cursor = self.connection.cursor()
         cursor.execute(query, params)
         self.connection.commit()
         return cursor.rowcount
-    
+
     def create_table(self, table_name: str, schema: str) -> None:
         """Create a table with the given schema."""
         query = f"CREATE TABLE IF NOT EXISTS {table_name} ({schema})"
         self.execute_update(query)
 ''',
     }
-    
+
     for filename, content in sample_files.items():
         (project_dir / filename).write_text(content)
-    
+
     return project_dir
 
 
 @pytest.fixture
-def sample_code_chunks() -> List[CodeChunk]:
+def sample_code_chunks() -> list[CodeChunk]:
     """Create sample code chunks for testing."""
     return [
         CodeChunk(
@@ -228,99 +223,111 @@ def sample_code_chunks() -> List[CodeChunk]:
 @pytest.fixture
 def mock_embedding_function():
     """Create a mock embedding function for testing."""
-    
+
     class MockEmbeddingFunction:
         """ChromaDB-compatible mock embedding function."""
-        
+
         def __init__(self):
             self._name = "test-embedding-function"
-        
-        def __call__(self, input: List[str]) -> List[List[float]]:
+
+        def __call__(self, input: list[str]) -> list[list[float]]:
             """Generate deterministic mock embeddings."""
             embeddings = []
             for text in input:
                 # Create a simple hash-based embedding (384-dimensional for all-MiniLM-L6-v2)
-                embedding = [float(hash(text + str(i)) % 100) / 100.0 for i in range(384)]
+                embedding = [
+                    float(hash(text + str(i)) % 100) / 100.0 for i in range(384)
+                ]
                 embeddings.append(embedding)
             return embeddings
-        
+
         def name(self) -> str:
             """Return the name of the embedding function."""
             return self._name
-        
-        def embed_documents(self, texts: List[str]) -> List[List[float]]:
+
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
             """Embed multiple documents."""
             return self.__call__(input=texts)
-        
-        def embed_query(self, text: str) -> List[float]:
+
+        def embed_query(self, text: str) -> list[float]:
             """Embed a single query."""
             return self.__call__(input=[text])[0]
-    
+
     return MockEmbeddingFunction()
 
 
 @pytest_asyncio.fixture
 async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
     """Create a mock vector database for testing."""
-    
+
     class MockVectorDatabase(VectorDatabase):
         def __init__(self):
-            self.chunks: List[CodeChunk] = []
+            self.chunks: list[CodeChunk] = []
             self.initialized = False
-        
+
         async def initialize(self) -> None:
             self.initialized = True
-        
+
         async def close(self) -> None:
             self.initialized = False
-        
-        async def add_chunks(self, chunks: List[CodeChunk]) -> None:
+
+        async def add_chunks(self, chunks: list[CodeChunk]) -> None:
             self.chunks.extend(chunks)
-        
+
         async def search(
             self,
             query: str,
             limit: int = 10,
-            filters: Dict[str, Any] = None,
+            filters: dict[str, Any] = None,
             similarity_threshold: float = 0.7,
-        ) -> List[SearchResult]:
+        ) -> list[SearchResult]:
             # Simple mock search based on text matching
             results = []
             for chunk in self.chunks:
                 # Simple similarity calculation - normalize content for comparison
                 query_words = set(query.lower().split())
                 # Handle multi-line content by replacing newlines with spaces
-                normalized_content = chunk.content.lower().replace('\n', ' ').replace('(', ' ').replace(')', ' ').replace(':', ' ')
+                normalized_content = (
+                    chunk.content.lower()
+                    .replace("\n", " ")
+                    .replace("(", " ")
+                    .replace(")", " ")
+                    .replace(":", " ")
+                )
                 content_words = set(normalized_content.split())
-                
+
                 if query_words.intersection(content_words):
-                    similarity = len(query_words.intersection(content_words)) / len(query_words.union(content_words))
+                    similarity = len(query_words.intersection(content_words)) / len(
+                        query_words.union(content_words)
+                    )
                     if similarity >= similarity_threshold:
-                        results.append(SearchResult(
-                            content=chunk.content,
-                            file_path=chunk.file_path,
-                            start_line=chunk.start_line,
-                            end_line=chunk.end_line,
-                            language=chunk.language,
-                            similarity_score=similarity,
-                            rank=len(results) + 1,
-                            chunk_type=chunk.chunk_type,
-                            function_name=chunk.function_name,
-                            class_name=chunk.class_name,
-                            context_before=[],
-                            context_after=[],
-                            highlights=[],
-                        ))
-            
+                        results.append(
+                            SearchResult(
+                                content=chunk.content,
+                                file_path=chunk.file_path,
+                                start_line=chunk.start_line,
+                                end_line=chunk.end_line,
+                                language=chunk.language,
+                                similarity_score=similarity,
+                                rank=len(results) + 1,
+                                chunk_type=chunk.chunk_type,
+                                function_name=chunk.function_name,
+                                class_name=chunk.class_name,
+                                context_before=[],
+                                context_after=[],
+                                highlights=[],
+                            )
+                        )
+
             # Sort by similarity and limit results
             results.sort(key=lambda x: x.similarity_score, reverse=True)
             return results[:limit]
-        
+
         async def delete_by_file(self, file_path: Path) -> int:
             initial_count = len(self.chunks)
             self.chunks = [c for c in self.chunks if c.file_path != file_path]
             return initial_count - len(self.chunks)
-        
+
         async def get_stats(self) -> IndexStats:
             # Count languages and file types
             language_counts = {}
@@ -331,7 +338,9 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
                 files.add(chunk.file_path)
                 # Count languages
                 if chunk.language:
-                    language_counts[chunk.language] = language_counts.get(chunk.language, 0) + 1
+                    language_counts[chunk.language] = (
+                        language_counts.get(chunk.language, 0) + 1
+                    )
                 # Count file types by extension
                 ext = chunk.file_path.suffix
                 if ext:
@@ -347,18 +356,18 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
                 embedding_model="test-embedding-model",  # Mock model name
             )
 
-        async def get_all_chunks(self) -> List[CodeChunk]:
+        async def get_all_chunks(self) -> list[CodeChunk]:
             """Get all chunks from the database."""
             return self.chunks.copy()
-        
+
         async def health_check(self) -> bool:
             return self.initialized
-        
+
         async def reset(self) -> None:
             """Reset the database."""
             self.chunks = []
             self.initialized = False
-    
+
     db = MockVectorDatabase()
     yield db
 
@@ -415,26 +424,28 @@ def real_embedding_function():
 # Performance testing utilities
 class PerformanceTimer:
     """Utility for measuring performance in tests."""
-    
+
     def __init__(self):
         self.times = []
-    
+
     async def time_async_operation(self, operation, *args, **kwargs):
         """Time an async operation."""
         import time
+
         start = time.perf_counter()
         result = await operation(*args, **kwargs)
         end = time.perf_counter()
         elapsed = end - start
         self.times.append(elapsed)
         return result, elapsed
-    
+
     def get_stats(self):
         """Get performance statistics."""
         if not self.times:
             return {}
-        
+
         import statistics
+
         return {
             "count": len(self.times),
             "total": sum(self.times),
@@ -453,7 +464,7 @@ def performance_timer():
 
 
 # Test data generators
-def generate_test_files(base_dir: Path, count: int = 10) -> List[Path]:
+def generate_test_files(base_dir: Path, count: int = 10) -> list[Path]:
     """Generate test files for performance testing."""
     files = []
     for i in range(count):
@@ -466,14 +477,14 @@ def function_{i}():
 class Class{i}:
     def method_{i}(self):
         return "method_{i}"
-        
+
     def process_data_{i}(self, data):
         """Process data for class {i}."""
         return data * {i}
 '''
         file_path.write_text(content)
         files.append(file_path)
-    
+
     return files
 
 
@@ -482,14 +493,17 @@ class Class{i}:
 def cli_runner():
     """Create a CLI runner for testing commands."""
     from typer.testing import CliRunner
+
     return CliRunner()
 
 
 # Assertion helpers
-def assert_search_results_valid(results: List[SearchResult], min_count: int = 0):
+def assert_search_results_valid(results: list[SearchResult], min_count: int = 0):
     """Assert that search results are valid."""
-    assert len(results) >= min_count, f"Expected at least {min_count} results, got {len(results)}"
-    
+    assert len(results) >= min_count, (
+        f"Expected at least {min_count} results, got {len(results)}"
+    )
+
     for result in results:
         assert isinstance(result, SearchResult)
         assert result.content is not None
@@ -499,10 +513,10 @@ def assert_search_results_valid(results: List[SearchResult], min_count: int = 0)
         assert result.end_line >= result.start_line
 
 
-def assert_chunks_valid(chunks: List[CodeChunk]):
+def assert_chunks_valid(chunks: list[CodeChunk]):
     """Assert that code chunks are valid."""
     assert len(chunks) > 0, "Expected at least one chunk"
-    
+
     for chunk in chunks:
         assert isinstance(chunk, CodeChunk)
         assert chunk.id is not None

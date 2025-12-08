@@ -52,7 +52,6 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -81,10 +80,10 @@ class HomebrewFormulaUpdater:
 
     def __init__(
         self,
-        tap_repo_path: Optional[Path] = None,
-        tap_repo_url: Optional[str] = None,
+        tap_repo_path: Path | None = None,
+        tap_repo_url: str | None = None,
         dry_run: bool = False,
-        verbose: bool = False
+        verbose: bool = False,
     ):
         """Initialize the formula updater.
 
@@ -100,14 +99,16 @@ class HomebrewFormulaUpdater:
         # Default tap repository
         self.tap_repo_url = tap_repo_url or os.getenv(
             "HOMEBREW_TAP_REPO",
-            "https://github.com/bobmatnyc/homebrew-mcp-vector-search.git"
+            "https://github.com/bobmatnyc/homebrew-mcp-vector-search.git",
         )
 
         # Default tap repo path
         if tap_repo_path:
             self.tap_repo_path = tap_repo_path
         else:
-            self.tap_repo_path = Path.home() / ".homebrew_tap_update" / "homebrew-mcp-vector-search"
+            self.tap_repo_path = (
+                Path.home() / ".homebrew_tap_update" / "homebrew-mcp-vector-search"
+            )
 
         # GitHub token for authentication
         self.github_token = os.getenv("HOMEBREW_TAP_TOKEN")
@@ -116,7 +117,7 @@ class HomebrewFormulaUpdater:
         self.formula_name = "mcp-vector-search.rb"
 
         # Track changes for rollback
-        self.backup_path: Optional[Path] = None
+        self.backup_path: Path | None = None
         self.created_commit = False
 
     def log(self, message: str, level: str = "info") -> None:
@@ -131,7 +132,7 @@ class HomebrewFormulaUpdater:
             "success": GREEN,
             "warning": YELLOW,
             "error": RED,
-            "debug": CYAN
+            "debug": CYAN,
         }
 
         symbols = {
@@ -139,7 +140,7 @@ class HomebrewFormulaUpdater:
             "success": "✓",
             "warning": "⚠",
             "error": "✗",
-            "debug": "→"
+            "debug": "→",
         }
 
         if level == "debug" and not self.verbose:
@@ -155,7 +156,7 @@ class HomebrewFormulaUpdater:
 
         print(f"{prefix}{color}{symbol}{RESET} {message}")
 
-    def fetch_pypi_info(self, version: Optional[str] = None) -> PackageInfo:
+    def fetch_pypi_info(self, version: str | None = None) -> PackageInfo:
         """Fetch package information from PyPI.
 
         Args:
@@ -207,7 +208,7 @@ class HomebrewFormulaUpdater:
                 version=pkg_version,
                 url=sdist["url"],
                 sha256=sdist["digests"]["sha256"],
-                size=sdist["size"]
+                size=sdist["size"],
             )
 
             self.log(f"Found version: {BOLD}{pkg_version}{RESET}", "success")
@@ -260,7 +261,7 @@ class HomebrewFormulaUpdater:
                 self.log("SHA256 hash verified successfully", "success")
                 return True
             else:
-                self.log(f"SHA256 mismatch!", "error")
+                self.log("SHA256 mismatch!", "error")
                 self.log(f"Expected: {package_info.sha256}", "error")
                 self.log(f"Got: {calculated_hash}", "error")
                 return False
@@ -289,9 +290,12 @@ class HomebrewFormulaUpdater:
                     ["git", "-C", str(self.tap_repo_path), "pull"],
                     capture_output=True,
                     text=True,
-                    check=True
+                    check=True,
                 )
-                self.log(result.stdout.strip() if result.stdout else "Already up to date", "debug")
+                self.log(
+                    result.stdout.strip() if result.stdout else "Already up to date",
+                    "debug",
+                )
                 self.log("Repository updated", "success")
             except subprocess.CalledProcessError as e:
                 self.log(f"Failed to pull changes: {e.stderr}", "error")
@@ -311,7 +315,7 @@ class HomebrewFormulaUpdater:
                     ["git", "clone", self.tap_repo_url, str(self.tap_repo_path)],
                     capture_output=True,
                     text=True,
-                    check=True
+                    check=True,
                 )
                 self.log("Repository cloned successfully", "success")
             except subprocess.CalledProcessError as e:
@@ -327,7 +331,9 @@ class HomebrewFormulaUpdater:
         if self.dry_run:
             return
 
-        backup_name = f"{formula_path.name}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        backup_name = (
+            f"{formula_path.name}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
         self.backup_path = formula_path.parent / backup_name
 
         shutil.copy2(formula_path, self.backup_path)
@@ -386,15 +392,17 @@ class HomebrewFormulaUpdater:
                 self.log("No changes needed", "info")
                 return formula_path
 
-        self.log(f"Version: {current_version} → {BOLD}{package_info.version}{RESET}", "info")
+        self.log(
+            f"Version: {current_version} → {BOLD}{package_info.version}{RESET}", "info"
+        )
 
         # Show diff
         if self.verbose:
             self.log("Changes:", "debug")
-            self.log(f"  - version \"{current_version}\"", "debug")
-            self.log(f"  + version \"{package_info.version}\"", "debug")
-            self.log(f"  - sha256 \"{current_sha256}\"", "debug")
-            self.log(f"  + sha256 \"{package_info.sha256}\"", "debug")
+            self.log(f'  - version "{current_version}"', "debug")
+            self.log(f'  + version "{package_info.version}"', "debug")
+            self.log(f'  - sha256 "{current_sha256}"', "debug")
+            self.log(f'  + sha256 "{package_info.sha256}"', "debug")
 
         if self.dry_run:
             self.log("Would update formula file", "debug")
@@ -402,23 +410,19 @@ class HomebrewFormulaUpdater:
 
         # Update version
         content = re.sub(
-            r'version\s+"[^"]+"',
-            f'version "{package_info.version}"',
-            content
+            r'version\s+"[^"]+"', f'version "{package_info.version}"', content
         )
 
         # Update sha256
         content = re.sub(
-            r'sha256\s+"[^"]+"',
-            f'sha256 "{package_info.sha256}"',
-            content
+            r'sha256\s+"[^"]+"', f'sha256 "{package_info.sha256}"', content
         )
 
         # Update URL if needed (ensure it matches version)
         content = re.sub(
             r'url\s+"https://files\.pythonhosted\.org/packages/[^"]+/mcp-vector-search-[^"]+\.tar\.gz"',
             f'url "{package_info.url}"',
-            content
+            content,
         )
 
         # Write updated formula
@@ -452,7 +456,7 @@ class HomebrewFormulaUpdater:
                 ["ruby", "-c", str(formula_path)],
                 capture_output=True,
                 text=True,
-                check=False
+                check=False,
             )
 
             if result.returncode == 0:
@@ -477,37 +481,59 @@ class HomebrewFormulaUpdater:
         """
         if self.dry_run:
             self.log("Would commit and push changes:", "info")
-            self.log(f"  Message: chore: update formula to {package_info.version}", "debug")
+            self.log(
+                f"  Message: chore: update formula to {package_info.version}", "debug"
+            )
             self.log(f"  File: {self.formula_name}", "debug")
             return
 
         # Check authentication
         if not self.github_token:
             self.log("HOMEBREW_TAP_TOKEN not set - push may fail", "warning")
-            self.log("Set HOMEBREW_TAP_TOKEN environment variable for authentication", "info")
+            self.log(
+                "Set HOMEBREW_TAP_TOKEN environment variable for authentication", "info"
+            )
 
         try:
             # Configure git to use token
             if self.github_token:
                 # Extract repo path from URL
-                repo_match = re.search(r'github\.com[:/](.+?)(?:\.git)?$', self.tap_repo_url)
+                repo_match = re.search(
+                    r"github\.com[:/](.+?)(?:\.git)?$", self.tap_repo_url
+                )
                 if repo_match:
                     repo_path = repo_match.group(1)
-                    authenticated_url = f"https://{self.github_token}@github.com/{repo_path}.git"
+                    authenticated_url = (
+                        f"https://{self.github_token}@github.com/{repo_path}.git"
+                    )
 
                     subprocess.run(
-                        ["git", "-C", str(self.tap_repo_path), "remote", "set-url", "origin", authenticated_url],
+                        [
+                            "git",
+                            "-C",
+                            str(self.tap_repo_path),
+                            "remote",
+                            "set-url",
+                            "origin",
+                            authenticated_url,
+                        ],
                         capture_output=True,
-                        check=True
+                        check=True,
                     )
                     self.log("Configured git authentication", "debug")
 
             # Stage changes
             subprocess.run(
-                ["git", "-C", str(self.tap_repo_path), "add", f"Formula/{self.formula_name}"],
+                [
+                    "git",
+                    "-C",
+                    str(self.tap_repo_path),
+                    "add",
+                    f"Formula/{self.formula_name}",
+                ],
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
 
             # Try old location too if it exists
@@ -517,28 +543,28 @@ class HomebrewFormulaUpdater:
                     ["git", "-C", str(self.tap_repo_path), "add", self.formula_name],
                     capture_output=True,
                     text=True,
-                    check=False  # Don't fail if file not tracked
+                    check=False,  # Don't fail if file not tracked
                 )
 
             # Commit
             commit_message = f"chore: update formula to {package_info.version}\n\nUpdated mcp-vector-search to version {package_info.version}\n- Version: {package_info.version}\n- SHA256: {package_info.sha256}"
 
-            result = subprocess.run(
+            subprocess.run(
                 ["git", "-C", str(self.tap_repo_path), "commit", "-m", commit_message],
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
             self.created_commit = True
             self.log("Changes committed", "success")
 
             # Push
             self.log("Pushing to remote repository...", "info")
-            result = subprocess.run(
+            subprocess.run(
                 ["git", "-C", str(self.tap_repo_path), "push"],
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
             self.log("Changes pushed successfully", "success")
 
@@ -574,7 +600,7 @@ class HomebrewFormulaUpdater:
                 subprocess.run(
                     ["git", "-C", str(self.tap_repo_path), "reset", "--hard", "HEAD~1"],
                     capture_output=True,
-                    check=True
+                    check=True,
                 )
                 self.log("Reset git commit", "success")
             except subprocess.CalledProcessError:
@@ -586,7 +612,7 @@ class HomebrewFormulaUpdater:
             self.backup_path.unlink()
             self.log("Removed backup file", "debug")
 
-    def run(self, version: Optional[str] = None) -> None:
+    def run(self, version: str | None = None) -> None:
         """Run the complete update process.
 
         Args:
@@ -630,7 +656,10 @@ class HomebrewFormulaUpdater:
             print(f"{BOLD}{GREEN}{'=' * 60}{RESET}\n")
 
             if not self.dry_run:
-                self.log(f"Users can now install with: brew install bobmatnyc/mcp-vector-search/mcp-vector-search", "info")
+                self.log(
+                    "Users can now install with: brew install bobmatnyc/mcp-vector-search/mcp-vector-search",
+                    "info",
+                )
 
         except KeyboardInterrupt:
             print(f"\n{YELLOW}Operation cancelled by user{RESET}")
@@ -666,39 +695,35 @@ Exit Codes:
   3: Formula update error
   4: Validation error
   5: Authentication error
-        """
+        """,
     )
 
     parser.add_argument(
         "--version",
         metavar="VERSION",
-        help="Specific version to update to (default: latest from PyPI)"
+        help="Specific version to update to (default: latest from PyPI)",
     )
 
     parser.add_argument(
         "--tap-repo-path",
         type=Path,
         metavar="PATH",
-        help="Local path to tap repository (default: ~/.homebrew_tap_update/homebrew-mcp-vector-search)"
+        help="Local path to tap repository (default: ~/.homebrew_tap_update/homebrew-mcp-vector-search)",
     )
 
     parser.add_argument(
         "--tap-repo-url",
         metavar="URL",
-        help="URL of tap repository (default: from HOMEBREW_TAP_REPO or bobmatnyc/homebrew-mcp-vector-search)"
+        help="URL of tap repository (default: from HOMEBREW_TAP_REPO or bobmatnyc/homebrew-mcp-vector-search)",
     )
 
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show what would be done without making changes"
+        help="Show what would be done without making changes",
     )
 
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output"
-    )
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
 
     args = parser.parse_args()
 
@@ -707,7 +732,7 @@ Exit Codes:
         tap_repo_path=args.tap_repo_path,
         tap_repo_url=args.tap_repo_url,
         dry_run=args.dry_run,
-        verbose=args.verbose
+        verbose=args.verbose,
     )
 
     # Run update

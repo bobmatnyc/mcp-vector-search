@@ -9,7 +9,6 @@ This file tests:
 5. Hierarchical chunk relationships (module → class → method)
 """
 
-from typing import Optional, List, Dict
 from dataclasses import dataclass
 
 
@@ -45,7 +44,7 @@ def calculate_grade(score: int, bonus: int = 0) -> str:
 
 
 # Function with high complexity (score = 10+)
-def complex_validator(data: Dict[str, any]) -> Optional[List[str]]:
+def complex_validator(data: dict[str, any]) -> list[str] | None:
     """Validate data with high complexity.
 
     Tests multiple decision points: if, for, while, try/except.
@@ -89,7 +88,7 @@ class User:
 
     name: str
     age: int
-    email: Optional[str] = None
+    email: str | None = None
 
     def __post_init__(self):
         """Validate user data after initialization."""
@@ -131,19 +130,14 @@ class User:
         return True
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "User":
+    def from_dict(cls, data: dict[str, any]) -> "User":
         """Create user from dictionary."""
         return cls(
-            name=data.get("name", ""),
-            age=data.get("age", 0),
-            email=data.get("email")
+            name=data.get("name", ""), age=data.get("age", 0), email=data.get("email")
         )
 
     def update_profile(
-        self,
-        name: Optional[str] = None,
-        age: Optional[int] = None,
-        email: Optional[str] = None
+        self, name: str | None = None, age: int | None = None, email: str | None = None
     ) -> None:
         """Update user profile with optional fields.
 
@@ -172,14 +166,11 @@ class AuthenticationManager:
         """
         self.secret_key = secret_key
         self.timeout = timeout
-        self._cache: Dict[str, any] = {}
+        self._cache: dict[str, any] = {}
 
     def authenticate(
-        self,
-        username: str,
-        password: str,
-        remember_me: bool = False
-    ) -> Optional[str]:
+        self, username: str, password: str, remember_me: bool = False
+    ) -> str | None:
         """Authenticate user and return token (high complexity).
 
         Args:
@@ -219,7 +210,7 @@ class AuthenticationManager:
         self._cache[username] = {
             "password": password,
             "token": token,
-            "timeout": self.timeout * 24 if remember_me else self.timeout  # +1
+            "timeout": self.timeout * 24 if remember_me else self.timeout,  # +1
         }
 
         return token

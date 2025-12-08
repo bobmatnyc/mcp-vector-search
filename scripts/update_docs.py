@@ -12,7 +12,6 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 # Color codes for terminal output
 RED = "\033[0;31m"
@@ -25,7 +24,7 @@ RESET = "\033[0m"
 class DocumentationUpdater:
     """Updates documentation files with version information."""
 
-    def __init__(self, project_root: Optional[Path] = None):
+    def __init__(self, project_root: Path | None = None):
         """Initialize documentation updater.
 
         Args:
@@ -52,7 +51,7 @@ class DocumentationUpdater:
             return False
 
         content = self.readme_file.read_text()
-        lines = content.split('\n')
+        lines = content.split("\n")
 
         # Find and update the alpha release line (should be around line 9)
         updated = False
@@ -60,20 +59,20 @@ class DocumentationUpdater:
             if line.strip().startswith("> ⚠️") and "Alpha Release" in line:
                 old_line = line
                 # Update version in the line
-                new_line = re.sub(
-                    r'\(v[\d.]+\)',
-                    f'(v{version})',
-                    line
-                )
+                new_line = re.sub(r"\(v[\d.]+\)", f"(v{version})", line)
 
                 if old_line != new_line:
                     if dry_run:
-                        print(f"{YELLOW}[DRY RUN]{RESET} Would update README.md line {i+1}:")
+                        print(
+                            f"{YELLOW}[DRY RUN]{RESET} Would update README.md line {i + 1}:"
+                        )
                         print(f"  {BLUE}Old:{RESET} {old_line}")
                         print(f"  {GREEN}New:{RESET} {new_line}")
                     else:
                         lines[i] = new_line
-                        print(f"{GREEN}✓{RESET} Updated README.md version badge to v{version}")
+                        print(
+                            f"{GREEN}✓{RESET} Updated README.md version badge to v{version}"
+                        )
                     updated = True
                 else:
                     print(f"{BLUE}ℹ{RESET} README.md already at v{version}")
@@ -87,15 +86,12 @@ class DocumentationUpdater:
 
         # Write back if not dry run
         if not dry_run and updated:
-            self.readme_file.write_text('\n'.join(lines))
+            self.readme_file.write_text("\n".join(lines))
 
         return True
 
     def update_claude_recent_activity(
-        self,
-        version: str,
-        release_type: str = "patch",
-        dry_run: bool = False
+        self, version: str, release_type: str = "patch", dry_run: bool = False
     ) -> bool:
         """Update CLAUDE.md Recent Activity section.
 
@@ -121,34 +117,39 @@ class DocumentationUpdater:
             return True
 
         # Find the Recent Activity section
-        lines = content.split('\n')
-        recent_activity_idx = -1
+        lines = content.split("\n")
         recent_releases_idx = -1
 
         for i, line in enumerate(lines):
             if "## 📊 Recent Activity" in line:
-                recent_activity_idx = i
+                pass
             elif "### 🔴 Recent Releases" in line:
                 recent_releases_idx = i
                 break
 
         if recent_releases_idx == -1:
-            print(f"{YELLOW}Warning:{RESET} Recent Releases section not found in CLAUDE.md")
+            print(
+                f"{YELLOW}Warning:{RESET} Recent Releases section not found in CLAUDE.md"
+            )
             return False
 
         # Determine release description based on type
-        date_str = datetime.now().strftime("%b %d, %Y")
-        month_str = datetime.now().strftime("%b %#d" if sys.platform == "win32" else "%b %-d")
+        datetime.now().strftime("%b %d, %Y")
+        month_str = datetime.now().strftime(
+            "%b %#d" if sys.platform == "win32" else "%b %-d"
+        )
 
         release_descriptions = {
             "patch": "Bug Fixes & Improvements",
             "minor": "New Features & Enhancements",
-            "major": "Major Release"
+            "major": "Major Release",
         }
         description = release_descriptions.get(release_type, "Release")
 
         # Create new release entry
-        new_entry = f'**v{version} ({month_str}, {datetime.now().year})** - {description}'
+        new_entry = (
+            f"**v{version} ({month_str}, {datetime.now().year})** - {description}"
+        )
 
         # Insert after the Recent Releases header
         insert_idx = recent_releases_idx + 1
@@ -158,7 +159,7 @@ class DocumentationUpdater:
             print(f"  {GREEN}+ {new_entry}{RESET}")
         else:
             lines.insert(insert_idx, new_entry)
-            self.claude_file.write_text('\n'.join(lines))
+            self.claude_file.write_text("\n".join(lines))
             print(f"{GREEN}✓{RESET} Updated CLAUDE.md Recent Activity with v{version}")
 
         return True
@@ -179,25 +180,26 @@ class DocumentationUpdater:
         current_date = datetime.now().strftime("%Y-%m-%d")
 
         # Find and update Last Updated line
-        pattern = r'\*\*Last Updated\*\*:\s*\d{4}-\d{2}-\d{2}'
-        new_text = f'**Last Updated**: {current_date}'
+        pattern = r"\*\*Last Updated\*\*:\s*\d{4}-\d{2}-\d{2}"
+        new_text = f"**Last Updated**: {current_date}"
 
         if re.search(pattern, content):
             if dry_run:
-                print(f"{YELLOW}[DRY RUN]{RESET} Would update CLAUDE.md Last Updated to {current_date}")
+                print(
+                    f"{YELLOW}[DRY RUN]{RESET} Would update CLAUDE.md Last Updated to {current_date}"
+                )
             else:
                 updated_content = re.sub(pattern, new_text, content)
                 self.claude_file.write_text(updated_content)
-                print(f"{GREEN}✓{RESET} Updated CLAUDE.md Last Updated to {current_date}")
+                print(
+                    f"{GREEN}✓{RESET} Updated CLAUDE.md Last Updated to {current_date}"
+                )
             return True
 
         return False
 
     def update_all(
-        self,
-        version: str,
-        release_type: str = "patch",
-        dry_run: bool = False
+        self, version: str, release_type: str = "patch", dry_run: bool = False
     ) -> bool:
         """Update all documentation files.
 
@@ -211,7 +213,9 @@ class DocumentationUpdater:
         """
         success = True
 
-        print(f"{BLUE}Updating documentation for v{version} ({release_type} release)...{RESET}\n")
+        print(
+            f"{BLUE}Updating documentation for v{version} ({release_type} release)...{RESET}\n"
+        )
 
         # Update README.md
         if not self.update_readme_version(version, dry_run):
@@ -242,42 +246,35 @@ Examples:
   %(prog)s --version 0.7.2
   %(prog)s --version 0.8.0 --type minor
   %(prog)s --version 1.0.0 --type major --dry-run
-        """
+        """,
     )
 
     parser.add_argument(
-        "--version",
-        "-v",
-        required=True,
-        help="Version to update to (e.g., 0.7.2)"
+        "--version", "-v", required=True, help="Version to update to (e.g., 0.7.2)"
     )
     parser.add_argument(
         "--type",
         "-t",
         choices=["patch", "minor", "major"],
         default="patch",
-        help="Type of release (default: patch)"
+        help="Type of release (default: patch)",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show what would change without modifying files"
+        help="Show what would change without modifying files",
     )
     parser.add_argument(
-        "--readme-only",
-        action="store_true",
-        help="Only update README.md"
+        "--readme-only", action="store_true", help="Only update README.md"
     )
     parser.add_argument(
-        "--claude-only",
-        action="store_true",
-        help="Only update CLAUDE.md"
+        "--claude-only", action="store_true", help="Only update CLAUDE.md"
     )
 
     args = parser.parse_args()
 
     # Validate version format
-    if not re.match(r'^\d+\.\d+\.\d+$', args.version):
+    if not re.match(r"^\d+\.\d+\.\d+$", args.version):
         print(f"{RED}Error:{RESET} Invalid version format. Use X.Y.Z (e.g., 0.7.2)")
         sys.exit(1)
 
@@ -295,10 +292,9 @@ Examples:
         if args.readme_only:
             success = updater.update_readme_version(args.version, args.dry_run)
         elif args.claude_only:
-            success = (
-                updater.update_claude_recent_activity(args.version, args.type, args.dry_run)
-                and updater.update_last_updated(args.dry_run)
-            )
+            success = updater.update_claude_recent_activity(
+                args.version, args.type, args.dry_run
+            ) and updater.update_last_updated(args.dry_run)
         else:
             success = updater.update_all(args.version, args.type, args.dry_run)
 

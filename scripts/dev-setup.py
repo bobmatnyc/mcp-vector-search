@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """UV-based development environment setup script."""
 
+import shutil
 import subprocess
 import sys
-import shutil
 from pathlib import Path
 
 
@@ -36,38 +36,22 @@ def main() -> None:
     print("✅ UV found, proceeding with setup\n")
 
     # Sync dependencies (creates venv and installs everything)
-    run_uv_command(
-        ["sync", "--dev"],
-        "Installing all dependencies with UV"
-    )
+    run_uv_command(["sync", "--dev"], "Installing all dependencies with UV")
 
     # Install pre-commit hooks
-    run_uv_command(
-        ["run", "pre-commit", "install"],
-        "Setting up pre-commit hooks"
-    )
+    run_uv_command(["run", "pre-commit", "install"], "Setting up pre-commit hooks")
 
     # Run initial code quality checks
     run_uv_command(
-        ["run", "black", "--check", "src", "tests"],
-        "Checking code formatting"
+        ["run", "black", "--check", "src", "tests"], "Checking code formatting"
     )
 
-    run_uv_command(
-        ["run", "ruff", "check", "src", "tests"],
-        "Running linter checks"
-    )
+    run_uv_command(["run", "ruff", "check", "src", "tests"], "Running linter checks")
 
-    run_uv_command(
-        ["run", "mypy", "src"],
-        "Running type checking"
-    )
+    run_uv_command(["run", "mypy", "src"], "Running type checking")
 
     # Run tests
-    run_uv_command(
-        ["run", "pytest", "tests/", "-v"],
-        "Running test suite"
-    )
+    run_uv_command(["run", "pytest", "tests/", "-v"], "Running test suite")
 
     print("\n🎉 Development environment setup complete!")
     print("\nNext steps:")

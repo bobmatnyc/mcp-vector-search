@@ -11,7 +11,6 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
 
 # Color codes for terminal output
 RED = "\033[0;31m"
@@ -33,10 +32,10 @@ class Changeset:
         self.filepath = filepath
         self.type: str = ""
         self.summary: str = ""
-        self.details: List[str] = []
-        self.impact: List[str] = []
-        self.breaking_changes: List[str] = []
-        self.related: List[str] = []
+        self.details: list[str] = []
+        self.impact: list[str] = []
+        self.breaking_changes: list[str] = []
+        self.related: list[str] = []
 
         self._parse()
 
@@ -52,11 +51,11 @@ class Changeset:
         # Parse YAML frontmatter (simple parsing - just extract type)
         try:
             frontmatter = parts[1].strip()
-            type_match = re.search(r'type:\s*(\w+)', frontmatter)
+            type_match = re.search(r"type:\s*(\w+)", frontmatter)
             if type_match:
                 self.type = type_match.group(1).strip().lower()
             else:
-                raise ValueError(f"No type field found in frontmatter")
+                raise ValueError("No type field found in frontmatter")
         except Exception as e:
             raise ValueError(f"Invalid frontmatter in {self.filepath}: {e}")
 
@@ -70,7 +69,9 @@ class Changeset:
         self._extract_section(markdown, "## Summary", self._set_summary)
         self._extract_section(markdown, "## Details", self._set_details)
         self._extract_section(markdown, "## Impact", self._set_impact)
-        self._extract_section(markdown, "## Breaking Changes", self._set_breaking_changes)
+        self._extract_section(
+            markdown, "## Breaking Changes", self._set_breaking_changes
+        )
         self._extract_section(markdown, "## Related", self._set_related)
 
     def _extract_section(self, content: str, header: str, setter) -> None:
@@ -80,53 +81,55 @@ class Changeset:
         if match:
             section_content = match.group(1).strip()
             # Remove HTML comments
-            section_content = re.sub(r'<!--.*?-->', '', section_content, flags=re.DOTALL)
+            section_content = re.sub(
+                r"<!--.*?-->", "", section_content, flags=re.DOTALL
+            )
             section_content = section_content.strip()
             if section_content:
                 setter(section_content)
 
     def _set_summary(self, content: str) -> None:
         """Set summary from content."""
-        self.summary = content.split('\n')[0].strip()
+        self.summary = content.split("\n")[0].strip()
 
     def _set_details(self, content: str) -> None:
         """Set details from content."""
         self.details = [
-            line.strip().lstrip('-').strip()
-            for line in content.split('\n')
-            if line.strip() and line.strip().startswith('-')
+            line.strip().lstrip("-").strip()
+            for line in content.split("\n")
+            if line.strip() and line.strip().startswith("-")
         ]
 
     def _set_impact(self, content: str) -> None:
         """Set impact from content."""
-        lines = content.split('\n')
+        lines = content.split("\n")
         # First line might be description, rest are bullet points
         for line in lines:
             line = line.strip()
-            if line.startswith('-'):
-                self.impact.append(line.lstrip('-').strip())
+            if line.startswith("-"):
+                self.impact.append(line.lstrip("-").strip())
 
     def _set_breaking_changes(self, content: str) -> None:
         """Set breaking changes from content."""
         self.breaking_changes = [
-            line.strip().lstrip('-').strip()
-            for line in content.split('\n')
-            if line.strip() and line.strip().startswith('-')
+            line.strip().lstrip("-").strip()
+            for line in content.split("\n")
+            if line.strip() and line.strip().startswith("-")
         ]
 
     def _set_related(self, content: str) -> None:
         """Set related items from content."""
         self.related = [
-            line.strip().lstrip('-').strip()
-            for line in content.split('\n')
-            if line.strip() and line.strip().startswith('-')
+            line.strip().lstrip("-").strip()
+            for line in content.split("\n")
+            if line.strip() and line.strip().startswith("-")
         ]
 
 
 class ChangesetManager:
     """Manages changesets for a project."""
 
-    def __init__(self, project_root: Optional[Path] = None):
+    def __init__(self, project_root: Path | None = None):
         """Initialize changeset manager.
 
         Args:
@@ -156,8 +159,8 @@ class ChangesetManager:
 
         # Generate filename
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        slug = re.sub(r'[^a-z0-9]+', '-', description.lower())
-        slug = slug.strip('-')[:50]  # Limit slug length
+        slug = re.sub(r"[^a-z0-9]+", "-", description.lower())
+        slug = slug.strip("-")[:50]  # Limit slug length
         filename = f"{timestamp}-{slug}.md"
         filepath = self.changesets_dir / filename
 
@@ -168,18 +171,10 @@ class ChangesetManager:
             content = self._default_template()
 
         # Update type in frontmatter
-        content = re.sub(
-            r'type:\s*\w+',
-            f'type: {change_type}',
-            content
-        )
+        content = re.sub(r"type:\s*\w+", f"type: {change_type}", content)
 
         # Update summary
-        content = re.sub(
-            r'(## Summary\n).*',
-            f'\\1{description}',
-            content
-        )
+        content = re.sub(r"(## Summary\n).*", f"\\1{description}", content)
 
         # Write changeset file
         filepath.write_text(content)
@@ -189,8 +184,8 @@ class ChangesetManager:
         print(f"  Description: {description}")
         print(f"\n{BLUE}Next steps:{RESET}")
         print(f"  1. Edit {filepath} to add details")
-        print(f"  2. Run 'make changeset-view' to see all changesets")
-        print(f"  3. Changes will be consumed during next release")
+        print("  2. Run 'make changeset-view' to see all changesets")
+        print("  3. Changes will be consumed during next release")
 
         return filepath
 
@@ -217,15 +212,18 @@ Brief description of the change
 <!-- Optional -->
 """
 
-    def list_changesets(self) -> List[Changeset]:
+    def list_changesets(self) -> list[Changeset]:
         """List all pending changesets.
 
         Returns:
             List of Changeset objects
         """
         changeset_files = sorted(
-            [f for f in self.changesets_dir.glob("*.md")
-             if f.name not in ["README.md", "template.md"]]
+            [
+                f
+                for f in self.changesets_dir.glob("*.md")
+                if f.name not in ["README.md", "template.md"]
+            ]
         )
 
         changesets = []
@@ -234,7 +232,9 @@ Brief description of the change
                 changeset = Changeset(filepath)
                 changesets.append(changeset)
             except Exception as e:
-                print(f"{YELLOW}Warning:{RESET} Skipping invalid changeset {filepath.name}: {e}")
+                print(
+                    f"{YELLOW}Warning:{RESET} Skipping invalid changeset {filepath.name}: {e}"
+                )
 
         return changesets
 
@@ -245,17 +245,13 @@ Brief description of the change
         if not changesets:
             print(f"{YELLOW}No pending changesets found.{RESET}")
             print(f"\n{BLUE}Add a changeset:{RESET}")
-            print(f"  make changeset-add TYPE=patch DESC=\"your change description\"")
+            print('  make changeset-add TYPE=patch DESC="your change description"')
             return
 
         print(f"{BLUE}Pending Changesets ({len(changesets)}):{RESET}\n")
 
         # Group by type
-        by_type: Dict[str, List[Changeset]] = {
-            "major": [],
-            "minor": [],
-            "patch": []
-        }
+        by_type: dict[str, list[Changeset]] = {"major": [], "minor": [], "patch": []}
 
         for cs in changesets:
             by_type[cs.type].append(cs)
@@ -264,7 +260,13 @@ Brief description of the change
         for change_type in ["major", "minor", "patch"]:
             items = by_type[change_type]
             if items:
-                color = RED if change_type == "major" else YELLOW if change_type == "minor" else GREEN
+                color = (
+                    RED
+                    if change_type == "major"
+                    else YELLOW
+                    if change_type == "minor"
+                    else GREEN
+                )
                 print(f"{color}[{change_type.upper()}]{RESET} ({len(items)} changes)")
                 for cs in items:
                     print(f"  • {cs.summary}")
@@ -272,10 +274,10 @@ Brief description of the change
                 print()
 
         print(f"{BLUE}Next steps:{RESET}")
-        print(f"  • Review changesets: ls -la .changesets/")
-        print(f"  • Consume changesets: make release-patch/minor/major")
+        print("  • Review changesets: ls -la .changesets/")
+        print("  • Consume changesets: make release-patch/minor/major")
 
-    def consume(self, version: str, dry_run: bool = False) -> Dict[str, List[str]]:
+    def consume(self, version: str, dry_run: bool = False) -> dict[str, list[str]]:
         """Consume changesets and update changelog.
 
         Args:
@@ -292,11 +294,11 @@ Brief description of the change
             return {}
 
         # Group changes by category
-        changes: Dict[str, List[str]] = {
+        changes: dict[str, list[str]] = {
             "Added": [],
             "Changed": [],
             "Fixed": [],
-            "Breaking": []
+            "Breaking": [],
         }
 
         # Process each changeset
@@ -313,9 +315,13 @@ Brief description of the change
 
                 # Categorize by keywords or type
                 summary_lower = cs.summary.lower()
-                if any(kw in summary_lower for kw in ["add", "new", "introduce", "feat"]):
+                if any(
+                    kw in summary_lower for kw in ["add", "new", "introduce", "feat"]
+                ):
                     changes["Added"].append(entry)
-                elif any(kw in summary_lower for kw in ["fix", "resolve", "correct", "bug"]):
+                elif any(
+                    kw in summary_lower for kw in ["fix", "resolve", "correct", "bug"]
+                ):
                     changes["Fixed"].append(entry)
                 else:
                     changes["Changed"].append(entry)
@@ -329,12 +335,14 @@ Brief description of the change
                 cs.filepath.unlink()
                 print(f"{GREEN}✓{RESET} Consumed: {cs.filepath.name}")
         else:
-            print(f"{YELLOW}[DRY RUN]{RESET} Would consume {len(changesets)} changesets")
+            print(
+                f"{YELLOW}[DRY RUN]{RESET} Would consume {len(changesets)} changesets"
+            )
             self._preview_changelog(version, changes)
 
         return changes
 
-    def _update_changelog(self, version: str, changes: Dict[str, List[str]]) -> None:
+    def _update_changelog(self, version: str, changes: dict[str, list[str]]) -> None:
         """Update CHANGELOG.md with changes.
 
         Args:
@@ -359,11 +367,15 @@ Brief description of the change
         # Add sections with content
         for category in ["Breaking", "Added", "Changed", "Fixed"]:
             if changes.get(category):
-                entry_lines.append(f"### {category if category != 'Breaking' else 'Breaking Changes'}")
+                entry_lines.append(
+                    f"### {category if category != 'Breaking' else 'Breaking Changes'}"
+                )
                 for item in changes[category]:
                     # Handle multi-line entries
-                    for line in item.split('\n'):
-                        entry_lines.append(line if line.startswith('  ') else f"- {line}")
+                    for line in item.split("\n"):
+                        entry_lines.append(
+                            line if line.startswith("  ") else f"- {line}"
+                        )
                 entry_lines.append("")
 
         # Find insertion point (after ## [Unreleased])
@@ -374,7 +386,9 @@ Brief description of the change
             if line.startswith("## [Unreleased]"):
                 # Skip to after the Unreleased section
                 insert_pos = i + 1
-                while insert_pos < len(lines) and not lines[insert_pos].startswith("## ["):
+                while insert_pos < len(lines) and not lines[insert_pos].startswith(
+                    "## ["
+                ):
                     insert_pos += 1
                 break
             elif line.startswith("## [") or line.startswith("## v"):
@@ -389,7 +403,7 @@ Brief description of the change
         self.changelog_file.write_text("\n".join(lines))
         print(f"{GREEN}✓{RESET} Updated CHANGELOG.md with version {version}")
 
-    def _preview_changelog(self, version: str, changes: Dict[str, List[str]]) -> None:
+    def _preview_changelog(self, version: str, changes: dict[str, list[str]]) -> None:
         """Preview changelog entry."""
         date_str = datetime.now().strftime("%Y-%m-%d")
         print(f"\n{BLUE}Changelog Entry Preview:{RESET}\n")
@@ -397,10 +411,12 @@ Brief description of the change
 
         for category in ["Breaking", "Added", "Changed", "Fixed"]:
             if changes.get(category):
-                print(f"### {category if category != 'Breaking' else 'Breaking Changes'}")
+                print(
+                    f"### {category if category != 'Breaking' else 'Breaking Changes'}"
+                )
                 for item in changes[category]:
-                    for line in item.split('\n'):
-                        print(line if line.startswith('  ') else f"- {line}")
+                    for line in item.split("\n"):
+                        print(line if line.startswith("  ") else f"- {line}")
                 print()
 
     def validate(self) -> bool:
@@ -410,7 +426,9 @@ Brief description of the change
             True if all valid, False otherwise
         """
         changesets = self.changesets_dir.glob("*.md")
-        changesets = [f for f in changesets if f.name not in ["README.md", "template.md"]]
+        changesets = [
+            f for f in changesets if f.name not in ["README.md", "template.md"]
+        ]
 
         if not changesets:
             print(f"{YELLOW}No changesets to validate.{RESET}")
@@ -439,7 +457,7 @@ Examples:
   %(prog)s list
   %(prog)s consume --version 0.7.2
   %(prog)s validate
-        """
+        """,
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
@@ -450,13 +468,10 @@ Examples:
         "--type",
         choices=["patch", "minor", "major"],
         required=True,
-        help="Type of change"
+        help="Type of change",
     )
     add_parser.add_argument(
-        "--description",
-        "-d",
-        required=True,
-        help="Short description of the change"
+        "--description", "-d", required=True, help="Short description of the change"
     )
 
     # List command
@@ -465,15 +480,10 @@ Examples:
     # Consume command
     consume_parser = subparsers.add_parser("consume", help="Consume changesets")
     consume_parser.add_argument(
-        "--version",
-        "-v",
-        required=True,
-        help="Version to consume changesets for"
+        "--version", "-v", required=True, help="Version to consume changesets for"
     )
     consume_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Preview without making changes"
+        "--dry-run", action="store_true", help="Preview without making changes"
     )
 
     # Validate command
