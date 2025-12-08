@@ -19,7 +19,7 @@ class LLMClient:
     3. Provide contextual explanations for results
     """
 
-    DEFAULT_MODEL = "anthropic/claude-3.5-sonnet"
+    DEFAULT_MODEL = "anthropic/claude-3-haiku"
     API_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
     TIMEOUT_SECONDS = 30.0
 
@@ -33,7 +33,7 @@ class LLMClient:
 
         Args:
             api_key: OpenRouter API key (defaults to OPENROUTER_API_KEY env var)
-            model: Model to use (defaults to claude-3.5-sonnet)
+            model: Model to use (defaults to claude-3-haiku)
             timeout: Request timeout in seconds
 
         Raises:

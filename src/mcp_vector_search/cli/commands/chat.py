@@ -60,7 +60,7 @@ def chat_main(
         None,
         "--model",
         "-m",
-        help="OpenRouter model to use (e.g., anthropic/claude-3.5-sonnet, anthropic/claude-3-haiku)",
+        help="OpenRouter model to use (default: claude-3-haiku, or claude-3.5-sonnet for higher quality)",
         rich_help_panel="🤖 LLM Options",
     ),
     timeout: float | None = typer.Option(
