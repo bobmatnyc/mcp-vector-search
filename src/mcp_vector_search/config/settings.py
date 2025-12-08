@@ -49,6 +49,10 @@ class ProjectConfig(BaseSettings):
         default=True,
         description="Respect .gitignore patterns when indexing files",
     )
+    openrouter_api_key: str | None = Field(
+        default=None,
+        description="OpenRouter API key for chat command (optional, can also use env var)",
+    )
 
     @field_validator("project_root", "index_path", mode="before")
     @classmethod

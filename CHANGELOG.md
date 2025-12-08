@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.5] - 2025-12-08
+
+### Fixed
+- **Chat command fails with "Extra inputs are not permitted" error**
+  - Added `openrouter_api_key` field to `ProjectConfig` Pydantic model
+  - Config file can now properly store the API key without validation errors
+
 ## [0.15.4] - 2025-12-08
 
 ### Fixed
