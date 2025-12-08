@@ -91,6 +91,13 @@ def chat_main(
         help="Filter by file glob patterns (e.g., '*.py', 'src/*.js'). Matches basename or relative path.",
         rich_help_panel="🔍 Filters",
     ),
+    think: bool = typer.Option(
+        False,
+        "--think",
+        "-t",
+        help="Use advanced model for complex queries (gpt-4o / claude-sonnet-4). Better reasoning, higher cost.",
+        rich_help_panel="🤖 LLM Options",
+    ),
 ) -> None:
     """🤖 Ask questions about your code in natural language.
 
@@ -140,8 +147,11 @@ def chat_main(
     [green]Custom timeout:[/green]
         $ mcp-vector-search chat "complex question" --timeout 60
 
-    [dim]💡 Tip: More specific questions get better answers. The LLM generates multiple
-    search queries and analyzes results to find the most relevant code.[/dim]
+    [green]Use advanced model for complex queries:[/green]
+        $ mcp-vector-search chat "explain the authentication flow" --think
+
+    [dim]💡 Tip: Use --think for complex architectural questions. It uses gpt-4o or
+    claude-sonnet-4 for better reasoning at higher cost.[/dim]
     """
     # If no query provided and no subcommand invoked, exit (show help)
     if query is None:
@@ -173,6 +183,7 @@ def chat_main(
                 timeout=timeout,
                 json_output=json_output,
                 files=files,
+                think=think,
             )
         )
 
@@ -191,6 +202,7 @@ async def run_chat_search(
     timeout: float = 30.0,
     json_output: bool = False,
     files: str | None = None,
+    think: bool = False,
 ) -> None:
     """Run LLM-powered chat search.
 
@@ -210,6 +222,7 @@ async def run_chat_search(
         timeout: API timeout in seconds
         json_output: Whether to output JSON format
         files: Optional glob pattern to filter files (e.g., '*.py', 'src/*.js')
+        think: Use advanced "thinking" model for complex queries
     """
     # Check for API keys (environment variable or config file)
     from ...core.config_utils import (
@@ -295,9 +308,13 @@ async def run_chat_search(
             model=model,
             provider=provider,
             timeout=timeout,
+            think=think,
         )
         provider_display = llm_client.provider.capitalize()
-        print_success(f"Connected to {provider_display}: {llm_client.model}")
+        model_info = f"{llm_client.model}"
+        if think:
+            model_info += " [bold magenta](thinking mode)[/bold magenta]"
+        print_success(f"Connected to {provider_display}: {model_info}")
     except ValueError as e:
         print_error(str(e))
         raise typer.Exit(1)

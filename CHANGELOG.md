@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.10] - 2025-12-08
+
+### Added
+- **`--think` flag for chat command**
+  - Uses advanced models for complex queries (gpt-4o / claude-sonnet-4)
+  - Better reasoning capabilities for architectural and design questions
+  - Higher cost but more thorough analysis
+  - Example: `mcp-vector-search chat "explain the authentication flow" --think`
+
 ## [0.15.9] - 2025-12-08
 
 ### Added

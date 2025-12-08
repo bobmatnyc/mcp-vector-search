@@ -33,6 +33,12 @@ class LLMClient:
         "openrouter": "anthropic/claude-3-haiku",
     }
 
+    # Advanced "thinking" models for complex queries (--think flag)
+    THINKING_MODELS = {
+        "openai": "gpt-4o",  # More capable, better reasoning
+        "openrouter": "anthropic/claude-sonnet-4",  # Claude Sonnet 4 for deep analysis
+    }
+
     # API endpoints
     API_ENDPOINTS = {
         "openai": "https://api.openai.com/v1/chat/completions",
@@ -49,6 +55,7 @@ class LLMClient:
         provider: LLMProvider | None = None,
         openai_api_key: str | None = None,
         openrouter_api_key: str | None = None,
+        think: bool = False,
     ) -> None:
         """Initialize LLM client.
 
@@ -59,10 +66,12 @@ class LLMClient:
             provider: Explicit provider ('openai' or 'openrouter')
             openai_api_key: OpenAI API key (or use OPENAI_API_KEY env var)
             openrouter_api_key: OpenRouter API key (or use OPENROUTER_API_KEY env var)
+            think: Use advanced "thinking" model for complex queries
 
         Raises:
             ValueError: If no API key is found for any provider
         """
+        self.think = think
         # Get API keys from environment or parameters
         self.openai_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
         self.openrouter_key = openrouter_api_key or os.environ.get("OPENROUTER_API_KEY")
@@ -98,18 +107,25 @@ class LLMClient:
                 )
 
         # Set API key and endpoint based on provider
+        # Select model: explicit > env var > thinking model > default model
         if self.provider == "openai":
             self.api_key = self.openai_key
             self.api_endpoint = self.API_ENDPOINTS["openai"]
-            self.model = model or os.environ.get(
-                "OPENAI_MODEL", self.DEFAULT_MODELS["openai"]
+            default_model = (
+                self.THINKING_MODELS["openai"]
+                if think
+                else self.DEFAULT_MODELS["openai"]
             )
+            self.model = model or os.environ.get("OPENAI_MODEL", default_model)
         else:
             self.api_key = self.openrouter_key
             self.api_endpoint = self.API_ENDPOINTS["openrouter"]
-            self.model = model or os.environ.get(
-                "OPENROUTER_MODEL", self.DEFAULT_MODELS["openrouter"]
+            default_model = (
+                self.THINKING_MODELS["openrouter"]
+                if think
+                else self.DEFAULT_MODELS["openrouter"]
             )
+            self.model = model or os.environ.get("OPENROUTER_MODEL", default_model)
 
         self.timeout = timeout
 
