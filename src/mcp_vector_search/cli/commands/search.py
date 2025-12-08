@@ -1,6 +1,8 @@
 """Search command for MCP Vector Search CLI."""
 
 import asyncio
+import os
+from fnmatch import fnmatch
 from pathlib import Path
 
 import typer
@@ -62,7 +64,7 @@ def search_main(
         None,
         "--files",
         "-f",
-        help="Filter by file patterns (e.g., '*.py' or 'src/*.js')",
+        help="Filter by file glob patterns (e.g., '*.py', 'src/*.js', 'tests/*.ts'). Matches basename or relative path.",
         rich_help_panel="🔍 Filters",
     ),
     language: str | None = typer.Option(
@@ -153,8 +155,10 @@ def search_main(
 
     [bold cyan]Advanced Search:[/bold cyan]
 
-    [green]Filter by file pattern:[/green]
-        $ mcp-vector-search search "validation" --files "src/*.py"
+    [green]Filter by file pattern (glob):[/green]
+        $ mcp-vector-search search "validation" --files "*.py"
+        $ mcp-vector-search search "component" --files "src/*.tsx"
+        $ mcp-vector-search search "test utils" --files "tests/*.ts"
 
     [green]Find similar code:[/green]
         $ mcp-vector-search search "src/auth.py" --similar
@@ -326,7 +330,7 @@ async def run_search(
         similarity_threshold=similarity_threshold or config.similarity_threshold,
     )
 
-    # Build filters
+    # Build filters (exclude file_path - will be handled with post-filtering)
     filters = {}
     if language:
         filters["language"] = language
@@ -334,9 +338,6 @@ async def run_search(
         filters["function_name"] = function_name
     if class_name:
         filters["class_name"] = class_name
-    if files:
-        # Simple file pattern matching (could be enhanced)
-        filters["file_path"] = files
 
     try:
         async with database:
@@ -347,6 +348,28 @@ async def run_search(
                 similarity_threshold=similarity_threshold,
                 include_context=show_content,
             )
+
+            # Post-filter results by file pattern if specified
+            if files and results:
+                filtered_results = []
+                for result in results:
+                    # Get relative path from project root
+                    try:
+                        rel_path = str(result.file_path.relative_to(project_root))
+                    except ValueError:
+                        # If file is outside project root, use absolute path
+                        rel_path = str(result.file_path)
+
+                    # Match against glob pattern (both full path and basename)
+                    if fnmatch(rel_path, files) or fnmatch(
+                        os.path.basename(rel_path), files
+                    ):
+                        filtered_results.append(result)
+
+                results = filtered_results
+                logger.debug(
+                    f"File pattern '{files}' filtered results to {len(results)} matches"
+                )
 
             # Handle export if requested
             if export_format:
