@@ -397,9 +397,21 @@ async def build_graph_data(
 
     # Compute external caller relationships
     console.print("[cyan]Computing external caller relationships...[/cyan]")
+    import time
+
+    start_time = time.time()
     caller_map = {}  # Map chunk_id -> list of caller info
 
-    for chunk in code_chunks:
+    logger.info(f"Processing {len(code_chunks)} code chunks for external callers...")
+    for chunk_idx, chunk in enumerate(code_chunks):
+        if chunk_idx % 50 == 0:  # Progress every 50 chunks
+            elapsed = time.time() - start_time
+            logger.info(
+                f"Progress: {chunk_idx}/{len(code_chunks)} chunks ({elapsed:.1f}s elapsed)"
+            )
+            console.print(
+                f"[dim]Progress: {chunk_idx}/{len(code_chunks)} chunks ({elapsed:.1f}s)[/dim]"
+            )
         chunk_id = chunk.chunk_id or chunk.id
         file_path = str(chunk.file_path)
         function_name = chunk.function_name or chunk.class_name
@@ -408,7 +420,13 @@ async def build_graph_data(
             continue
 
         # Search for other chunks that reference this function/class name
+        other_chunks_count = 0
         for other_chunk in chunks:
+            other_chunks_count += 1
+            if chunk_idx % 50 == 0 and other_chunks_count % 500 == 0:  # Inner progress
+                logger.debug(
+                    f"  Chunk {chunk_idx}: Scanning {other_chunks_count}/{len(chunks)} chunks"
+                )
             other_file_path = str(other_chunk.file_path)
 
             # Only track EXTERNAL callers (different file)
@@ -447,8 +465,10 @@ async def build_graph_data(
 
     # Count total caller relationships
     total_callers = sum(len(callers) for callers in caller_map.values())
+    elapsed_total = time.time() - start_time
+    logger.info(f"Completed external caller computation in {elapsed_total:.1f}s")
     console.print(
-        f"[green]✓[/green] Found {total_callers} external caller relationships"
+        f"[green]✓[/green] Found {total_callers} external caller relationships ({elapsed_total:.1f}s)"
     )
 
     # Detect circular dependencies in caller relationships
