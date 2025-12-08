@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.2] - 2025-12-08
+
+### Changed
+- **Setup command now always prompts for API key** with existing value shown as obfuscated default
+  - Shows keys like `sk-or-...abc1234` (first 6 + last 4 chars)
+  - Press Enter to keep existing value (no change)
+  - Type `clear` or `delete` to remove key from config
+  - Warns when environment variable takes precedence over config file
+- Deprecated `--save-api-key` flag (now always interactive during setup)
+
+### Added
+- New `_obfuscate_api_key()` helper for consistent key display
+- 19 new unit tests for API key prompt behavior
+
 ## [0.15.1] - 2025-12-08
 
 ### Added
