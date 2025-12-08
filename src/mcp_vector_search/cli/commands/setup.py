@@ -286,19 +286,40 @@ def select_optimal_embedding_model(languages: list[str]) -> str:
     return DEFAULT_EMBEDDING_MODELS["code"]
 
 
-def setup_openrouter_api_key() -> bool:
+def setup_openrouter_api_key(project_root: Path, interactive: bool = True) -> bool:
     """Check and optionally set up OpenRouter API key for chat command.
 
-    This function checks if OPENROUTER_API_KEY is set in the environment.
-    If not, it provides helpful instructions for setting it up.
+    This function checks for API key in environment and config file.
+    If not found and interactive mode is enabled, prompts user to save one.
+
+    Args:
+        project_root: Project root directory
+        interactive: Whether to prompt for API key input
 
     Returns:
         True if API key is configured, False otherwise
     """
-    api_key = os.environ.get("OPENROUTER_API_KEY")
+    from ...core.config_utils import (
+        get_config_file_path,
+        get_openrouter_api_key,
+        save_openrouter_api_key,
+    )
+
+    config_dir = project_root / ".mcp-vector-search"
+
+    # Check if API key is already available
+    api_key = get_openrouter_api_key(config_dir)
 
     if api_key:
-        print_success("   ✅ OpenRouter API key found")
+        print_success(f"   ✅ OpenRouter API key found (ends with {api_key[-4:]})")
+
+        # Check where it came from
+        if os.environ.get("OPENROUTER_API_KEY"):
+            print_info("      Source: Environment variable")
+        else:
+            config_path = get_config_file_path(config_dir)
+            print_info(f"      Source: Config file ({config_path})")
+
         print_info("      Chat command is ready to use!")
         return True
 
@@ -308,15 +329,61 @@ def setup_openrouter_api_key() -> bool:
     print_info("   The 'chat' command uses AI to answer questions about your code.")
     print_info("   It requires an OpenRouter API key (free tier available).")
     print_info("")
-    print_info("   [bold cyan]To enable the chat command:[/bold cyan]")
-    print_info("   1. Get a free API key: [cyan]https://openrouter.ai/keys[/cyan]")
-    print_info("   2. Add to your shell profile (~/.bashrc, ~/.zshrc, etc.):")
-    print_info("      [yellow]export OPENROUTER_API_KEY='your-key-here'[/yellow]")
-    print_info("   3. Reload your shell: [yellow]source ~/.bashrc[/yellow]")
-    print_info("")
-    print_info("   [dim]💡 You can skip this for now - search still works![/dim]")
 
-    return False
+    if not interactive:
+        print_info("   [bold cyan]To enable the chat command:[/bold cyan]")
+        print_info("   1. Get a free API key: [cyan]https://openrouter.ai/keys[/cyan]")
+        print_info("   2. Option A - Environment variable (recommended for security):")
+        print_info("      [yellow]export OPENROUTER_API_KEY='your-key-here'[/yellow]")
+        print_info("   3. Option B - Save to local config (convenient):")
+        print_info("      [yellow]mcp-vector-search setup --save-api-key[/yellow]")
+        print_info("")
+        print_info("   [dim]💡 You can skip this for now - search still works![/dim]")
+        return False
+
+    # Interactive mode - prompt to save key
+    print_info("   [bold cyan]Would you like to save an API key now?[/bold cyan]")
+    print_info("")
+    print_info("   1. Get a free API key: [cyan]https://openrouter.ai/keys[/cyan]")
+    print_info("   2. Paste it below (it will be saved securely)")
+    print_info("")
+    print_info("   [dim]Press Enter to skip (you can set it up later)[/dim]")
+    print_info("")
+
+    try:
+        # Prompt for API key
+        from ..output import console
+
+        user_input = console.input(
+            "   [yellow]Enter API key (or press Enter to skip): [/yellow]"
+        )
+
+        if user_input and user_input.strip():
+            # Save the API key
+            try:
+                save_openrouter_api_key(user_input.strip(), config_dir)
+                config_path = get_config_file_path(config_dir)
+                print_success(f"   ✅ API key saved to {config_path}")
+                print_info(f"      Last 4 characters: {user_input.strip()[-4:]}")
+                print_info("      Chat command is now ready to use!")
+                return True
+            except Exception as e:
+                print_error(f"   ❌ Failed to save API key: {e}")
+                return False
+        else:
+            print_info("   ⏭️  Skipped API key setup")
+            print_info("")
+            print_info("   [dim]You can set it up later with:[/dim]")
+            print_info("   [cyan]mcp-vector-search setup --save-api-key[/cyan]")
+            return False
+
+    except KeyboardInterrupt:
+        print_info("\n   ⏭️  API key setup cancelled")
+        return False
+    except Exception as e:
+        logger.error(f"Error during API key setup: {e}")
+        print_error(f"   ❌ Error: {e}")
+        return False
 
 
 # ==============================================================================
@@ -340,6 +407,12 @@ def main(
         "-v",
         help="Show detailed progress information",
         rich_help_panel="⚙️  Options",
+    ),
+    save_api_key: bool = typer.Option(
+        False,
+        "--save-api-key",
+        help="Interactively save OpenRouter API key to config",
+        rich_help_panel="🤖 Chat Options",
     ),
 ) -> None:
     """🚀 Smart zero-config setup for mcp-vector-search.
@@ -365,7 +438,7 @@ def main(
         return
 
     try:
-        asyncio.run(_run_smart_setup(ctx, force, verbose))
+        asyncio.run(_run_smart_setup(ctx, force, verbose, save_api_key))
     except KeyboardInterrupt:
         print_info("\nSetup interrupted by user")
         raise typer.Exit(0)
@@ -378,7 +451,9 @@ def main(
         raise typer.Exit(1)
 
 
-async def _run_smart_setup(ctx: typer.Context, force: bool, verbose: bool) -> None:
+async def _run_smart_setup(
+    ctx: typer.Context, force: bool, verbose: bool, save_api_key: bool
+) -> None:
     """Run the smart setup workflow."""
     console.print(
         Panel.fit(
@@ -559,7 +634,10 @@ async def _run_smart_setup(ctx: typer.Context, force: bool, verbose: bool) -> No
     # Phase 6: OpenRouter API Key Setup (Optional)
     # ===========================================================================
     console.print("\n[bold blue]🤖 Chat Command Setup (Optional)...[/bold blue]")
-    openrouter_configured = setup_openrouter_api_key()
+    # Use interactive mode if --save-api-key flag is set or running full setup
+    openrouter_configured = setup_openrouter_api_key(
+        project_root=project_root, interactive=save_api_key
+    )
 
     # ===========================================================================
     # Phase 7: Completion

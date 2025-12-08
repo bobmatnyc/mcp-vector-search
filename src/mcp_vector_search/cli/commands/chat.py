@@ -1,7 +1,6 @@
 """Chat command for LLM-powered intelligent code search."""
 
 import asyncio
-import os
 from pathlib import Path
 
 import typer
@@ -170,16 +169,28 @@ async def run_chat_search(
         timeout: API timeout in seconds
         json_output: Whether to output JSON format
     """
-    # Check for API key first
-    api_key = os.environ.get("OPENROUTER_API_KEY")
+    # Check for API key (environment variable or config file)
+    from ...core.config_utils import get_config_file_path, get_openrouter_api_key
+
+    config_dir = project_root / ".mcp-vector-search"
+    api_key = get_openrouter_api_key(config_dir)
+
     if not api_key:
         print_error("OpenRouter API key not found.")
         print_info("\n[bold]To use the chat command:[/bold]")
         print_info("1. Get an API key from [cyan]https://openrouter.ai/keys[/cyan]")
+        print_info("2. Save it using one of these methods:")
+        print_info("")
         print_info(
-            "2. Set it as an environment variable: [cyan]export OPENROUTER_API_KEY='your-key'[/cyan]"
+            "   [cyan]Option A - Environment variable (recommended for security):[/cyan]"
         )
-        print_info("3. Or add it to your shell profile (~/.bashrc, ~/.zshrc, etc.)\n")
+        print_info("   [yellow]export OPENROUTER_API_KEY='your-key'[/yellow]")
+        print_info("")
+        print_info("   [cyan]Option B - Save to local config (convenient):[/cyan]")
+        print_info("   [yellow]mcp-vector-search setup --save-api-key[/yellow]")
+        print_info("")
+        config_path = get_config_file_path(config_dir)
+        print_info(f"   [dim]Config file location: {config_path}[/dim]\n")
         raise typer.Exit(1)
 
     # Load project configuration
