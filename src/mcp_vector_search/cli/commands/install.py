@@ -143,6 +143,36 @@ def find_git_root(path: Path) -> Path | None:
     return None
 
 
+def _get_claude_desktop_config_path() -> Path | None:
+    """Get the default config path for Claude Desktop based on OS.
+
+    Returns:
+        Path to Claude Desktop config or None if unknown OS
+    """
+    import sys
+
+    if sys.platform == "darwin":
+        # macOS
+        return (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
+    elif sys.platform == "win32":
+        # Windows
+        import os
+
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            return Path(appdata) / "Claude" / "claude_desktop_config.json"
+    else:
+        # Linux
+        return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+    return None
+
+
 def detect_all_platforms() -> list[PlatformInfo]:
     """Detect all available platforms on the system.
 
@@ -166,20 +196,48 @@ def detect_all_platforms() -> list[PlatformInfo]:
     for platform_enum, detector_func in platform_detectors.items():
         try:
             confidence, config_path = detector_func()
+
+            # Determine CLI availability
+            cli_available = False
+            from py_mcp_installer.utils import resolve_command_path
+
+            if platform_enum in (Platform.CLAUDE_CODE, Platform.CLAUDE_DESKTOP):
+                cli_available = resolve_command_path("claude") is not None
+            elif platform_enum == Platform.CURSOR:
+                cli_available = resolve_command_path("cursor") is not None
+
+            # Include platform if:
+            # 1. Has config file with confidence > 0, OR
+            # 2. Has CLI available (can create config)
+            # For CLI-based platforms, we can configure even without existing config
             if confidence > 0.0 and config_path:
-                # Determine CLI availability
-                cli_available = False
-                from py_mcp_installer.utils import resolve_command_path
-
-                if platform_enum in (Platform.CLAUDE_CODE, Platform.CLAUDE_DESKTOP):
-                    cli_available = resolve_command_path("claude") is not None
-                elif platform_enum == Platform.CURSOR:
-                    cli_available = resolve_command_path("cursor") is not None
-
+                # Has existing config file
                 platform_info = PlatformInfo(
                     platform=platform_enum,
                     confidence=confidence,
                     config_path=config_path,
+                    cli_available=cli_available,
+                )
+                detected_platforms.append(platform_info)
+            elif cli_available and platform_enum in (
+                Platform.CLAUDE_CODE,
+                Platform.CLAUDE_DESKTOP,
+                Platform.CURSOR,
+            ):
+                # CLI available but no config yet - we can still configure it
+                # Use default config path for the platform
+                default_config_paths = {
+                    Platform.CLAUDE_CODE: Path.home()
+                    / ".config"
+                    / "claude"
+                    / "mcp.json",
+                    Platform.CLAUDE_DESKTOP: _get_claude_desktop_config_path(),
+                    Platform.CURSOR: Path.home() / ".cursor" / "mcp.json",
+                }
+                platform_info = PlatformInfo(
+                    platform=platform_enum,
+                    confidence=0.2,  # Low confidence since no config exists yet
+                    config_path=default_config_paths.get(platform_enum),
                     cli_available=cli_available,
                 )
                 detected_platforms.append(platform_info)

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.4] - 2025-12-08
+
+### Fixed
+- **Platform detection now works when CLI is available but config doesn't exist yet**
+  - Claude Code, Claude Desktop, and Cursor can now be detected and configured via CLI
+  - Previously required existing config file, now works with just CLI installation
+  - Enables first-time setup without manual config file creation
+
 ## [0.15.3] - 2025-12-08
 
 ### Fixed
