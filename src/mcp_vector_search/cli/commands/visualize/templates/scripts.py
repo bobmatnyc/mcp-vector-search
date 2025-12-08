@@ -36,7 +36,7 @@ def get_d3_initialization() -> str:
         let collapsedNodes = new Set();
         let highlightedNode = null;
         let rootNodes = [];  // Store root nodes for reset function
-        let currentLayout = 'force';  // Track current layout type
+        let isInitialOverview = true;  // Track if we're in Phase 1 (initial overview) or Phase 2 (tree expansion)
         let cy = null;  // Cytoscape instance
         let edgeFilters = {
             containment: true,
@@ -1849,9 +1849,8 @@ def get_layout_switching_logic() -> str:
 
         // Switch to Cytoscape layout (Dagre or Circle)
         function switchToCytoscapeLayout(layoutName) {
-            if (currentLayout === layoutName && cy) return; // Already in this layout
-
-            currentLayout = layoutName;
+            // Note: This is legacy code for old visualization architecture
+            // V2.0 uses tree-based layouts with automatic phase transitions
 
             // Hide D3 SVG
             svg.style('display', 'none');
@@ -1973,9 +1972,8 @@ def get_layout_switching_logic() -> str:
 
         // Switch to D3 force-directed layout
         function switchToForceLayout() {
-            if (currentLayout === 'force') return; // Already in force layout
-
-            currentLayout = 'force';
+            // Note: This is legacy code for old visualization architecture
+            // V2.0 uses tree-based layouts with automatic phase transitions
 
             // Hide Cytoscape
             const cyContainer = document.getElementById('cy-container');
@@ -2018,11 +2016,12 @@ def get_layout_switching_logic() -> str:
                 if (checkbox) {
                     checkbox.addEventListener('change', (e) => {
                         edgeFilters[filterKey] = e.target.checked;
-                        // Re-render current layout with new filters
-                        if (currentLayout === 'force') {
-                            renderGraph();
+                        // Re-render with new filters
+                        // Note: V2.0 uses automatic layout based on view mode
+                        if (typeof renderGraphV2 === 'function') {
+                            renderGraphV2();  // V2.0 rendering
                         } else {
-                            switchToCytoscapeLayout(currentLayout);
+                            renderGraph();    // Legacy fallback
                         }
                     });
                 }
@@ -2219,10 +2218,20 @@ def get_state_management() -> str:
          * Manages expansion paths, node visibility, and view modes.
          * Enforces sibling exclusivity: only one child expanded per depth.
          *
-         * View Modes (Tree-based):
-         *   - tree_root: Vertical list of root nodes, NO edges shown
-         *   - tree_expanded: Rightward tree expansion of directories, NO edges shown
-         *   - file_detail: File with AST chunks, function call edges shown
+         * Two-Phase Prescriptive Approach:
+         *   Phase 1 (tree_root): Initial overview - vertical list of root nodes, all collapsed, NO edges
+         *   Phase 2 (tree_expanded/file_detail): Tree navigation - rightward expansion with dagre-style hierarchy
+         *
+         * View Modes (corresponds to phases):
+         *   - tree_root: Phase 1 - Vertical list of root nodes, NO edges shown
+         *   - tree_expanded: Phase 2 - Rightward tree expansion of directories, NO edges shown
+         *   - file_detail: Phase 2 - File with AST chunks, function call edges shown
+         *
+         * Design Decision: Prescriptive (non-configurable) phase transition
+         *
+         * The first click on any node automatically transitions from Phase 1 to Phase 2.
+         * This is a fixed behavior with no user configuration - reduces cognitive load
+         * and provides consistent, predictable interaction patterns.
          *
          * Reference: docs/development/VISUALIZATION_ARCHITECTURE_V2.md
          */
@@ -2753,15 +2762,27 @@ def get_interaction_handlers_v2() -> str:
         /**
          * Handle node click events for V2.0 navigation.
          *
-         * Behavior (Tree-based):
+         * Behavior (Two-Phase Prescriptive Approach):
+         * - Phase 1 (Initial Overview): Circle/grid layout with root-level nodes only, all collapsed
+         * - Phase 2 (Tree Navigation): Dagre vertical tree layout with rightward expansion
+         *
+         * On first click, automatically transitions from Phase 1 to Phase 2.
+         *
+         * Node Behavior:
          * - Directory: Expand/collapse with rightward tree layout
          * - File: Expand/collapse AST chunks with tree layout + call edges
          * - AST Chunk: Show in content pane, no expansion
          *
-         * Design Decision: Tree navigation with sibling exclusivity
+         * Design Decision: Automatic phase transition on first interaction
          *
-         * When clicking a sibling at the same depth, the previously expanded
-         * sibling is automatically collapsed to maintain focus and reduce clutter.
+         * Rationale: Users start with high-level overview (Phase 1), then drill down
+         * into specific areas (Phase 2). The transition is automatic and prescriptive
+         * - no user configuration needed.
+         *
+         * Trade-offs:
+         * - Simplicity: Fixed behavior vs. user choice (removes cognitive load)
+         * - Discoverability: Automatic transition vs. explicit control
+         * - Consistency: Predictable behavior vs. flexible customization
          */
         function handleNodeClickV2(event, nodeData) {
             event.stopPropagation();
@@ -2773,6 +2794,13 @@ def get_interaction_handlers_v2() -> str:
             }
 
             console.log('[Click] Node clicked:', node.type, node.name);
+
+            // PHASE TRANSITION: First click transitions from Phase 1 to Phase 2
+            if (isInitialOverview && (node.type === 'directory' || node.type === 'file')) {
+                console.log('[Phase Transition] Switching from Phase 1 (overview) to Phase 2 (tree expansion)');
+                isInitialOverview = false;
+                // The layout will automatically change when expandNodeV2 updates viewMode to 'tree_expanded'
+            }
 
             // Always show content pane
             showContentPane(node);
@@ -2790,7 +2818,7 @@ def get_interaction_handlers_v2() -> str:
                     // Collapse node
                     collapseNodeV2(node.id);
                 } else {
-                    // Expand node
+                    // Expand node (this will trigger layout change to tree)
                     expandNodeV2(node.id, node.type);
                 }
             }
@@ -2860,7 +2888,7 @@ def get_interaction_handlers_v2() -> str:
         }
 
         /**
-         * Reset to initial list view.
+         * Reset to initial list view (Phase 1).
          */
         function resetToListViewV2() {
             if (!stateManager) {
@@ -2868,7 +2896,10 @@ def get_interaction_handlers_v2() -> str:
                 return;
             }
 
-            console.log('[Reset] Resetting to list view');
+            console.log('[Reset] Resetting to Phase 1 (initial overview)');
+
+            // Reset to Phase 1
+            isInitialOverview = true;
 
             // Collapse all nodes
             stateManager.reset();
@@ -2923,7 +2954,17 @@ def get_rendering_v2() -> str:
         /**
          * Main rendering function for V2.0 with transition animations.
          *
+         * Two-Phase Prescriptive Layout:
+         * - Phase 1 (tree_root): Vertical list layout with root-level nodes only, all collapsed
+         * - Phase 2 (tree_expanded/file_detail): Rightward tree expansion with dagre-style hierarchy
+         *
          * Renders visible nodes with smooth 750ms transitions between layouts.
+         *
+         * Design Decision: Automatic layout selection based on view mode
+         *
+         * The layout automatically adapts to the current phase:
+         * - Phase 1 uses simple vertical list (clear overview)
+         * - Phase 2 uses tree layout (rightward expansion for deep hierarchies)
          */
         function renderGraphV2(duration = 750) {
             if (!stateManager) {
@@ -2931,7 +2972,7 @@ def get_rendering_v2() -> str:
                 return;
             }
 
-            console.log('[Render] Rendering graph, mode:', stateManager.viewMode);
+            console.log('[Render] Rendering graph, mode:', stateManager.viewMode, 'phase:', isInitialOverview ? 'Phase 1 (overview)' : 'Phase 2 (tree)');
 
             // 1. Get visible nodes
             const visibleNodeIds = stateManager.getVisibleNodes();
@@ -2941,16 +2982,17 @@ def get_rendering_v2() -> str:
 
             console.log('[Render] Visible nodes:', visibleNodesList.length);
 
-            // 2. Calculate layout positions (Tree-based)
+            // 2. Calculate layout positions (Two-Phase Prescriptive)
             const positions = new Map();
 
             if (stateManager.viewMode === 'tree_root') {
-                // Vertical list layout for root nodes only
+                // PHASE 1: Vertical list layout for root nodes only (initial overview)
                 const listPos = calculateListLayout(visibleNodesList, width, height);
                 listPos.forEach((pos, nodeId) => positions.set(nodeId, pos));
 
-                console.debug('[Render] TREE_ROOT: Vertical list with', positions.size, 'root nodes');
+                console.debug('[Render] PHASE 1 (tree_root): Vertical list with', positions.size, 'root nodes');
             } else if (stateManager.viewMode === 'tree_expanded' || stateManager.viewMode === 'file_detail') {
+                // PHASE 2: Tree layout with rightward expansion (after first click)
                 // Tree layout: rightward expansion for directories/files
                 stateManager.expansionPath.forEach((expandedId, depth) => {
                     const expandedNode = allNodes.find(n => n.id === expandedId);
