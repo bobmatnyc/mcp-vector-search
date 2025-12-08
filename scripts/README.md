@@ -110,6 +110,46 @@ Development workflow guidance and automation.
 
 ### Performance & Analysis Scripts
 
+#### benchmark_llm_models.py ⭐
+Benchmarks various LLM models for the chat command to compare response quality, speed, token usage, and cost.
+
+**Usage:**
+```bash
+# Test all models (via Makefile)
+make benchmark-llm
+
+# Test fast/cheap models only
+make benchmark-llm-fast
+
+# Test single query
+make benchmark-llm-query QUERY="where is similarity_threshold configured?"
+
+# Direct usage with custom options
+uv run python scripts/benchmark_llm_models.py --models anthropic/claude-3-haiku
+uv run python scripts/benchmark_llm_models.py --query "how does the indexer work?"
+```
+
+**Features:**
+- Benchmarks 7 OpenRouter LLM models by default
+- Tests response quality (★★★★★ rating)
+- Measures latency (seconds)
+- Tracks token usage (input/output)
+- Calculates cost (USD per query)
+- Provides recommendations (fastest, cheapest, best quality)
+- Rate limiting protection (1s between requests)
+- Comprehensive summary tables
+
+**Models Tested:**
+- Premium: `anthropic/claude-3.5-sonnet`, `openai/gpt-4o`
+- Mid-tier: `anthropic/claude-3-haiku`, `openai/gpt-4o-mini`, `google/gemini-flash-1.5`
+- Budget: `meta-llama/llama-3.1-70b-instruct`, `mistralai/mistral-large`
+
+**Requirements:**
+- OpenRouter API key: `export OPENROUTER_API_KEY='your-key'`
+- Indexed project: Run `mcp-vector-search init && mcp-vector-search index`
+
+**Documentation:** See [LLM Benchmarking Guide](../docs/guides/llm-benchmarking.md)
+
 #### analyze_search_bottlenecks.py
 Analyzes search performance and identifies bottlenecks in the search pipeline.
 
@@ -340,6 +380,9 @@ Most scripts are integrated with the project Makefile for convenience:
 | `run_tests.py` | `make test` | Run test suite |
 | `dev-setup.py` | `make dev` | Development setup |
 | Performance testing | `make test-performance` | Run performance benchmarks |
+| `benchmark_llm_models.py` | `make benchmark-llm` | Benchmark LLM models for chat |
+| `benchmark_llm_models.py` (fast) | `make benchmark-llm-fast` | Benchmark fast/cheap models only |
+| `benchmark_llm_models.py` (custom) | `make benchmark-llm-query QUERY="..."` | Benchmark single query |
 
 See the [Versioning Workflow Documentation](../docs/VERSIONING_WORKFLOW.md) for complete details on the unified build and release system.
 
@@ -352,7 +395,7 @@ All scripts require:
 
 Performance scripts may require additional dependencies:
 - **psutil** - For system monitoring
-- **matplotlib** - For performance visualization  
+- **matplotlib** - For performance visualization
 - **pandas** - For data analysis
 
 Install development dependencies:
@@ -491,13 +534,14 @@ For more information, see the [Contributing Guidelines](../docs/developer/CONTRI
 ### Version Management (Active)
 - `version_manager.py` ⭐ - Primary version management tool
 
-### Development (Active)  
+### Development (Active)
 - `dev-test.sh` - Development testing
 - `dev-setup.py` - Environment setup
 - `deploy-test.sh` - Deployment testing
 - `workflow.sh` - Workflow guidance
 
 ### Performance (Active)
+- `benchmark_llm_models.py` ⭐ - LLM model benchmarking for chat
 - `analyze_search_bottlenecks.py` - Performance analysis
 - `monitor_search_performance.py` - Real-time monitoring
 - `quick_search_timing.py` - Quick benchmarks
@@ -510,7 +554,7 @@ For more information, see the [Contributing Guidelines](../docs/developer/CONTRI
 
 ### Deprecated (Do Not Use)
 - `build.sh` - Use `make release-*` instead
-- `dev-build.py` - Use `make version-*` instead  
+- `dev-build.py` - Use `make version-*` instead
 - `publish.sh` - Use `make publish` instead
 
 **Recommendation:** Always prefer Makefile commands over direct script execution for standard operations.

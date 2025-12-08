@@ -87,6 +87,10 @@ help: ## Show this help message
 	@grep -E '^homebrew-.*:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
 	@echo ""
+	@echo "$(GREEN)LLM Benchmarking:$(RESET)"
+	@grep -E '^benchmark-llm.*:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(RESET) %s\n", $$1, $$2}'
+	@echo ""
 	@echo "$(YELLOW)Options:$(RESET)"
 	@echo "  DRY_RUN=1       Run in dry-run mode (no actual changes)"
 	@echo ""
@@ -796,6 +800,40 @@ debug-build: ## 🟢 Debug build failures
 	$(MAKE) clean
 	$(UV) build --verbose
 	@echo "$(GREEN)✓ Build debug completed$(RESET)"
+
+# ============================================================================
+# LLM Benchmarking
+# ============================================================================
+
+.PHONY: benchmark-llm
+benchmark-llm: ## 🔴 Benchmark LLM models for chat command
+	@echo "$(GREEN)Running LLM model benchmarks...$(RESET)"
+	@if [ -z "$(OPENROUTER_API_KEY)" ]; then \
+		echo "$(RED)✗ OPENROUTER_API_KEY not set$(RESET)"; \
+		echo "  export OPENROUTER_API_KEY='your-key-here'"; \
+		exit 1; \
+	fi
+	$(UV) run python $(SCRIPTS_DIR)/benchmark_llm_models.py
+	@echo "$(GREEN)✓ LLM benchmarks completed$(RESET)"
+
+.PHONY: benchmark-llm-fast
+benchmark-llm-fast: ## 🟡 Benchmark fast/cheap LLM models only
+	@echo "$(GREEN)Running fast model benchmarks...$(RESET)"
+	$(UV) run python $(SCRIPTS_DIR)/benchmark_llm_models.py \
+		--models anthropic/claude-3-haiku \
+		--models openai/gpt-4o-mini \
+		--models google/gemini-flash-1.5
+	@echo "$(GREEN)✓ Fast model benchmarks completed$(RESET)"
+
+.PHONY: benchmark-llm-query
+benchmark-llm-query: ## 🟡 Benchmark single query (usage: make benchmark-llm-query QUERY="your query")
+	@if [ -z "$(QUERY)" ]; then \
+		echo "$(RED)Usage: make benchmark-llm-query QUERY='your search query'$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Benchmarking query: $(QUERY)$(RESET)"
+	$(UV) run python $(SCRIPTS_DIR)/benchmark_llm_models.py --query "$(QUERY)"
+	@echo "$(GREEN)✓ Query benchmark completed$(RESET)"
 
 # Prevent make from treating arguments as targets
 %:
