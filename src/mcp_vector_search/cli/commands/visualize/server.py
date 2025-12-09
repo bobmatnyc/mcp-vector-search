@@ -80,9 +80,100 @@ def create_app(viz_dir: Path) -> FastAPI:
     """
     app = FastAPI(title="MCP Vector Search Visualization")
 
+    @app.get("/api/graph")
+    async def get_graph_data() -> Response:
+        """Get graph data for D3 tree visualization.
+
+        Returns:
+            JSON response with nodes and links
+        """
+        graph_file = viz_dir / "chunk-graph.json"
+
+        if not graph_file.exists():
+            return Response(
+                content='{"error": "Graph data not found", "nodes": [], "links": []}',
+                status_code=404,
+                media_type="application/json",
+            )
+
+        try:
+            import json
+
+            with open(graph_file) as f:
+                data = json.load(f)
+
+            # Return nodes and links
+            return Response(
+                content=json.dumps(
+                    {"nodes": data.get("nodes", []), "links": data.get("links", [])}
+                ),
+                media_type="application/json",
+                headers={"Cache-Control": "no-cache"},
+            )
+        except Exception as e:
+            console.print(f"[red]Error loading graph data: {e}[/red]")
+            return Response(
+                content='{"error": "Failed to load graph data", "nodes": [], "links": []}',
+                status_code=500,
+                media_type="application/json",
+            )
+
+    @app.get("/api/chunks")
+    async def get_file_chunks(file_id: str) -> Response:
+        """Get code chunks for a specific file.
+
+        Args:
+            file_id: File node ID
+
+        Returns:
+            JSON response with chunks array
+        """
+        graph_file = viz_dir / "chunk-graph.json"
+
+        if not graph_file.exists():
+            return Response(
+                content='{"error": "Graph data not found", "chunks": []}',
+                status_code=404,
+                media_type="application/json",
+            )
+
+        try:
+            import json
+
+            with open(graph_file) as f:
+                data = json.load(f)
+
+            # Find chunks associated with this file
+            # Look for nodes that have this file as parent via containment links
+            chunks = []
+            for node in data.get("nodes", []):
+                if node.get("type") == "chunk" and node.get("file_id") == file_id:
+                    chunks.append(
+                        {
+                            "id": node.get("id"),
+                            "type": node.get("chunk_type", "code"),
+                            "content": node.get("content", ""),
+                            "start_line": node.get("start_line"),
+                            "end_line": node.get("end_line"),
+                        }
+                    )
+
+            return Response(
+                content=json.dumps({"chunks": chunks}),
+                media_type="application/json",
+                headers={"Cache-Control": "no-cache"},
+            )
+        except Exception as e:
+            console.print(f"[red]Error loading chunks: {e}[/red]")
+            return Response(
+                content='{"error": "Failed to load chunks", "chunks": []}',
+                status_code=500,
+                media_type="application/json",
+            )
+
     @app.get("/api/graph-data")
     async def stream_graph_data() -> StreamingResponse:
-        """Stream chunk-graph.json in 100KB chunks.
+        """Stream chunk-graph.json in 100KB chunks (legacy endpoint).
 
         Returns:
             StreamingResponse with chunked transfer encoding
@@ -137,8 +228,27 @@ def create_app(viz_dir: Path) -> FastAPI:
             },
         )
 
-    # Mount static files (favicon, etc.)
-    app.mount("/", StaticFiles(directory=str(viz_dir), html=True), name="static")
+    # Mount static files AFTER API routes are defined
+    # Using /static prefix to avoid conflicts with API routes
+    app.mount("/static", StaticFiles(directory=str(viz_dir)), name="static")
+
+    # Also serve files directly at root level for backward compatibility
+    # BUT place this after explicit routes so /api/graph-data works
+    @app.get("/{path:path}")
+    async def serve_static(path: str) -> FileResponse:
+        """Serve static files from visualization directory."""
+        file_path = viz_dir / path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        # Fallback to index.html for SPA routing
+        return FileResponse(
+            viz_dir / "index.html",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     return app
 

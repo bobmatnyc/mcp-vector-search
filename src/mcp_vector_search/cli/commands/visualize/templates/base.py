@@ -39,157 +39,76 @@ def generate_html_template() -> str:
 </head>
 <body>
     <div id="controls">
-        <h1>🔍 Code Graph</h1>
+        <h1>🔍 Code Tree</h1>
 
-        <div class="control-group" id="loading">
-            <label>⏳ Loading graph data...</label>
-        </div>
-
-        <div class="control-group" id="layout-controls" style="display: none;">
-            <h3 style="margin: 12px 0 8px 0;">Layout</h3>
-            <select id="layoutSelector" style="width: 100%; padding: 6px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 12px;">
-                <option value="force">Force-Directed</option>
-                <option value="dagre">Hierarchical (Dagre)</option>
-                <option value="circle">Circular</option>
-            </select>
-        </div>
-
-        <div class="control-group" id="edge-filters" style="display: none;">
-            <h3 style="margin: 12px 0 8px 0;">Edge Filters</h3>
-            <div style="font-size: 12px;">
-                <label style="display: block; margin-bottom: 6px; cursor: pointer;">
-                    <input type="checkbox" id="filter-containment" checked style="margin-right: 6px;">
-                    Containment (dir/file)
+        <div class="control-group">
+            <label style="color: #c9d1d9; margin-bottom: 8px;">Layout Mode</label>
+            <div class="toggle-switch-container">
+                <span class="toggle-label">Linear</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="layout-toggle" onchange="toggleLayout()">
+                    <span class="toggle-slider"></span>
                 </label>
-                <label style="display: block; margin-bottom: 6px; cursor: pointer;">
-                    <input type="checkbox" id="filter-calls" checked style="margin-right: 6px;">
-                    Function Calls
-                </label>
-                <label style="display: block; margin-bottom: 6px; cursor: pointer;">
-                    <input type="checkbox" id="filter-imports" style="margin-right: 6px;">
-                    Imports
-                </label>
-                <label style="display: block; margin-bottom: 6px; cursor: pointer;">
-                    <input type="checkbox" id="filter-semantic" style="margin-right: 6px;">
-                    Semantic Links
-                </label>
-                <label style="display: block; margin-bottom: 6px; cursor: pointer;">
-                    <input type="checkbox" id="filter-cycles" checked style="margin-right: 6px;">
-                    Circular Dependencies
-                </label>
+                <span class="toggle-label">Circular</span>
             </div>
         </div>
 
         <h3>Legend</h3>
         <div class="legend">
             <div class="legend-category">
-                <div class="legend-title">Code Elements</div>
+                <div class="legend-title">Node Types</div>
                 <div class="legend-item">
                     <svg width="16" height="16" style="margin-right: 8px;">
-                        <circle cx="8" cy="8" r="6" fill="#d29922"/>
+                        <circle cx="8" cy="8" r="6" fill="#3498db"/>
                     </svg>
-                    <span>Function</span>
+                    <span>Directory (expanded)</span>
                 </div>
                 <div class="legend-item">
                     <svg width="16" height="16" style="margin-right: 8px;">
-                        <circle cx="8" cy="8" r="6" fill="#1f6feb"/>
+                        <circle cx="8" cy="8" r="6" fill="#f39c12"/>
                     </svg>
-                    <span>Class</span>
+                    <span>Directory (collapsed)</span>
                 </div>
                 <div class="legend-item">
                     <svg width="16" height="16" style="margin-right: 8px;">
-                        <circle cx="8" cy="8" r="6" fill="#8957e5"/>
+                        <circle cx="8" cy="8" r="6" fill="#95a5a6"/>
                     </svg>
-                    <span>Method</span>
+                    <span>File</span>
                 </div>
             </div>
 
             <div class="legend-category">
-                <div class="legend-title">File</div>
+                <div class="legend-title">Interactions</div>
                 <div class="legend-item" style="padding-left: 16px;">
-                    <span style="margin-right: 6px;">📄</span>
-                    <span>.py (Python) 🐍</span>
+                    <span>Click directory → expand/collapse</span>
                 </div>
                 <div class="legend-item" style="padding-left: 16px;">
-                    <span style="margin-right: 6px;">📄</span>
-                    <span>.js (JavaScript) 📜</span>
+                    <span>Click file → view info</span>
                 </div>
                 <div class="legend-item" style="padding-left: 16px;">
-                    <span style="margin-right: 6px;">📄</span>
-                    <span>.ts (TypeScript) 📜</span>
+                    <span>Click chunk → view code</span>
                 </div>
                 <div class="legend-item" style="padding-left: 16px;">
-                    <span style="margin-right: 6px;">📄</span>
-                    <span>.md (Markdown) 📝</span>
-                </div>
-                <div class="legend-item" style="padding-left: 16px;">
-                    <span style="margin-right: 6px;">📄</span>
-                    <span>.json (JSON) ⚙️</span>
-                </div>
-                <div class="legend-item" style="padding-left: 16px;">
-                    <span style="margin-right: 6px;">📄</span>
-                    <span>.yaml (YAML) ⚙️</span>
-                </div>
-                <div class="legend-item" style="padding-left: 16px;">
-                    <span style="margin-right: 6px;">📄</span>
-                    <span>.sh (Shell) 💻</span>
+                    <span>Scroll → zoom in/out</span>
                 </div>
             </div>
-
-            <div class="legend-category">
-                <div class="legend-title">Indicators</div>
-                <div class="legend-item">
-                    <svg width="16" height="16" style="margin-right: 8px;">
-                        <circle cx="8" cy="8" r="6" fill="#d29922" stroke="#ff6b6b" stroke-width="2"/>
-                    </svg>
-                    <span>Dead Code (red border)</span>
-                </div>
-                <div class="legend-item">
-                    <svg width="16" height="16" style="margin-right: 8px;">
-                        <line x1="2" y1="8" x2="14" y2="8" stroke="#ff4444" stroke-width="2" stroke-dasharray="4,2"/>
-                    </svg>
-                    <span>Circular Dependency (red dashed)</span>
-                </div>
-            </div>
-        </div>
-
-        <div id="subprojects-legend" style="display: none;">
-            <h3>Subprojects</h3>
-            <div class="legend" id="subprojects-list"></div>
         </div>
 
         <div class="stats" id="stats"></div>
     </div>
 
-    <svg id="graph"></svg>
-    <div id="tooltip" class="tooltip"></div>
+    <div id="main-container">
+        <svg id="graph"></svg>
+    </div>
 
-    <button id="reset-view-btn" title="Reset to home view">
-        <span style="font-size: 18px;">🏠</span>
-        <span>Reset View</span>
-    </button>
-
-    <div id="content-pane">
-        <div class="pane-header">
-            <button class="collapse-btn" onclick="closeContentPane()">×</button>
-            <div class="code-viewer-nav">
-                <button id="navBack" disabled title="Back (Alt+Left)">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z"></path>
-                    </svg>
-                </button>
-                <button id="navForward" disabled title="Forward (Alt+Right)">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z"></path>
-                    </svg>
-                </button>
-                <span id="navPosition"></span>
-            </div>
-            <div class="pane-title" id="pane-title"></div>
-            <div class="pane-meta" id="pane-meta"></div>
+    <div id="viewer-panel" class="viewer-panel">
+        <div class="viewer-header">
+            <button class="viewer-close-btn" onclick="closeViewerPanel()" title="Close panel">×</button>
+            <h2 class="viewer-title" id="viewer-title">Viewer</h2>
         </div>
-        <div class="pane-content" id="pane-content"></div>
-        <div class="pane-footer" id="pane-footer"></div>
+        <div class="viewer-content" id="viewer-content">
+            <p style="color: #8b949e; text-align: center; padding: 40px;">Select a node to view details</p>
+        </div>
     </div>
 
     <script>

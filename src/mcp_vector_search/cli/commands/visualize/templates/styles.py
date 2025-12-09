@@ -124,6 +124,85 @@ def get_controls_styles() -> str:
             font-size: 12px;
             color: #8b949e;
         }
+
+        .toggle-switch-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 10px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+        }
+
+        .toggle-label {
+            font-size: 13px;
+            color: #8b949e;
+            font-weight: 500;
+            transition: color 0.2s ease;
+        }
+
+        .toggle-label.active {
+            color: #58a6ff;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 48px;
+            height: 24px;
+            margin: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #30363d;
+            transition: 0.3s;
+            border-radius: 24px;
+            border: 1px solid #30363d;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 3px;
+            bottom: 3px;
+            background-color: #8b949e;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #238636;
+            border-color: #2ea043;
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+            background-color: #ffffff;
+        }
+
+        .toggle-slider:hover {
+            background-color: #3a424d;
+        }
+
+        .toggle-switch input:checked + .toggle-slider:hover {
+            background-color: #2ea043;
+        }
     """
 
 
@@ -134,9 +213,22 @@ def get_graph_styles() -> str:
         CSS string for graph styling
     """
     return """
+        #main-container {
+            position: fixed;
+            left: 0;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            transition: right 0.3s ease-in-out;
+        }
+
+        #main-container.viewer-open {
+            right: 450px;
+        }
+
         #graph {
-            width: 100vw;
-            height: 100vh;
+            width: 100%;
+            height: 100%;
         }
     """
 
@@ -177,20 +269,31 @@ def get_node_styles() -> str:
         .node.subproject circle { fill: #da3633; stroke-width: 3px; }
 
         /* Non-code document nodes - squares */
-        .node.docstring rect { fill: #8b949e; }
-        .node.comment rect { fill: #6e7681; }
-        .node rect {
+        .node.docstring rect:not(.hit-area) { fill: #8b949e; }
+        .node.comment rect:not(.hit-area) { fill: #6e7681; }
+        .node rect:not(.hit-area) {
             cursor: pointer;
             stroke: #c9d1d9;
             stroke-width: 2px;
             pointer-events: all;
         }
 
+        /* Hit area for file/directory nodes - transparent clickable rectangle */
+        .node rect.hit-area {
+            fill: transparent;
+            stroke: none;
+            pointer-events: all;
+            cursor: pointer;
+        }
+
+        /* Debug mode: uncomment to visualize hit areas */
+        /* .node rect.hit-area { fill: rgba(255, 0, 0, 0.1); stroke: red; stroke-width: 1; } */
+
         /* File type icon styling */
         .node path.file-icon {
             fill: currentColor;
             stroke: none;
-            pointer-events: all;
+            pointer-events: none;
             cursor: pointer;
         }
 
@@ -232,7 +335,8 @@ def get_link_styles() -> str:
     """
     return """
         .link {
-            stroke: #30363d;
+            fill: none;
+            stroke: #8b949e;
             stroke-opacity: 0.6;
             stroke-width: 1.5px;
         }
@@ -362,17 +466,17 @@ def get_breadcrumb_styles() -> str:
 
 
 def get_content_pane_styles() -> str:
-    """Get styles for the content pane (code viewer).
+    """Get styles for the viewer panel (code/file/directory viewer).
 
     Returns:
-        CSS string for content pane styling
+        CSS string for viewer panel styling
     """
     return """
-        #content-pane {
+        .viewer-panel {
             position: fixed;
             top: 0;
             right: 0;
-            width: 600px;
+            width: 450px;
             height: 100vh;
             background: rgba(13, 17, 23, 0.98);
             border-left: 1px solid #30363d;
@@ -383,11 +487,11 @@ def get_content_pane_styles() -> str:
             z-index: 1000;
         }
 
-        #content-pane.visible {
+        .viewer-panel.open {
             transform: translateX(0);
         }
 
-        #content-pane .pane-header {
+        .viewer-header {
             position: sticky;
             top: 0;
             background: rgba(13, 17, 23, 0.98);
@@ -396,105 +500,78 @@ def get_content_pane_styles() -> str:
             z-index: 1;
         }
 
-        #content-pane .pane-title {
+        .viewer-title {
             font-size: 16px;
             font-weight: bold;
             color: #58a6ff;
-            margin-bottom: 8px;
+            margin: 0;
             padding-right: 30px;
         }
 
-        #content-pane .pane-meta {
-            font-size: 12px;
-            color: #8b949e;
-        }
-
-        #content-pane .pane-footer {
-            position: sticky;
-            bottom: 0;
-            background: rgba(13, 17, 23, 0.98);
-            padding: 16px 20px;
-            border-top: 1px solid #30363d;
-            font-size: 11px;
-            color: #8b949e;
-            z-index: 1;
-        }
-
-        #content-pane .pane-footer .footer-item {
-            display: block;
-            margin-bottom: 8px;
-        }
-
-        #content-pane .pane-footer .footer-label {
-            color: #c9d1d9;
-            font-weight: 600;
-            margin-right: 4px;
-        }
-
-        #content-pane .pane-footer .footer-value {
-            color: #8b949e;
-        }
-
-        #content-pane .collapse-btn {
+        .viewer-close-btn {
             position: absolute;
-            top: 20px;
-            right: 20px;
+            top: 16px;
+            right: 16px;
             cursor: pointer;
             color: #8b949e;
-            font-size: 24px;
+            font-size: 28px;
             line-height: 1;
             background: none;
             border: none;
             padding: 0;
             transition: color 0.2s;
-        }
-
-        #content-pane .collapse-btn:hover {
-            color: #c9d1d9;
-        }
-
-        #content-pane .code-viewer-nav {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 12px;
-        }
-
-        #content-pane .code-viewer-nav button {
+            width: 28px;
+            height: 28px;
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 32px;
-            height: 32px;
-            background: #21262d;
-            border: 1px solid #30363d;
-            border-radius: 6px;
+        }
+
+        .viewer-close-btn:hover {
             color: #c9d1d9;
-            cursor: pointer;
-            transition: all 0.2s;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
         }
 
-        #content-pane .code-viewer-nav button:hover:not(:disabled) {
-            background: #30363d;
-            border-color: #58a6ff;
-        }
-
-        #content-pane .code-viewer-nav button:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-        }
-
-        #content-pane .code-viewer-nav #navPosition {
-            font-size: 11px;
-            color: #8b949e;
-            margin-left: 4px;
-        }
-
-        #content-pane .pane-content {
+        .viewer-content {
             padding: 20px;
         }
 
-        #content-pane pre {
+        .viewer-section {
+            margin-bottom: 24px;
+        }
+
+        .viewer-section-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #8b949e;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+
+        .viewer-info-grid {
+            display: grid;
+            gap: 8px;
+        }
+
+        .viewer-info-row {
+            display: flex;
+            font-size: 13px;
+        }
+
+        .viewer-info-label {
+            color: #8b949e;
+            min-width: 100px;
+            font-weight: 500;
+        }
+
+        .viewer-info-value {
+            color: #c9d1d9;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        }
+
+        .viewer-content pre {
             margin: 0;
             padding: 16px;
             background: #0d1117;
@@ -505,88 +582,102 @@ def get_content_pane_styles() -> str:
             line-height: 1.6;
         }
 
-        #content-pane code {
+        .viewer-content code {
             color: #c9d1d9;
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
         }
 
-        /* Code links for jumping to function/class definitions */
-        #content-pane .code-link {
-            color: #58a6ff;
-            cursor: pointer;
-            text-decoration: underline;
-            text-decoration-style: dotted;
+        .chunk-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
         }
 
-        #content-pane .code-link:hover {
-            color: #79c0ff;
-            text-decoration-style: solid;
-        }
-
-        /* Bold primitives styling */
-        #content-pane pre code strong {
-            color: #ff7b72;
-            font-weight: 600;
-        }
-
-        #content-pane .directory-list {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-        }
-
-        #content-pane .directory-list li {
-            padding: 8px 12px;
-            margin: 4px 0;
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 4px;
-            font-size: 12px;
+        .chunk-list-item {
             display: flex;
             align-items: center;
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-
-        #content-pane .directory-list li:hover {
-            background-color: rgba(255, 255, 255, 0.1);
-        }
-
-        #content-pane .directory-list .item-icon {
-            margin-right: 8px;
-            font-size: 14px;
-        }
-
-        #content-pane .directory-list .item-type {
-            margin-left: auto;
-            padding-left: 12px;
-            font-size: 10px;
-            color: #8b949e;
-        }
-
-        #content-pane .import-details {
+            gap: 10px;
+            padding: 10px 12px;
             background: #161b22;
             border: 1px solid #30363d;
             border-radius: 6px;
-            padding: 16px;
+            cursor: pointer;
+            transition: all 0.2s ease;
         }
 
-        #content-pane .import-details .import-statement {
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-            font-size: 12px;
-            color: #79c0ff;
-            margin-bottom: 12px;
+        .chunk-list-item:hover {
+            background: #21262d;
+            border-color: #58a6ff;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
         }
 
-        #content-pane .import-details .detail-row {
+        .chunk-icon {
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .chunk-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .chunk-name {
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 13px;
+            color: #c9d1d9;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .chunk-meta {
             font-size: 11px;
             color: #8b949e;
-            margin: 4px 0;
+            margin-top: 2px;
         }
 
-        #content-pane .import-details .detail-label {
+        .dir-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .dir-list-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .dir-list-item:hover {
+            background: #21262d;
+            border-color: #58a6ff;
+        }
+
+        .dir-icon {
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .dir-name {
+            flex: 1;
+            font-size: 13px;
             color: #c9d1d9;
-            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .dir-type {
+            font-size: 11px;
+            color: #8b949e;
+            text-transform: uppercase;
         }
     """
 

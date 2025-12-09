@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Link Structure Debug</title>
+</head>
+<body>
+    <h1>Link Structure Debug Test</h1>
+    <div id="output"></div>
+    <script>
+        async function testLinkStructure() {
+            const output = document.getElementById('output');
+            output.innerHTML = '<p>Loading graph data...</p>';
+
+            try {
+                const response = await fetch('http://127.0.0.1:8080/api/graph');
+                const data = await response.json();
+
+                const nodes = data.nodes || [];
+                const links = data.links || [];
+
+                let html = '<h2>Graph Data Analysis</h2>';
+                html += `<p>Total nodes: ${nodes.length}</p>`;
+                html += `<p>Total links: ${links.length}</p>`;
+
+                // Get link types
+                const linkTypes = [...new Set(links.map(l => l.type))];
+                html += `<h3>Link Types Found:</h3>`;
+                html += `<ul>${linkTypes.map(t => `<li>${t}</li>`).join('')}</ul>`;
+
+                // Count by type
+                const linkTypeCounts = {};
+                links.forEach(link => {
+                    linkTypeCounts[link.type] = (linkTypeCounts[link.type] || 0) + 1;
+                });
+                html += `<h3>Link Type Counts:</h3>`;
+                html += '<pre>' + JSON.stringify(linkTypeCounts, null, 2) + '</pre>';
+
+                // Sample links
+                html += `<h3>Sample Links (first 10):</h3>`;
+                html += '<pre>' + JSON.stringify(links.slice(0, 10), null, 2) + '</pre>';
+
+                // Count node types
+                const nodeTypes = [...new Set(nodes.map(n => n.type))];
+                html += `<h3>Node Types Found:</h3>`;
+                html += `<ul>${nodeTypes.map(t => `<li>${t}</li>`).join('')}</ul>`;
+
+                const nodeTypeCounts = {};
+                nodes.forEach(node => {
+                    nodeTypeCounts[node.type] = (nodeTypeCounts[node.type] || 0) + 1;
+                });
+                html += `<h3>Node Type Counts:</h3>`;
+                html += '<pre>' + JSON.stringify(nodeTypeCounts, null, 2) + '</pre>';
+
+                // Sample nodes
+                html += `<h3>Sample Nodes (first 5):</h3>`;
+                html += '<pre>' + JSON.stringify(nodes.slice(0, 5), null, 2) + '</pre>';
+
+                output.innerHTML = html;
+            } catch (error) {
+                output.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+            }
+        }
+
+        testLinkStructure();
+    </script>
+</body>
+</html>

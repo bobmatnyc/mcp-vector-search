@@ -14,11 +14,25 @@ Created at: `scripts/mcp-dev`
 **Important**: Claude CLI uses its own MCP server registry, NOT the Claude Desktop config.
 
 To add mcp-vector-search to Claude CLI:
+
+**Recommended: Using uv (modern approach)**
 ```bash
 claude mcp add-json mcp-vector-search '{
-  "command": "/Users/masa/Projects/managed/mcp-vector-search/.venv/bin/python",
-  "args": ["-m", "mcp_vector_search.mcp.server", "/Users/masa/Projects/managed/mcp-vector-search"],
-  "cwd": "/Users/masa/Projects/managed/mcp-vector-search",
+  "command": "uv",
+  "args": ["run", "--directory", "/Users/masa/Projects/mcp-vector-search", "mcp-vector-search", "mcp"],
+  "env": {
+    "PROJECT_ROOT": "/Users/masa/Projects/mcp-vector-search",
+    "MCP_PROJECT_ROOT": "/Users/masa/Projects/mcp-vector-search"
+  }
+}'
+```
+
+**Alternative: Using venv directly**
+```bash
+claude mcp add-json mcp-vector-search '{
+  "command": "/Users/masa/Projects/mcp-vector-search/.venv/bin/python",
+  "args": ["-m", "mcp_vector_search.mcp.server", "/Users/masa/Projects/mcp-vector-search"],
+  "cwd": "/Users/masa/Projects/mcp-vector-search",
   "env": {
     "MCP_DEBUG": "1"
   }
@@ -43,7 +57,7 @@ The `mcp-vector-search` command is already configured in your shell via `shell-a
 
 This file is automatically sourced from your `~/.zshrc` with:
 ```bash
-source /Users/masa/Projects/managed/mcp-vector-search/shell-aliases.sh
+source /Users/masa/Projects/mcp-vector-search/shell-aliases.sh
 ```
 
 Available commands:
@@ -66,7 +80,7 @@ source ~/.zshrc  # or source the aliases file directly
    ```
    You should see:
    ```
-   mcp-vector-search: /Users/masa/Projects/managed/mcp-vector-search/.venv/bin/python -m mcp_vector_search.mcp.server /Users/masa/Projects/managed/mcp-vector-search - ✓ Connected
+   mcp-vector-search: uv run --directory /Users/masa/Projects/mcp-vector-search mcp-vector-search mcp - ✓ Connected
    ```
 
 2. **Test in Claude CLI**:
@@ -84,8 +98,8 @@ To use mcp-vector-search in any project:
 
 ```bash
 cd /path/to/your/project
-/Users/masa/Projects/managed/mcp-vector-search/scripts/mcp-dev init
-/Users/masa/Projects/managed/mcp-vector-search/scripts/mcp-dev index
+/Users/masa/Projects/mcp-vector-search/scripts/mcp-dev init
+/Users/masa/Projects/mcp-vector-search/scripts/mcp-dev index
 ```
 
 ### 6. Development Workflow

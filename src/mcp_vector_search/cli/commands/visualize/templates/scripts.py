@@ -1,3925 +1,899 @@
-"""JavaScript code for the D3.js visualization.
+"""Simple D3.js tree visualization for code graph.
 
-This module contains all JavaScript functionality for the interactive code graph,
-organized into logical sections for maintainability.
+Clean, minimal implementation focusing on core functionality:
+- Hierarchical tree layout (linear and circular)
+- Expandable/collapsible directories and files
+- File expansion shows code chunks as child nodes
+- Chunk selection to view content in side panel
+
+Design Decision: Complete rewrite from scratch
+Rationale: Previous implementation was 4085 lines (5x over 800-line limit)
+with excessive complexity. This minimal version provides core functionality
+in <450 lines while maintaining clarity and maintainability.
+
+Node Types and Colors:
+- Orange (collapsed directory) / Blue (expanded directory)
+- Gray (collapsed file) / White (expanded file)
+- Purple (chunk nodes) - smaller circles with purple text
+
+Trade-offs:
+- Simplicity vs Features: Removed advanced features (force-directed, filters)
+- Performance vs Clarity: Straightforward DOM updates over optimized rendering
+- Flexibility vs Simplicity: Fixed layouts instead of customizable options
+
+Extension Points: Add features incrementally based on user feedback rather
+than preemptive feature bloat.
 """
 
 
-def get_d3_initialization() -> str:
-    """Get D3.js initialization and global variables.
-
-    Returns:
-        JavaScript string for D3.js setup
-    """
-    return """
-        const width = window.innerWidth;
-        const height = window.innerHeight;
-
-        // Create zoom behavior - allow more zoom out for larger nodes
-        const zoom = d3.zoom()
-            .scaleExtent([0.15, 4]) // Increased range from [0.1, 3] to allow better zoom out with larger nodes
-            .on("zoom", (event) => {
-                g.attr("transform", event.transform);
-            });
-
-        const svg = d3.select("#graph")
-            .attr("width", width)
-            .attr("height", height)
-            .call(zoom);
-
-        const g = svg.append("g");
-        const tooltip = d3.select("#tooltip");
-        let simulation;
-        let allNodes = [];
-        let allLinks = [];
-        let visibleNodes = new Set();
-        let collapsedNodes = new Set();
-        let highlightedNode = null;
-        let rootNodes = [];  // Store root nodes for reset function
-        let isInitialOverview = true;  // Track if we're in Phase 1 (initial overview) or Phase 2 (tree expansion)
-        let cy = null;  // Cytoscape instance
-        let edgeFilters = {
-            containment: true,
-            calls: true,
-            imports: false,
-            semantic: false,
-            cycles: true
-        };
-    """
-
-
-def get_file_type_functions() -> str:
-    """Get file type detection and icon functions.
-
-    Returns:
-        JavaScript string for file type handling
-    """
-    return """
-        // Get file extension from path
-        function getFileExtension(filePath) {
-            if (!filePath) return '';
-            const match = filePath.match(/\\.([^.]+)$/);
-            return match ? match[1].toLowerCase() : '';
-        }
-
-        // Get SVG icon path for file type
-        function getFileTypeIcon(node) {
-            if (node.type === 'directory') {
-                // Folder icon
-                return 'M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z';
-            }
-            if (node.type === 'file') {
-                const ext = getFileExtension(node.file_path);
-
-                // Python files
-                if (ext === 'py') {
-                    return 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z';
-                }
-                // JavaScript/TypeScript
-                if (ext === 'js' || ext === 'jsx' || ext === 'ts' || ext === 'tsx') {
-                    return 'M3 3h18v18H3V3zm16 16V5H5v14h14zM7 7h2v2H7V7zm4 0h2v2h-2V7zm-4 4h2v2H7v-2zm4 0h6v2h-6v-2zm-4 4h10v2H7v-2z';
-                }
-                // Markdown
-                if (ext === 'md' || ext === 'markdown') {
-                    return 'M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6zm10-10h-3v2h3v2h-3v2h3v2h-7V8h7v2z';
-                }
-                // JSON/YAML/Config files
-                if (ext === 'json' || ext === 'yaml' || ext === 'yml' || ext === 'toml' || ext === 'ini' || ext === 'conf') {
-                    return 'M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm0 2l4 4h-4V4zM6 20V4h6v6h6v10H6zm4-4h4v2h-4v-2zm0-4h4v2h-4v-2z';
-                }
-                // Shell scripts
-                if (ext === 'sh' || ext === 'bash' || ext === 'zsh') {
-                    return 'M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zm-2-8h-2v2h2v-2zm0 4h-2v2h2v-2zM6 10h8v2H6v-2z';
-                }
-                // Generic code file
-                return 'M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm0 2l4 4h-4V4zM6 20V4h6v6h6v10H6zm3-4h6v2H9v-2zm0-4h6v2H9v-2z';
-            }
-            return null;
-        }
-
-        // Get color for file type icon
-        function getFileTypeColor(node) {
-            if (node.type === 'directory') return '#79c0ff';
-            if (node.type === 'file') {
-                const ext = getFileExtension(node.file_path);
-                if (ext === 'py') return '#3776ab';  // Python blue
-                if (ext === 'js' || ext === 'jsx') return '#f7df1e';  // JavaScript yellow
-                if (ext === 'ts' || ext === 'tsx') return '#3178c6';  // TypeScript blue
-                if (ext === 'md' || ext === 'markdown') return '#8b949e';  // Gray
-                if (ext === 'json' || ext === 'yaml' || ext === 'yml') return '#90a4ae';  // Config gray
-                if (ext === 'sh' || ext === 'bash' || ext === 'zsh') return '#4eaa25';  // Shell green
-                return '#58a6ff';  // Default file color
-            }
-            return null;
-        }
-    """
-
-
-def get_spacing_calculation_functions() -> str:
-    """Get automatic spacing calculation functions.
-
-    Returns:
-        JavaScript string for spacing calculations
-
-    Design Decision: Adaptive spacing based on graph density
-
-    Rationale: Original 800px spacing caused nodes to go off-screen on typical displays.
-    Reduced to 300px to fit 5+ hierarchy levels on 1920px screens while maintaining readability.
-
-    Trade-offs:
-    - Adaptability: Auto-scales for mobile to 4K displays vs. fixed spacing
-    - Complexity: Requires calculation but prevents manual tuning per graph size
-    - Performance: Minimal overhead (O(1) calculation) vs. simplicity of hardcoded value
-
-    Alternatives Considered:
-    1. Fixed spacing with manual overrides: Rejected - requires user intervention
-    2. Viewport-only scaling: Rejected - doesn't account for node count
-    3. Node-count-only scaling: Rejected - breaks on different screen sizes
-
-    Extension Points: Mode parameter ('tight', 'balanced', 'loose') allows future
-    customization. Bounds can be adjusted per graph size category if needed.
-
-    Performance:
-    - Time Complexity: O(1) - simple arithmetic operations
-    - Space Complexity: O(1) - no data structures allocated
-    - Expected Performance: <1ms per calculation on modern browsers
-
-    Error Handling:
-    - Zero nodes: Returns default 100px spacing
-    - Invalid mode: Falls back to 'balanced' mode
-    - Extreme viewports: Clamped by min/max bounds per size category
-    """
-    return """
-        // Calculate adaptive spacing based on graph density
-        function calculateAdaptiveSpacing(nodeCount, width, height, mode = 'balanced') {
-            if (nodeCount === 0) return 100; // Guard clause
-
-            const areaPerNode = (width * height) / nodeCount;
-            const baseSpacing = Math.sqrt(areaPerNode);
-
-            // Scale factors for different modes
-            const modeScales = {
-                'tight': 0.4,      // Dense packing
-                'balanced': 0.6,   // Good default
-                'loose': 0.8       // More breathing room
-            };
-
-            const scaleFactor = modeScales[mode] || 0.6;
-            const calculatedSpacing = baseSpacing * scaleFactor;
-
-            // Bounds based on graph size
-            let minBound, maxBound;
-            if (nodeCount < 50) {
-                minBound = 150; maxBound = 400;
-            } else if (nodeCount < 500) {
-                minBound = 100; maxBound = 250;
-            } else {
-                minBound = 60; maxBound = 150;
-            }
-
-            return Math.max(minBound, Math.min(maxBound, calculatedSpacing));
-        }
-
-        // Calculate coordinated force parameters
-        function calculateForceParameters(nodeCount, width, height, spacing) {
-            const k = Math.sqrt(nodeCount / (width * height));
-
-            return {
-                linkDistance: Math.max(30, spacing * 0.25),
-                chargeStrength: -10 / k,
-                collideRadius: 30,
-                centerStrength: 0.05 + (0.1 * k),
-                radialStrength: 0.05 + (0.15 * k)
-            };
-        }
-    """
-
-
-def get_loading_spinner_functions() -> str:
-    """Get loading spinner functions for async node operations.
-
-    Returns:
-        JavaScript string for loading spinner display
-
-    Usage Examples:
-        // Show spinner during async operation
-        showNodeLoading(nodeId);
-        try {
-            await fetchNodeData(nodeId);
-        } finally {
-            hideNodeLoading(nodeId);
-        }
-
-    Common Use Cases:
-    - Lazy-loading node data when expanding collapsed groups
-    - Fetching additional details from backend
-    - Loading file contents on demand
-    - Any async operation tied to a specific node
-
-    Error Case Handling:
-    - Missing nodeId: Silently returns (no error thrown)
-    - Invalid nodeId: Silently returns if node not found in DOM
-    - Multiple calls: Safe to call showNodeLoading multiple times (removes old spinner)
-
-    Performance:
-    - Time Complexity: O(n) where n = number of visible nodes (D3 selection filter)
-    - Space Complexity: O(1) - adds 2 SVG elements per node
-    - Animation: CSS-based, hardware-accelerated transform
-    """
-    return """
-        // Show loading spinner on a node
-        function showNodeLoading(nodeId) {
-            const node = svg.selectAll('.node')
-                .filter(d => d.id === nodeId);
-
-            if (node.empty()) return;
-
-            const nodeData = node.datum();
-            const x = nodeData.x || 0;
-            const y = nodeData.y || 0;
-            const radius = 30;
-
-            // Remove any existing spinner first
-            node.selectAll('.node-loading, .node-loading-overlay').remove();
-
-            // Add semi-transparent overlay
-            node.append('circle')
-                .attr('class', 'node-loading-overlay')
-                .attr('cx', x)
-                .attr('cy', y)
-                .attr('r', radius);
-
-            // Add spinning circle
-            node.append('circle')
-                .attr('class', 'node-loading')
-                .attr('cx', x)
-                .attr('cy', y)
-                .attr('r', radius * 0.7)
-                .style('transform-origin', `${x}px ${y}px`);
-        }
-
-        // Hide loading spinner from a node
-        function hideNodeLoading(nodeId) {
-            const node = svg.selectAll('.node')
-                .filter(d => d.id === nodeId);
-
-            node.selectAll('.node-loading, .node-loading-overlay').remove();
-        }
-    """
-
-
-def get_graph_visualization_functions() -> str:
-    """Get main graph visualization functions.
-
-    Returns:
-        JavaScript string for graph rendering
-    """
-    return """
-        // Helper function to calculate complexity-based color shading
-        function getComplexityShade(baseColor, complexity) {
-            if (!complexity || complexity === 0) return baseColor;
-
-            // Convert hex to HSL for proper darkening
-            const rgb = d3.rgb(baseColor);
-            const hsl = d3.hsl(rgb);
-
-            // Reduce lightness based on complexity (darker = more complex)
-            // Complexity scale: 0-5 (low), 6-10 (medium), 11+ (high)
-            // Max reduction: 40% for very complex functions
-            const lightnessReduction = Math.min(complexity * 0.03, 0.4);
-            hsl.l = Math.max(hsl.l - lightnessReduction, 0.1); // Don't go too dark
-
-            return hsl.toString();
-        }
-
-        // Position ALL nodes in an adaptive initial layout
-        function positionNodesCompactly(nodes) {
-            const folders = nodes.filter(n => n.type === 'directory');
-            const outliers = nodes.filter(n => n.type !== 'directory');
-
-            // Calculate adaptive spacing for folders (grid layout)
-            if (folders.length > 0) {
-                const folderSpacing = calculateAdaptiveSpacing(folders.length, width, height, 'balanced');
-                const cols = Math.ceil(Math.sqrt(folders.length));
-                const startX = width / 2 - (cols * folderSpacing) / 2;
-                const startY = height / 2 - (Math.ceil(folders.length / cols) * folderSpacing) / 2;
-
-                folders.forEach((folder, i) => {
-                    const col = i % cols;
-                    const row = Math.floor(i / cols);
-                    folder.x = startX + col * folderSpacing;
-                    folder.y = startY + row * folderSpacing;
-                    folder.fx = folder.x; // Fix position initially
-                    folder.fy = folder.y;
-                });
-            }
-
-            // Calculate adaptive radius for outliers (spiral layout)
-            if (outliers.length > 0) {
-                const clusterRadius = calculateAdaptiveSpacing(outliers.length, width * 0.6, height * 0.6, 'tight') * 2;
-                outliers.forEach((node, i) => {
-                    const angle = (i / outliers.length) * 2 * Math.PI;
-                    const radius = clusterRadius * Math.sqrt(i / outliers.length);
-                    node.x = width / 2 + radius * Math.cos(angle);
-                    node.y = height / 2 + radius * Math.sin(angle);
-                });
-            }
-
-            // Release fixed folder positions after settling
-            setTimeout(() => {
-                folders.forEach(folder => {
-                    folder.fx = null;
-                    folder.fy = null;
-                });
-            }, 1000);
-        }
-
-        function visualizeGraph(data) {
-            g.selectAll("*").remove();
-
-            allNodes = data.nodes;
-            allLinks = data.links;
-
-            // Find root nodes - start with only top-level nodes
-            if (data.metadata && data.metadata.is_monorepo) {
-                // In monorepos, subproject nodes are roots
-                rootNodes = allNodes.filter(n => n.type === 'subproject');
-            } else {
-                // Regular projects: show root-level directories AND files
-                const dirNodes = allNodes.filter(n => n.type === 'directory');
-                const fileNodes = allNodes.filter(n => n.type === 'file');
-
-                // Find minimum depth for directories and files
-                const minDirDepth = dirNodes.length > 0
-                    ? Math.min(...dirNodes.map(n => n.depth))
-                    : Infinity;
-                const minFileDepth = fileNodes.length > 0
-                    ? Math.min(...fileNodes.map(n => n.depth))
-                    : Infinity;
-
-                // Include both root-level directories and root-level files
-                rootNodes = [
-                    ...dirNodes.filter(n => n.depth === minDirDepth),
-                    ...fileNodes.filter(n => n.depth === minFileDepth)
-                ];
-
-                // Fallback to all files if nothing found
-                if (rootNodes.length === 0) {
-                    rootNodes = fileNodes;
-                }
-            }
-
-            // Start with only root nodes visible, all collapsed
-            visibleNodes = new Set(rootNodes.map(n => n.id));
-            collapsedNodes = new Set(rootNodes.map(n => n.id));
-            highlightedNode = null;
-
-            // Initial render
-            renderGraph();
-
-            // Position folders compactly (same as reset view)
-            const currentNodes = allNodes.filter(n => visibleNodes.has(n.id));
-            positionNodesCompactly(currentNodes);
-
-            // Zoom to fit (same as reset view)
-            setTimeout(() => {
-                zoomToFit(750);
-            }, 300); // Slightly longer delay for positioning
-        }
-
-        function renderGraph() {
-            const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
-            const filteredLinks = getFilteredLinks();
-            const visibleLinks = filteredLinks.filter(l =>
-                visibleNodes.has(l.source.id || l.source) &&
-                visibleNodes.has(l.target.id || l.target)
-            );
-
-            simulation = d3.forceSimulation(visibleNodesList)
-                .force("link", d3.forceLink(visibleLinks)
-                    .id(d => d.id)
-                    .distance(d => {
-                        // MUCH shorter distances for compact packing
-                        if (d.type === 'dir_containment' || d.type === 'dir_hierarchy') {
-                            return 40; // Drastically reduced from 60
-                        }
-                        if (d.is_cycle) return 80; // Reduced from 120
-                        if (d.type === 'semantic') return 100; // Reduced from 150
-                        return 60; // Reduced from 90
-                    })
-                    .strength(d => {
-                        // STRONGER links to pull nodes much closer
-                        if (d.type === 'dir_containment' || d.type === 'dir_hierarchy') {
-                            return 0.8; // Increased from 0.6
-                        }
-                        if (d.is_cycle) return 0.4; // Increased from 0.3
-                        if (d.type === 'semantic') return 0.3; // Increased from 0.2
-                        return 0.7; // Increased from 0.5
-                    })
-                )
-                .force("charge", d3.forceManyBody()
-                    .strength(d => {
-                        // ULTRA-LOW repulsion for maximum clustering
-                        if (d.type === 'directory') {
-                            return -30; // FURTHER REDUCED: -50 → -30 (40% less)
-                        }
-                        return -60; // FURTHER REDUCED: -100 → -60 (40% less)
-                    })
-                )
-                .force("center", d3.forceCenter(width / 2, height / 2).strength(0.1)) // Explicit centering strength
-                .force("radial", d3.forceRadial(100, width / 2, height / 2)
-                    .strength(d => {
-                        // Pull non-folder nodes toward center
-                        if (d.type === 'directory') {
-                            return 0; // Don't affect folders
-                        }
-                        return 0.1; // Gentle pull toward center for other nodes
-                    })
-                )
-                .force("collision", d3.forceCollide()
-                    .radius(d => {
-                        // Collision radius to prevent overlap
-                        if (d.type === 'directory') return 30;
-                        if (d.type === 'file') return 26;
-                        return 24;
-                    })
-                    .strength(1.0) // Maximum collision strength to prevent overlap
-                )
-                .velocityDecay(0.6)
-                .alphaDecay(0.02)
-
-            g.selectAll("*").remove();
-
-            const link = g.append("g")
-                .selectAll("line")
-                .data(visibleLinks)
-                .join("line")
-                .attr("class", d => {
-                    // Cycle links have highest priority
-                    if (d.is_cycle) return "link cycle";
-                    if (d.type === "dependency") return "link dependency";
-                    if (d.type === "semantic") {
-                        // Color based on similarity score
-                        const sim = d.similarity || 0;
-                        let simClass = "sim-very-low";
-                        if (sim >= 0.8) simClass = "sim-high";
-                        else if (sim >= 0.6) simClass = "sim-medium-high";
-                        else if (sim >= 0.4) simClass = "sim-medium";
-                        else if (sim >= 0.2) simClass = "sim-low";
-                        return `link semantic ${simClass}`;
-                    }
-                    return "link";
-                })
-                .on("mouseover", showLinkTooltip)
-                .on("mouseout", hideTooltip);
-
-            const node = g.append("g")
-                .selectAll("g")
-                .data(visibleNodesList)
-                .join("g")
-                .attr("class", d => {
-                    let classes = `node ${d.type}`;
-                    if (highlightedNode && d.id === highlightedNode.id) {
-                        classes += ' highlighted';
-                    }
-                    return classes;
-                })
-                .call(drag(simulation))
-                .on("click", handleNodeClick)
-                .on("mouseover", showTooltip)
-                .on("mouseout", hideTooltip);
-
-            // Add shapes based on node type
-            const isDocNode = d => ['docstring', 'comment'].includes(d.type);
-            const isFileOrDir = d => d.type === 'file' || d.type === 'directory';
-
-            // Add circles for regular code nodes (not files/dirs/docs)
-            node.filter(d => !isDocNode(d) && !isFileOrDir(d))
-                .append("circle")
-                .attr("r", d => {
-                    if (d.type === 'subproject') return 28; // Increased from 24
-                    // Increase base size and complexity multiplier
-                    return d.complexity ? Math.min(15 + d.complexity * 2.5, 32) : 18; // Was 12 + complexity * 2, max 28, default 15
-                })
-                .attr("stroke", d => {
-                    // Check if node has incoming caller/imports edges (dead code detection)
-                    const hasIncoming = allLinks.some(l =>
-                        (l.target.id || l.target) === d.id &&
-                        (l.type === 'caller' || l.type === 'imports')
-                    );
-                    if (!hasIncoming && (d.type === 'function' || d.type === 'class' || d.type === 'method')) {
-                        // Check if it's not an entry point (main, test, cli files)
-                        const isEntryPoint = d.file_path && (
-                            d.file_path.includes('main.py') ||
-                            d.file_path.includes('__main__.py') ||
-                            d.file_path.includes('cli.py') ||
-                            d.file_path.includes('test_')
-                        );
-                        if (!isEntryPoint) {
-                            return "#ff6b6b"; // Red border for potentially dead code
-                        }
-                    }
-                    return hasChildren(d) ? "#ffffff" : "none";
-                })
-                .attr("stroke-width", d => {
-                    const hasIncoming = allLinks.some(l =>
-                        (l.target.id || l.target) === d.id &&
-                        (l.type === 'caller' || l.type === 'imports')
-                    );
-                    if (!hasIncoming && (d.type === 'function' || d.type === 'class' || d.type === 'method')) {
-                        const isEntryPoint = d.file_path && (
-                            d.file_path.includes('main.py') ||
-                            d.file_path.includes('__main__.py') ||
-                            d.file_path.includes('cli.py') ||
-                            d.file_path.includes('test_')
-                        );
-                        if (!isEntryPoint) {
-                            return 3; // Thicker red border
-                        }
-                    }
-                    return hasChildren(d) ? 2 : 0;
-                })
-                .style("fill", d => {
-                    const baseColor = d.color || null;
-                    if (!baseColor) return null;
-                    return getComplexityShade(baseColor, d.complexity);
-                });
-
-            // Add rectangles for document nodes
-            node.filter(d => isDocNode(d))
-                .append("rect")
-                .attr("width", d => {
-                    const size = d.complexity ? Math.min(15 + d.complexity * 2.5, 32) : 18; // Increased from 12/28/15
-                    return size * 2;
-                })
-                .attr("height", d => {
-                    const size = d.complexity ? Math.min(15 + d.complexity * 2.5, 32) : 18; // Increased from 12/28/15
-                    return size * 2;
-                })
-                .attr("x", d => {
-                    const size = d.complexity ? Math.min(15 + d.complexity * 2.5, 32) : 18; // Increased from 12/28/15
-                    return -size;
-                })
-                .attr("y", d => {
-                    const size = d.complexity ? Math.min(15 + d.complexity * 2.5, 32) : 18; // Increased from 12/28/15
-                    return -size;
-                })
-                .attr("rx", 2)  // Rounded corners
-                .attr("ry", 2)
-                .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
-                .attr("stroke-width", d => hasChildren(d) ? 2 : 0)
-                .style("fill", d => {
-                    const baseColor = d.color || null;
-                    if (!baseColor) return null;
-                    return getComplexityShade(baseColor, d.complexity);
-                });
-
-            // Add SVG icons for file and directory nodes
-            node.filter(d => isFileOrDir(d))
-                .append("path")
-                .attr("class", "file-icon")
-                .attr("d", d => getFileTypeIcon(d))
-                .attr("transform", d => {
-                    const scale = d.type === 'directory' ? 2.2 : 1.8; // Increased from 1.8/1.5
-                    return `translate(-12, -12) scale(${scale})`;
-                })
-                .style("color", d => getFileTypeColor(d))
-                .attr("stroke", d => hasChildren(d) ? "#ffffff" : "none")
-                .attr("stroke-width", d => hasChildren(d) ? 1.5 : 0); // Slightly thicker stroke
-
-            // Add expand/collapse indicator - positioned to the left of label
-            node.filter(d => hasChildren(d))
-                .append("text")
-                .attr("class", "expand-indicator")
-                .attr("x", d => {
-                    const iconRadius = d.type === 'directory' ? 22 : (d.type === 'file' ? 18 : 18); // Increased from 18/15/15
-                    return iconRadius + 5;  // Just right of the icon
-                })
-                .attr("y", 0)
-                .attr("dy", "0.6em")
-                .attr("text-anchor", "start")
-                .style("font-size", "15px") // Slightly larger from 14px
-                .style("font-weight", "bold")
-                .style("fill", "#ffffff")
-                .style("pointer-events", "none")
-                .text(d => collapsedNodes.has(d.id) ? "+" : "−");
-
-            // Add labels (show actual import statement for L1 nodes)
-            node.append("text")
-                .text(d => {
-                    // L1 (depth 1) nodes are imports
-                    if (d.depth === 1 && d.type !== 'directory' && d.type !== 'file') {
-                        if (d.content) {
-                            // Extract first line of import statement
-                            const importLine = d.content.split('\\n')[0].trim();
-                            // Truncate if too long (max 60 chars)
-                            return importLine.length > 60 ? importLine.substring(0, 57) + '...' : importLine;
-                        }
-                        return d.name;  // Fallback to name if no content
-                    }
-                    return d.name;
-                })
-                .attr("x", d => {
-                    const iconRadius = d.type === 'directory' ? 22 : (d.type === 'file' ? 18 : 18); // Increased from 18/15/15
-                    const hasExpand = hasChildren(d);
-                    return iconRadius + 8 + (hasExpand ? 24 : 0); // Slightly more offset for larger indicator
-                })
-                .attr("y", 0)
-                .attr("dy", "0.6em")
-                .attr("text-anchor", "start")
-                .style("font-size", d => {
-                    if (d.type === 'subproject') return "13px"; // Slightly larger from 12px
-                    if (isFileOrDir(d)) return "12px"; // Larger from 11px
-                    return "11px"; // Larger from 10px
-                });
-
-            simulation.on("tick", () => {
-                link
-                    .attr("x1", d => d.source.x)
-                    .attr("y1", d => d.source.y)
-                    .attr("x2", d => d.target.x)
-                    .attr("y2", d => d.target.y);
-
-                node.attr("transform", d => `translate(${d.x},${d.y})`);
-            });
-
-            updateStats({nodes: visibleNodesList, links: visibleLinks, metadata: {total_files: allNodes.length}});
-        }
-
-        function hasChildren(node) {
-            return allLinks.some(l => (l.source.id || l.source) === node.id);
-        }
-    """
-
-
-def get_zoom_and_navigation_functions() -> str:
-    """Get zoom and navigation functions.
-
-    Returns:
-        JavaScript string for zoom and navigation
-    """
-    return """
-        // Zoom to fit all visible nodes with appropriate padding
-        function zoomToFit(duration = 750) {
-            const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
-            console.log('[zoomToFit] Visible nodes:', visibleNodesList.length);
-            if (visibleNodesList.length === 0) {
-                console.warn('[zoomToFit] No visible nodes to fit');
-                return;
-            }
-
-            // Calculate bounding box of visible nodes
-            // Use moderate padding to ensure all nodes visible
-            const padding = 80;
-            let minX = Infinity, minY = Infinity;
-            let maxX = -Infinity, maxY = -Infinity;
-            let nodesWithPosition = 0;
-
-            visibleNodesList.forEach(d => {
-                if (d.x !== undefined && d.y !== undefined) {
-                    nodesWithPosition++;
-                    minX = Math.min(minX, d.x);
-                    minY = Math.min(minY, d.y);
-                    maxX = Math.max(maxX, d.x);
-                    maxY = Math.max(maxY, d.y);
-                }
-            });
-
-            console.log('[zoomToFit] Nodes with positions:', nodesWithPosition, '/', visibleNodesList.length);
-
-            // If no nodes have positions, can't calculate bounds
-            if (nodesWithPosition === 0) {
-                console.warn('[zoomToFit] No nodes have x/y positions set');
-                return;
-            }
-
-            console.log('[zoomToFit] Bounds before padding:', {minX, minY, maxX, maxY});
-
-            // Add padding
-            minX -= padding;
-            minY -= padding;
-            maxX += padding;
-            maxY += padding;
-
-            const boxWidth = maxX - minX;
-            const boxHeight = maxY - minY;
-
-            // Calculate scale to fit ALL nodes in viewport
-            // Use 0.85 factor to leave some margin, but not too much
-            const scale = Math.min(
-                width / boxWidth,
-                height / boxHeight,
-                2  // Max zoom level
-            ) * 0.85;
-
-            // Calculate center translation
-            const centerX = (minX + maxX) / 2;
-            const centerY = (minY + maxY) / 2;
-            const translateX = width / 2 - scale * centerX;
-            const translateY = height / 2 - scale * centerY;
-
-            console.log('[zoomToFit] Transform:', {scale, centerX, centerY, translateX, translateY, width, height});
-
-            // Apply zoom transform with animation (or immediately if duration is 0)
-            if (duration === 0) {
-                // Immediate application without transition
-                svg.call(
-                    zoom.transform,
-                    d3.zoomIdentity
-                        .translate(translateX, translateY)
-                        .scale(scale)
-                );
-            } else {
-                svg.transition()
-                    .duration(duration)
-                    .call(
-                        zoom.transform,
-                        d3.zoomIdentity
-                            .translate(translateX, translateY)
-                            .scale(scale)
-                    );
-            }
-            console.log('[zoomToFit] Transform applied with duration:', duration);
-        }
-
-        function centerNode(node) {
-            // Get current transform to maintain zoom level
-            const transform = d3.zoomTransform(svg.node());
-
-            // Calculate translation to center the node in LEFT portion of viewport
-            // Position at 30% from left to avoid code pane on right side
-            const x = -node.x * transform.k + width * 0.3;
-            const y = -node.y * transform.k + height / 2;
-
-            // Apply smooth animation to center the node
-            svg.transition()
-                .duration(750)
-                .call(zoom.transform, d3.zoomIdentity.translate(x, y).scale(transform.k));
-        }
-
-        function resetView() {
-            // Reset to root level nodes only
-            visibleNodes = new Set(rootNodes.map(n => n.id));
-            collapsedNodes = new Set(rootNodes.map(n => n.id));
-            highlightedNode = null;
-
-            // Clean up non-visible objects
-            const pane = document.querySelector('.content-pane');
-            if (pane) {
-                pane.classList.remove('visible');
-                // Clear pane content to free memory
-                const content = pane.querySelector('.content-container');
-                const footer = pane.querySelector('.footer-container');
-                if (content) content.innerHTML = '';
-                if (footer) footer.innerHTML = '';
-            }
-
-            // Remove any highlighted states
-            d3.selectAll('.node circle, .node rect')
-                .classed('highlighted', false)
-                .classed('selected', false);
-
-            // Re-render graph
-            renderGraph();
-
-            // Position folders compactly after rendering
-            setTimeout(() => {
-                const currentNodes = allNodes.filter(n => visibleNodes.has(n.id));
-                positionNodesCompactly(currentNodes);
-            }, 100);
-
-            // Zoom to fit after positioning
-            setTimeout(() => {
-                zoomToFit(750);
-            }, 300);
-        }
-    """
-
-
-def get_interaction_handlers() -> str:
-    """Get interaction handler functions (click, expand, collapse).
-
-    Returns:
-        JavaScript string for interaction handling
-    """
-    return """
-        function handleNodeClick(event, d) {
-            event.stopPropagation();
-
-            // Always show content pane when clicking any node
-            showContentPane(d);
-
-            // If node has children, also toggle expansion
-            if (hasChildren(d)) {
-                const wasCollapsed = collapsedNodes.has(d.id);
-                if (wasCollapsed) {
-                    expandNode(d);
-                } else {
-                    collapseNode(d);
-                }
-                renderGraph();
-
-                // After rendering and nodes have positions, zoom to fit ONLY visible nodes
-                if (!wasCollapsed) {
-                    setTimeout(() => {
-                        simulation.alphaTarget(0);
-                        zoomToFit(750);
-                    }, 200);
-                } else {
-                    setTimeout(() => {
-                        centerNode(d);
-                    }, 200);
-                }
-            } else {
-                setTimeout(() => {
-                    centerNode(d);
-                }, 100);
-            }
-        }
-
-        function expandNode(node) {
-            collapsedNodes.delete(node.id);
-
-            // Find direct children
-            const children = allLinks
-                .filter(l => (l.source.id || l.source) === node.id)
-                .map(l => allNodes.find(n => n.id === (l.target.id || l.target)))
-                .filter(n => n);
-
-            children.forEach(child => {
-                visibleNodes.add(child.id);
-                collapsedNodes.add(child.id); // Children start collapsed
-            });
-        }
-
-        function collapseNode(node) {
-            collapsedNodes.add(node.id);
-
-            // Hide all descendants recursively
-            function hideDescendants(parentId) {
-                const children = allLinks
-                    .filter(l => (l.source.id || l.source) === parentId)
-                    .map(l => l.target.id || l.target);
-
-                children.forEach(childId => {
-                    visibleNodes.delete(childId);
-                    collapsedNodes.delete(childId);
-                    hideDescendants(childId);
-                });
-            }
-
-            hideDescendants(node.id);
-        }
-    """
-
-
-def get_tooltip_logic() -> str:
-    """Get tooltip display logic with enhanced relationship types.
-
-    Returns:
-        JavaScript string for tooltip handling
-    """
-    return """
-        function showTooltip(event, d) {
-            // Extract first 2-3 lines of docstring for preview
-            let docPreview = '';
-            if (d.docstring) {
-                const lines = d.docstring.split('\\n').filter(l => l.trim());
-                const previewLines = lines.slice(0, 3).join(' ');
-                const truncated = previewLines.length > 150 ? previewLines.substring(0, 147) + '...' : previewLines;
-                docPreview = `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; font-size: 11px; color: #8b949e; font-style: italic;">${truncated}</div>`;
-            }
-
-            tooltip
-                .style("display", "block")
-                .style("left", (event.pageX + 10) + "px")
-                .style("top", (event.pageY + 10) + "px")
-                .html(`
-                    <div><strong>${d.name}</strong></div>
-                    <div>Type: ${d.type}</div>
-                    ${d.complexity ? `<div>Complexity: ${d.complexity.toFixed(1)}</div>` : ''}
-                    ${d.start_line ? `<div>Lines: ${d.start_line}-${d.end_line}</div>` : ''}
-                    <div>File: ${d.file_path}</div>
-                    ${docPreview}
-                `);
-        }
-
-        function showLinkTooltip(event, d) {
-            const sourceName = allNodes.find(n => n.id === (d.source.id || d.source))?.name || 'Unknown';
-            const targetName = allNodes.find(n => n.id === (d.target.id || d.target))?.name || 'Unknown';
-
-            // Special tooltip for cycle links
-            if (d.is_cycle) {
-                tooltip
-                    .style("display", "block")
-                    .style("left", (event.pageX + 10) + "px")
-                    .style("top", (event.pageY + 10) + "px")
-                    .html(`
-                        <div style="color: #ff4444;"><strong>⚠️ Circular Dependency Detected</strong></div>
-                        <div style="margin-top: 8px;">Path: ${sourceName} → ${targetName}</div>
-                        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; font-size: 11px; color: #8b949e; font-style: italic;">
-                            This indicates a circular call relationship that may lead to infinite recursion or tight coupling.
-                        </div>
-                    `);
-                return;
-            }
-
-            // Tooltip content based on link type
-            let typeLabel = '';
-            let typeDescription = '';
-            let extraInfo = '';
-
-            switch(d.type) {
-                case 'caller':
-                    typeLabel = '📞 Function Call';
-                    typeDescription = `${sourceName} calls ${targetName}`;
-                    extraInfo = 'This is a direct function call relationship, the most common type of code dependency.';
-                    break;
-                case 'semantic':
-                    typeLabel = '🔗 Semantic Similarity';
-                    typeDescription = `${(d.similarity * 100).toFixed(1)}% similar`;
-                    extraInfo = `These code chunks have similar meaning or purpose based on their content.`;
-                    break;
-                case 'imports':
-                    typeLabel = '📦 Import Dependency';
-                    typeDescription = `${sourceName} imports ${targetName}`;
-                    extraInfo = 'This is an explicit import/dependency declaration.';
-                    break;
-                case 'file_containment':
-                    typeLabel = '📄 File Contains';
-                    typeDescription = `${sourceName} contains ${targetName}`;
-                    extraInfo = 'This file contains the code chunk or function.';
-                    break;
-                case 'dir_containment':
-                    typeLabel = '📁 Directory Contains';
-                    typeDescription = `${sourceName} contains ${targetName}`;
-                    extraInfo = 'This directory contains the file or subdirectory.';
-                    break;
-                case 'dir_hierarchy':
-                    typeLabel = '🗂️ Directory Hierarchy';
-                    typeDescription = `${sourceName} → ${targetName}`;
-                    extraInfo = 'Parent-child directory structure relationship.';
-                    break;
-                case 'method':
-                    typeLabel = '⚙️ Method Relationship';
-                    typeDescription = `${sourceName} ↔ ${targetName}`;
-                    extraInfo = 'Class method relationship.';
-                    break;
-                case 'module':
-                    typeLabel = '📚 Module Relationship';
-                    typeDescription = `${sourceName} ↔ ${targetName}`;
-                    extraInfo = 'Module-level relationship.';
-                    break;
-                case 'dependency':
-                    typeLabel = '🔀 Dependency';
-                    typeDescription = `${sourceName} depends on ${targetName}`;
-                    extraInfo = 'General code dependency relationship.';
-                    break;
-                default:
-                    typeLabel = `🔗 ${d.type || 'Unknown'}`;
-                    typeDescription = `${sourceName} → ${targetName}`;
-                    extraInfo = 'Code relationship.';
-            }
-
-            tooltip
-                .style("display", "block")
-                .style("left", (event.pageX + 10) + "px")
-                .style("top", (event.pageY + 10) + "px")
-                .html(`
-                    <div><strong>${typeLabel}</strong></div>
-                    <div style="margin-top: 4px;">${typeDescription}</div>
-                    <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; font-size: 11px; color: #8b949e; font-style: italic;">
-                        ${extraInfo}
-                    </div>
-                `);
-        }
-
-        function hideTooltip() {
-            tooltip.style("display", "none");
-        }
-    """
-
-
-def get_drag_and_stats_functions() -> str:
-    """Get drag behavior and stats update functions.
-
-    Returns:
-        JavaScript string for drag and stats
-    """
-    return """
-        function drag(simulation) {
-            function dragstarted(event) {
-                if (!event.active) simulation.alphaTarget(0.3).restart();
-                event.subject.fx = event.subject.x;
-                event.subject.fy = event.subject.y;
-            }
-
-            function dragged(event) {
-                event.subject.fx = event.x;
-                event.subject.fy = event.y;
-            }
-
-            function dragended(event) {
-                if (!event.active) simulation.alphaTarget(0);
-                event.subject.fx = null;
-                event.subject.fy = null;
-            }
-
-            return d3.drag()
-                .on("start", dragstarted)
-                .on("drag", dragged)
-                .on("end", dragended);
-        }
-
-        function updateStats(data) {
-            const stats = d3.select("#stats");
-            stats.html(`
-                <div>Nodes: ${data.nodes.length}</div>
-                <div>Links: ${data.links.length}</div>
-                ${data.metadata ? `<div>Files: ${data.metadata.total_files || 'N/A'}</div>` : ''}
-                ${data.metadata && data.metadata.is_monorepo ? `<div>Monorepo: ${data.metadata.subprojects.length} subprojects</div>` : ''}
-            `);
-
-            // Show subproject legend if monorepo
-            if (data.metadata && data.metadata.is_monorepo && data.metadata.subprojects.length > 0) {
-                const subprojectsLegend = d3.select("#subprojects-legend");
-                const subprojectsList = d3.select("#subprojects-list");
-
-                subprojectsLegend.style("display", "block");
-
-                // Get subproject nodes with colors
-                const subprojectNodes = allNodes.filter(n => n.type === 'subproject');
-
-                subprojectsList.html(
-                    subprojectNodes.map(sp =>
-                        `<div class="legend-item">
-                            <span class="legend-color" style="background: ${sp.color};"></span> ${sp.name}
-                        </div>`
-                    ).join('')
-                );
-            }
-        }
-    """
-
-
-def get_breadcrumb_functions() -> str:
-    """Get breadcrumb navigation functions for file/directory paths.
-
-    Returns:
-        JavaScript string for breadcrumb generation and navigation
-    """
-    return """
-        // Generate breadcrumb navigation for a file/directory path
-        function generateBreadcrumbs(node) {
-            if (!node.file_path) return '';
-
-            // File paths are already relative to project root, use them directly
-            const nodePath = node.file_path;
-            const segments = nodePath.split('/').filter(s => s.length > 0);
-
-            if (segments.length === 0) return '';
-
-            let breadcrumbHTML = '<div class="breadcrumb-nav">';
-            breadcrumbHTML += '<span class="breadcrumb-root" onclick="navigateToRoot()">🏠 Root</span>';
-
-            let currentPath = '';
-            segments.forEach((segment, index) => {
-                currentPath += (currentPath ? '/' : '') + segment;
-                const isLast = (index === segments.length - 1);
-
-                breadcrumbHTML += ' <span class="breadcrumb-separator">/</span> ';
-
-                if (!isLast) {
-                    // Parent directories are clickable
-                    breadcrumbHTML += `<span class="breadcrumb-link" onclick="navigateToBreadcrumb('${currentPath}')">${segment}</span>`;
-                } else {
-                    // Current file/directory is not clickable (highlighted)
-                    breadcrumbHTML += `<span class="breadcrumb-current">${segment}</span>`;
-                }
-            });
-
-            breadcrumbHTML += '</div>';
-            return breadcrumbHTML;
-        }
-
-        // Navigate to a breadcrumb link (find and highlight the node)
-        function navigateToBreadcrumb(path) {
-            // Try to find the directory node by path
-            const targetNode = allNodes.find(n => n.file_path === path || n.dir_path === path);
-
-            if (targetNode) {
-                navigateToNode(targetNode);
-            }
-        }
-
-        // Navigate to project root
-        function navigateToRoot() {
-            resetView();
-        }
-    """
-
-
-def get_code_chunks_functions() -> str:
-    """Get code chunks display functions for file viewer.
-
-    Returns:
-        JavaScript string for code chunks navigation
-
-    Design Decision: Clickable code chunks section for file detail pane
-
-    Rationale: Users need quick navigation to specific functions/classes within files.
-    Selected list-based UI with line ranges and type badges for clarity.
-
-    Trade-offs:
-    - Performance: O(n) filtering per file vs. pre-indexing (chose simplicity)
-    - UX: Shows all chunks vs. grouped by type (chose comprehensive view)
-    - Visual: Icons vs. badges (chose both for maximum clarity)
-
-    Alternatives Considered:
-    1. Tree structure (functions under classes): Rejected - adds complexity
-    2. Grouped by type: Rejected - line number order more intuitive
-    3. Separate tab: Rejected - want chunks visible by default
-
-    Extension Points: Can add filtering by chunk_type, search box, or grouping later.
-    """
-    return """
-        // Get all code chunks for a given file
-        function getCodeChunksForFile(filePath) {
-            if (!filePath) return [];
-
-            const chunks = allNodes.filter(n =>
-                n.type === 'code' ||
-                (n.file_path === filePath &&
-                 ['function', 'class', 'method'].includes(n.type))
-            ).filter(n => n.file_path === filePath || n.parent_file === filePath);
-
-            // Sort by start_line
-            return chunks.sort((a, b) =>
-                (a.start_line || 0) - (b.start_line || 0)
-            );
-        }
-
-        // Generate HTML for code chunks section
-        function generateCodeChunksSection(filePath) {
-            const chunks = getCodeChunksForFile(filePath);
-
-            if (chunks.length === 0) {
-                return ''; // No chunks, don't show section
-            }
-
-            let html = '<div class="code-chunks-section">';
-            html += '<h4 class="section-header">Code Chunks (' + chunks.length + ')</h4>';
-            html += '<div class="code-chunks-list">';
-
-            chunks.forEach(chunk => {
-                const icon = getChunkIcon(chunk.type);
-                const lineRange = chunk.start_line ?
-                    ` <span class="line-range">L${chunk.start_line}-${chunk.end_line || chunk.start_line}</span>` :
-                    '';
-
-                html += `
-                    <div class="code-chunk-item" data-type="${chunk.type}" onclick="navigateToChunk('${chunk.id}')">
-                        <span class="chunk-icon">${icon}</span>
-                        <span class="chunk-name">${escapeHtml(chunk.name || 'unnamed')}</span>
-                        ${lineRange}
-                        <span class="chunk-type">${chunk.type || 'code'}</span>
-                    </div>
-                `;
-            });
-
-            html += '</div></div>';
-            return html;
-        }
-
-        // Get icon for chunk type
-        function getChunkIcon(chunkType) {
-            const icons = {
-                'function': '⚡',
-                'class': '📦',
-                'method': '🔧',
-                'variable': '📊',
-                'import': '📥',
-                'export': '📤',
-                'code': '📄'
-            };
-            return icons[chunkType] || '📄';
-        }
-
-        // Navigate to a code chunk (highlight and show details)
-        function navigateToChunk(chunkId) {
-            const chunk = allNodes.find(n => n.id === chunkId);
-            if (chunk) {
-                navigateToNode(chunk);
-            }
-        }
-
-        // Navigate to a file by path (reload parent file view from code chunk)
-        function navigateToFile(filePath) {
-            const fileNode = allNodes.find(n => n.file_path === filePath && n.type === 'file');
-            if (fileNode) {
-                navigateToNode(fileNode);
-            }
-        }
-    """
-
-
-def get_content_pane_functions() -> str:
-    """Get content pane display functions.
-
-    Returns:
-        JavaScript string for content pane
-    """
-    return """
-        function showContentPane(node, addToHistory = true) {
-            // Add to navigation stack if requested
-            if (addToHistory) {
-                viewStack.push(node.id);
-            }
-
-            // Highlight the node
-            highlightedNode = node;
-            renderGraph();
-
-            // Populate content pane
-            const pane = document.getElementById('content-pane');
-            const title = document.getElementById('pane-title');
-            const meta = document.getElementById('pane-meta');
-            const content = document.getElementById('pane-content');
-            const footer = document.getElementById('pane-footer');
-
-            // Generate and inject breadcrumbs at the top
-            const breadcrumbs = generateBreadcrumbs(node);
-
-            // Set title with actual import statement for L1 nodes
-            if (node.depth === 1 && node.type !== 'directory' && node.type !== 'file') {
-                if (node.content) {
-                    const importLine = node.content.split('\\n')[0].trim();
-                    title.innerHTML = breadcrumbs + importLine;
-                } else {
-                    title.innerHTML = breadcrumbs + `Import: ${node.name}`;
-                }
-            } else {
-                title.innerHTML = breadcrumbs + node.name;
-            }
-
-            // Set metadata
-            meta.textContent = node.type;
-
-            // Build footer with annotations
-            let footerHtml = '';
-            if (node.language) {
-                footerHtml += `<span class="footer-item"><span class="footer-label">Language:</span> ${node.language}</span>`;
-            }
-            footerHtml += `<span class="footer-item"><span class="footer-label">File:</span> ${node.file_path}</span>`;
-
-            if (node.start_line !== undefined && node.end_line !== undefined) {
-                const totalLines = node.end_line - node.start_line + 1;
-
-                // Build line info string with optional non-doc code lines
-                let lineInfo = `${node.start_line}-${node.end_line} (${totalLines} lines`;
-
-                // Add non-documentation code lines if available
-                if (node.non_doc_lines !== undefined && node.non_doc_lines > 0) {
-                    lineInfo += `, ${node.non_doc_lines} code`;
-                }
-
-                lineInfo += ')';
-
-                if (node.type === 'function' || node.type === 'class' || node.type === 'method') {
-                    footerHtml += `<span class="footer-item"><span class="footer-label">Lines:</span> ${lineInfo}</span>`;
-                } else if (node.type === 'file') {
-                    footerHtml += `<span class="footer-item"><span class="footer-label">File Lines:</span> ${totalLines}</span>`;
-                } else {
-                    footerHtml += `<span class="footer-item"><span class="footer-label">Location:</span> ${lineInfo}</span>`;
-                }
-
-                if (node.complexity && node.complexity > 0) {
-                    footerHtml += `<span class="footer-item"><span class="footer-label">Complexity:</span> ${node.complexity}</span>`;
-                }
-            }
-
-            footer.innerHTML = footerHtml;
-
-            // Display content based on node type
-            if (node.type === 'directory') {
-                showDirectoryContents(node, content, footer);
-            } else if (node.type === 'file') {
-                showFileContents(node, content);
-            } else if (node.depth === 1 && node.type !== 'directory' && node.type !== 'file') {
-                showImportDetails(node, content);
-            } else {
-                showCodeContent(node, content);
-            }
-
-            pane.classList.add('visible');
-        }
-
-        function showDirectoryContents(node, container, footer) {
-            const children = allLinks
-                .filter(l => (l.source.id || l.source) === node.id)
-                .map(l => allNodes.find(n => n.id === (l.target.id || l.target)))
-                .filter(n => n);
-
-            if (children.length === 0) {
-                container.innerHTML = '<p style="color: #8b949e;">Empty directory</p>';
-                footer.innerHTML = `<span class="footer-item"><span class="footer-label">File:</span> ${node.file_path}</span>`;
-                return;
-            }
-
-            const files = children.filter(n => n.type === 'file');
-            const subdirs = children.filter(n => n.type === 'directory');
-            const chunks = children.filter(n => n.type !== 'file' && n.type !== 'directory');
-
-            let html = '<ul class="directory-list">';
-
-            subdirs.forEach(child => {
-                html += `
-                    <li data-node-id="${child.id}">
-                        <span class="item-icon">📁</span>
-                        ${child.name}
-                    </li>
-                `;
-            });
-
-            files.forEach(child => {
-                html += `
-                    <li data-node-id="${child.id}">
-                        <span class="item-icon">📄</span>
-                        ${child.name}
-                    </li>
-                `;
-            });
-
-            chunks.forEach(child => {
-                const icon = child.type === 'class' ? '🔷' : child.type === 'function' ? '⚡' : '📝';
-                html += `
-                    <li data-node-id="${child.id}">
-                        <span class="item-icon">${icon}</span>
-                        ${child.name}
-                    </li>
-                `;
-            });
-
-            html += '</ul>';
-            container.innerHTML = html;
-
-            const listItems = container.querySelectorAll('.directory-list li');
-            listItems.forEach(item => {
-                item.addEventListener('click', () => {
-                    const nodeId = item.getAttribute('data-node-id');
-                    const childNode = allNodes.find(n => n.id === nodeId);
-                    if (childNode) {
-                        showContentPane(childNode);
-                    }
-                });
-            });
-
-            footer.innerHTML = `
-                <span class="footer-item"><span class="footer-label">File:</span> ${node.file_path}</span>
-                <span class="footer-item"><span class="footer-label">Total:</span> ${children.length} items (${subdirs.length} directories, ${files.length} files, ${chunks.length} code chunks)</span>
-            `;
-        }
-
-        function showFileContents(node, container) {
-            const fileChunks = allLinks
-                .filter(l => (l.source.id || l.source) === node.id)
-                .map(l => allNodes.find(n => n.id === (l.target.id || l.target)))
-                .filter(n => n);
-
-            if (fileChunks.length === 0) {
-                container.innerHTML = '<p style="color: #8b949e;">No code chunks found in this file</p>';
-                return;
-            }
-
-            const sortedChunks = fileChunks
-                .filter(c => c.content)
-                .sort((a, b) => a.start_line - b.start_line);
-
-            if (sortedChunks.length === 0) {
-                container.innerHTML = '<p style="color: #8b949e;">File content not available</p>';
-                return;
-            }
-
-            const fullContent = sortedChunks.map(c => c.content).join('\\n\\n');
-
-            // Generate code chunks section HTML
-            const codeChunksHtml = generateCodeChunksSection(node.file_path || node.id);
-
-            container.innerHTML = `
-                ${codeChunksHtml}
-                <p style="color: #8b949e; font-size: 11px; margin-bottom: 12px; ${codeChunksHtml ? 'margin-top: 20px;' : ''}">
-                    Contains ${fileChunks.length} code chunks
-                </p>
-                <pre><code>${escapeHtml(fullContent)}</code></pre>
-            `;
-        }
-
-        function showImportDetails(node, container) {
-            const importHtml = `
-                <div class="import-details">
-                    ${node.content ? `
-                        <div style="margin-bottom: 16px;">
-                            <div class="detail-label" style="margin-bottom: 8px;">Import Statement:</div>
-                            <pre><code>${escapeHtml(node.content)}</code></pre>
-                        </div>
-                    ` : '<p style="color: #8b949e;">No import content available</p>'}
-                </div>
-            `;
-
-            container.innerHTML = importHtml;
-        }
-
-        function parseDocstring(docstring) {
-            if (!docstring) return { brief: '', sections: {} };
-
-            const lines = docstring.split('\\n');
-            const sections = {};
-            let currentSection = 'brief';
-            let currentContent = [];
-
-            for (let line of lines) {
-                const trimmed = line.trim();
-                const sectionMatch = trimmed.match(/^(Args?|Returns?|Yields?|Raises?|Note|Notes|Example|Examples|See Also|Docs?|Parameters?):?$/i);
-
-                if (sectionMatch) {
-                    if (currentContent.length > 0) {
-                        sections[currentSection] = currentContent.join('\\n').trim();
-                    }
-                    currentSection = sectionMatch[1].toLowerCase();
-                    currentContent = [];
-                } else {
-                    currentContent.push(line);
-                }
-            }
-
-            if (currentContent.length > 0) {
-                sections[currentSection] = currentContent.join('\\n').trim();
-            }
-
-            return { brief: sections.brief || '', sections };
-        }
-
-        // Create linkable code with Python primitives bolded
-        function createLinkableCode(code, currentNodeId) {
-            // Build map of available nodes (functions, classes, methods)
-            const nodeMap = new Map();
-            allNodes.forEach(node => {
-                if (node.type === 'function' || node.type === 'class' || node.type === 'method') {
-                    nodeMap.set(node.name, node.id);
-                }
-            });
-
-            // Escape HTML first
-            let html = code
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;');
-
-            // Find and link function/class references
-            // Match: word followed by '(' or preceded by 'class '
-            const identifierRegex = /\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()|(?<=class\\s+)([a-zA-Z_][a-zA-Z0-9_]*)/g;
-
-            // Collect matches to avoid overlapping replacements
-            const matches = [];
-            let match;
-            while ((match = identifierRegex.exec(code)) !== null) {
-                const name = match[1] || match[2];
-                if (nodeMap.has(name) && nodeMap.get(name) !== currentNodeId) {
-                    matches.push({
-                        index: match.index,
-                        length: name.length,
-                        name: name,
-                        nodeId: nodeMap.get(name)
-                    });
-                }
-            }
-
-            // Apply replacements in reverse order to preserve indices
-            matches.reverse().forEach(m => {
-                const before = html.substring(0, m.index);
-                const linkText = html.substring(m.index, m.index + m.length);
-                const after = html.substring(m.index + m.length);
-
-                html = before +
-                       `<span class="code-link" data-node-id="${m.nodeId}" title="Jump to ${m.name}">${linkText}</span>` +
-                       after;
-            });
-
-            // Apply primitive bolding AFTER creating links
-            html = boldPythonPrimitives(html);
-
-            return html;
-        }
-
-        // Bold Python primitives (keywords and built-ins)
-        function boldPythonPrimitives(html) {
-            // Python keywords
-            const keywords = [
-                'def', 'class', 'if', 'else', 'elif', 'for', 'while', 'return',
-                'import', 'from', 'try', 'except', 'finally', 'with', 'as',
-                'async', 'await', 'yield', 'lambda', 'pass', 'break', 'continue',
-                'raise', 'assert', 'del', 'global', 'nonlocal', 'is', 'in',
-                'and', 'or', 'not'
-            ];
-
-            // Built-in types and functions
-            const builtins = [
-                'str', 'int', 'float', 'bool', 'list', 'dict', 'set', 'tuple',
-                'None', 'True', 'False', 'type', 'len', 'range', 'enumerate',
-                'zip', 'map', 'filter', 'sorted', 'reversed', 'any', 'all',
-                'isinstance', 'issubclass', 'hasattr', 'getattr', 'setattr', 'print'
-            ];
-
-            // Combine all primitives
-            const allPrimitives = [...keywords, ...builtins];
-
-            // Create regex pattern: \b(keyword1|keyword2|...)\b
-            // Use word boundaries to avoid matching parts of identifiers
-            const pattern = new RegExp(`\\\\b(${allPrimitives.join('|')})\\\\b`, 'g');
-
-            // Replace with bold version
-            // Important: Skip content inside existing HTML tags (like code-link spans)
-            const result = html.replace(pattern, (match) => {
-                return `<strong style="color: #ff7b72; font-weight: 600;">${match}</strong>`;
-            });
-
-            return result;
-        }
-
-        function showCodeContent(node, container) {
-            let html = '';
-
-            const docInfo = parseDocstring(node.docstring);
-
-            if (docInfo.brief && docInfo.brief.trim()) {
-                html += `
-                    <div style="margin-bottom: 16px; padding: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px;">
-                        <div style="font-size: 11px; color: #8b949e; margin-bottom: 8px; font-weight: 600;">DESCRIPTION</div>
-                        <pre style="margin: 0; padding: 0; background: transparent; border: none; white-space: pre-wrap;"><code>${escapeHtml(docInfo.brief)}</code></pre>
-                    </div>
-                `;
-            }
-
-            if (node.content) {
-                // Use linkable code with primitives bolding
-                const linkedCode = createLinkableCode(node.content, node.id);
-                html += `<pre><code>${linkedCode}</code></pre>`;
-            } else {
-                html += '<p style="color: #8b949e;">No content available</p>';
-            }
-
-            container.innerHTML = html;
-
-            // Add click handler for code links
-            const codeLinks = container.querySelectorAll('.code-link');
-            codeLinks.forEach(link => {
-                link.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    const nodeId = link.getAttribute('data-node-id');
-                    const targetNode = allNodes.find(n => n.id === nodeId);
-                    if (targetNode) {
-                        navigateToNode(targetNode);
-                    }
-                });
-            });
-
-            const footer = document.getElementById('pane-footer');
-            let footerHtml = '';
-
-            if (node.language) {
-                footerHtml += `<div class="footer-item"><span class="footer-label">Language:</span> <span class="footer-value">${node.language}</span></div>`;
-            }
-            footerHtml += `<div class="footer-item"><span class="footer-label">File:</span> <a href="#" class="file-path-link" onclick="navigateToFile('${node.file_path}'); return false;" style="color: #58a6ff; text-decoration: none; cursor: pointer;">${node.file_path}</a></div>`;
-            if (node.start_line) {
-                footerHtml += `<div class="footer-item"><span class="footer-label">Lines:</span> <span class="footer-value">${node.start_line}-${node.end_line}</span></div>`;
-            }
-
-            if (node.callers && node.callers.length > 0) {
-                footerHtml += `<div class="footer-item" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d;">`;
-                footerHtml += `<span class="footer-label">Called By:</span><br/>`;
-                node.callers.forEach(caller => {
-                    const fileName = caller.file.split('/').pop();
-                    const callerDisplay = `${fileName}::${caller.name}`;
-                    footerHtml += `<span class="footer-value" style="display: block; margin-left: 8px; margin-top: 4px;">
-                        <a href="#" class="caller-link" data-chunk-id="${caller.chunk_id}" style="color: #58a6ff; text-decoration: none; cursor: pointer;">
-                            • ${escapeHtml(callerDisplay)}
-                        </a>
-                    </span>`;
-                });
-                footerHtml += `</div>`;
-            } else if (node.type === 'function' || node.type === 'method' || node.type === 'class') {
-                footerHtml += `<div class="footer-item" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d;">`;
-                footerHtml += `<span class="footer-label">Called By:</span> <span class="footer-value" style="font-style: italic; color: #6e7681;">(No external callers found)</span>`;
-                footerHtml += `</div>`;
-            }
-
-            const sectionLabels = {
-                'docs': 'Docs', 'doc': 'Docs',
-                'args': 'Args', 'arg': 'Args',
-                'parameters': 'Args', 'parameter': 'Args',
-                'returns': 'Returns', 'return': 'Returns',
-                'yields': 'Yields', 'yield': 'Yields',
-                'raises': 'Raises', 'raise': 'Raises',
-                'note': 'Note', 'notes': 'Note',
-                'example': 'Example', 'examples': 'Example',
-            };
-
-            for (let [key, content] of Object.entries(docInfo.sections)) {
-                if (key === 'brief') continue;
-
-                const label = sectionLabels[key] || key.charAt(0).toUpperCase() + key.slice(1);
-                const truncated = content.length > 200 ? content.substring(0, 197) + '...' : content;
-
-                footerHtml += `<div class="footer-item"><span class="footer-label">${label}:</span> <span class="footer-value">${escapeHtml(truncated)}</span></div>`;
-            }
-
-            footer.innerHTML = footerHtml;
-
-            const callerLinks = footer.querySelectorAll('.caller-link');
-            callerLinks.forEach(link => {
-                link.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    const chunkId = link.getAttribute('data-chunk-id');
-                    const callerNode = allNodes.find(n => n.id === chunkId);
-                    if (callerNode) {
-                        navigateToNode(callerNode);
-                    }
-                });
-            });
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        function navigateToNode(targetNode) {
-            if (!visibleNodes.has(targetNode.id)) {
-                expandParentsToNode(targetNode);
-                renderGraph();
-            }
-
-            showContentPane(targetNode);
-
-            setTimeout(() => {
-                if (targetNode.x !== undefined && targetNode.y !== undefined) {
-                    const scale = 1.5;
-                    const translateX = width * 0.3 - scale * targetNode.x;
-                    const translateY = height / 2 - scale * targetNode.y;
-
-                    svg.transition()
-                        .duration(750)
-                        .call(
-                            zoom.transform,
-                            d3.zoomIdentity
-                                .translate(translateX, translateY)
-                                .scale(scale)
-                        );
-                }
-            }, 200);
-        }
-
-        function expandParentsToNode(targetNode) {
-            const path = [];
-            let current = targetNode;
-
-            while (current) {
-                path.unshift(current);
-                const parentLink = allLinks.find(l =>
-                    (l.target.id || l.target) === current.id &&
-                    (l.type !== 'semantic' && l.type !== 'dependency')
-                );
-                if (parentLink) {
-                    const parentId = parentLink.source.id || parentLink.source;
-                    current = allNodes.find(n => n.id === parentId);
-                } else {
-                    break;
-                }
-            }
-
-            path.forEach(node => {
-                if (!visibleNodes.has(node.id)) {
-                    visibleNodes.add(node.id);
-                }
-                if (collapsedNodes.has(node.id)) {
-                    expandNode(node);
-                }
-            });
-        }
-
-        function closeContentPane() {
-            const pane = document.getElementById('content-pane');
-            pane.classList.remove('visible');
-
-            highlightedNode = null;
-            renderGraph();
-        }
-    """
-
-
-def get_navigation_stack_logic() -> str:
-    """Get navigation stack for back/forward functionality.
-
-    Returns:
-        JavaScript string for navigation stack management
-    """
-    return """
-        // Navigation stack for back/forward functionality
-        const viewStack = {
-            stack: [],
-            currentIndex: -1,
-
-            push(chunkId) {
-                // Don't add duplicates if clicking same node
-                if (this.stack.length > 0 && this.stack[this.currentIndex] === chunkId) {
-                    return;
-                }
-
-                // Remove forward history if we're not at the end
-                this.stack = this.stack.slice(0, this.currentIndex + 1);
-                this.stack.push(chunkId);
-                this.currentIndex++;
-                this.updateButtons();
-            },
-
-            canGoBack() {
-                return this.currentIndex > 0;
-            },
-
-            canGoForward() {
-                return this.currentIndex < this.stack.length - 1;
-            },
-
-            back() {
-                if (this.canGoBack()) {
-                    this.currentIndex--;
-                    this.updateButtons();
-                    return this.stack[this.currentIndex];
-                }
-                return null;
-            },
-
-            forward() {
-                if (this.canGoForward()) {
-                    this.currentIndex++;
-                    this.updateButtons();
-                    return this.stack[this.currentIndex];
-                }
-                return null;
-            },
-
-            updateButtons() {
-                const backBtn = document.getElementById('navBack');
-                const forwardBtn = document.getElementById('navForward');
-                const positionSpan = document.getElementById('navPosition');
-
-                if (backBtn) backBtn.disabled = !this.canGoBack();
-                if (forwardBtn) forwardBtn.disabled = !this.canGoForward();
-                if (positionSpan && this.stack.length > 0) {
-                    positionSpan.textContent = `${this.currentIndex + 1} of ${this.stack.length}`;
-                }
-            },
-
-            clear() {
-                this.stack = [];
-                this.currentIndex = -1;
-                this.updateButtons();
-            }
-        };
-
-        // Add keyboard shortcuts for navigation
-        document.addEventListener('keydown', (e) => {
-            if (e.altKey && e.key === 'ArrowLeft') {
-                e.preventDefault();
-                const chunkId = viewStack.back();
-                if (chunkId) {
-                    const node = allNodes.find(n => n.id === chunkId);
-                    if (node) showContentPane(node, false); // false = don't add to history
-                }
-            } else if (e.altKey && e.key === 'ArrowRight') {
-                e.preventDefault();
-                const chunkId = viewStack.forward();
-                if (chunkId) {
-                    const node = allNodes.find(n => n.id === chunkId);
-                    if (node) showContentPane(node, false);
-                }
-            }
-        });
-
-        // Add click handlers for navigation buttons
-        document.addEventListener('DOMContentLoaded', () => {
-            const backBtn = document.getElementById('navBack');
-            const forwardBtn = document.getElementById('navForward');
-
-            if (backBtn) {
-                backBtn.addEventListener('click', () => {
-                    const chunkId = viewStack.back();
-                    if (chunkId) {
-                        const node = allNodes.find(n => n.id === chunkId);
-                        if (node) showContentPane(node, false);
-                    }
-                });
-            }
-
-            if (forwardBtn) {
-                forwardBtn.addEventListener('click', () => {
-                    const chunkId = viewStack.forward();
-                    if (chunkId) {
-                        const node = allNodes.find(n => n.id === chunkId);
-                        if (node) showContentPane(node, false);
-                    }
-                });
-            }
-        });
-    """
-
-
-def get_layout_switching_logic() -> str:
-    """Get layout switching functionality for Dagre/Force/Circle layouts.
-
-    Returns:
-        JavaScript string for layout switching
-    """
-    return """
-        // Filter edges based on current filter settings
-        function getFilteredLinks() {
-            return allLinks.filter(link => {
-                const linkType = link.type || 'unknown';
-
-                // Containment edges
-                if (linkType === 'dir_containment' || linkType === 'dir_hierarchy' || linkType === 'file_containment') {
-                    return edgeFilters.containment;
-                }
-
-                // Call edges
-                if (linkType === 'caller') {
-                    return edgeFilters.calls;
-                }
-
-                // Import edges
-                if (linkType === 'imports') {
-                    return edgeFilters.imports;
-                }
-
-                // Semantic edges
-                if (linkType === 'semantic') {
-                    return edgeFilters.semantic;
-                }
-
-                // Cycle edges
-                if (link.is_cycle) {
-                    return edgeFilters.cycles;
-                }
-
-                // Default: show other edge types
-                return true;
-            });
-        }
-
-        // Switch to Cytoscape layout (Dagre or Circle)
-        function switchToCytoscapeLayout(layoutName) {
-            // Note: This is legacy code for old visualization architecture
-            // V2.0 uses tree-based layouts with automatic phase transitions
-
-            // Hide D3 SVG
-            svg.style('display', 'none');
-
-            // Create Cytoscape container if doesn't exist
-            let cyContainer = document.getElementById('cy-container');
-            if (!cyContainer) {
-                cyContainer = document.createElement('div');
-                cyContainer.id = 'cy-container';
-                cyContainer.style.width = '100vw';
-                cyContainer.style.height = '100vh';
-                cyContainer.style.position = 'absolute';
-                cyContainer.style.top = '0';
-                cyContainer.style.left = '0';
-                document.body.insertBefore(cyContainer, document.body.firstChild);
-            }
-            cyContainer.style.display = 'block';
-
-            // Get visible nodes and filtered links
-            const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
-            const filteredLinks = getFilteredLinks();
-            const visibleLinks = filteredLinks.filter(l =>
-                visibleNodes.has(l.source.id || l.source) &&
-                visibleNodes.has(l.target.id || l.target)
-            );
-
-            // Convert to Cytoscape format
-            const cyElements = [];
-
-            // Add nodes
-            visibleNodesList.forEach(node => {
-                cyElements.push({
-                    data: {
-                        id: node.id,
-                        label: node.name,
-                        nodeType: node.type,
-                        color: node.color,
-                        ...node
-                    }
-                });
-            });
-
-            // Add edges
-            visibleLinks.forEach(link => {
-                const sourceId = link.source.id || link.source;
-                const targetId = link.target.id || link.target;
-                cyElements.push({
-                    data: {
-                        ...link,
-                        source: sourceId,
-                        target: targetId,
-                        linkType: link.type,
-                        isCycle: link.is_cycle
-                    }
-                });
-            });
-
-            // Initialize or update Cytoscape
-            if (cy) {
-                cy.destroy();
-            }
-
-            cy = cytoscape({
-                container: cyContainer,
-                elements: cyElements,
-                style: [
-                    {
-                        selector: 'node',
-                        style: {
-                            'label': 'data(label)',
-                            'background-color': 'data(color)',
-                            'color': '#c9d1d9',
-                            'font-size': '11px',
-                            'text-valign': 'center',
-                            'text-halign': 'right',
-                            'text-margin-x': '5px',
-                            'width': d => d.data('type') === 'directory' ? 35 : 25,
-                            'height': d => d.data('type') === 'directory' ? 35 : 25,
-                        }
-                    },
-                    {
-                        selector: 'edge',
-                        style: {
-                            'width': 2,
-                            'line-color': '#30363d',
-                            'target-arrow-color': '#30363d',
-                            'target-arrow-shape': 'triangle',
-                            'curve-style': 'bezier'
-                        }
-                    },
-                    {
-                        selector: 'edge[isCycle]',
-                        style: {
-                            'line-color': '#ff4444',
-                            'width': 3,
-                            'line-style': 'dashed'
-                        }
-                    }
-                ],
-                layout: {
-                    name: layoutName === 'dagre' ? 'dagre' : 'circle',
-                    rankDir: 'TB',
-                    rankSep: 150,
-                    nodeSep: 80,
-                    ranker: 'network-simplex',
-                    spacingFactor: 1.2
-                }
-            });
-
-            // Add click handler
-            cy.on('tap', 'node', function(evt) {
-                const nodeData = evt.target.data();
-                const node = allNodes.find(n => n.id === nodeData.id);
-                if (node) {
-                    showContentPane(node);
-                }
-            });
-        }
-
-        // Switch to D3 force-directed layout
-        function switchToForceLayout() {
-            // Note: This is legacy code for old visualization architecture
-            // V2.0 uses tree-based layouts with automatic phase transitions
-
-            // Hide Cytoscape
-            const cyContainer = document.getElementById('cy-container');
-            if (cyContainer) {
-                cyContainer.style.display = 'none';
-            }
-
-            // Show D3 SVG
-            svg.style('display', 'block');
-
-            // Re-render with D3
-            renderGraph();
-        }
-
-        // Handle layout selector change
-        document.addEventListener('DOMContentLoaded', () => {
-            const layoutSelector = document.getElementById('layoutSelector');
-            if (layoutSelector) {
-                layoutSelector.addEventListener('change', (e) => {
-                    const layout = e.target.value;
-                    if (layout === 'force') {
-                        switchToForceLayout();
-                    } else if (layout === 'dagre' || layout === 'circle') {
-                        switchToCytoscapeLayout(layout);
-                    }
-                });
-            }
-
-            // Handle edge filter checkboxes
-            const filterCheckboxes = {
-                'filter-containment': 'containment',
-                'filter-calls': 'calls',
-                'filter-imports': 'imports',
-                'filter-semantic': 'semantic',
-                'filter-cycles': 'cycles'
-            };
-
-            Object.entries(filterCheckboxes).forEach(([id, filterKey]) => {
-                const checkbox = document.getElementById(id);
-                if (checkbox) {
-                    checkbox.addEventListener('change', (e) => {
-                        edgeFilters[filterKey] = e.target.checked;
-                        // Re-render with new filters
-                        // Note: V2.0 uses automatic layout based on view mode
-                        if (typeof renderGraphV2 === 'function') {
-                            renderGraphV2();  // V2.0 rendering
-                        } else {
-                            renderGraph();    // Legacy fallback
-                        }
-                    });
-                }
-            });
-        });
-    """
-
-
-def get_data_loading_logic() -> str:
-    """Get data loading logic with streaming JSON parser.
-
-    Returns:
-        JavaScript string for data loading
-
-    Design Decision: Streaming JSON with chunked transfer and incremental parsing
-
-    Rationale: Safari's JSON.parse() crashes with 6.3MB files. Selected streaming
-    approach to download in chunks and parse incrementally, avoiding browser memory
-    limits and parser crashes.
-
-    Trade-offs:
-    - Memory: Constant memory usage vs. loading entire file
-    - Complexity: Custom streaming parser vs. simple JSON.parse()
-    - Performance: Slightly slower but prevents crashes
-
-    Alternatives Considered:
-    1. Web Workers for parsing: Rejected - still requires full JSON in memory
-    2. IndexedDB caching: Rejected - doesn't solve initial load problem
-    3. MessagePack binary: Rejected - requires backend changes
-
-    Error Handling:
-    - Network errors: Show retry button with clear error message
-    - Timeout: 60s timeout with abort controller
-    - Parse errors: Log to console and show user-friendly message
-    - Incomplete data: Validate nodes/links exist before rendering
-
-    Performance:
-    - Transfer: Shows progress 0-50% during download
-    - Parse: Shows progress 50-100% during JSON parsing
-    - Expected: <10s for 6.3MB file on localhost
-    - Memory: <100MB peak usage during load
-    """
-    return """
-        // Streaming JSON loader to handle large files without crashing Safari
-        async function loadGraphDataStreaming() {
-            const progressBar = document.getElementById('progress-bar');
-            const progressText = document.getElementById('progress-text');
-
-            try {
-                // Fetch from streaming endpoint
-                const response = await fetch('/api/graph-data');
-
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-
-                const contentLength = response.headers.get('content-length');
-                const total = contentLength ? parseInt(contentLength, 10) : 0;
-                let loaded = 0;
-
-                if (total > 0) {
-                    const sizeMB = (total / (1024 * 1024)).toFixed(1);
-                    progressText.textContent = `Downloading ${sizeMB}MB...`;
-                }
-
-                // Stream download with progress tracking
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-
-                while (true) {
-                    const {done, value} = await reader.read();
-
-                    if (done) break;
-
-                    loaded += value.byteLength;
-
-                    // Update progress (0-50% for transfer)
-                    if (total > 0) {
-                        const transferPercent = Math.round((loaded / total) * 50);
-                        progressBar.style.width = transferPercent + '%';
-                        const loadedMB = (loaded / (1024 * 1024)).toFixed(1);
-                        const totalMB = (total / (1024 * 1024)).toFixed(1);
-                        progressText.textContent = `Downloaded ${loadedMB}MB / ${totalMB}MB (${transferPercent}%)`;
-                    } else {
-                        const loadedMB = (loaded / (1024 * 1024)).toFixed(1);
-                        progressText.textContent = `Downloaded ${loadedMB}MB...`;
-                    }
-
-                    // Accumulate chunks into buffer
-                    buffer += decoder.decode(value, {stream: true});
-                }
-
-                // Transfer complete, now parse
-                progressBar.style.width = '50%';
-                progressText.textContent = 'Parsing JSON data...';
-
-                // Parse JSON (this is still the bottleneck, but at least we streamed the download)
-                // Future optimization: Implement incremental JSON parser if needed
-                const data = JSON.parse(buffer);
-
-                // Parsing complete
-                progressBar.style.width = '100%';
-                progressText.textContent = 'Complete!';
-
-                return data;
-
-            } catch (error) {
-                console.error('Streaming load error:', error);
-                throw error;
-            }
-        }
-
-        // Auto-load graph data on page load with streaming support
-        window.addEventListener('DOMContentLoaded', () => {
-            const loadingEl = document.getElementById('loading');
-
-            // Show initial loading message
-            loadingEl.innerHTML = '<label style="color: #58a6ff;"><span class="spinner"></span>Loading graph data...</label><br>' +
-                                 '<div style="margin-top: 8px; background: #21262d; border-radius: 4px; height: 20px; width: 250px; position: relative; overflow: hidden;">' +
-                                 '<div id="progress-bar" style="background: #238636; height: 100%; width: 0%; transition: width 0.3s;"></div>' +
-                                 '</div>' +
-                                 '<small id="progress-text" style="color: #8b949e; margin-top: 4px; display: block;">Connecting...</small>';
-
-            // Create abort controller for timeout
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout
-
-            // Use streaming loader
-            loadGraphDataStreaming()
-                .then(data => {
-                    clearTimeout(timeout);
-                    loadingEl.innerHTML = '<label style="color: #238636;">✓ Graph loaded successfully</label>';
-                    setTimeout(() => loadingEl.style.display = 'none', 2000);
-
-                    // Initialize V2.0 two-phase visualization system
-                    // Phase 1: Vertical list of root nodes (overview)
-                    // Phase 2: Tree expansion on click (rightward)
-                    initializeVisualizationV2(data);
-
-                    console.log('[Data Load] V2 visualization initialized - Phase 1 active (vertical list)');
-                })
-                .catch(err => {
-                    clearTimeout(timeout);
-
-                    let errorMsg = err.message;
-                    if (err.name === 'AbortError') {
-                        errorMsg = 'Loading timeout - file may be too large or server unresponsive';
-                    }
-
-                    loadingEl.innerHTML = `<label style="color: #f85149;">✗ Failed to load graph data</label><br>` +
-                                         `<small style="color: #8b949e;">${errorMsg}</small><br>` +
-                                         `<button onclick="location.reload()" style="margin-top: 8px; padding: 6px 12px; background: #238636; border: none; border-radius: 6px; color: white; cursor: pointer;">Retry</button><br>` +
-                                         `<small style="color: #8b949e; margin-top: 4px; display: block;">Or run: mcp-vector-search visualize export</small>`;
-                    console.error("Failed to load graph:", err);
-                });
-        });
-
-        // Reset view button event handler - return to Phase 1 (vertical list)
-        document.getElementById('reset-view-btn').addEventListener('click', () => {
-            resetToListViewV2();
-        });
-    """
-
-
-def get_state_management() -> str:
-    """Get visualization V2.0 state management JavaScript.
-
-    Implements the VisualizationStateManager class for hierarchical
-    list-based navigation with expansion paths and sibling exclusivity.
-
-    Returns:
-        JavaScript string for state management
-    """
-    return """
-        /**
-         * Visualization State Manager for V2.0 Architecture
-         *
-         * Manages expansion paths, node visibility, and view modes.
-         * Enforces sibling exclusivity: only one child expanded per depth.
-         *
-         * Two-Phase Prescriptive Approach:
-         *   Phase 1 (tree_root): Initial overview - vertical list of root nodes, all collapsed, NO edges
-         *   Phase 2 (tree_expanded/file_detail): Tree navigation - rightward expansion with dagre-style hierarchy
-         *
-         * View Modes (corresponds to phases):
-         *   - tree_root: Phase 1 - Vertical list of root nodes, NO edges shown
-         *   - tree_expanded: Phase 2 - Rightward tree expansion of directories, NO edges shown
-         *   - file_detail: Phase 2 - File with AST chunks, function call edges shown
-         *
-         * Design Decision: Prescriptive (non-configurable) phase transition
-         *
-         * The first click on any node automatically transitions from Phase 1 to Phase 2.
-         * This is a fixed behavior with no user configuration - reduces cognitive load
-         * and provides consistent, predictable interaction patterns.
-         *
-         * Reference: docs/development/VISUALIZATION_ARCHITECTURE_V2.md
-         */
-        class VisualizationStateManager {
-            constructor(initialState = null) {
-                // View mode: "tree_root", "tree_expanded", or "file_detail"
-                this.viewMode = initialState?.view_mode || "tree_root";
-
-                // Handle old view mode names (backward compatibility)
-                if (this.viewMode === "list") this.viewMode = "tree_root";
-                if (this.viewMode === "directory_fan") this.viewMode = "tree_expanded";
-                if (this.viewMode === "file_fan") this.viewMode = "file_detail";
-
-                // Expansion path: ordered array of expanded node IDs (root to current)
-                this.expansionPath = initialState?.expansion_path || [];
-
-                // Node states: map of node_id -> {expanded, visible, children_visible}
-                this.nodeStates = new Map();
-
-                // Visible edges: set of [source_id, target_id] tuples
-                this.visibleEdges = new Set();
-
-                // Event listeners for state changes
-                this.listeners = [];
-
-                // Initialize from initial state if provided
-                if (initialState?.node_states) {
-                    for (const [nodeId, state] of Object.entries(initialState.node_states)) {
-                        this.nodeStates.set(nodeId, {
-                            expanded: state.expanded || false,
-                            visible: state.visible || true,
-                            childrenVisible: state.children_visible || false,
-                            positionOverride: state.position_override || null
-                        });
-                    }
-                }
-
-                console.log('[StateManager] Initialized with mode:', this.viewMode);
-            }
-
-            /**
-             * Get or create node state
-             */
-            _getOrCreateState(nodeId) {
-                if (!this.nodeStates.has(nodeId)) {
-                    this.nodeStates.set(nodeId, {
-                        expanded: false,
-                        visible: true,
-                        childrenVisible: false,
-                        positionOverride: null
-                    });
-                }
-                return this.nodeStates.get(nodeId);
-            }
-
-            /**
-             * Expand a node (directory or file)
-             *
-             * Enforces sibling exclusivity: if another sibling is expanded
-             * at the same depth, it is collapsed first.
-             */
-            expandNode(nodeId, nodeType, children = []) {
-                console.log(`[StateManager] Expanding ${nodeType} node:`, nodeId, 'with', children.length, 'children');
-
-                const nodeState = this._getOrCreateState(nodeId);
-
-                // Calculate depth
-                const depth = this.expansionPath.length;
-
-                // Sibling exclusivity: check if another sibling is expanded at this depth
-                if (depth < this.expansionPath.length) {
-                    const oldSibling = this.expansionPath[depth];
-                    if (oldSibling !== nodeId) {
-                        console.log(`[StateManager] Sibling exclusivity: collapsing ${oldSibling}`);
-                        // Collapse old path from this depth onward
-                        const nodesToCollapse = this.expansionPath.slice(depth);
-                        this.expansionPath = this.expansionPath.slice(0, depth);
-                        for (const oldNode of nodesToCollapse) {
-                            this._collapseNodeInternal(oldNode);
-                        }
-                    }
-                }
-
-                // Phase 2 Transition: Hide sibling nodes when expanding at root level
-                // This prevents duplicate rendering of root nodes when transitioning from Phase 1 to Phase 2
-                if (depth === 0) {
-                    console.log('[StateManager] Phase 1->2 transition: Hiding non-expanded root siblings');
-                    // Hide all nodes except the one being expanded and its children
-                    for (const [siblingId, siblingState] of this.nodeStates.entries()) {
-                        if (siblingId !== nodeId && siblingState.visible && !this.expansionPath.includes(siblingId)) {
-                            // This is a sibling root node - hide it during Phase 2 tree expansion
-                            siblingState.visible = false;
-                            console.log(`[StateManager] Hiding root sibling: ${siblingId}`);
-                        }
-                    }
-                }
-
-                // Mark node as expanded
-                nodeState.expanded = true;
-                nodeState.childrenVisible = true;
-
-                // Add to expansion path
-                if (!this.expansionPath.includes(nodeId)) {
-                    this.expansionPath.push(nodeId);
-                }
-
-                // Make children visible
-                for (const childId of children) {
-                    const childState = this._getOrCreateState(childId);
-                    childState.visible = true;
-                }
-
-                // Update view mode
-                if (nodeType === 'directory') {
-                    this.viewMode = 'tree_expanded';
-                } else if (nodeType === 'file') {
-                    this.viewMode = 'file_detail';
-                }
-
-                console.log('[StateManager] Expansion path:', this.expansionPath.join(' > '));
-                console.log('[StateManager] View mode:', this.viewMode);
-
-                // Notify listeners
-                this._notifyListeners();
-            }
-
-            /**
-             * Internal collapse (without path manipulation)
-             */
-            _collapseNodeInternal(nodeId) {
-                const nodeState = this.nodeStates.get(nodeId);
-                if (!nodeState) return;
-
-                nodeState.expanded = false;
-                nodeState.childrenVisible = false;
-            }
-
-            /**
-             * Collapse a node and hide all descendants
-             */
-            collapseNode(nodeId) {
-                console.log('[StateManager] Collapsing node:', nodeId);
-
-                // Remove from expansion path
-                const pathIndex = this.expansionPath.indexOf(nodeId);
-                if (pathIndex !== -1) {
-                    this.expansionPath = this.expansionPath.slice(0, pathIndex);
-                }
-
-                // Mark as collapsed
-                this._collapseNodeInternal(nodeId);
-
-                // Update view mode if path is empty
-                if (this.expansionPath.length === 0) {
-                    this.viewMode = 'tree_root';
-                    console.log('[StateManager] Collapsed to root, switching to TREE_ROOT view - restoring root siblings');
-
-                    // Restore visibility of all root nodes when returning to Phase 1
-                    // This reverses the hiding done in expandNode() at depth 0
-                    this._showAllRootNodes();
-                }
-
-                // Notify listeners
-                this._notifyListeners();
-            }
-
-            /**
-             * Show all root-level nodes (used when returning to Phase 1)
-             * CRITICAL: Also hides all non-root nodes to prevent fragments from appearing
-             */
-            _showAllRootNodes() {
-                // Find and show all root nodes (nodes with no parent containment links)
-                // This is determined by checking allLinks, which is available globally
-                if (typeof allLinks !== 'undefined' && typeof allNodes !== 'undefined') {
-                    // Filter for root nodes only (directories/files with no parent containment)
-                    const rootNodeIds = new Set();
-
-                    for (const node of allNodes) {
-                        // Only consider structural nodes (directories, files, subprojects)
-                        const isStructural = node.type === 'directory' || node.type === 'file' || node.type === 'subproject';
-                        if (!isStructural) {
-                            continue;
-                        }
-
-                        const hasParent = allLinks.some(link => {
-                            const targetId = link.target.id || link.target;
-                            const linkType = link.type;
-                            return targetId === node.id &&
-                                   (linkType === 'dir_containment' ||
-                                    linkType === 'file_containment' ||
-                                    linkType === 'dir_hierarchy');
-                        });
-
-                        if (!hasParent) {
-                            rootNodeIds.add(node.id);
-                        }
-                    }
-
-                    console.log('[StateManager] Reset: found', rootNodeIds.size, 'root nodes');
-
-                    // Now update all node states: show roots, hide everything else
-                    for (const node of allNodes) {
-                        const nodeState = this._getOrCreateState(node.id);
-                        const isRoot = rootNodeIds.has(node.id);
-
-                        if (isRoot) {
-                            // This is a root node - make it visible and collapsed
-                            nodeState.visible = true;
-                            nodeState.expanded = false;
-                            nodeState.childrenVisible = false;
-                        } else {
-                            // This is NOT a root node - hide it completely
-                            nodeState.visible = false;
-                            nodeState.expanded = false;
-                            nodeState.childrenVisible = false;
-                        }
-                    }
-
-                    console.log('[StateManager] Reset: visible nodes =', this.getVisibleNodes().length);
-                }
-            }
-
-            /**
-             * Reset state to initial list view (Phase 1).
-             * Shows ONLY root nodes, hides all children/descendants.
-             */
-            reset() {
-                console.log('[StateManager] ===== RESET TO PHASE 1 =====');
-                console.log('[StateManager] Before reset - visible nodes:', this.getVisibleNodes().length);
-                console.log('[StateManager] Before reset - expansion path:', this.expansionPath.join(' > '));
-
-                // Collapse all nodes in expansion path
-                const nodesToCollapse = [...this.expansionPath];
-                for (const nodeId of nodesToCollapse) {
-                    this._collapseNodeInternal(nodeId);
-                }
-
-                // Clear expansion path
-                this.expansionPath = [];
-
-                // Clear visible edges
-                this.visibleEdges.clear();
-
-                // Reset view mode to tree_root
-                this.viewMode = 'tree_root';
-
-                // CRITICAL: Show ONLY root nodes, hide everything else
-                // This prevents fragments (expanded children) from appearing after reset
-                this._showAllRootNodes();
-
-                console.log('[StateManager] After reset - visible nodes:', this.getVisibleNodes().length);
-                console.log('[StateManager] After reset - expansion path:', this.expansionPath.join(' > '));
-                console.log('[StateManager] ===== RESET COMPLETE =====');
-
-                // Notify listeners
-                this._notifyListeners();
-            }
-
-            /**
-             * Get list of visible node IDs
-             */
-            getVisibleNodes() {
-                const visible = [];
-                for (const [nodeId, state] of this.nodeStates.entries()) {
-                    if (state.visible) {
-                        visible.push(nodeId);
-                    }
-                }
-                return visible;
-            }
-
-            /**
-             * Get visible edges (AST calls only in FILE_FAN mode)
-             */
-            getVisibleEdges() {
-                return Array.from(this.visibleEdges);
-            }
-
-            /**
-             * Subscribe to state changes
-             */
-            subscribe(listener) {
-                this.listeners.push(listener);
-            }
-
-            /**
-             * Notify all listeners of state change
-             */
-            _notifyListeners() {
-                for (const listener of this.listeners) {
-                    listener(this.toDict());
-                }
-            }
-
-            /**
-             * Serialize state to plain object
-             */
-            toDict() {
-                const nodeStatesObj = {};
-                for (const [nodeId, state] of this.nodeStates.entries()) {
-                    nodeStatesObj[nodeId] = {
-                        expanded: state.expanded,
-                        visible: state.visible,
-                        children_visible: state.childrenVisible,
-                        position_override: state.positionOverride
-                    };
-                }
-
-                return {
-                    view_mode: this.viewMode,
-                    expansion_path: [...this.expansionPath],
-                    visible_nodes: this.getVisibleNodes(),
-                    visible_edges: this.getVisibleEdges(),
-                    node_states: nodeStatesObj
-                };
-            }
-        }
-
-        // Global state manager instance (initialized in visualizeGraph)
-        let stateManager = null;
-    """
-
-
-def get_layout_algorithms_v2() -> str:
-    """Get V2.0 layout algorithms (list and fan layouts).
-
-    Returns:
-        JavaScript string for layout calculation functions
-    """
-    return """
-        /**
-         * Calculate vertical list layout positions for nodes.
-         *
-         * Positions nodes in a vertical list with fixed spacing,
-         * sorted alphabetically with directories before files.
-         *
-         * @param {Array} nodes - Array of node objects
-         * @param {Number} canvasWidth - SVG viewport width
-         * @param {Number} canvasHeight - SVG viewport height
-         * @returns {Map} Map of nodeId -> {x, y} positions
-         */
-        function calculateListLayout(nodes, canvasWidth, canvasHeight) {
-            if (!nodes || nodes.length === 0) {
-                console.debug('[Layout] No nodes to layout');
-                return new Map();
-            }
-
-            // Sort alphabetically (directories first, then files)
-            const sortedNodes = nodes.slice().sort((a, b) => {
-                // Directories first
-                const aIsDir = a.type === 'directory' ? 0 : 1;
-                const bIsDir = b.type === 'directory' ? 0 : 1;
-                if (aIsDir !== bIsDir) return aIsDir - bIsDir;
-
-                // Then alphabetical by name
-                const aName = (a.name || '').toLowerCase();
-                const bName = (b.name || '').toLowerCase();
-                return aName.localeCompare(bName);
-            });
-
-            // Layout parameters for Phase 1 (Initial Overview) - Vertical Linear List
-            const rowHeight = 50;    // Vertical space per node (compact list)
-            const startX = 100;      // Left margin (100px as per requirements)
-            const startY = 100;      // Top margin (100px as per requirements)
-
-            // Calculate positions in simple vertical list (linear tree, single column)
-            const positions = new Map();
-            sortedNodes.forEach((node, i) => {
-                if (!node.id) {
-                    console.warn('[Layout] Node missing id:', node);
-                    return;
-                }
-
-                const xPosition = startX;
-                const yPosition = startY + (i * rowHeight);
-                positions.set(node.id, { x: xPosition, y: yPosition });
-            });
-
-            const totalHeight = sortedNodes.length * rowHeight;
-            console.debug(
-                `[Layout] Vertical List: ${positions.size} nodes, ` +
-                `height=${totalHeight}px, start=(${startX},${startY})`
-            );
-
-            return positions;
-        }
-
-        /**
-         * Calculate D3.js tree layout positions for child nodes.
-         *
-         * Uses D3.js's official tree layout algorithm to arrange children in a radial pattern.
-         * This provides optimal spacing and collision avoidance through D3's proven algorithms.
-         *
-         * Design Decision: D3.js tree layout for radial visualization
-         *
-         * Rationale: D3's tree layout provides:
-         * - Industry-standard layout algorithm with proven spacing heuristics
-         * - Automatic collision detection and avoidance
-         * - Built-in support for radial tree projections
-         * - Better handling of deep hierarchies with adaptive spacing
-         *
-         * Trade-offs:
-         * - Dependencies: Requires D3.js library vs. custom implementation
-         * - Performance: Slightly slower for very large trees (100+ nodes)
-         * - Flexibility: D3's separation function provides better spacing control
-         * - Maintainability: Leverages well-tested library vs. custom math
-         *
-         * Performance Analysis:
-         * - Time Complexity: O(n log n) where n = number of children
-         * - Space Complexity: O(n) for hierarchy structure
-         * - Expected Performance: <5ms for typical node counts (1-50 children)
-         *
-         * @param {Object} parentNode - Parent node with {id, name, type}
-         * @param {Array} children - Array of child node objects
-         * @param {Number} canvasWidth - SVG viewport width
-         * @param {Number} canvasHeight - SVG viewport height
-         * @returns {Map} Map of childId -> {x, y} positions
-         */
-        function calculateD3TreeLayout(parentNode, children, canvasWidth, canvasHeight) {
-            if (!children || children.length === 0) {
-                console.debug('[D3 Layout] No children to layout');
-                return new Map();
-            }
-
-            // Sort children (directories first, then alphabetical) for consistent layout
-            const sortedChildren = children.slice().sort((a, b) => {
-                const aIsDir = a.type === 'directory' ? 0 : 1;
-                const bIsDir = b.type === 'directory' ? 0 : 1;
-                if (aIsDir !== bIsDir) return aIsDir - bIsDir;
-
-                const aName = (a.name || '').toLowerCase();
-                const bName = (b.name || '').toLowerCase();
-                return aName.localeCompare(bName);
-            });
-
-            // Create hierarchical data structure for D3
-            // Parent is at depth 0, children at depth 1
-            const hierarchyData = {
-                id: parentNode.id,
-                name: parentNode.name || 'root',
-                type: parentNode.type,
-                children: sortedChildren.map(child => ({
-                    id: child.id,
-                    name: child.name || 'unnamed',
-                    type: child.type
-                }))
-            };
-
-            // Calculate adaptive radius based on child count
-            // More children = larger radius for better spacing
-            const minRadius = 200;  // Minimum radius for small child counts
-            const maxRadius = 400;  // Maximum radius for large child counts
-            const spacingPerChild = 50;  // Desired arc length per child
-
-            // Circumference = 2πr, want circumference >= children * spacing
-            const calculatedRadius = (sortedChildren.length * spacingPerChild) / (2 * Math.PI);
-            const radius = Math.max(minRadius, Math.min(calculatedRadius, maxRadius));
-
-            // Create D3 tree layout with radial projection
-            // size([angle, radius]) where angle is in radians (0 to 2π)
-            const treeLayout = d3.tree()
-                .size([2 * Math.PI, radius])
-                .separation((a, b) => {
-                    // Separation function: how much space between siblings
-                    // Same parent: 1 unit apart, different parents: 2 units apart
-                    // Divided by depth to tighten spacing at deeper levels
-                    return (a.parent === b.parent ? 1 : 2) / (a.depth || 1);
-                });
-
-            // Create hierarchy from data
-            const root = d3.hierarchy(hierarchyData);
-
-            // Apply tree layout (computes x and y for each node)
-            // x = angle (0 to 2π), y = distance from center
-            treeLayout(root);
-
-            // Convert D3 positions to Cytoscape coordinates
-            const positions = new Map();
-            const parentPos = { x: canvasWidth / 2, y: canvasHeight / 2 };
-
-            // Only position the children (depth 1), not the parent
-            root.children.forEach(node => {
-                // D3 tree layout outputs:
-                // - node.x: angle in radians (0 to 2π)
-                // - node.y: radial distance from center
-
-                const angle = node.x;
-                const distance = node.y;
-
-                // Convert polar coordinates (angle, distance) to cartesian (x, y)
-                // Offset by -π/2 to start at top of circle (12 o'clock position)
-                const x = parentPos.x + distance * Math.cos(angle - Math.PI / 2);
-                const y = parentPos.y + distance * Math.sin(angle - Math.PI / 2);
-
-                positions.set(node.data.id, { x, y });
-            });
-
-            console.debug(
-                `[D3 Layout] Positioned ${positions.size} children using D3 tree layout, ` +
-                `radius=${radius.toFixed(1)}px, arc=${(2 * Math.PI * radius / sortedChildren.length).toFixed(1)}px/child`
-            );
-
-            return positions;
-        }
-
-        /**
-         * Legacy radial layout function (replaced by D3.js tree layout).
-         * Kept for reference and potential fallback if D3.js is unavailable.
-         *
-         * @deprecated Use calculateD3TreeLayout instead
-         */
-        function calculateRadialLayout(parentPos, children, canvasWidth, canvasHeight) {
-            // Fallback: If D3 is not available, use simple radial layout
-            if (typeof d3 === 'undefined') {
-                console.warn('[Layout] D3.js not available, using fallback radial layout');
-                return calculateRadialLayoutFallback(parentPos, children, canvasWidth, canvasHeight);
-            }
-
-            // Convert to D3 tree layout format
-            // parentPos needs to be wrapped in a node object for D3 layout
-            const parentNode = {
-                id: 'parent',  // Will be replaced by actual parent in calling context
-                name: 'parent',
-                type: 'directory',
-                x: parentPos.x,
-                y: parentPos.y
-            };
-
-            return calculateD3TreeLayout(parentNode, children, canvasWidth, canvasHeight);
-        }
-
-        /**
-         * Simple fallback radial layout if D3.js is not available.
-         * Arranges children in a circle with equal spacing.
-         */
-        function calculateRadialLayoutFallback(parentPos, children, canvasWidth, canvasHeight) {
-            if (!children || children.length === 0) {
-                console.debug('[Layout] No children to layout in radial');
-                return new Map();
-            }
-
-            const parentX = parentPos.x;
-            const parentY = parentPos.y;
-
-            // Calculate adaptive radius based on child count
-            const baseRadius = 200;
-            const maxRadius = 350;
-            const spacingPerChild = 40;
-            const calculatedRadius = (children.length * spacingPerChild) / (2 * Math.PI);
-            const radius = Math.max(baseRadius, Math.min(calculatedRadius, maxRadius));
-
-            // Sort children
-            const sortedChildren = children.slice().sort((a, b) => {
-                const aIsDir = a.type === 'directory' ? 0 : 1;
-                const bIsDir = b.type === 'directory' ? 0 : 1;
-                if (aIsDir !== bIsDir) return aIsDir - bIsDir;
-
-                const aName = (a.name || '').toLowerCase();
-                const bName = (b.name || '').toLowerCase();
-                return aName.localeCompare(bName);
-            });
-
-            // Calculate positions in full circle
-            const positions = new Map();
-            const numChildren = sortedChildren.length;
-            const startAngle = -Math.PI / 2;
-
-            sortedChildren.forEach((child, i) => {
-                if (!child.id) {
-                    console.warn('[Layout] Child missing id:', child);
-                    return;
-                }
-
-                const angleStep = (2 * Math.PI) / numChildren;
-                const angle = startAngle + (i * angleStep);
-                const x = parentX + radius * Math.cos(angle);
-                const y = parentY + radius * Math.sin(angle);
-
-                positions.set(child.id, { x, y });
-            });
-
-            console.debug(
-                `[Layout Fallback] Radial: ${positions.size} children, ` +
-                `radius=${radius.toFixed(1)}px, 360° circle`
-            );
-
-            return positions;
-        }
-
-        /**
-         * @deprecated Use calculateRadialLayout instead
-         * Legacy function name for backward compatibility
-         */
-        function calculateFanLayout(parentPos, children, canvasWidth, canvasHeight) {
-            return calculateRadialLayout(parentPos, children, canvasWidth, canvasHeight);
-        }
-
-        /**
-         * Calculate tree layout for directory navigation (rightward expansion).
-         *
-         * Arranges children vertically to the right of parent node,
-         * creating a hierarchical tree structure similar to file explorers.
-         *
-         * NEW: Supports hierarchical depth indication via horizontal offset.
-         * Each level can be positioned at a consistent horizontal distance,
-         * creating a clear visual hierarchy.
-         *
-         * Design Decision: Tree layout for directory navigation
-         *
-         * Rationale: Selected rightward tree layout to match familiar file explorer
-         * UX (Finder, Explorer). Provides clear parent-child relationships and
-         * efficient use of horizontal space for deep hierarchies.
-         *
-         * Trade-offs:
-         * - Clarity: Clear hierarchical structure vs. fan's compact radial layout
-         * - Space: Grows rightward (scrollable) vs. fan's fixed radius
-         * - Familiarity: Matches file explorer metaphor vs. novel visualization
-         *
-         * @param {Object} parentPos - {x, y} coordinates of parent
-         * @param {Array} children - Array of child node objects
-         * @param {Number} canvasWidth - SVG viewport width
-         * @param {Number} canvasHeight - SVG viewport height
-         * @param {Number} depth - Optional depth level for hierarchical spacing
-         * @returns {Map} Map of childId -> {x, y} positions
-         */
-        function calculateTreeLayout(parentPos, children, canvasWidth, canvasHeight, depth = 1) {
-            if (!children || children.length === 0) {
-                console.debug('[Layout] No children for tree layout');
-                return new Map();
-            }
-
-            const parentX = parentPos.x;
-            const parentY = parentPos.y;
-
-            // Tree layout parameters
-            const horizontalOffset = 300;  // Fixed horizontal spacing from parent (reduced from 800 to fit on screen)
-            const verticalSpacing = 100;   // Vertical spacing between children (increased from 50 for better readability)
-
-            // Sort children (directories first, then alphabetical)
-            const sortedChildren = children.slice().sort((a, b) => {
-                const aIsDir = a.type === 'directory' ? 0 : 1;
-                const bIsDir = b.type === 'directory' ? 0 : 1;
-                if (aIsDir !== bIsDir) return aIsDir - bIsDir;
-
-                const aName = (a.name || '').toLowerCase();
-                const bName = (b.name || '').toLowerCase();
-                return aName.localeCompare(bName);
-            });
-
-            // Calculate vertical centering
-            const totalHeight = sortedChildren.length * verticalSpacing;
-            const startY = parentY - (totalHeight / 2);
-
-            // Calculate positions
-            const positions = new Map();
-            sortedChildren.forEach((child, i) => {
-                if (!child.id) {
-                    console.warn('[Layout] Child missing id:', child);
-                    return;
-                }
-
-                const x = parentX + horizontalOffset;
-                const y = startY + (i * verticalSpacing);
-
-                positions.set(child.id, { x, y });
-            });
-
-            console.debug(
-                `[Layout] Tree: ${positions.size} children, ` +
-                `offset=${horizontalOffset}px, spacing=${verticalSpacing}px, depth=${depth}`
-            );
-
-            return positions;
-        }
-
-        /**
-         * Calculate hybrid layout for file detail view.
-         *
-         * Combines vertical tree positioning for AST chunks with
-         * force-directed layout for function call relationships.
-         *
-         * Design Decision: Vertical tree + function call edges
-         *
-         * Rationale: AST chunks within a file have natural top-to-bottom order
-         * (by line number). Vertical tree preserves this order while function
-         * call edges show actual code dependencies.
-         *
-         * Trade-offs:
-         * - Readability: Preserves code order vs. force layout's organic grouping
-         * - Performance: Simple O(n) tree vs. O(n²) force simulation
-         * - Edges: Shows only AST calls (clear) vs. all relationships (cluttered)
-         *
-         * @param {Object} parentPos - {x, y} coordinates of parent file node
-         * @param {Array} chunks - Array of AST chunk node objects
-         * @param {Array} edges - Array of function call edges
-         * @param {Number} canvasWidth - SVG viewport width
-         * @param {Number} canvasHeight - SVG viewport height
-         * @returns {Map} Map of chunkId -> {x, y} positions
-         */
-        function calculateHybridCodeLayout(parentPos, chunks, edges, canvasWidth, canvasHeight) {
-            if (!chunks || chunks.length === 0) {
-                console.debug('[Layout] No chunks for hybrid code layout');
-                return new Map();
-            }
-
-            // Use tree layout for initial positioning (preserves code order)
-            // For file detail view, we show chunks in vertical order
-            const positions = calculateTreeLayout(parentPos, chunks, canvasWidth, canvasHeight);
-
-            // Note: Force-directed refinement can be added later if needed
-            // For now, simple tree layout preserves line number order
-
-            console.debug(
-                `[Layout] Hybrid code: ${positions.size} chunks positioned in tree layout`
-            );
-
-            return positions;
-        }
-
-        /**
-         * @deprecated Use calculateTreeLayout instead
-         * Legacy function name for backward compatibility
-         */
-        function calculateCompactFolderLayout(parentPos, children, canvasWidth, canvasHeight) {
-            return calculateTreeLayout(parentPos, children, canvasWidth, canvasHeight);
-        }
-    """
-
-
-def get_interaction_handlers_v2() -> str:
-    """Get V2.0 interaction handlers (expand, collapse, click).
-
-    Returns:
-        JavaScript string for interaction handling
-    """
-    return """
-        /**
-         * Handle node click events for V2.0 navigation.
-         *
-         * Behavior (Two-Phase Prescriptive Approach):
-         * - Phase 1 (Initial Overview): Circle/grid layout with root-level nodes only, all collapsed
-         * - Phase 2 (Tree Navigation): Dagre vertical tree layout with rightward expansion
-         *
-         * On first click, automatically transitions from Phase 1 to Phase 2.
-         *
-         * Node Behavior:
-         * - Directory: Expand/collapse with rightward tree layout
-         * - File: Expand/collapse AST chunks with tree layout + call edges
-         * - AST Chunk: Show in content pane, no expansion
-         *
-         * Design Decision: Automatic phase transition on first interaction
-         *
-         * Rationale: Users start with high-level overview (Phase 1), then drill down
-         * into specific areas (Phase 2). The transition is automatic and prescriptive
-         * - no user configuration needed.
-         *
-         * Trade-offs:
-         * - Simplicity: Fixed behavior vs. user choice (removes cognitive load)
-         * - Discoverability: Automatic transition vs. explicit control
-         * - Consistency: Predictable behavior vs. flexible customization
-         */
-        function handleNodeClickV2(event, nodeData) {
-            event.stopPropagation();
-
-            const node = allNodes.find(n => n.id === nodeData.id);
-            if (!node) {
-                console.warn('[Click] Node not found:', nodeData.id);
-                return;
-            }
-
-            console.log('[Click] Node clicked:', node.type, node.name);
-
-            // PHASE TRANSITION: First click transitions from Phase 1 to Phase 2
-            if (isInitialOverview && (node.type === 'directory' || node.type === 'file')) {
-                console.log('[Phase Transition] Switching from Phase 1 (overview) to Phase 2 (tree expansion)');
-                isInitialOverview = false;
-                // The layout will automatically change when expandNodeV2 updates viewMode to 'tree_expanded'
-            }
-
-            // Always show content pane
-            showContentPane(node);
-
-            // Handle expansion based on node type
-            if (node.type === 'directory' || node.type === 'file') {
-                if (!stateManager) {
-                    console.error('[Click] State manager not initialized');
-                    return;
-                }
-
-                const isExpanded = stateManager.nodeStates.get(node.id)?.expanded || false;
-
-                if (isExpanded) {
-                    // Collapse node
-                    collapseNodeV2(node.id);
-                } else {
-                    // Expand node (this will trigger layout change to tree)
-                    expandNodeV2(node.id, node.type);
-                }
-            }
-            // AST chunks (function, class, method) don't expand
-        }
-
-        /**
-         * Get immediate children of a given node (ONE level only).
-         *
-         * Returns only direct children, not recursive descendants.
-         * This enables on-demand expansion where each click reveals one level.
-         *
-         * Design Decision: Lazy expansion (one level at a time)
-         *
-         * Rationale: Users build mental model incrementally by expanding one level
-         * at a time. Pre-expanding entire subtrees is overwhelming and defeats
-         * the purpose of interactive exploration.
-         *
-         * @param {String} parentId - ID of parent node
-         * @param {Array} links - All graph links
-         * @param {Array} nodes - All graph nodes
-         * @returns {Array} Array of immediate child node objects
-         */
-        function getImmediateChildren(parentId, links, nodes) {
-            const children = links
-                .filter(link => {
-                    const sourceId = link.source.id || link.source;
-                    const linkType = link.type;
-                    return sourceId === parentId &&
-                           (linkType === 'dir_containment' ||
-                            linkType === 'file_containment' ||
-                            linkType === 'dir_hierarchy');
-                })
-                .map(link => {
-                    const childId = link.target.id || link.target;
-                    const childNode = nodes.find(n => n.id === childId);
-                    return childNode;
-                })
-                .filter(n => n);
-
-            console.log(`[getImmediateChildren] Found ${children.length} immediate children for node ${parentId}`);
-            return children;
-        }
-
-        /**
-         * Expand a node (directory or file) in V2.0 mode.
-         *
-         * ON-DEMAND EXPANSION: Shows ONLY immediate children (one level)
-         * - Directories: Show immediate subdirectories and files
-         * - Files: Show immediate AST chunks
-         *
-         * Design Decision: One level at a time (lazy expansion)
-         *
-         * Rationale: Users explore incrementally, building mental model level by level.
-         * Pre-expanding entire trees causes cognitive overload and defeats the purpose
-         * of interactive visualization.
-         *
-         * Triggers state update and re-render with radial animation.
-         */
-        function expandNodeV2(nodeId, nodeType) {
-            if (!stateManager) {
-                console.error('[Expand] State manager not initialized');
-                return;
-            }
-
-            const node = allNodes.find(n => n.id === nodeId);
-            if (!node) {
-                console.warn('[Expand] Node not found:', nodeId);
-                return;
-            }
-
-            // ON-DEMAND: Get ONLY immediate children (one level)
-            const children = getImmediateChildren(nodeId, allLinks, allNodes);
-            const childIds = children.map(c => c.id);
-
-            console.log(`[Expand] ${nodeType} - showing ${childIds.length} immediate children only (on-demand expansion)`);
-
-            // Update state
-            stateManager.expandNode(nodeId, nodeType, childIds);
-
-            // Re-render with radial animation
-            renderGraphV2();
-        }
-
-        /**
-         * Collapse a node and hide all its descendants.
-         */
-        function collapseNodeV2(nodeId) {
-            if (!stateManager) {
-                console.error('[Collapse] State manager not initialized');
-                return;
-            }
-
-            console.log('[Collapse] Collapsing node:', nodeId);
-
-            // Update state (recursively hides descendants)
-            stateManager.collapseNode(nodeId, allNodes);
-
-            // Re-render with animation
-            renderGraphV2();
-        }
-
-        /**
-         * Reset to initial list view (Phase 1).
-         */
-        function resetToListViewV2() {
-            if (!stateManager) {
-                console.error('[Reset] State manager not initialized');
-                return;
-            }
-
-            console.log('[Reset] Resetting to Phase 1 (initial overview)');
-
-            // Reset to Phase 1
-            isInitialOverview = true;
-
-            // Collapse all nodes
-            stateManager.reset();
-
-            // Clear selection
-            highlightedNode = null;
-
-            // Close content pane
-            closeContentPane();
-
-            // Re-render
-            renderGraphV2();
-        }
-
-        /**
-         * Navigate to a node in the expansion path (breadcrumb click).
-         */
-        function navigateToNodeInPath(nodeId) {
-            if (!stateManager) {
-                console.error('[Navigate] State manager not initialized');
-                return;
-            }
-
-            const pathIndex = stateManager.expansionPath.indexOf(nodeId);
-            if (pathIndex === -1) {
-                console.warn('[Navigate] Node not in expansion path:', nodeId);
-                return;
-            }
-
-            console.log('[Navigate] Navigating to node in path:', nodeId);
-
-            // Collapse all nodes after this one in the path
-            const nodesToCollapse = stateManager.expansionPath.slice(pathIndex + 1);
-            nodesToCollapse.forEach(id => collapseNodeV2(id));
-
-            // Show the node in content pane
-            const node = allNodes.find(n => n.id === nodeId);
-            if (node) {
-                showContentPane(node);
-            }
-        }
-
-        /**
-         * Initialize V2.0 visualization with two-phase prescriptive layout.
-         *
-         * Phase 1 (Initial State):
-         * - Show only root nodes (nodes with no incoming containment edges)
-         * - Vertical list layout at x=100, y spaced every 100px starting at y=100
-         * - All nodes collapsed, NO edges visible
-         * - viewMode: 'tree_root'
-         *
-         * Design Decision: Prescriptive initialization
-         *
-         * Rationale: Always start in Phase 1 (overview) to provide consistent,
-         * predictable initial state. Users can explore from this clean starting point.
-         */
-        function initializeVisualizationV2(data) {
-            console.log('[Init V2] Starting two-phase visualization initialization');
-
-            // Store global data
-            allNodes = data.nodes;
-            allLinks = data.links;
-
-            // Find root nodes - nodes with no incoming containment edges
-            // Phase 1: Only show directories and files (exclude code chunks)
-            // This prevents hundreds of functions/classes from cluttering the initial view
-            const rootNodesList = allNodes.filter(n => {
-                // Filter by type: only structural elements (directories, files, subprojects)
-                // This prevents hundreds of functions/classes from cluttering the initial view
-                const isDirectoryOrFile = n.type === 'directory' || n.type === 'file' || n.type === 'subproject';
-                if (!isDirectoryOrFile) {
-                    return false;
-                }
-
-                // Check if node has a parent containment edge
-                const hasParent = allLinks.some(link => {
-                    const targetId = link.target.id || link.target;
-                    return targetId === n.id &&
-                           (link.type === 'dir_containment' ||
-                            link.type === 'file_containment' ||
-                            link.type === 'dir_hierarchy');
-                });
-                return !hasParent;
-            });
-
-            console.log('[Init V2] Found', rootNodesList.length, 'root nodes');
-
-            // Debug: Log node type distribution for verification
-            const nodeTypeCounts = {};
-            rootNodesList.forEach(n => {
-                nodeTypeCounts[n.type] = (nodeTypeCounts[n.type] || 0) + 1;
-            });
-            console.log('[Init V2] Root node types:', nodeTypeCounts);
-
-            // Debug: Warn if any non-structural nodes slipped through
-            const nonStructural = rootNodesList.filter(n =>
-                n.type !== 'directory' && n.type !== 'file' && n.type !== 'subproject'
-            );
-            if (nonStructural.length > 0) {
-                console.warn('[Init V2] WARNING: Non-structural nodes in root list:',
-                    nonStructural.map(n => `${n.id} (${n.type})`));
-            }
-
-            // Store root nodes globally
-            rootNodes = rootNodesList;
-
-            // Initialize state manager in Phase 1 (tree_root mode)
-            stateManager = new VisualizationStateManager({
-                view_mode: 'tree_root',
-                expansion_path: [],
-                node_states: {}
-            });
-
-            // Initialize all root nodes as visible and collapsed
-            for (const rootNode of rootNodesList) {
-                stateManager.nodeStates.set(rootNode.id, {
-                    expanded: false,
-                    visible: true,
-                    childrenVisible: false,
-                    positionOverride: null
-                });
-            }
-
-            // All non-root nodes start invisible
-            for (const node of allNodes) {
-                if (!stateManager.nodeStates.has(node.id)) {
-                    stateManager.nodeStates.set(node.id, {
-                        expanded: false,
-                        visible: false,
-                        childrenVisible: false,
-                        positionOverride: null
-                    });
-                }
-            }
-
-            // Set initial overview flag
-            isInitialOverview = true;
-
-            console.log('[Init V2] State manager initialized');
-            console.log('[Init V2] View mode:', stateManager.viewMode);
-            console.log('[Init V2] Visible nodes:', stateManager.getVisibleNodes().length);
-
-            // Sync V1's visibleNodes Set with V2's state for compatibility with zoomToFit
-            visibleNodes = new Set(stateManager.getVisibleNodes());
-
-            // Pre-calculate and store positions on node objects BEFORE rendering
-            // This ensures zoomToFit has access to d.x and d.y
-            const positions = calculateListLayout(rootNodesList, width, height);
-            rootNodesList.forEach(node => {
-                const pos = positions.get(node.id);
-                if (pos) {
-                    node.x = pos.x;
-                    node.y = pos.y;
-                }
-            });
-            console.log('[Init V2] Pre-set positions on', rootNodesList.length, 'root nodes');
-
-            // Render Phase 1: vertical list of root nodes, no edges (no animation on initial render)
-            renderGraphV2(0);
-
-            // IMMEDIATELY apply initial zoom to center the vertical list
-            // Calculate list bounds (same as calculateListLayout uses)
-            const listStartX = 100;
-            const listStartY = 100;
-            const rowHeight = 50;
-            const nodeCount = rootNodesList.length;
-            const listHeight = nodeCount * rowHeight;
-            const listWidth = 300;  // Approximate width including icons/labels
-
-            // List center point (in data coordinates)
-            const listCenterX = listStartX + listWidth / 2;
-            const listCenterY = listStartY + listHeight / 2;
-
-            // Calculate scale to fit list with padding
-            const padding = 100;
-            const availableWidth = width - padding * 2;
-            const availableHeight = height - padding * 2;
-            const initScale = Math.min(
-                availableWidth / (listWidth + padding),
-                availableHeight / (listHeight + padding),
-                1.5  // Max zoom level
-            );
-
-            // Translation to center the list
-            // Formula: viewport_center = scale * data_point + translate
-            // So: translate = viewport_center - scale * data_point
-            const initTranslateX = width / 2 - initScale * listCenterX;
-            const initTranslateY = height / 2 - initScale * listCenterY;
-
-            console.log('[Init V2] Initial zoom params:', {
-                nodeCount, listHeight, listWidth,
-                listCenterX, listCenterY,
-                initScale, initTranslateX, initTranslateY,
-                viewportWidth: width, viewportHeight: height
-            });
-
-            // Apply the transform IMMEDIATELY (synchronous)
-            const initialTransform = d3.zoomIdentity
-                .translate(initTranslateX, initTranslateY)
-                .scale(initScale);
-            svg.call(zoom.transform, initialTransform);
-
-            // Also set on the g element directly as a fallback
-            g.attr('transform', `translate(${initTranslateX}, ${initTranslateY}) scale(${initScale})`);
-
-            console.log('[Init V2] Phase 1 complete - vertical list with', rootNodesList.length, 'root nodes');
-        }
-    """
-
-
-def get_rendering_v2() -> str:
-    """Get V2.0 rendering functions with transitions.
-
-    Returns:
-        JavaScript string for D3.js rendering with animations
-    """
-    return """
-        /**
-         * Main rendering function for V2.0 with transition animations.
-         *
-         * Two-Phase Prescriptive Layout:
-         * - Phase 1 (tree_root): Grid layout with root-level nodes only, all collapsed
-         * - Phase 2 (tree_expanded/file_detail): Radial expansion with on-demand children
-         *
-         * Renders visible nodes with smooth 750ms transitions between layouts.
-         *
-         * Design Decision: Radial layout for incremental exploration
-         *
-         * Rationale: Radial layout (360° circles) provides:
-         * - Natural visual grouping of siblings around parent
-         * - Space-efficient scaling for many children (up to 20+)
-         * - Clear depth indication through concentric rings
-         * - Incremental mental model building (one level at a time)
-         *
-         * Trade-offs:
-         * - Exploration: On-demand expansion vs. pre-expanded tree (less cognitive load)
-         * - Space: Radial rings vs. linear tree (better use of 2D space)
-         * - Familiarity: Novel radial pattern vs. file explorer metaphor
-         *
-         * The layout automatically adapts to the current phase:
-         * - Phase 1 uses grid layout (clear overview)
-         * - Phase 2 uses radial layout (concentric expansion)
-         */
-        function renderGraphV2(duration = 750) {
-            if (!stateManager) {
-                console.error('[Render] State manager not initialized');
-                return;
-            }
-
-            console.log('[Render] Rendering graph, mode:', stateManager.viewMode, 'phase:', isInitialOverview ? 'Phase 1 (overview)' : 'Phase 2 (radial)');
-
-            // 1. Get visible nodes
-            const visibleNodeIds = stateManager.getVisibleNodes();
-            const visibleNodesList = visibleNodeIds
-                .map(id => allNodes.find(n => n.id === id))
-                .filter(n => n);
-
-            console.log('[Render] Visible nodes:', visibleNodesList.length);
-
-            // 2. Calculate layout positions (Two-Phase Prescriptive)
-            const positions = new Map();
-
-            if (stateManager.viewMode === 'tree_root') {
-                // PHASE 1: Vertical list layout for root nodes only (initial overview)
-                const listPos = calculateListLayout(visibleNodesList, width, height);
-                listPos.forEach((pos, nodeId) => positions.set(nodeId, pos));
-
-                console.debug('[Render] PHASE 1 (tree_root): Vertical list with', positions.size, 'root nodes');
-            } else if (stateManager.viewMode === 'tree_expanded' || stateManager.viewMode === 'file_detail') {
-                // PHASE 2: Radial layout with on-demand expansion (after first click)
-                // Each node's children fan out in a 360° circle around it
-
-                // Get the root expanded node (first in expansion path)
-                const rootExpandedId = stateManager.expansionPath[0];
-                if (!rootExpandedId) {
-                    console.warn('[Render] No expanded node in path');
-                    return;
-                }
-
-                const rootExpandedNode = allNodes.find(n => n.id === rootExpandedId);
-                if (!rootExpandedNode) {
-                    console.warn('[Render] Root expanded node not found:', rootExpandedId);
-                    return;
-                }
-
-                // RADIAL LAYOUT: Position nodes in concentric circles around parents
-                // Each expanded node has its children arranged radially around it
-
-                // Start by positioning the root expanded node at center
-                const centerX = width / 2;
-                const centerY = height / 2;
-                positions.set(rootExpandedId, { x: centerX, y: centerY });
-
-                // Build hierarchical radial layout for ALL visible descendants
-                // Use BFS to position nodes level by level in radial pattern
-                const positioned = new Set([rootExpandedId]);
-                const queue = [rootExpandedId];
-
-                while (queue.length > 0) {
-                    const parentId = queue.shift();
-                    const parentPos = positions.get(parentId);
-                    if (!parentPos) continue;
-
-                    // Get the parent node object for D3 layout
-                    const parentNode = allNodes.find(n => n.id === parentId);
-                    if (!parentNode) continue;
-
-                    // Find visible children of this parent
-                    const children = allLinks
-                        .filter(link => {
-                            const sourceId = link.source.id || link.source;
-                            const linkType = link.type;
-                            return sourceId === parentId &&
-                                   (linkType === 'dir_containment' ||
-                                    linkType === 'file_containment' ||
-                                    linkType === 'dir_hierarchy');
-                        })
-                        .map(link => {
-                            const targetId = link.target.id || link.target;
-                            return allNodes.find(n => n.id === targetId);
-                        })
-                        .filter(n => n && visibleNodeIds.includes(n.id) && !positioned.has(n.id));
-
-                    if (children.length > 0) {
-                        // Calculate D3 tree layout for these children (360° radial around parent)
-                        const radialPos = calculateD3TreeLayout(parentNode, children, width, height);
-                        radialPos.forEach((pos, childId) => {
-                            positions.set(childId, pos);
-                            positioned.add(childId);
-                            // Add to queue to position their children
-                            queue.push(childId);
-                        });
-                    }
-                }
-
-                console.debug(
-                    `[Render] ${stateManager.viewMode.toUpperCase()}: ` +
-                    `Radial layout with ${positions.size} nodes, ` +
-                    `depth ${stateManager.expansionPath.length}`
-                );
-            }
-
-            console.log('[Render] Calculated positions for', positions.size, 'nodes');
-
-            // 3. Filter edges
-            const visibleLinks = getFilteredLinksForCurrentViewV2();
-
-            console.log('[Render] Visible links:', visibleLinks.length);
-
-            // 4. D3 rendering with transitions
-
-            // --- LINKS ---
-            const linkSelection = g.selectAll('.link')
-                .data(visibleLinks, d => `${d.source.id || d.source}-${d.target.id || d.target}`);
-
-            // ENTER: New links
-            linkSelection.enter()
-                .append('line')
-                .attr('class', d => `link ${d.type}`)
-                .attr('x1', d => {
-                    const sourceId = d.source.id || d.source;
-                    const pos = positions.get(sourceId);
-                    return pos ? pos.x : (d.source.x || 0);
-                })
-                .attr('y1', d => {
-                    const sourceId = d.source.id || d.source;
-                    const pos = positions.get(sourceId);
-                    return pos ? pos.y : (d.source.y || 0);
-                })
-                .attr('x2', d => {
-                    const targetId = d.target.id || d.target;
-                    const pos = positions.get(targetId);
-                    return pos ? pos.x : (d.target.x || 0);
-                })
-                .attr('y2', d => {
-                    const targetId = d.target.id || d.target;
-                    const pos = positions.get(targetId);
-                    return pos ? pos.y : (d.target.y || 0);
-                })
-                .style('opacity', 0)
-                .transition()
-                .duration(duration)
-                .style('opacity', 1);
-
-            // UPDATE: Existing links
-            linkSelection.transition()
-                .duration(duration)
-                .attr('x1', d => {
-                    const sourceId = d.source.id || d.source;
-                    const pos = positions.get(sourceId);
-                    return pos ? pos.x : (d.source.x || 0);
-                })
-                .attr('y1', d => {
-                    const sourceId = d.source.id || d.source;
-                    const pos = positions.get(sourceId);
-                    return pos ? pos.y : (d.source.y || 0);
-                })
-                .attr('x2', d => {
-                    const targetId = d.target.id || d.target;
-                    const pos = positions.get(targetId);
-                    return pos ? pos.x : (d.target.x || 0);
-                })
-                .attr('y2', d => {
-                    const targetId = d.target.id || d.target;
-                    const pos = positions.get(targetId);
-                    return pos ? pos.y : (d.target.y || 0);
-                });
-
-            // EXIT: Remove links
-            linkSelection.exit()
-                .transition()
-                .duration(duration)
-                .style('opacity', 0)
-                .remove();
-
-            // --- NODES ---
-            const nodeSelection = g.selectAll('.node')
-                .data(visibleNodesList, d => d.id);
-
-            // ENTER: New nodes
-            const nodeEnter = nodeSelection.enter()
-                .append('g')
-                .attr('class', d => `node ${d.type}`)
-                .attr('transform', d => {
-                    // Start at calculated position or center
-                    const pos = positions.get(d.id);
-                    if (pos) {
-                        // Store position on node object for zoomToFit compatibility
-                        d.x = pos.x;
-                        d.y = pos.y;
-                        return `translate(${pos.x}, ${pos.y})`;
-                    }
-                    return `translate(${width / 2}, ${height / 2})`;
-                })
-                .style('opacity', 0)
-                .on('click', handleNodeClickV2)
-                .on('mouseover', (event, d) => showTooltip(event, d))
-                .on('mouseout', () => hideTooltip());
-
-            // Add node visuals (reuse existing rendering functions)
-            addNodeVisuals(nodeEnter);
-
-            // Fade in new nodes
-            nodeEnter.transition()
-                .duration(duration)
-                .style('opacity', 1);
-
-            // UPDATE: Existing nodes with transition
-            nodeSelection.transition()
-                .duration(duration)
-                .attr('transform', d => {
-                    const pos = positions.get(d.id);
-                    if (pos) {
-                        // Update stored position for force layout compatibility
-                        d.x = pos.x;
-                        d.y = pos.y;
-                        return `translate(${pos.x}, ${pos.y})`;
-                    }
-                    return `translate(${d.x || width / 2}, ${d.y || height / 2})`;
-                });
-
-            // Update expand/collapse indicators
-            nodeSelection.selectAll('.expand-indicator')
-                .text(d => {
-                    if (!hasChildren(d)) return '';
-                    const state = stateManager.nodeStates.get(d.id);
-                    return state?.expanded ? '−' : '+';
-                });
-
-            // EXIT: Remove nodes
-            nodeSelection.exit()
-                .transition()
-                .duration(duration)
-                .style('opacity', 0)
-                .remove();
-
-            // 5. Post-render updates
-            updateBreadcrumbsV2();
-            updateStats();
-
-            // NOTE: zoomToFit is now handled by caller (initializeVisualizationV2)
-            // to have better control over timing and prevent race conditions
-        }
-
-        /**
-         * Filter links for current view mode (V2.0).
-         *
-         * Rules (Tree-based):
-         * - TREE_ROOT mode: NO edges shown (vertical list only)
-         * - TREE_EXPANDED mode: NO edges shown (directory tree only)
-         * - FILE_DETAIL mode: Only AST call edges within expanded file
-         *
-         * Design Decision: No edges during navigation
-         *
-         * Rationale: Edges are hidden during directory navigation to reduce
-         * visual clutter and maintain focus on hierarchy. Only function call
-         * edges are shown in file detail view where they provide value.
-         *
-         * Error Handling:
-         * - Returns empty array if state manager not initialized
-         * - Returns empty array if no file expanded in FILE_DETAIL mode
-         * - Filters out edges where source or target nodes are not visible
-         */
-        function getFilteredLinksForCurrentViewV2() {
-            if (!stateManager) {
-                console.warn('[EdgeFilter] State manager not initialized');
-                return [];
-            }
-
-            // No edges in tree_root mode (initial overview - just list of folders)
-            if (stateManager.viewMode === 'tree_root') {
-                return [];
-            }
-
-            // TREE_EXPANDED mode: Show containment edges between visible nodes
-            if (stateManager.viewMode === 'tree_expanded') {
-                const visibleNodeIds = stateManager.getVisibleNodes();
-
-                // Show only containment edges (dir_containment, file_containment, dir_hierarchy)
-                const filteredLinks = allLinks.filter(link => {
-                    const linkType = link.type;
-                    const sourceId = link.source.id || link.source;
-                    const targetId = link.target.id || link.target;
-
-                    // Must be containment relationship
-                    const isContainment = linkType === 'dir_containment' ||
-                                         linkType === 'file_containment' ||
-                                         linkType === 'dir_hierarchy';
-
-                    if (!isContainment) return false;
-
-                    // Both nodes must be visible
-                    return visibleNodeIds.includes(sourceId) && visibleNodeIds.includes(targetId);
-                });
-
-                console.debug(
-                    `[EdgeFilter] TREE_EXPANDED mode: ${filteredLinks.length} containment edges`
-                );
-
-                return filteredLinks;
-            }
-
-            // FILE_DETAIL mode: Show AST call edges within file
-            if (stateManager.viewMode === 'file_detail') {
-                // Find expanded file in path
-                const expandedFileId = stateManager.expansionPath.find(nodeId => {
-                    const node = allNodes.find(n => n.id === nodeId);
-                    return node && node.type === 'file';
-                });
-
-                if (!expandedFileId) {
-                    console.debug('[EdgeFilter] No file expanded in FILE_DETAIL mode');
-                    return [];
-                }
-
-                const expandedFile = allNodes.find(n => n.id === expandedFileId);
-                if (!expandedFile) {
-                    console.warn('[EdgeFilter] Expanded file node not found:', expandedFileId);
-                    return [];
-                }
-
-                // Show only caller edges within this file
-                const filteredLinks = allLinks.filter(link => {
-                    // Must be caller relationship
-                    if (link.type !== 'caller') return false;
-
-                    // Both source and target must be AST chunks of the expanded file
-                    const sourceId = link.source.id || link.source;
-                    const targetId = link.target.id || link.target;
-
-                    const source = allNodes.find(n => n.id === sourceId);
-                    const target = allNodes.find(n => n.id === targetId);
-
-                    if (!source || !target) return false;
-
-                    // Both must be in the same file and visible
-                    return source.file_path === expandedFile.file_path &&
-                           target.file_path === expandedFile.file_path &&
-                           stateManager.getVisibleNodes().includes(sourceId) &&
-                           stateManager.getVisibleNodes().includes(targetId);
-                });
-
-                console.debug(
-                    `[EdgeFilter] FILE_DETAIL mode: ${filteredLinks.length} call edges ` +
-                    `in file ${expandedFile.name}`
-                );
-
-                return filteredLinks;
-            }
-
-            // Unknown view mode
-            console.warn('[EdgeFilter] Unknown view mode:', stateManager.viewMode);
-            return [];
-        }
-
-        /**
-         * Update breadcrumbs for V2.0 navigation.
-         */
-        function updateBreadcrumbsV2() {
-            if (!stateManager) return;
-
-            const breadcrumbEl = document.querySelector('.breadcrumb-nav');
-            if (!breadcrumbEl) return;
-
-            const parts = ['<span class="breadcrumb-root" onclick="resetToListViewV2()" style="cursor:pointer;">🏠 Root</span>'];
-
-            stateManager.expansionPath.forEach((nodeId, index) => {
-                const node = allNodes.find(n => n.id === nodeId);
-                if (!node) return;
-
-                const isLast = (index === stateManager.expansionPath.length - 1);
-
-                parts.push(' / ');
-
-                if (isLast) {
-                    // Current node: not clickable, highlighted
-                    parts.push(`<span class="breadcrumb-current" style="color: #ffffff; font-weight: 600;">${escapeHtml(node.name)}</span>`);
-                } else {
-                    // Parent nodes: clickable
-                    parts.push(
-                        `<span class="breadcrumb-link" onclick="navigateToNodeInPath('${node.id}')" ` +
-                        `style="color: #58a6ff; cursor: pointer; text-decoration: none;">` +
-                        `${escapeHtml(node.name)}</span>`
-                    );
-                }
-            });
-
-            breadcrumbEl.innerHTML = parts.join('');
-        }
-
-        /**
-         * Helper function to add node visuals (reused from existing code).
-         */
-        function addNodeVisuals(nodeEnter) {
-            // This function should call existing node rendering logic
-            // For now, we'll add basic shapes
-
-            // Add circles for code nodes
-            nodeEnter.filter(d => !isFileOrDir(d) && !isDocNode(d))
-                .append('circle')
-                .attr('r', d => d.complexity ? Math.min(15 + d.complexity * 2.5, 32) : 18)
-                .style('fill', d => d.color || '#58a6ff')
-                .attr('stroke', d => hasChildren(d) ? '#ffffff' : 'none')
-                .attr('stroke-width', d => hasChildren(d) ? 2 : 0);
-
-            // Add SVG icons for file and directory nodes
-            nodeEnter.filter(d => isFileOrDir(d))
-                .append('path')
-                .attr('class', 'file-icon')
-                .attr('d', d => getFileTypeIcon(d))
-                .attr('transform', d => {
-                    const scale = d.type === 'directory' ? 2.2 : 1.8;
-                    return `translate(-12, -12) scale(${scale})`;
-                })
-                .style('color', d => getFileTypeColor(d))
-                .attr('stroke', d => hasChildren(d) ? '#ffffff' : 'none')
-                .attr('stroke-width', d => hasChildren(d) ? 1.5 : 0);
-
-            // Add expand/collapse indicator
-            nodeEnter.filter(d => hasChildren(d))
-                .append('text')
-                .attr('class', 'expand-indicator')
-                .attr('x', d => {
-                    const iconRadius = d.type === 'directory' ? 22 : 18;
-                    return iconRadius + 5;
-                })
-                .attr('y', 0)
-                .attr('dy', '0.6em')
-                .attr('text-anchor', 'start')
-                .style('fill', '#ffffff')
-                .style('font-size', '16px')
-                .style('font-weight', 'bold')
-                .style('pointer-events', 'none')
-                .text(d => {
-                    if (!stateManager) return '+';
-                    const state = stateManager.nodeStates.get(d.id);
-                    return state?.expanded ? '−' : '+';
-                });
-
-            // Add labels
-            nodeEnter.append('text')
-                .attr('class', 'node-label')
-                .attr('x', d => {
-                    if (isFileOrDir(d)) {
-                        const iconRadius = d.type === 'directory' ? 22 : 18;
-                        return iconRadius + 25;  // After icon and indicator
-                    }
-                    return 0;
-                })
-                .attr('y', d => isFileOrDir(d) ? 0 : 0)
-                .attr('dy', d => isFileOrDir(d) ? '0.35em' : '2.5em')
-                .attr('text-anchor', d => isFileOrDir(d) ? 'start' : 'middle')
-                .style('fill', '#ffffff')
-                .style('font-size', '14px')
-                .style('pointer-events', 'none')
-                .text(d => d.name || 'Unknown');
-        }
-
-        /**
-         * Helper function to check if node is file or directory.
-         */
-        function isFileOrDir(node) {
-            return node.type === 'file' || node.type === 'directory';
-        }
-
-        /**
-         * Helper function to check if node is a document node.
-         */
-        function isDocNode(node) {
-            return node.type === 'document' || node.type === 'section';
-        }
-
-        /**
-         * Helper function to check if node has children.
-         */
-        function hasChildren(node) {
-            return allLinks.some(link => {
-                const sourceId = link.source.id || link.source;
-                return sourceId === node.id &&
-                       (link.type === 'dir_containment' ||
-                        link.type === 'file_containment' ||
-                        link.type === 'dir_hierarchy');
-            });
-        }
-
-        /**
-         * Helper function to escape HTML in strings.
-         */
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-    """
-
-
 def get_all_scripts() -> str:
-    """Get all JavaScript code combined.
+    """Generate all JavaScript for the visualization.
 
     Returns:
-        Complete JavaScript string for the visualization
+        Complete JavaScript code as a single string
     """
-    return "".join(
-        [
-            get_d3_initialization(),
-            get_state_management(),  # NEW: V2.0 state management
-            get_layout_algorithms_v2(),  # NEW: V2.0 layout algorithms
-            get_interaction_handlers_v2(),  # NEW: V2.0 interaction handlers
-            get_rendering_v2(),  # NEW: V2.0 rendering with transitions
-            get_file_type_functions(),
-            get_spacing_calculation_functions(),
-            get_loading_spinner_functions(),
-            get_navigation_stack_logic(),
-            get_layout_switching_logic(),
-            get_graph_visualization_functions(),
-            get_zoom_and_navigation_functions(),
-            get_interaction_handlers(),
-            get_tooltip_logic(),
-            get_drag_and_stats_functions(),
-            get_breadcrumb_functions(),
-            get_code_chunks_functions(),
-            get_content_pane_functions(),
-            get_data_loading_logic(),
-        ]
-    )
+    return """
+// ============================================================================
+// GLOBAL STATE
+// ============================================================================
+
+let allNodes = [];
+let allLinks = [];
+let currentLayout = 'linear';  // 'linear' or 'circular'
+let treeData = null;
+let isViewerOpen = false;
+
+// Chunk types for code nodes (function, class, method, text, imports, module)
+const chunkTypes = ['function', 'class', 'method', 'text', 'imports', 'module'];
+
+// Dynamic dimensions that update when viewer opens/closes
+function getViewportDimensions() {
+    const container = document.getElementById('main-container');
+    return {
+        width: container.clientWidth,
+        height: container.clientHeight
+    };
+}
+
+const margin = {top: 40, right: 120, bottom: 20, left: 120};
+
+// ============================================================================
+// DATA LOADING
+// ============================================================================
+
+async function loadGraphData() {
+    try {
+        const response = await fetch('/api/graph');
+        const data = await response.json();
+        allNodes = data.nodes || [];
+        allLinks = data.links || [];
+
+        console.log(`Loaded ${allNodes.length} nodes and ${allLinks.length} links`);
+
+        // DEBUG: Log first few nodes to see actual structure
+        console.log('=== SAMPLE NODE STRUCTURE ===');
+        if (allNodes.length > 0) {
+            console.log('First node:', JSON.stringify(allNodes[0], null, 2));
+            if (allNodes.length > 1) {
+                console.log('Second node:', JSON.stringify(allNodes[1], null, 2));
+            }
+        }
+
+        // Count node types
+        const typeCounts = {};
+        allNodes.forEach(node => {
+            const type = node.type || 'undefined';
+            typeCounts[type] = (typeCounts[type] || 0) + 1;
+        });
+        console.log('Node type counts:', typeCounts);
+        console.log('=== END SAMPLE NODE STRUCTURE ===');
+
+        buildTreeStructure();
+        renderVisualization();
+    } catch (error) {
+        console.error('Failed to load graph data:', error);
+        document.body.innerHTML =
+            '<div style="color: red; padding: 20px; font-family: Arial;">Error loading visualization data. Check console for details.</div>';
+    }
+}
+
+// ============================================================================
+// TREE STRUCTURE BUILDING
+// ============================================================================
+
+function buildTreeStructure() {
+    // Include directories, files, AND chunks (function, class, method, text, imports, module)
+    const treeNodes = allNodes.filter(node => {
+        const type = node.type;
+        return type === 'directory' || type === 'file' || chunkTypes.includes(type);
+    });
+
+    console.log(`Filtered to ${treeNodes.length} tree nodes (directories, files, and chunks)`);
+
+    // Count node types for debugging
+    const dirCount = treeNodes.filter(n => n.type === 'directory').length;
+    const fileCount = treeNodes.filter(n => n.type === 'file').length;
+    const chunkCount = treeNodes.filter(n => chunkTypes.includes(n.type)).length;
+    console.log(`Node breakdown: ${dirCount} directories, ${fileCount} files, ${chunkCount} chunks`);
+
+    // Create lookup maps
+    const nodeMap = new Map();
+    treeNodes.forEach(node => {
+        nodeMap.set(node.id, {
+            ...node,
+            children: []
+        });
+    });
+
+    // Build parent-child relationships
+    const parentMap = new Map();
+
+    // DEBUG: Analyze link structure
+    console.log('=== LINK STRUCTURE DEBUG ===');
+    console.log(`Total links: ${allLinks.length}`);
+
+    // Get unique link types (handle undefined)
+    const linkTypes = [...new Set(allLinks.map(l => l.type || 'undefined'))];
+    console.log('Link types found:', linkTypes);
+
+    // Count links by type
+    const linkTypeCounts = {};
+    allLinks.forEach(link => {
+        const type = link.type || 'undefined';
+        linkTypeCounts[type] = (linkTypeCounts[type] || 0) + 1;
+    });
+    console.log('Link type counts:', linkTypeCounts);
+
+    // Sample first few links
+    console.log('Sample links (first 5):');
+    allLinks.slice(0, 5).forEach((link, i) => {
+        console.log(`  Link ${i}:`, JSON.stringify(link, null, 2));
+    });
+
+    // Check if links have properties we expect
+    if (allLinks.length > 0) {
+        const firstLink = allLinks[0];
+        console.log('Link properties:', Object.keys(firstLink));
+    }
+    console.log('=== END LINK STRUCTURE DEBUG ===');
+
+    // First pass: Handle directory hierarchy
+    console.log('=== BUILDING DIRECTORY HIERARCHY ===');
+    let dirLinksProcessed = 0;
+    let dirLinksMatched = 0;
+
+    allLinks.forEach(link => {
+        if (link.type === 'dir_containment' || link.type === 'dir_hierarchy') {
+            dirLinksProcessed++;
+
+            if (nodeMap.has(link.source) && nodeMap.has(link.target)) {
+                dirLinksMatched++;
+                parentMap.set(link.target, link.source);
+
+                const parent = nodeMap.get(link.source);
+                const child = nodeMap.get(link.target);
+
+                if (parent && child) {
+                    parent.children.push(child);
+                }
+            } else {
+                // DEBUG: Why didn't this link match?
+                if (dirLinksProcessed <= 5) {  // Only log first few mismatches
+                    console.log(`Link mismatch - source: ${link.source} (exists: ${nodeMap.has(link.source)}), target: ${link.target} (exists: ${nodeMap.has(link.target)})`);
+                }
+            }
+        }
+    });
+
+    console.log(`Processed ${dirLinksProcessed} directory links, matched ${dirLinksMatched}`);
+    console.log('=== END DIRECTORY HIERARCHY ===');
+
+    // Second pass: Attach chunks to their parent files using file_containment links
+    console.log('=== CHUNK ATTACHMENT DEBUG ===');
+
+    let fileLinksProcessed = 0;
+    let fileLinksMatched = 0;
+    let fileLinksChunkMissing = 0;
+    let fileLinksFileMissing = 0;
+    let fileLinksChunkNotInTree = 0;
+    let fileLinksFileNotInTree = 0;
+
+    allLinks.forEach(link => {
+        if (link.type === 'file_containment') {
+            fileLinksProcessed++;
+
+            // For file_containment links:
+            // - source is the FILE
+            // - target is the CHUNK
+            const parentFile = nodeMap.get(link.source);
+            const chunkNode = nodeMap.get(link.target);
+
+            if (!parentFile) {
+                fileLinksFileMissing++;
+                // Check if file exists in allNodes but not in tree
+                const fileInAll = allNodes.find(n => n.id === link.source);
+                if (fileInAll) {
+                    fileLinksFileNotInTree++;
+                }
+                if (fileLinksFileMissing <= 3) {  // Log first few
+                    console.log(`File ${link.source} not found in nodeMap (exists in allNodes: ${!!fileInAll})`);
+                }
+                return;
+            }
+
+            if (!chunkNode) {
+                fileLinksChunkMissing++;
+                // Check if chunk exists in allNodes but not in tree
+                const chunkInAll = allNodes.find(n => n.id === link.target);
+                if (chunkInAll) {
+                    fileLinksChunkNotInTree++;
+                }
+                if (fileLinksChunkMissing <= 3) {  // Log first few
+                    console.log(`Chunk ${link.target} not found in nodeMap (exists in allNodes: ${!!chunkInAll}, type: ${chunkInAll?.type})`);
+                }
+                return;
+            }
+
+            // Successfully attach chunk to parent file
+            parentFile.children.push(chunkNode);
+            parentMap.set(link.target, link.source);
+            fileLinksMatched++;
+        }
+    });
+
+    console.log(`Processed ${fileLinksProcessed} file_containment links`);
+    console.log(`Successfully matched: ${fileLinksMatched}`);
+    console.log(`File not found: ${fileLinksFileMissing} (${fileLinksFileNotInTree} exist in allNodes but filtered out)`);
+    console.log(`Chunk not found: ${fileLinksChunkMissing} (${fileLinksChunkNotInTree} exist in allNodes but filtered out)`);
+    console.log('=== END CHUNK ATTACHMENT DEBUG ===');
+
+    // DEBUG: Check parent map
+    console.log('=== PARENT MAP DEBUG ===');
+    console.log(`Total entries in parentMap: ${parentMap.size}`);
+    console.log(`Total tree nodes: ${treeNodes.length}`);
+    console.log(`Expected root nodes: ${treeNodes.length - parentMap.size}`);
+
+    // Sample some chunk nodes to see if they're in parentMap
+    const sampleChunks = treeNodes.filter(n => chunkTypes.includes(n.type)).slice(0, 5);
+    console.log('Sample chunk parent check:');
+    sampleChunks.forEach(chunk => {
+        const hasParent = parentMap.has(chunk.id);
+        const parent = parentMap.get(chunk.id);
+        console.log(`  Chunk ${chunk.id} (${chunk.type}): hasParent=${hasParent}, parent=${parent}`);
+    });
+    console.log('=== END PARENT MAP DEBUG ===');
+
+    // Find root nodes (nodes with no parents)
+    const rootNodes = treeNodes
+        .filter(node => !parentMap.has(node.id))
+        .map(node => nodeMap.get(node.id))
+        .filter(node => node !== undefined);
+
+    console.log(`Found ${rootNodes.length} root nodes`);
+
+    // DEBUG: Count root node types
+    const rootTypeCounts = {};
+    rootNodes.forEach(node => {
+        const type = node.type || 'undefined';
+        rootTypeCounts[type] = (rootTypeCounts[type] || 0) + 1;
+    });
+    console.log('Root node type breakdown:', rootTypeCounts);
+
+    // Create virtual root if multiple roots
+    if (rootNodes.length === 0) {
+        console.error('No root nodes found!');
+        treeData = {name: 'Empty', id: 'root', type: 'directory', children: []};
+    } else if (rootNodes.length === 1) {
+        treeData = rootNodes[0];
+    } else {
+        treeData = {
+            name: 'Project Root',
+            id: 'virtual-root',
+            type: 'directory',
+            children: rootNodes
+        };
+    }
+
+    // Collapse all directories and files by default
+    function collapseAll(node) {
+        if (node.children && node.children.length > 0) {
+            // First, recursively process all descendants
+            node.children.forEach(child => collapseAll(child));
+
+            // Then collapse this node (move children to _children)
+            node._children = node.children;
+            node.children = null;
+        }
+    }
+
+    // Collapse all child nodes of the root (but keep root's direct children visible initially)
+    // This way, only the root level (first level) is visible, all deeper levels are collapsed
+    if (treeData.children) {
+        treeData.children.forEach(child => {
+            // Collapse all descendants of each root child, but keep the root children themselves visible
+            if (child.children && child.children.length > 0) {
+                child.children.forEach(grandchild => collapseAll(grandchild));
+                // Move children to _children to collapse
+                child._children = child.children;
+                child.children = null;
+            }
+        });
+    }
+
+    console.log('Tree structure built with all directories and files collapsed');
+
+    // DEBUG: Check a few file nodes to see if they have chunks in _children
+    console.log('=== POST-COLLAPSE FILE CHECK ===');
+    let filesChecked = 0;
+    let filesWithChunks = 0;
+
+    function checkFilesRecursive(node) {
+        if (node.type === 'file') {
+            filesChecked++;
+            const chunkCount = (node._children || []).length;
+            if (chunkCount > 0) {
+                filesWithChunks++;
+                console.log(`File ${node.name} has ${chunkCount} chunks in _children`);
+            }
+        }
+
+        // Check both visible and hidden children
+        const childrenToCheck = node.children || node._children || [];
+        childrenToCheck.forEach(child => checkFilesRecursive(child));
+    }
+
+    checkFilesRecursive(treeData);
+    console.log(`Checked ${filesChecked} files, ${filesWithChunks} have chunks`);
+    console.log('=== END POST-COLLAPSE FILE CHECK ===');
+}
+
+// ============================================================================
+// VISUALIZATION RENDERING
+// ============================================================================
+
+function renderVisualization() {
+    console.log('=== RENDER VISUALIZATION ===');
+    console.log(`Current layout: ${currentLayout}`);
+    console.log(`Tree data exists: ${treeData !== null}`);
+    if (treeData) {
+        console.log(`Root node: ${treeData.name}, children: ${(treeData.children || []).length}, _children: ${(treeData._children || []).length}`);
+    }
+
+    // Clear existing content
+    const graphElement = d3.select('#graph');
+    console.log(`Graph element found: ${!graphElement.empty()}`);
+    graphElement.selectAll('*').remove();
+
+    if (currentLayout === 'linear') {
+        console.log('Calling renderLinearTree()...');
+        renderLinearTree();
+    } else {
+        console.log('Calling renderCircularTree()...');
+        renderCircularTree();
+    }
+    console.log('=== END RENDER VISUALIZATION ===');
+}
+
+// ============================================================================
+// LINEAR TREE LAYOUT
+// ============================================================================
+
+function renderLinearTree() {
+    console.log('=== RENDER LINEAR TREE ===');
+    const { width, height } = getViewportDimensions();
+    console.log(`Viewport dimensions: ${width}x${height}`);
+
+    const svg = d3.select('#graph')
+        .attr('width', width)
+        .attr('height', height);
+
+    const g = svg.append('g')
+        .attr('transform', `translate(${margin.left},${margin.top})`);
+
+    // Create tree layout
+    // For horizontal tree: size is [height, width] where height controls vertical spread
+    const treeLayout = d3.tree()
+        .size([height - margin.top - margin.bottom, width - margin.left - margin.right]);
+
+    console.log(`Tree layout size: ${height - margin.top - margin.bottom} x ${width - margin.left - margin.right}`);
+
+    // Create hierarchy from tree data
+    // D3 hierarchy automatically respects children vs _children
+    console.log('Creating D3 hierarchy...');
+    const root = d3.hierarchy(treeData, d => d.children);
+    console.log(`Hierarchy created: ${root.descendants().length} nodes`);
+
+    // Apply tree layout
+    console.log('Applying tree layout...');
+    treeLayout(root);
+    console.log('Tree layout applied');
+
+    // Add zoom behavior
+    const zoom = d3.zoom()
+        .scaleExtent([0.1, 3])
+        .on('zoom', (event) => {
+            g.attr('transform', `translate(${margin.left},${margin.top}) ${event.transform}`);
+        });
+
+    svg.call(zoom);
+
+    // Draw links
+    const links = root.links();
+    console.log(`Drawing ${links.length} links`);
+    g.selectAll('.link')
+        .data(links)
+        .enter()
+        .append('path')
+        .attr('class', 'link')
+        .attr('d', d3.linkHorizontal()
+            .x(d => d.y)
+            .y(d => d.x))
+        .attr('fill', 'none')
+        .attr('stroke', '#ccc')
+        .attr('stroke-width', 1.5);
+
+    // Draw nodes
+    const descendants = root.descendants();
+    console.log(`Drawing ${descendants.length} nodes`);
+    const nodes = g.selectAll('.node')
+        .data(descendants)
+        .enter()
+        .append('g')
+        .attr('class', 'node')
+        .attr('transform', d => `translate(${d.y},${d.x})`)
+        .on('click', handleNodeClick)
+        .style('cursor', 'pointer');
+
+    console.log(`Created ${nodes.size()} node elements`);
+
+    // Node circles
+    nodes.append('circle')
+        .attr('r', d => chunkTypes.includes(d.data.type) ? 4 : 6)  // Smaller circles for chunks
+        .attr('fill', d => {
+            if (d.data.type === 'directory') {
+                // Orange if collapsed (has _children), blue if expanded (has children)
+                return d.data._children ? '#f39c12' : '#3498db';
+            } else if (d.data.type === 'file') {
+                // Gray if collapsed (has _children), white if expanded or no chunks
+                return d.data._children ? '#95a5a6' : '#ecf0f1';
+            } else if (chunkTypes.includes(d.data.type)) {
+                return '#9b59b6';  // Purple for chunks
+            }
+            return '#95a5a6';  // Default gray
+        })
+        .attr('stroke', '#fff')
+        .attr('stroke-width', 2);
+
+    // Node labels
+    const labels = nodes.append('text')
+        .attr('dx', 12)
+        .attr('dy', 4)
+        .text(d => {
+            // For chunks, show the name (function/class name)
+            return d.data.name;
+        })
+        .style('font-size', d => chunkTypes.includes(d.data.type) ? '10px' : '12px')
+        .style('font-family', 'Arial, sans-serif')
+        .style('fill', d => chunkTypes.includes(d.data.type) ? '#bb86fc' : '#adbac7');
+
+    console.log(`Created ${labels.size()} label elements`);
+    console.log('=== END RENDER LINEAR TREE ===');
+}
+
+// ============================================================================
+// CIRCULAR TREE LAYOUT
+// ============================================================================
+
+function renderCircularTree() {
+    const { width, height } = getViewportDimensions();
+    const svg = d3.select('#graph')
+        .attr('width', width)
+        .attr('height', height);
+
+    const radius = Math.min(width, height) / 2 - 100;
+
+    const g = svg.append('g')
+        .attr('transform', `translate(${width/2},${height/2})`);
+
+    // Create radial tree layout
+    const treeLayout = d3.tree()
+        .size([2 * Math.PI, radius])
+        .separation((a, b) => (a.parent === b.parent ? 1 : 2) / a.depth);
+
+    // Create hierarchy
+    // D3 hierarchy automatically respects children vs _children
+    const root = d3.hierarchy(treeData, d => d.children);
+
+    // Apply layout
+    treeLayout(root);
+
+    // Add zoom behavior
+    const zoom = d3.zoom()
+        .scaleExtent([0.1, 3])
+        .on('zoom', (event) => {
+            g.attr('transform', `translate(${width/2},${height/2}) ${event.transform}`);
+        });
+
+    svg.call(zoom);
+
+    // Draw links
+    g.selectAll('.link')
+        .data(root.links())
+        .enter()
+        .append('path')
+        .attr('class', 'link')
+        .attr('d', d3.linkRadial()
+            .angle(d => d.x)
+            .radius(d => d.y))
+        .attr('fill', 'none')
+        .attr('stroke', '#ccc')
+        .attr('stroke-width', 1.5);
+
+    // Draw nodes
+    const nodes = g.selectAll('.node')
+        .data(root.descendants())
+        .enter()
+        .append('g')
+        .attr('class', 'node')
+        .attr('transform', d => `
+            rotate(${d.x * 180 / Math.PI - 90})
+            translate(${d.y},0)
+        `)
+        .on('click', handleNodeClick)
+        .style('cursor', 'pointer');
+
+    // Node circles
+    nodes.append('circle')
+        .attr('r', d => chunkTypes.includes(d.data.type) ? 4 : 6)  // Smaller circles for chunks
+        .attr('fill', d => {
+            if (d.data.type === 'directory') {
+                // Orange if collapsed (has _children), blue if expanded (has children)
+                return d.data._children ? '#f39c12' : '#3498db';
+            } else if (d.data.type === 'file') {
+                // Gray if collapsed (has _children), white if expanded or no chunks
+                return d.data._children ? '#95a5a6' : '#ecf0f1';
+            } else if (chunkTypes.includes(d.data.type)) {
+                return '#9b59b6';  // Purple for chunks
+            }
+            return '#95a5a6';  // Default gray
+        })
+        .attr('stroke', '#fff')
+        .attr('stroke-width', 2);
+
+    // Node labels
+    nodes.append('text')
+        .attr('dx', 12)
+        .attr('dy', 4)
+        .attr('transform', d => d.x >= Math.PI ? 'rotate(180)' : null)
+        .attr('text-anchor', d => d.x >= Math.PI ? 'end' : 'start')
+        .text(d => {
+            // For chunks, show the name (function/class name)
+            return d.data.name;
+        })
+        .style('font-size', d => chunkTypes.includes(d.data.type) ? '10px' : '12px')
+        .style('font-family', 'Arial, sans-serif')
+        .style('fill', d => chunkTypes.includes(d.data.type) ? '#bb86fc' : '#adbac7');
+}
+
+// ============================================================================
+// INTERACTION HANDLERS
+// ============================================================================
+
+function handleNodeClick(event, d) {
+    event.stopPropagation();
+
+    const nodeData = d.data;
+
+    console.log('=== NODE CLICK DEBUG ===');
+    console.log(`Clicked node: ${nodeData.name} (type: ${nodeData.type}, id: ${nodeData.id})`);
+    console.log(`Has children: ${nodeData.children ? nodeData.children.length : 0}`);
+    console.log(`Has _children: ${nodeData._children ? nodeData._children.length : 0}`);
+
+    if (nodeData.type === 'directory') {
+        // Toggle directory: swap children <-> _children
+        if (nodeData.children) {
+            // Currently expanded - collapse it
+            console.log('Collapsing directory');
+            nodeData._children = nodeData.children;
+            nodeData.children = null;
+        } else if (nodeData._children) {
+            // Currently collapsed - expand it
+            console.log('Expanding directory');
+            nodeData.children = nodeData._children;
+            nodeData._children = null;
+        }
+
+        // Re-render to show/hide children
+        renderVisualization();
+
+        // Also show directory info in viewer
+        displayDirectoryInfo(nodeData);
+    } else if (nodeData.type === 'file') {
+        // Toggle file: swap children <-> _children
+        if (nodeData.children) {
+            // Currently expanded - collapse it
+            console.log('Collapsing file');
+            nodeData._children = nodeData.children;
+            nodeData.children = null;
+        } else if (nodeData._children) {
+            // Currently collapsed - expand it
+            console.log('Expanding file');
+            nodeData.children = nodeData._children;
+            nodeData._children = null;
+        } else {
+            console.log('WARNING: File has neither children nor _children!');
+        }
+
+        // Re-render to show/hide children
+        renderVisualization();
+
+        // Show file info in viewer
+        displayFileInfo(nodeData);
+    } else if (chunkTypes.includes(nodeData.type)) {
+        console.log('Displaying chunk content');
+        // Show chunk content in side panel
+        displayChunkContent(nodeData);
+    }
+
+    console.log('=== END NODE CLICK DEBUG ===');
+}
+
+function displayDirectoryInfo(dirData) {
+    openViewerPanel();
+
+    const title = document.getElementById('viewer-title');
+    const content = document.getElementById('viewer-content');
+
+    title.textContent = `📁 ${dirData.name}`;
+
+    // Count children
+    const children = dirData.children || dirData._children || [];
+    const dirs = children.filter(c => c.type === 'directory').length;
+    const files = children.filter(c => c.type === 'file').length;
+
+    let html = '<div class="viewer-section">';
+    html += '<div class="viewer-section-title">Directory Information</div>';
+    html += '<div class="viewer-info-grid">';
+    html += `<div class="viewer-info-row">`;
+    html += `<span class="viewer-info-label">Name:</span>`;
+    html += `<span class="viewer-info-value">${escapeHtml(dirData.name)}</span>`;
+    html += `</div>`;
+    html += `<div class="viewer-info-row">`;
+    html += `<span class="viewer-info-label">Subdirectories:</span>`;
+    html += `<span class="viewer-info-value">${dirs}</span>`;
+    html += `</div>`;
+    html += `<div class="viewer-info-row">`;
+    html += `<span class="viewer-info-label">Files:</span>`;
+    html += `<span class="viewer-info-value">${files}</span>`;
+    html += `</div>`;
+    html += `<div class="viewer-info-row">`;
+    html += `<span class="viewer-info-label">Total Items:</span>`;
+    html += `<span class="viewer-info-value">${children.length}</span>`;
+    html += `</div>`;
+    html += '</div>';
+    html += '</div>';
+
+    if (children.length > 0) {
+        html += '<div class="viewer-section">';
+        html += '<div class="viewer-section-title">Contents</div>';
+        html += '<div class="dir-list">';
+
+        children.forEach(child => {
+            const icon = child.type === 'directory' ? '📁' : '📄';
+            const type = child.type === 'directory' ? 'dir' : 'file';
+            html += `<div class="dir-list-item">`;
+            html += `<span class="dir-icon">${icon}</span>`;
+            html += `<span class="dir-name">${escapeHtml(child.name)}</span>`;
+            html += `<span class="dir-type">${type}</span>`;
+            html += `</div>`;
+        });
+
+        html += '</div>';
+        html += '</div>';
+    }
+
+    content.innerHTML = html;
+}
+
+function displayFileInfo(fileData) {
+    openViewerPanel();
+
+    const title = document.getElementById('viewer-title');
+    const content = document.getElementById('viewer-content');
+
+    title.textContent = `📄 ${fileData.name}`;
+
+    // Get chunks
+    const chunks = fileData.children || fileData._children || [];
+
+    let html = '<div class="viewer-section">';
+    html += '<div class="viewer-section-title">File Information</div>';
+    html += '<div class="viewer-info-grid">';
+    html += `<div class="viewer-info-row">`;
+    html += `<span class="viewer-info-label">Name:</span>`;
+    html += `<span class="viewer-info-value">${escapeHtml(fileData.name)}</span>`;
+    html += `</div>`;
+    html += `<div class="viewer-info-row">`;
+    html += `<span class="viewer-info-label">Chunks:</span>`;
+    html += `<span class="viewer-info-value">${chunks.length}</span>`;
+    html += `</div>`;
+    if (fileData.path) {
+        html += `<div class="viewer-info-row">`;
+        html += `<span class="viewer-info-label">Path:</span>`;
+        html += `<span class="viewer-info-value" style="word-break: break-all;">${escapeHtml(fileData.path)}</span>`;
+        html += `</div>`;
+    }
+    html += '</div>';
+    html += '</div>';
+
+    if (chunks.length > 0) {
+        html += '<div class="viewer-section">';
+        html += '<div class="viewer-section-title">Code Chunks</div>';
+        html += '<div class="chunk-list">';
+
+        chunks.forEach(chunk => {
+            const icon = getChunkIcon(chunk.type);
+            const chunkName = chunk.name || chunk.type || 'chunk';
+            const lines = chunk.start_line && chunk.end_line
+                ? `Lines ${chunk.start_line}-${chunk.end_line}`
+                : 'Unknown lines';
+
+            html += `<div class="chunk-list-item" onclick="displayChunkContent(${JSON.stringify(chunk).replace(/"/g, '&quot;')})">`;
+            html += `<span class="chunk-icon">${icon}</span>`;
+            html += `<div class="chunk-info">`;
+            html += `<div class="chunk-name">${escapeHtml(chunkName)}</div>`;
+            html += `<div class="chunk-meta">${lines} • ${chunk.type || 'code'}</div>`;
+            html += `</div>`;
+            html += `</div>`;
+        });
+
+        html += '</div>';
+        html += '</div>';
+    }
+
+    content.innerHTML = html;
+}
+
+function displayChunkContent(chunkData) {
+    openViewerPanel();
+
+    const title = document.getElementById('viewer-title');
+    const content = document.getElementById('viewer-content');
+
+    const chunkName = chunkData.name || chunkData.type || 'Chunk';
+    title.textContent = `${getChunkIcon(chunkData.type)} ${chunkName}`;
+
+    let html = '<div class="viewer-section">';
+    html += '<div class="viewer-section-title">Chunk Information</div>';
+    html += '<div class="viewer-info-grid">';
+    html += `<div class="viewer-info-row">`;
+    html += `<span class="viewer-info-label">Name:</span>`;
+    html += `<span class="viewer-info-value">${escapeHtml(chunkName)}</span>`;
+    html += `</div>`;
+    html += `<div class="viewer-info-row">`;
+    html += `<span class="viewer-info-label">Type:</span>`;
+    html += `<span class="viewer-info-value">${escapeHtml(chunkData.type || 'code')}</span>`;
+    html += `</div>`;
+    if (chunkData.start_line && chunkData.end_line) {
+        html += `<div class="viewer-info-row">`;
+        html += `<span class="viewer-info-label">Lines:</span>`;
+        html += `<span class="viewer-info-value">${chunkData.start_line} - ${chunkData.end_line}</span>`;
+        html += `</div>`;
+    }
+    html += '</div>';
+    html += '</div>';
+
+    if (chunkData.content) {
+        html += '<div class="viewer-section">';
+        html += '<div class="viewer-section-title">Source Code</div>';
+        html += `<pre><code>${escapeHtml(chunkData.content)}</code></pre>`;
+        html += '</div>';
+    } else {
+        html += '<p style="color: #8b949e; padding: 20px; text-align: center;">No content available for this chunk.</p>';
+    }
+
+    content.innerHTML = html;
+}
+
+function getChunkIcon(chunkType) {
+    const icons = {
+        'function': '⚡',
+        'class': '🏛️',
+        'method': '🔧',
+        'code': '📝',
+        'import': '📦',
+        'comment': '💬',
+        'docstring': '📖'
+    };
+    return icons[chunkType] || '📝';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ============================================================================
+// LAYOUT TOGGLE
+// ============================================================================
+
+function toggleLayout() {
+    const toggleCheckbox = document.getElementById('layout-toggle');
+    const labels = document.querySelectorAll('.toggle-label');
+
+    // Update layout based on checkbox state
+    currentLayout = toggleCheckbox.checked ? 'circular' : 'linear';
+
+    // Update label highlighting
+    labels.forEach((label, index) => {
+        if (index === 0) {
+            // Linear label (left)
+            label.classList.toggle('active', currentLayout === 'linear');
+        } else {
+            // Circular label (right)
+            label.classList.toggle('active', currentLayout === 'circular');
+        }
+    });
+
+    console.log(`Layout switched to: ${currentLayout}`);
+    renderVisualization();
+}
+
+// ============================================================================
+// VIEWER PANEL CONTROLS
+// ============================================================================
+
+function openViewerPanel() {
+    const panel = document.getElementById('viewer-panel');
+    const container = document.getElementById('main-container');
+
+    if (!isViewerOpen) {
+        panel.classList.add('open');
+        container.classList.add('viewer-open');
+        isViewerOpen = true;
+
+        // Re-render visualization to adjust to new viewport size
+        setTimeout(() => {
+            renderVisualization();
+        }, 300); // Wait for transition
+    }
+}
+
+function closeViewerPanel() {
+    const panel = document.getElementById('viewer-panel');
+    const container = document.getElementById('main-container');
+
+    panel.classList.remove('open');
+    container.classList.remove('viewer-open');
+    isViewerOpen = false;
+
+    // Re-render visualization to adjust to new viewport size
+    setTimeout(() => {
+        renderVisualization();
+    }, 300); // Wait for transition
+}
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+
+// Load data and initialize UI when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('=== PAGE INITIALIZATION ===');
+    console.log('DOMContentLoaded event fired');
+
+    // Initialize toggle label highlighting
+    const labels = document.querySelectorAll('.toggle-label');
+    console.log(`Found ${labels.length} toggle labels`);
+    if (labels[0]) {
+        labels[0].classList.add('active');
+        console.log('Activated first toggle label (linear mode)');
+    }
+
+    // Load graph data
+    console.log('Calling loadGraphData()...');
+    loadGraphData();
+    console.log('=== END PAGE INITIALIZATION ===');
+});
+"""
