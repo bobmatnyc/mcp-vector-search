@@ -41,6 +41,8 @@ Exit Codes:
     5: Authentication error
 """
 
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -182,7 +184,7 @@ class HomebrewFormulaUpdater:
             request = Request(url)
             request.add_header("User-Agent", "mcp-vector-search-formula-updater/1.0")
 
-            with urlopen(request, timeout=30) as response:
+            with urlopen(request, timeout=30) as response:  # nosec B310
                 data = json.loads(response.read().decode())
 
             # Extract version
@@ -251,7 +253,7 @@ class HomebrewFormulaUpdater:
             request = Request(package_info.url)
             request.add_header("User-Agent", "mcp-vector-search-formula-updater/1.0")
 
-            with urlopen(request, timeout=60) as response:
+            with urlopen(request, timeout=60) as response:  # nosec B310
                 data = response.read()
 
             # Calculate SHA256
@@ -286,7 +288,7 @@ class HomebrewFormulaUpdater:
             # Pull latest changes
             try:
                 self.log("Pulling latest changes...", "info")
-                result = subprocess.run(
+                result = subprocess.run(  # nosec B607
                     ["git", "-C", str(self.tap_repo_path), "pull"],
                     capture_output=True,
                     text=True,
@@ -311,7 +313,7 @@ class HomebrewFormulaUpdater:
             try:
                 self.tap_repo_path.parent.mkdir(parents=True, exist_ok=True)
 
-                result = subprocess.run(
+                result = subprocess.run(  # nosec B607
                     ["git", "clone", self.tap_repo_url, str(self.tap_repo_path)],
                     capture_output=True,
                     text=True,
@@ -376,14 +378,29 @@ class HomebrewFormulaUpdater:
             sys.exit(3)
 
         # Extract current version and sha256
+        # First try explicit version directive
         version_match = re.search(r'version\s+"([^"]+)"', content)
-        sha256_match = re.search(r'sha256\s+"([^"]+)"', content)
+        if version_match:
+            current_version = version_match.group(1)
+        else:
+            # Extract version from URL (e.g., mcp_vector_search-0.15.16.tar.gz)
+            url_match = re.search(
+                r"mcp_vector_search-([0-9]+\.[0-9]+\.[0-9]+)\.tar\.gz", content
+            )
+            if url_match:
+                current_version = url_match.group(1)
+            else:
+                self.log(
+                    "Could not parse version from formula (tried version directive and URL)",
+                    "error",
+                )
+                sys.exit(3)
 
-        if not version_match or not sha256_match:
-            self.log("Could not parse version or sha256 from formula", "error")
+        sha256_match = re.search(r'sha256\s+"([^"]+)"', content)
+        if not sha256_match:
+            self.log("Could not parse sha256 from formula", "error")
             sys.exit(3)
 
-        current_version = version_match.group(1)
         current_sha256 = sha256_match.group(1)
 
         if current_version == package_info.version:
@@ -408,19 +425,20 @@ class HomebrewFormulaUpdater:
             self.log("Would update formula file", "debug")
             return formula_path
 
-        # Update version
-        content = re.sub(
-            r'version\s+"[^"]+"', f'version "{package_info.version}"', content
-        )
+        # Update version directive only if it exists
+        if version_match:
+            content = re.sub(
+                r'version\s+"[^"]+"', f'version "{package_info.version}"', content
+            )
 
         # Update sha256
         content = re.sub(
             r'sha256\s+"[^"]+"', f'sha256 "{package_info.sha256}"', content
         )
 
-        # Update URL if needed (ensure it matches version)
+        # Update URL (this also updates version implicitly for URL-derived versions)
         content = re.sub(
-            r'url\s+"https://files\.pythonhosted\.org/packages/[^"]+/mcp-vector-search-[^"]+\.tar\.gz"',
+            r'url\s+"https://files\.pythonhosted\.org/packages/[^"]+/mcp[_-]vector[_-]search-[^"]+\.tar\.gz"',
             f'url "{package_info.url}"',
             content,
         )
@@ -452,7 +470,7 @@ class HomebrewFormulaUpdater:
 
         # Check if ruby is available
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B607
                 ["ruby", "-c", str(formula_path)],
                 capture_output=True,
                 text=True,
@@ -507,7 +525,7 @@ class HomebrewFormulaUpdater:
                         f"https://{self.github_token}@github.com/{repo_path}.git"
                     )
 
-                    subprocess.run(
+                    subprocess.run(  # nosec B607
                         [
                             "git",
                             "-C",
@@ -523,7 +541,7 @@ class HomebrewFormulaUpdater:
                     self.log("Configured git authentication", "debug")
 
             # Stage changes
-            subprocess.run(
+            subprocess.run(  # nosec B607
                 [
                     "git",
                     "-C",
@@ -539,7 +557,7 @@ class HomebrewFormulaUpdater:
             # Try old location too if it exists
             old_formula = self.tap_repo_path / self.formula_name
             if old_formula.exists():
-                subprocess.run(
+                subprocess.run(  # nosec B607
                     ["git", "-C", str(self.tap_repo_path), "add", self.formula_name],
                     capture_output=True,
                     text=True,
@@ -549,7 +567,7 @@ class HomebrewFormulaUpdater:
             # Commit
             commit_message = f"chore: update formula to {package_info.version}\n\nUpdated mcp-vector-search to version {package_info.version}\n- Version: {package_info.version}\n- SHA256: {package_info.sha256}"
 
-            subprocess.run(
+            subprocess.run(  # nosec B607
                 ["git", "-C", str(self.tap_repo_path), "commit", "-m", commit_message],
                 capture_output=True,
                 text=True,
@@ -560,7 +578,7 @@ class HomebrewFormulaUpdater:
 
             # Push
             self.log("Pushing to remote repository...", "info")
-            subprocess.run(
+            subprocess.run(  # nosec B607
                 ["git", "-C", str(self.tap_repo_path), "push"],
                 capture_output=True,
                 text=True,
@@ -597,7 +615,7 @@ class HomebrewFormulaUpdater:
         # Reset git if commit was created
         if self.created_commit:
             try:
-                subprocess.run(
+                subprocess.run(  # nosec B607
                     ["git", "-C", str(self.tap_repo_path), "reset", "--hard", "HEAD~1"],
                     capture_output=True,
                     check=True,

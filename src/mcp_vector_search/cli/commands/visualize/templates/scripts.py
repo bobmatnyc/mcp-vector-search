@@ -662,22 +662,38 @@ def get_zoom_and_navigation_functions() -> str:
         // Zoom to fit all visible nodes with appropriate padding
         function zoomToFit(duration = 750) {
             const visibleNodesList = allNodes.filter(n => visibleNodes.has(n.id));
-            if (visibleNodesList.length === 0) return;
+            console.log('[zoomToFit] Visible nodes:', visibleNodesList.length);
+            if (visibleNodesList.length === 0) {
+                console.warn('[zoomToFit] No visible nodes to fit');
+                return;
+            }
 
             // Calculate bounding box of visible nodes
-            // Use MUCH more padding to ensure all nodes visible
-            const padding = 120;
+            // Use moderate padding to ensure all nodes visible
+            const padding = 80;
             let minX = Infinity, minY = Infinity;
             let maxX = -Infinity, maxY = -Infinity;
+            let nodesWithPosition = 0;
 
             visibleNodesList.forEach(d => {
                 if (d.x !== undefined && d.y !== undefined) {
+                    nodesWithPosition++;
                     minX = Math.min(minX, d.x);
                     minY = Math.min(minY, d.y);
                     maxX = Math.max(maxX, d.x);
                     maxY = Math.max(maxY, d.y);
                 }
             });
+
+            console.log('[zoomToFit] Nodes with positions:', nodesWithPosition, '/', visibleNodesList.length);
+
+            // If no nodes have positions, can't calculate bounds
+            if (nodesWithPosition === 0) {
+                console.warn('[zoomToFit] No nodes have x/y positions set');
+                return;
+            }
+
+            console.log('[zoomToFit] Bounds before padding:', {minX, minY, maxX, maxY});
 
             // Add padding
             minX -= padding;
@@ -689,11 +705,12 @@ def get_zoom_and_navigation_functions() -> str:
             const boxHeight = maxY - minY;
 
             // Calculate scale to fit ALL nodes in viewport
+            // Use 0.85 factor to leave some margin, but not too much
             const scale = Math.min(
                 width / boxWidth,
                 height / boxHeight,
                 2  // Max zoom level
-            ) * 0.5;  // EVEN MORE ZOOM-OUT: 0.7 → 0.5 (29% more margin)
+            ) * 0.85;
 
             // Calculate center translation
             const centerX = (minX + maxX) / 2;
@@ -701,15 +718,28 @@ def get_zoom_and_navigation_functions() -> str:
             const translateX = width / 2 - scale * centerX;
             const translateY = height / 2 - scale * centerY;
 
-            // Apply zoom transform with animation
-            svg.transition()
-                .duration(duration)
-                .call(
+            console.log('[zoomToFit] Transform:', {scale, centerX, centerY, translateX, translateY, width, height});
+
+            // Apply zoom transform with animation (or immediately if duration is 0)
+            if (duration === 0) {
+                // Immediate application without transition
+                svg.call(
                     zoom.transform,
                     d3.zoomIdentity
                         .translate(translateX, translateY)
                         .scale(scale)
                 );
+            } else {
+                svg.transition()
+                    .duration(duration)
+                    .call(
+                        zoom.transform,
+                        d3.zoomIdentity
+                            .translate(translateX, translateY)
+                            .scale(scale)
+                    );
+            }
+            console.log('[zoomToFit] Transform applied with duration:', duration);
         }
 
         function centerNode(node) {
@@ -2577,19 +2607,12 @@ def get_layout_algorithms_v2() -> str:
                 return aName.localeCompare(bName);
             });
 
-            // Layout parameters for Phase 1 (Initial Overview) - Grid Layout
-            const cellWidth = 250;   // Horizontal space per node (250px for adequate label space)
-            const cellHeight = 150;  // Vertical space per node (150px spacing)
+            // Layout parameters for Phase 1 (Initial Overview) - Vertical Linear List
+            const rowHeight = 50;    // Vertical space per node (compact list)
             const startX = 100;      // Left margin (100px as per requirements)
-            const startY = 100;      // Top margin (100px as per requirements, fixed not centered)
+            const startY = 100;      // Top margin (100px as per requirements)
 
-            // Calculate grid dimensions (roughly square layout)
-            const columnsPerRow = Math.ceil(Math.sqrt(sortedNodes.length));
-            const totalRows = Math.ceil(sortedNodes.length / columnsPerRow);
-            const totalWidth = columnsPerRow * cellWidth;
-            const totalHeight = totalRows * cellHeight;
-
-            // Calculate positions in grid
+            // Calculate positions in simple vertical list (linear tree, single column)
             const positions = new Map();
             sortedNodes.forEach((node, i) => {
                 if (!node.id) {
@@ -2597,17 +2620,15 @@ def get_layout_algorithms_v2() -> str:
                     return;
                 }
 
-                const col = i % columnsPerRow;
-                const row = Math.floor(i / columnsPerRow);
-                const xPosition = startX + (col * cellWidth);
-                const yPosition = startY + (row * cellHeight);
+                const xPosition = startX;
+                const yPosition = startY + (i * rowHeight);
                 positions.set(node.id, { x: xPosition, y: yPosition });
             });
 
+            const totalHeight = sortedNodes.length * rowHeight;
             console.debug(
-                `[Layout] Grid: ${positions.size} nodes, ` +
-                `${columnsPerRow} cols × ${totalRows} rows, ` +
-                `size=${totalWidth}×${totalHeight}px, start=(${startX},${startY})`
+                `[Layout] Vertical List: ${positions.size} nodes, ` +
+                `height=${totalHeight}px, start=(${startX},${startY})`
             );
 
             return positions;
@@ -3279,10 +3300,70 @@ def get_interaction_handlers_v2() -> str:
             console.log('[Init V2] View mode:', stateManager.viewMode);
             console.log('[Init V2] Visible nodes:', stateManager.getVisibleNodes().length);
 
-            // Render Phase 1: vertical list of root nodes, no edges
-            renderGraphV2(750);
+            // Sync V1's visibleNodes Set with V2's state for compatibility with zoomToFit
+            visibleNodes = new Set(stateManager.getVisibleNodes());
 
-            console.log('[Init V2] Phase 1 rendering complete - vertical list with', rootNodesList.length, 'root nodes');
+            // Pre-calculate and store positions on node objects BEFORE rendering
+            // This ensures zoomToFit has access to d.x and d.y
+            const positions = calculateListLayout(rootNodesList, width, height);
+            rootNodesList.forEach(node => {
+                const pos = positions.get(node.id);
+                if (pos) {
+                    node.x = pos.x;
+                    node.y = pos.y;
+                }
+            });
+            console.log('[Init V2] Pre-set positions on', rootNodesList.length, 'root nodes');
+
+            // Render Phase 1: vertical list of root nodes, no edges (no animation on initial render)
+            renderGraphV2(0);
+
+            // IMMEDIATELY apply initial zoom to center the vertical list
+            // Calculate list bounds (same as calculateListLayout uses)
+            const listStartX = 100;
+            const listStartY = 100;
+            const rowHeight = 50;
+            const nodeCount = rootNodesList.length;
+            const listHeight = nodeCount * rowHeight;
+            const listWidth = 300;  // Approximate width including icons/labels
+
+            // List center point (in data coordinates)
+            const listCenterX = listStartX + listWidth / 2;
+            const listCenterY = listStartY + listHeight / 2;
+
+            // Calculate scale to fit list with padding
+            const padding = 100;
+            const availableWidth = width - padding * 2;
+            const availableHeight = height - padding * 2;
+            const initScale = Math.min(
+                availableWidth / (listWidth + padding),
+                availableHeight / (listHeight + padding),
+                1.5  // Max zoom level
+            );
+
+            // Translation to center the list
+            // Formula: viewport_center = scale * data_point + translate
+            // So: translate = viewport_center - scale * data_point
+            const initTranslateX = width / 2 - initScale * listCenterX;
+            const initTranslateY = height / 2 - initScale * listCenterY;
+
+            console.log('[Init V2] Initial zoom params:', {
+                nodeCount, listHeight, listWidth,
+                listCenterX, listCenterY,
+                initScale, initTranslateX, initTranslateY,
+                viewportWidth: width, viewportHeight: height
+            });
+
+            // Apply the transform IMMEDIATELY (synchronous)
+            const initialTransform = d3.zoomIdentity
+                .translate(initTranslateX, initTranslateY)
+                .scale(initScale);
+            svg.call(zoom.transform, initialTransform);
+
+            // Also set on the g element directly as a fallback
+            g.attr('transform', `translate(${initTranslateX}, ${initTranslateY}) scale(${initScale})`);
+
+            console.log('[Init V2] Phase 1 complete - vertical list with', rootNodesList.length, 'root nodes');
         }
     """
 
@@ -3504,6 +3585,9 @@ def get_rendering_v2() -> str:
                     // Start at calculated position or center
                     const pos = positions.get(d.id);
                     if (pos) {
+                        // Store position on node object for zoomToFit compatibility
+                        d.x = pos.x;
+                        d.y = pos.y;
                         return `translate(${pos.x}, ${pos.y})`;
                     }
                     return `translate(${width / 2}, ${height / 2})`;
@@ -3553,6 +3637,9 @@ def get_rendering_v2() -> str:
             // 5. Post-render updates
             updateBreadcrumbsV2();
             updateStats();
+
+            // NOTE: zoomToFit is now handled by caller (initializeVisualizationV2)
+            // to have better control over timing and prevent race conditions
         }
 
         /**

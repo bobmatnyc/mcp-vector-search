@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.17] - 2025-12-08
+
+### Fixed
+- **Fixed TOML config writing for Codex platform**
+  - Now requires py-mcp-installer>=0.1.4 which adds missing `tomli-w` dependency
+  - Fixes "Failed to serialize config: TOML write support requires tomli-w" error
+  - Added Python 3.9+ compatibility with `from __future__ import annotations`
+
 ## [0.15.16] - 2025-12-08
 
 ### Fixed

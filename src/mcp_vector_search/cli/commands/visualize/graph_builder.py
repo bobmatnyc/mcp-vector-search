@@ -445,6 +445,11 @@ async def build_graph_data(
                     or f"L{other_chunk.start_line}"
                 )
 
+                # Skip __init__ functions as callers - they are noise in "called by" lists
+                # (every class calls __init__ when constructing objects)
+                if other_name == "__init__":
+                    continue
+
                 if chunk_id not in caller_map:
                     caller_map[chunk_id] = []
 
