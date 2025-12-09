@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.15] - 2025-12-08
+
+### Fixed
+- **Fixed platform forcing bug in MCP installer**
+  - Now requires py-mcp-installer>=0.1.3 which fixes platform detection when forcing specific platforms
+  - Fixes "Platform not supported: claude_code" errors during `mcp-vector-search setup`
+  - Added `detect_for_platform()` method to detect specific platforms instead of highest-confidence one
+  - Enables setup to work correctly in multi-platform environments (Claude Code + Claude Desktop + Cursor)
+
 ## [0.15.14] - 2025-12-08
 
 ### Fixed
