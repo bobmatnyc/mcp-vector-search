@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.16] - 2025-12-08
+
+### Fixed
+- **Cleaned up verbose traceback output during setup**
+  - Suppressed noisy "already exists" tracebacks when reinstalling MCP servers
+  - Errors now show clean, single-line messages instead of full stack traces
+  - "Already exists" is treated as success (server is already configured)
+  - Debug output available via `--verbose` flag for troubleshooting
+
 ## [0.15.15] - 2025-12-08
 
 ### Fixed

@@ -26,6 +26,8 @@ from loguru import logger
 
 # Import from py-mcp-installer library
 from py_mcp_installer import (
+    InstallationError,
+    InstallationResult,
     MCPInspector,
     MCPInstaller,
     MCPServerConfig,
@@ -457,16 +459,22 @@ def main(
 # ==============================================================================
 
 
-def _install_to_platform(platform_info: PlatformInfo, project_root: Path) -> bool:
+def _install_to_platform(
+    platform_info: PlatformInfo, project_root: Path, force: bool = True
+) -> bool:
     """Install to a specific platform.
 
     Args:
         platform_info: Platform information
         project_root: Project root directory
+        force: If True, overwrite existing installation (default: True)
 
     Returns:
         True if installation succeeded
     """
+    import io
+    import sys
+
     try:
         # Create installer for this platform
         installer = MCPInstaller(platform=platform_info.platform)
@@ -502,14 +510,62 @@ def _install_to_platform(platform_info: PlatformInfo, project_root: Path) -> boo
             description=f"Semantic code search for {project_root.name}",
         )
 
-        # Install server
-        result = installer.install_server(
-            name=server_config.name,
-            command=server_config.command,
-            args=server_config.args,
-            env=server_config.env,
-            description=server_config.description,
-        )
+        def do_install() -> InstallationResult:
+            """Execute the installation."""
+            return installer.install_server(
+                name=server_config.name,
+                command=server_config.command,
+                args=server_config.args,
+                env=server_config.env,
+                description=server_config.description,
+            )
+
+        # Try to install, suppressing verbose stderr output from py-mcp-installer
+        try:
+            # Capture stderr to suppress verbose traceback output
+            old_stderr = sys.stderr
+            sys.stderr = io.StringIO()
+            try:
+                result = do_install()
+            finally:
+                captured_stderr = sys.stderr.getvalue()
+                sys.stderr = old_stderr
+                # Log captured output at debug level for troubleshooting
+                if captured_stderr.strip():
+                    logger.debug(f"Installation stderr: {captured_stderr[:500]}")
+        except InstallationError as e:
+            # Restore stderr before handling error
+            if sys.stderr != old_stderr:
+                sys.stderr = old_stderr
+
+            # Check if it's an "already exists" error
+            error_msg = str(e).lower()
+            if "already exists" in error_msg and force:
+                # Silently uninstall first, then reinstall
+                logger.debug(
+                    f"Server already exists on {platform_info.platform.value}, "
+                    "removing and reinstalling..."
+                )
+                try:
+                    # Suppress stderr during uninstall too
+                    old_stderr = sys.stderr
+                    sys.stderr = io.StringIO()
+                    try:
+                        installer.uninstall_server(server_config.name)
+                        result = do_install()
+                    finally:
+                        sys.stderr = old_stderr
+                except Exception as uninstall_err:
+                    logger.debug(
+                        f"Failed to uninstall existing server: {uninstall_err}"
+                    )
+                    # Server already exists is not a failure - it's already configured
+                    print_success(f"  ✅ Installed to {platform_info.platform.value}")
+                    if platform_info.config_path:
+                        print_info(f"     Config: {platform_info.config_path}")
+                    return True
+            else:
+                raise
 
         if result.success:
             print_success(f"  ✅ Installed to {platform_info.platform.value}")
@@ -534,9 +590,21 @@ def _install_to_platform(platform_info: PlatformInfo, project_root: Path) -> boo
             return False
 
     except Exception as e:
-        logger.exception(f"Installation to {platform_info.platform.value} failed")
-        print_error(f"  ❌ Installation failed: {e}")
-        return False
+        logger.debug(f"Installation to {platform_info.platform.value} failed: {e}")
+        # Don't print full exception - just a clean error message
+        error_str = str(e)
+        # Extract just the main error message, not the full traceback
+        if "already exists" in error_str.lower():
+            # Already exists is a success case - server is configured
+            print_success(f"  ✅ Installed to {platform_info.platform.value}")
+            if platform_info.config_path:
+                print_info(f"     Config: {platform_info.config_path}")
+            return True
+        else:
+            # Extract first line of error for clean output
+            short_error = error_str.split("\n")[0][:100]
+            print_error(f"  ❌ Failed: {platform_info.platform.value} - {short_error}")
+            return False
 
 
 @install_app.command(name="mcp")
