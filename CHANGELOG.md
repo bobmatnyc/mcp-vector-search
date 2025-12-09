@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.14] - 2025-12-08
+
+### Fixed
+- **Fixed Claude Code CLI installation syntax error**
+  - Now requires py-mcp-installer>=0.1.2 which fixes the CLI command building
+  - Fixes "error: unknown option '--command'" during `mcp-vector-search setup`
+  - Claude Code CLI uses positional arguments, not `--command`/`--arg` flags
+  - Correct syntax: `claude mcp add <name> <command> [args...] -e KEY=val --scope project`
+
+## [0.15.13] - 2025-12-08
+
+### Fixed
+- **Updated py-mcp-installer dependency to 0.1.1**
+  - Now requires py-mcp-installer>=0.1.1 which includes the platform forcing fix
+  - Fixes "Platform not supported: claude_code" error during `mcp-vector-search setup`
+  - Users must upgrade to get the fix: `pipx upgrade mcp-vector-search`
+
+## [0.15.12] - 2025-12-08
+
+### Fixed
+- **`--version` flag now works correctly**
+  - Fixed "Error: Missing command" when running `mcp-vector-search --version`
+  - Added `is_eager=True` callback for version flag to process before command parsing
+  - The `-v` short form also works now
+
 ## [0.15.11] - 2025-12-08
 
 ### Fixed

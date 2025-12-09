@@ -123,8 +123,8 @@ def get_spacing_calculation_functions() -> str:
 
     Design Decision: Adaptive spacing based on graph density
 
-    Rationale: Hardcoded 800px spacing doesn't adapt to viewport size or node count.
-    Selected density-based formula (nodes/area) for automatic scaling across devices.
+    Rationale: Original 800px spacing caused nodes to go off-screen on typical displays.
+    Reduced to 300px to fit 5+ hierarchy levels on 1920px screens while maintaining readability.
 
     Trade-offs:
     - Adaptability: Auto-scales for mobile to 4K displays vs. fixed spacing
@@ -2300,6 +2300,20 @@ def get_state_management() -> str:
                     }
                 }
 
+                // Phase 2 Transition: Hide sibling nodes when expanding at root level
+                // This prevents duplicate rendering of root nodes when transitioning from Phase 1 to Phase 2
+                if (depth === 0) {
+                    console.log('[StateManager] Phase 1->2 transition: Hiding non-expanded root siblings');
+                    // Hide all nodes except the one being expanded and its children
+                    for (const [siblingId, siblingState] of this.nodeStates.entries()) {
+                        if (siblingId !== nodeId && siblingState.visible && !this.expansionPath.includes(siblingId)) {
+                            // This is a sibling root node - hide it during Phase 2 tree expansion
+                            siblingState.visible = false;
+                            console.log(`[StateManager] Hiding root sibling: ${siblingId}`);
+                        }
+                    }
+                }
+
                 // Mark node as expanded
                 nodeState.expanded = true;
                 nodeState.childrenVisible = true;
@@ -2358,7 +2372,11 @@ def get_state_management() -> str:
                 // Update view mode if path is empty
                 if (this.expansionPath.length === 0) {
                     this.viewMode = 'tree_root';
-                    console.log('[StateManager] Collapsed to root, switching to TREE_ROOT view');
+                    console.log('[StateManager] Collapsed to root, switching to TREE_ROOT view - restoring root siblings');
+
+                    // Restore visibility of all root nodes when returning to Phase 1
+                    // This reverses the hiding done in expandNode() at depth 0
+                    this._showAllRootNodes();
                 }
 
                 // Notify listeners
@@ -2366,10 +2384,69 @@ def get_state_management() -> str:
             }
 
             /**
-             * Reset state to initial list view
+             * Show all root-level nodes (used when returning to Phase 1)
+             * CRITICAL: Also hides all non-root nodes to prevent fragments from appearing
+             */
+            _showAllRootNodes() {
+                // Find and show all root nodes (nodes with no parent containment links)
+                // This is determined by checking allLinks, which is available globally
+                if (typeof allLinks !== 'undefined' && typeof allNodes !== 'undefined') {
+                    // Filter for root nodes only (directories/files with no parent containment)
+                    const rootNodeIds = new Set();
+
+                    for (const node of allNodes) {
+                        // Only consider structural nodes (directories, files, subprojects)
+                        const isStructural = node.type === 'directory' || node.type === 'file' || node.type === 'subproject';
+                        if (!isStructural) {
+                            continue;
+                        }
+
+                        const hasParent = allLinks.some(link => {
+                            const targetId = link.target.id || link.target;
+                            const linkType = link.type;
+                            return targetId === node.id &&
+                                   (linkType === 'dir_containment' ||
+                                    linkType === 'file_containment' ||
+                                    linkType === 'dir_hierarchy');
+                        });
+
+                        if (!hasParent) {
+                            rootNodeIds.add(node.id);
+                        }
+                    }
+
+                    console.log('[StateManager] Reset: found', rootNodeIds.size, 'root nodes');
+
+                    // Now update all node states: show roots, hide everything else
+                    for (const node of allNodes) {
+                        const nodeState = this._getOrCreateState(node.id);
+                        const isRoot = rootNodeIds.has(node.id);
+
+                        if (isRoot) {
+                            // This is a root node - make it visible and collapsed
+                            nodeState.visible = true;
+                            nodeState.expanded = false;
+                            nodeState.childrenVisible = false;
+                        } else {
+                            // This is NOT a root node - hide it completely
+                            nodeState.visible = false;
+                            nodeState.expanded = false;
+                            nodeState.childrenVisible = false;
+                        }
+                    }
+
+                    console.log('[StateManager] Reset: visible nodes =', this.getVisibleNodes().length);
+                }
+            }
+
+            /**
+             * Reset state to initial list view (Phase 1).
+             * Shows ONLY root nodes, hides all children/descendants.
              */
             reset() {
-                console.log('[StateManager] Resetting to initial state');
+                console.log('[StateManager] ===== RESET TO PHASE 1 =====');
+                console.log('[StateManager] Before reset - visible nodes:', this.getVisibleNodes().length);
+                console.log('[StateManager] Before reset - expansion path:', this.expansionPath.join(' > '));
 
                 // Collapse all nodes in expansion path
                 const nodesToCollapse = [...this.expansionPath];
@@ -2380,16 +2457,19 @@ def get_state_management() -> str:
                 // Clear expansion path
                 this.expansionPath = [];
 
+                // Clear visible edges
+                this.visibleEdges.clear();
+
                 // Reset view mode to tree_root
                 this.viewMode = 'tree_root';
 
-                // Make only root nodes visible
-                for (const [nodeId, state] of this.nodeStates.entries()) {
-                    // Keep only nodes that have no parent (root nodes)
-                    // This will be determined by the allLinks data
-                    // For now, mark all non-root nodes as invisible
-                    // The renderGraphV2 function will handle visibility correctly
-                }
+                // CRITICAL: Show ONLY root nodes, hide everything else
+                // This prevents fragments (expanded children) from appearing after reset
+                this._showAllRootNodes();
+
+                console.log('[StateManager] After reset - visible nodes:', this.getVisibleNodes().length);
+                console.log('[StateManager] After reset - expansion path:', this.expansionPath.join(' > '));
+                console.log('[StateManager] ===== RESET COMPLETE =====');
 
                 // Notify listeners
                 this._notifyListeners();
@@ -2534,43 +2614,43 @@ def get_layout_algorithms_v2() -> str:
         }
 
         /**
-         * Calculate horizontal fan layout positions for child nodes.
+         * Calculate D3.js tree layout positions for child nodes.
          *
-         * Arranges children in a 180° arc (horizontal fan) from parent node.
-         * Radius adapts to child count (200-400px range).
+         * Uses D3.js's official tree layout algorithm to arrange children in a radial pattern.
+         * This provides optimal spacing and collision avoidance through D3's proven algorithms.
          *
-         * @param {Object} parentPos - {x, y} coordinates of parent
+         * Design Decision: D3.js tree layout for radial visualization
+         *
+         * Rationale: D3's tree layout provides:
+         * - Industry-standard layout algorithm with proven spacing heuristics
+         * - Automatic collision detection and avoidance
+         * - Built-in support for radial tree projections
+         * - Better handling of deep hierarchies with adaptive spacing
+         *
+         * Trade-offs:
+         * - Dependencies: Requires D3.js library vs. custom implementation
+         * - Performance: Slightly slower for very large trees (100+ nodes)
+         * - Flexibility: D3's separation function provides better spacing control
+         * - Maintainability: Leverages well-tested library vs. custom math
+         *
+         * Performance Analysis:
+         * - Time Complexity: O(n log n) where n = number of children
+         * - Space Complexity: O(n) for hierarchy structure
+         * - Expected Performance: <5ms for typical node counts (1-50 children)
+         *
+         * @param {Object} parentNode - Parent node with {id, name, type}
          * @param {Array} children - Array of child node objects
          * @param {Number} canvasWidth - SVG viewport width
          * @param {Number} canvasHeight - SVG viewport height
          * @returns {Map} Map of childId -> {x, y} positions
          */
-        function calculateFanLayout(parentPos, children, canvasWidth, canvasHeight) {
+        function calculateD3TreeLayout(parentNode, children, canvasWidth, canvasHeight) {
             if (!children || children.length === 0) {
-                console.debug('[Layout] No children to layout in fan');
+                console.debug('[D3 Layout] No children to layout');
                 return new Map();
             }
 
-            const parentX = parentPos.x;
-            const parentY = parentPos.y;
-
-            // Calculate adaptive radius based on child count
-            const baseRadius = 200;  // Minimum radius
-            const maxRadius = 400;   // Maximum radius
-            const spacingPerChild = 60;  // Horizontal space per child
-
-            // Arc length = radius * π (for 180° arc)
-            // We want: arc_length >= num_children * spacingPerChild
-            // Therefore: radius >= (num_children * spacingPerChild) / π
-            const calculatedRadius = (children.length * spacingPerChild) / Math.PI;
-            const radius = Math.max(baseRadius, Math.min(calculatedRadius, maxRadius));
-
-            // Horizontal fan: 180° arc from left to right
-            const startAngle = Math.PI;  // Left (180°)
-            const endAngle = 0;          // Right (0°)
-            const angleRange = startAngle - endAngle;
-
-            // Sort children (directories first, then alphabetical)
+            // Sort children (directories first, then alphabetical) for consistent layout
             const sortedChildren = children.slice().sort((a, b) => {
                 const aIsDir = a.type === 'directory' ? 0 : 1;
                 const bIsDir = b.type === 'directory' ? 0 : 1;
@@ -2581,9 +2661,137 @@ def get_layout_algorithms_v2() -> str:
                 return aName.localeCompare(bName);
             });
 
-            // Calculate positions
+            // Create hierarchical data structure for D3
+            // Parent is at depth 0, children at depth 1
+            const hierarchyData = {
+                id: parentNode.id,
+                name: parentNode.name || 'root',
+                type: parentNode.type,
+                children: sortedChildren.map(child => ({
+                    id: child.id,
+                    name: child.name || 'unnamed',
+                    type: child.type
+                }))
+            };
+
+            // Calculate adaptive radius based on child count
+            // More children = larger radius for better spacing
+            const minRadius = 200;  // Minimum radius for small child counts
+            const maxRadius = 400;  // Maximum radius for large child counts
+            const spacingPerChild = 50;  // Desired arc length per child
+
+            // Circumference = 2πr, want circumference >= children * spacing
+            const calculatedRadius = (sortedChildren.length * spacingPerChild) / (2 * Math.PI);
+            const radius = Math.max(minRadius, Math.min(calculatedRadius, maxRadius));
+
+            // Create D3 tree layout with radial projection
+            // size([angle, radius]) where angle is in radians (0 to 2π)
+            const treeLayout = d3.tree()
+                .size([2 * Math.PI, radius])
+                .separation((a, b) => {
+                    // Separation function: how much space between siblings
+                    // Same parent: 1 unit apart, different parents: 2 units apart
+                    // Divided by depth to tighten spacing at deeper levels
+                    return (a.parent === b.parent ? 1 : 2) / (a.depth || 1);
+                });
+
+            // Create hierarchy from data
+            const root = d3.hierarchy(hierarchyData);
+
+            // Apply tree layout (computes x and y for each node)
+            // x = angle (0 to 2π), y = distance from center
+            treeLayout(root);
+
+            // Convert D3 positions to Cytoscape coordinates
+            const positions = new Map();
+            const parentPos = { x: canvasWidth / 2, y: canvasHeight / 2 };
+
+            // Only position the children (depth 1), not the parent
+            root.children.forEach(node => {
+                // D3 tree layout outputs:
+                // - node.x: angle in radians (0 to 2π)
+                // - node.y: radial distance from center
+
+                const angle = node.x;
+                const distance = node.y;
+
+                // Convert polar coordinates (angle, distance) to cartesian (x, y)
+                // Offset by -π/2 to start at top of circle (12 o'clock position)
+                const x = parentPos.x + distance * Math.cos(angle - Math.PI / 2);
+                const y = parentPos.y + distance * Math.sin(angle - Math.PI / 2);
+
+                positions.set(node.data.id, { x, y });
+            });
+
+            console.debug(
+                `[D3 Layout] Positioned ${positions.size} children using D3 tree layout, ` +
+                `radius=${radius.toFixed(1)}px, arc=${(2 * Math.PI * radius / sortedChildren.length).toFixed(1)}px/child`
+            );
+
+            return positions;
+        }
+
+        /**
+         * Legacy radial layout function (replaced by D3.js tree layout).
+         * Kept for reference and potential fallback if D3.js is unavailable.
+         *
+         * @deprecated Use calculateD3TreeLayout instead
+         */
+        function calculateRadialLayout(parentPos, children, canvasWidth, canvasHeight) {
+            // Fallback: If D3 is not available, use simple radial layout
+            if (typeof d3 === 'undefined') {
+                console.warn('[Layout] D3.js not available, using fallback radial layout');
+                return calculateRadialLayoutFallback(parentPos, children, canvasWidth, canvasHeight);
+            }
+
+            // Convert to D3 tree layout format
+            // parentPos needs to be wrapped in a node object for D3 layout
+            const parentNode = {
+                id: 'parent',  // Will be replaced by actual parent in calling context
+                name: 'parent',
+                type: 'directory',
+                x: parentPos.x,
+                y: parentPos.y
+            };
+
+            return calculateD3TreeLayout(parentNode, children, canvasWidth, canvasHeight);
+        }
+
+        /**
+         * Simple fallback radial layout if D3.js is not available.
+         * Arranges children in a circle with equal spacing.
+         */
+        function calculateRadialLayoutFallback(parentPos, children, canvasWidth, canvasHeight) {
+            if (!children || children.length === 0) {
+                console.debug('[Layout] No children to layout in radial');
+                return new Map();
+            }
+
+            const parentX = parentPos.x;
+            const parentY = parentPos.y;
+
+            // Calculate adaptive radius based on child count
+            const baseRadius = 200;
+            const maxRadius = 350;
+            const spacingPerChild = 40;
+            const calculatedRadius = (children.length * spacingPerChild) / (2 * Math.PI);
+            const radius = Math.max(baseRadius, Math.min(calculatedRadius, maxRadius));
+
+            // Sort children
+            const sortedChildren = children.slice().sort((a, b) => {
+                const aIsDir = a.type === 'directory' ? 0 : 1;
+                const bIsDir = b.type === 'directory' ? 0 : 1;
+                if (aIsDir !== bIsDir) return aIsDir - bIsDir;
+
+                const aName = (a.name || '').toLowerCase();
+                const bName = (b.name || '').toLowerCase();
+                return aName.localeCompare(bName);
+            });
+
+            // Calculate positions in full circle
             const positions = new Map();
             const numChildren = sortedChildren.length;
+            const startAngle = -Math.PI / 2;
 
             sortedChildren.forEach((child, i) => {
                 if (!child.id) {
@@ -2591,18 +2799,8 @@ def get_layout_algorithms_v2() -> str:
                     return;
                 }
 
-                // Calculate angle for this child
-                let angle;
-                if (numChildren === 1) {
-                    // Single child: center of arc (90°)
-                    angle = Math.PI / 2;
-                } else {
-                    // Distribute evenly across arc
-                    const progress = i / (numChildren - 1);
-                    angle = startAngle - (progress * angleRange);
-                }
-
-                // Convert polar to cartesian coordinates
+                const angleStep = (2 * Math.PI) / numChildren;
+                const angle = startAngle + (i * angleStep);
                 const x = parentX + radius * Math.cos(angle);
                 const y = parentY + radius * Math.sin(angle);
 
@@ -2610,12 +2808,19 @@ def get_layout_algorithms_v2() -> str:
             });
 
             console.debug(
-                `[Layout] Fan: ${positions.size} children, ` +
-                `radius=${radius.toFixed(1)}px, ` +
-                `arc=${(angleRange * 180 / Math.PI).toFixed(0)}°`
+                `[Layout Fallback] Radial: ${positions.size} children, ` +
+                `radius=${radius.toFixed(1)}px, 360° circle`
             );
 
             return positions;
+        }
+
+        /**
+         * @deprecated Use calculateRadialLayout instead
+         * Legacy function name for backward compatibility
+         */
+        function calculateFanLayout(parentPos, children, canvasWidth, canvasHeight) {
+            return calculateRadialLayout(parentPos, children, canvasWidth, canvasHeight);
         }
 
         /**
@@ -2623,6 +2828,10 @@ def get_layout_algorithms_v2() -> str:
          *
          * Arranges children vertically to the right of parent node,
          * creating a hierarchical tree structure similar to file explorers.
+         *
+         * NEW: Supports hierarchical depth indication via horizontal offset.
+         * Each level can be positioned at a consistent horizontal distance,
+         * creating a clear visual hierarchy.
          *
          * Design Decision: Tree layout for directory navigation
          *
@@ -2639,9 +2848,10 @@ def get_layout_algorithms_v2() -> str:
          * @param {Array} children - Array of child node objects
          * @param {Number} canvasWidth - SVG viewport width
          * @param {Number} canvasHeight - SVG viewport height
+         * @param {Number} depth - Optional depth level for hierarchical spacing
          * @returns {Map} Map of childId -> {x, y} positions
          */
-        function calculateTreeLayout(parentPos, children, canvasWidth, canvasHeight) {
+        function calculateTreeLayout(parentPos, children, canvasWidth, canvasHeight, depth = 1) {
             if (!children || children.length === 0) {
                 console.debug('[Layout] No children for tree layout');
                 return new Map();
@@ -2651,8 +2861,8 @@ def get_layout_algorithms_v2() -> str:
             const parentY = parentPos.y;
 
             // Tree layout parameters
-            const horizontalOffset = 800;  // Fixed horizontal spacing from parent
-            const verticalSpacing = 50;    // Vertical spacing between children
+            const horizontalOffset = 300;  // Fixed horizontal spacing from parent (reduced from 800 to fit on screen)
+            const verticalSpacing = 100;   // Vertical spacing between children (increased from 50 for better readability)
 
             // Sort children (directories first, then alphabetical)
             const sortedChildren = children.slice().sort((a, b) => {
@@ -2685,7 +2895,7 @@ def get_layout_algorithms_v2() -> str:
 
             console.debug(
                 `[Layout] Tree: ${positions.size} children, ` +
-                `offset=${horizontalOffset}px, spacing=${verticalSpacing}px`
+                `offset=${horizontalOffset}px, spacing=${verticalSpacing}px, depth=${depth}`
             );
 
             return positions;
@@ -2819,9 +3029,57 @@ def get_interaction_handlers_v2() -> str:
         }
 
         /**
+         * Get immediate children of a given node (ONE level only).
+         *
+         * Returns only direct children, not recursive descendants.
+         * This enables on-demand expansion where each click reveals one level.
+         *
+         * Design Decision: Lazy expansion (one level at a time)
+         *
+         * Rationale: Users build mental model incrementally by expanding one level
+         * at a time. Pre-expanding entire subtrees is overwhelming and defeats
+         * the purpose of interactive exploration.
+         *
+         * @param {String} parentId - ID of parent node
+         * @param {Array} links - All graph links
+         * @param {Array} nodes - All graph nodes
+         * @returns {Array} Array of immediate child node objects
+         */
+        function getImmediateChildren(parentId, links, nodes) {
+            const children = links
+                .filter(link => {
+                    const sourceId = link.source.id || link.source;
+                    const linkType = link.type;
+                    return sourceId === parentId &&
+                           (linkType === 'dir_containment' ||
+                            linkType === 'file_containment' ||
+                            linkType === 'dir_hierarchy');
+                })
+                .map(link => {
+                    const childId = link.target.id || link.target;
+                    const childNode = nodes.find(n => n.id === childId);
+                    return childNode;
+                })
+                .filter(n => n);
+
+            console.log(`[getImmediateChildren] Found ${children.length} immediate children for node ${parentId}`);
+            return children;
+        }
+
+        /**
          * Expand a node (directory or file) in V2.0 mode.
          *
-         * Triggers state update and re-render with animation.
+         * ON-DEMAND EXPANSION: Shows ONLY immediate children (one level)
+         * - Directories: Show immediate subdirectories and files
+         * - Files: Show immediate AST chunks
+         *
+         * Design Decision: One level at a time (lazy expansion)
+         *
+         * Rationale: Users explore incrementally, building mental model level by level.
+         * Pre-expanding entire trees causes cognitive overload and defeats the purpose
+         * of interactive visualization.
+         *
+         * Triggers state update and re-render with radial animation.
          */
         function expandNodeV2(nodeId, nodeType) {
             if (!stateManager) {
@@ -2835,30 +3093,16 @@ def get_interaction_handlers_v2() -> str:
                 return;
             }
 
-            // Find direct children
-            const children = allLinks
-                .filter(link => {
-                    const sourceId = link.source.id || link.source;
-                    const linkType = link.type;
-                    return sourceId === nodeId &&
-                           (linkType === 'dir_containment' ||
-                            linkType === 'file_containment' ||
-                            linkType === 'dir_hierarchy');
-                })
-                .map(link => {
-                    const targetId = link.target.id || link.target;
-                    return allNodes.find(n => n.id === targetId);
-                })
-                .filter(n => n);
-
+            // ON-DEMAND: Get ONLY immediate children (one level)
+            const children = getImmediateChildren(nodeId, allLinks, allNodes);
             const childIds = children.map(c => c.id);
 
-            console.log('[Expand] Expanding node:', nodeId, 'with', childIds.length, 'children');
+            console.log(`[Expand] ${nodeType} - showing ${childIds.length} immediate children only (on-demand expansion)`);
 
             // Update state
             stateManager.expandNode(nodeId, nodeType, childIds);
 
-            // Re-render with animation
+            // Re-render with radial animation
             renderGraphV2();
         }
 
@@ -2957,7 +3201,17 @@ def get_interaction_handlers_v2() -> str:
             allLinks = data.links;
 
             // Find root nodes - nodes with no incoming containment edges
+            // Phase 1: Only show directories and files (exclude code chunks)
+            // This prevents hundreds of functions/classes from cluttering the initial view
             const rootNodesList = allNodes.filter(n => {
+                // Filter by type: only structural elements (directories, files, subprojects)
+                // This prevents hundreds of functions/classes from cluttering the initial view
+                const isDirectoryOrFile = n.type === 'directory' || n.type === 'file' || n.type === 'subproject';
+                if (!isDirectoryOrFile) {
+                    return false;
+                }
+
+                // Check if node has a parent containment edge
                 const hasParent = allLinks.some(link => {
                     const targetId = link.target.id || link.target;
                     return targetId === n.id &&
@@ -2969,6 +3223,22 @@ def get_interaction_handlers_v2() -> str:
             });
 
             console.log('[Init V2] Found', rootNodesList.length, 'root nodes');
+
+            // Debug: Log node type distribution for verification
+            const nodeTypeCounts = {};
+            rootNodesList.forEach(n => {
+                nodeTypeCounts[n.type] = (nodeTypeCounts[n.type] || 0) + 1;
+            });
+            console.log('[Init V2] Root node types:', nodeTypeCounts);
+
+            // Debug: Warn if any non-structural nodes slipped through
+            const nonStructural = rootNodesList.filter(n =>
+                n.type !== 'directory' && n.type !== 'file' && n.type !== 'subproject'
+            );
+            if (nonStructural.length > 0) {
+                console.warn('[Init V2] WARNING: Non-structural nodes in root list:',
+                    nonStructural.map(n => `${n.id} (${n.type})`));
+            }
 
             // Store root nodes globally
             rootNodes = rootNodesList;
@@ -3028,16 +3298,27 @@ def get_rendering_v2() -> str:
          * Main rendering function for V2.0 with transition animations.
          *
          * Two-Phase Prescriptive Layout:
-         * - Phase 1 (tree_root): Vertical list layout with root-level nodes only, all collapsed
-         * - Phase 2 (tree_expanded/file_detail): Rightward tree expansion with dagre-style hierarchy
+         * - Phase 1 (tree_root): Grid layout with root-level nodes only, all collapsed
+         * - Phase 2 (tree_expanded/file_detail): Radial expansion with on-demand children
          *
          * Renders visible nodes with smooth 750ms transitions between layouts.
          *
-         * Design Decision: Automatic layout selection based on view mode
+         * Design Decision: Radial layout for incremental exploration
+         *
+         * Rationale: Radial layout (360° circles) provides:
+         * - Natural visual grouping of siblings around parent
+         * - Space-efficient scaling for many children (up to 20+)
+         * - Clear depth indication through concentric rings
+         * - Incremental mental model building (one level at a time)
+         *
+         * Trade-offs:
+         * - Exploration: On-demand expansion vs. pre-expanded tree (less cognitive load)
+         * - Space: Radial rings vs. linear tree (better use of 2D space)
+         * - Familiarity: Novel radial pattern vs. file explorer metaphor
          *
          * The layout automatically adapts to the current phase:
-         * - Phase 1 uses simple vertical list (clear overview)
-         * - Phase 2 uses tree layout (rightward expansion for deep hierarchies)
+         * - Phase 1 uses grid layout (clear overview)
+         * - Phase 2 uses radial layout (concentric expansion)
          */
         function renderGraphV2(duration = 750) {
             if (!stateManager) {
@@ -3045,7 +3326,7 @@ def get_rendering_v2() -> str:
                 return;
             }
 
-            console.log('[Render] Rendering graph, mode:', stateManager.viewMode, 'phase:', isInitialOverview ? 'Phase 1 (overview)' : 'Phase 2 (tree)');
+            console.log('[Render] Rendering graph, mode:', stateManager.viewMode, 'phase:', isInitialOverview ? 'Phase 1 (overview)' : 'Phase 2 (radial)');
 
             // 1. Get visible nodes
             const visibleNodeIds = stateManager.getVisibleNodes();
@@ -3065,62 +3346,75 @@ def get_rendering_v2() -> str:
 
                 console.debug('[Render] PHASE 1 (tree_root): Vertical list with', positions.size, 'root nodes');
             } else if (stateManager.viewMode === 'tree_expanded' || stateManager.viewMode === 'file_detail') {
-                // PHASE 2: Tree layout with rightward expansion (after first click)
-                // Tree layout: rightward expansion for directories/files
-                stateManager.expansionPath.forEach((expandedId, depth) => {
-                    const expandedNode = allNodes.find(n => n.id === expandedId);
-                    if (!expandedNode) return;
+                // PHASE 2: Radial layout with on-demand expansion (after first click)
+                // Each node's children fan out in a 360° circle around it
 
-                    // Position expanded node
-                    if (depth === 0) {
-                        // Root level - use list layout position
-                        const rootNodes = allNodes.filter(n => {
-                            // Phase 1: Only show directories and files (exclude code chunks)
-                            // This prevents hundreds of functions/classes from cluttering the initial view
-                            const isDirectoryOrFile = n.type === 'directory' || n.type === 'file' || n.type === 'subproject';
-                            if (!isDirectoryOrFile) return false;
+                // Get the root expanded node (first in expansion path)
+                const rootExpandedId = stateManager.expansionPath[0];
+                if (!rootExpandedId) {
+                    console.warn('[Render] No expanded node in path');
+                    return;
+                }
 
-                            const parentLinks = allLinks.filter(l =>
-                                (l.target.id || l.target) === n.id &&
-                                (l.type === 'dir_containment' || l.type === 'file_containment')
-                            );
-                            return parentLinks.length === 0;
-                        });
-                        const listPos = calculateListLayout(rootNodes, width, height);
-                        const pos = listPos.get(expandedId);
-                        if (pos) positions.set(expandedId, pos);
-                    } else {
-                        // Child node - should already have position from parent's tree
-                        if (!positions.has(expandedId)) {
-                            // Fallback to center-left
-                            positions.set(expandedId, { x: width * 0.3, y: height / 2 });
-                        }
-                    }
+                const rootExpandedNode = allNodes.find(n => n.id === rootExpandedId);
+                if (!rootExpandedNode) {
+                    console.warn('[Render] Root expanded node not found:', rootExpandedId);
+                    return;
+                }
 
-                    // Calculate tree layout for children (rightward expansion)
+                // RADIAL LAYOUT: Position nodes in concentric circles around parents
+                // Each expanded node has its children arranged radially around it
+
+                // Start by positioning the root expanded node at center
+                const centerX = width / 2;
+                const centerY = height / 2;
+                positions.set(rootExpandedId, { x: centerX, y: centerY });
+
+                // Build hierarchical radial layout for ALL visible descendants
+                // Use BFS to position nodes level by level in radial pattern
+                const positioned = new Set([rootExpandedId]);
+                const queue = [rootExpandedId];
+
+                while (queue.length > 0) {
+                    const parentId = queue.shift();
+                    const parentPos = positions.get(parentId);
+                    if (!parentPos) continue;
+
+                    // Get the parent node object for D3 layout
+                    const parentNode = allNodes.find(n => n.id === parentId);
+                    if (!parentNode) continue;
+
+                    // Find visible children of this parent
                     const children = allLinks
                         .filter(link => {
                             const sourceId = link.source.id || link.source;
-                            return sourceId === expandedId;
+                            const linkType = link.type;
+                            return sourceId === parentId &&
+                                   (linkType === 'dir_containment' ||
+                                    linkType === 'file_containment' ||
+                                    linkType === 'dir_hierarchy');
                         })
                         .map(link => {
                             const targetId = link.target.id || link.target;
                             return allNodes.find(n => n.id === targetId);
                         })
-                        .filter(n => n && visibleNodeIds.includes(n.id));
+                        .filter(n => n && visibleNodeIds.includes(n.id) && !positioned.has(n.id));
 
                     if (children.length > 0) {
-                        const parentPos = positions.get(expandedId) || { x: width * 0.3, y: height / 2 };
-
-                        // Use tree layout for rightward expansion
-                        const treePos = calculateTreeLayout(parentPos, children, width, height);
-                        treePos.forEach((pos, childId) => positions.set(childId, pos));
+                        // Calculate D3 tree layout for these children (360° radial around parent)
+                        const radialPos = calculateD3TreeLayout(parentNode, children, width, height);
+                        radialPos.forEach((pos, childId) => {
+                            positions.set(childId, pos);
+                            positioned.add(childId);
+                            // Add to queue to position their children
+                            queue.push(childId);
+                        });
                     }
-                });
+                }
 
                 console.debug(
                     `[Render] ${stateManager.viewMode.toUpperCase()}: ` +
-                    `Tree layout with ${positions.size} nodes, ` +
+                    `Radial layout with ${positions.size} nodes, ` +
                     `depth ${stateManager.expansionPath.length}`
                 );
             }
@@ -3286,9 +3580,37 @@ def get_rendering_v2() -> str:
                 return [];
             }
 
-            // No edges in tree navigation modes
-            if (stateManager.viewMode === 'tree_root' || stateManager.viewMode === 'tree_expanded') {
+            // No edges in tree_root mode (initial overview - just list of folders)
+            if (stateManager.viewMode === 'tree_root') {
                 return [];
+            }
+
+            // TREE_EXPANDED mode: Show containment edges between visible nodes
+            if (stateManager.viewMode === 'tree_expanded') {
+                const visibleNodeIds = stateManager.getVisibleNodes();
+
+                // Show only containment edges (dir_containment, file_containment, dir_hierarchy)
+                const filteredLinks = allLinks.filter(link => {
+                    const linkType = link.type;
+                    const sourceId = link.source.id || link.source;
+                    const targetId = link.target.id || link.target;
+
+                    // Must be containment relationship
+                    const isContainment = linkType === 'dir_containment' ||
+                                         linkType === 'file_containment' ||
+                                         linkType === 'dir_hierarchy';
+
+                    if (!isContainment) return false;
+
+                    // Both nodes must be visible
+                    return visibleNodeIds.includes(sourceId) && visibleNodeIds.includes(targetId);
+                });
+
+                console.debug(
+                    `[EdgeFilter] TREE_EXPANDED mode: ${filteredLinks.length} containment edges`
+                );
+
+                return filteredLinks;
             }
 
             // FILE_DETAIL mode: Show AST call edges within file

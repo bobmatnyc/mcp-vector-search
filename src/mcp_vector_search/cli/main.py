@@ -352,6 +352,15 @@ def version_command() -> None:
     console.print("[dim]Built with ChromaDB, Tree-sitter, and modern Python[/dim]")
 
 
+def _version_callback(value: bool) -> None:
+    """Handle --version flag eagerly before command parsing."""
+    if value:
+        console.print(
+            f"[bold blue]mcp-vector-search[/bold blue] version [green]{__version__}[/green] [dim](build {__build__})[/dim]"
+        )
+        raise typer.Exit()
+
+
 @app.callback()
 def main(
     ctx: typer.Context,
@@ -361,6 +370,8 @@ def main(
         "-v",
         help="Show version and exit",
         rich_help_panel="ℹ️  Information",
+        is_eager=True,
+        callback=lambda v: _version_callback(v),
     ),
     verbose: bool = typer.Option(
         False,
@@ -391,9 +402,8 @@ def main(
     A modern, lightweight tool for semantic code search using ChromaDB and Tree-sitter.
     Designed for local development with optional MCP server integration.
     """
-    if version:
-        console.print(f"mcp-vector-search version {__version__} (build {__build__})")
-        raise typer.Exit()
+    # Note: --version is handled by _version_callback with is_eager=True
+    # This ensures it runs before no_args_is_help check
 
     # Setup logging
     log_level = "DEBUG" if verbose else "ERROR" if quiet else "WARNING"
