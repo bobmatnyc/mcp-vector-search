@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.11] - 2025-12-08
+
+### Fixed
+- **MCP installer platform forcing bug**
+  - Fixed error "Platform not supported: claude_code" when forcing a platform
+  - Now correctly detects info for the specific forced platform
+  - Previously failed when another platform had higher confidence
+  - Added `detect_for_platform()` method to PlatformDetector
+
 ## [0.15.10] - 2025-12-08
 
 ### Added
