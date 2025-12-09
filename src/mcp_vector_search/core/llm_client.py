@@ -1,7 +1,9 @@
 """LLM client for intelligent code search using OpenAI or OpenRouter API."""
 
+import json
 import os
 import re
+from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 import httpx
@@ -11,6 +13,9 @@ from .exceptions import SearchError
 
 # Type alias for provider
 LLMProvider = Literal["openai", "openrouter"]
+
+# Type alias for intent
+IntentType = Literal["find", "answer"]
 
 
 class LLMClient:
@@ -467,3 +472,207 @@ Select the top {top_n} most relevant results:"""
                 continue
 
         return enriched_results
+
+    async def detect_intent(self, query: str) -> IntentType:
+        """Detect user intent from query.
+
+        Args:
+            query: User's natural language query
+
+        Returns:
+            Intent type: "find" or "answer"
+
+        Raises:
+            SearchError: If API call fails
+        """
+        system_prompt = """You are a code search intent classifier. Classify the user's query into ONE of these categories:
+
+1. "find" - User wants to locate/search for something in the codebase
+   Examples: "where is X", "find the function that", "show me the code for", "locate X"
+
+2. "answer" - User wants an explanation/answer about the codebase
+   Examples: "what does this do", "how does X work", "explain the architecture", "why is X used"
+
+Return ONLY the word "find" or "answer" with no other text."""
+
+        user_prompt = f"""Query: {query}
+
+Intent:"""
+
+        try:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+
+            response = await self._chat_completion(messages)
+
+            content = (
+                response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            )
+            intent = content.strip().lower()
+
+            if intent not in ("find", "answer"):
+                # Default to find if unclear
+                logger.warning(
+                    f"Unclear intent '{intent}' for query '{query}', defaulting to 'find'"
+                )
+                return "find"
+
+            logger.debug(f"Detected intent '{intent}' for query: '{query}'")
+            return intent  # type: ignore
+
+        except Exception as e:
+            logger.error(f"Failed to detect intent: {e}, defaulting to 'find'")
+            return "find"
+
+    async def stream_chat_completion(
+        self, messages: list[dict[str, str]]
+    ) -> AsyncIterator[str]:
+        """Stream chat completion response chunk by chunk.
+
+        Args:
+            messages: List of message dictionaries with role and content
+
+        Yields:
+            Text chunks from the streaming response
+
+        Raises:
+            SearchError: If API request fails
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        if self.provider == "openrouter":
+            headers["HTTP-Referer"] = "https://github.com/bobmatnyc/mcp-vector-search"
+            headers["X-Title"] = "MCP Vector Search"
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": True,
+        }
+
+        provider_name = self.provider.capitalize()
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST", self.api_endpoint, headers=headers, json=payload
+                ) as response:
+                    response.raise_for_status()
+
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+
+                        # Skip empty lines and comments
+                        if not line or line.startswith(":"):
+                            continue
+
+                        # Parse SSE format: "data: {json}"
+                        if line.startswith("data: "):
+                            data = line[6:]  # Remove "data: " prefix
+
+                            # Check for end of stream
+                            if data == "[DONE]":
+                                break
+
+                            try:
+                                chunk = json.loads(data)
+                                content = (
+                                    chunk.get("choices", [{}])[0]
+                                    .get("delta", {})
+                                    .get("content")
+                                )
+
+                                if content:
+                                    yield content
+
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Failed to parse SSE chunk: {e}")
+                                continue
+
+        except httpx.TimeoutException as e:
+            logger.error(f"{provider_name} API timeout after {self.timeout}s")
+            raise SearchError(
+                f"LLM request timed out after {self.timeout} seconds. "
+                "Try a simpler query or check your network connection."
+            ) from e
+
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            error_msg = f"{provider_name} API error (HTTP {status_code})"
+
+            if status_code == 401:
+                env_var = (
+                    "OPENAI_API_KEY"
+                    if self.provider == "openai"
+                    else "OPENROUTER_API_KEY"
+                )
+                error_msg = f"Invalid {provider_name} API key. Please check {env_var} environment variable."
+            elif status_code == 429:
+                error_msg = f"{provider_name} API rate limit exceeded. Please wait and try again."
+            elif status_code >= 500:
+                error_msg = f"{provider_name} API server error. Please try again later."
+
+            logger.error(error_msg)
+            raise SearchError(error_msg) from e
+
+        except Exception as e:
+            logger.error(f"{provider_name} streaming request failed: {e}")
+            raise SearchError(f"LLM streaming failed: {e}") from e
+
+    async def generate_answer(
+        self,
+        query: str,
+        context: str,
+        conversation_history: list[dict[str, str]] | None = None,
+    ) -> str:
+        """Generate answer to user question using codebase context.
+
+        Args:
+            query: User's question
+            context: Relevant code context from search results
+            conversation_history: Previous conversation messages (optional)
+
+        Returns:
+            LLM response text
+
+        Raises:
+            SearchError: If API call fails
+        """
+        system_prompt = f"""You are a helpful code assistant analyzing a codebase. Answer the user's questions based on the provided code context.
+
+Code Context:
+{context}
+
+Guidelines:
+- Be concise but thorough in explanations
+- Reference specific functions, classes, or files when relevant
+- Use code examples from the context when helpful
+- If the context doesn't contain enough information, say so
+- Use markdown formatting for code snippets"""
+
+        messages = [{"role": "system", "content": system_prompt}]
+
+        # Add conversation history if provided
+        if conversation_history:
+            messages.extend(conversation_history)
+
+        # Add current query
+        messages.append({"role": "user", "content": query})
+
+        try:
+            response = await self._chat_completion(messages)
+            content = (
+                response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            )
+
+            logger.debug(f"Generated answer for query: '{query}'")
+            return content
+
+        except Exception as e:
+            logger.error(f"Failed to generate answer: {e}")
+            raise SearchError(f"Failed to generate answer: {e}") from e

@@ -4,9 +4,12 @@ import asyncio
 import os
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Any
 
 import typer
 from loguru import logger
+from rich.live import Live
+from rich.markdown import Markdown
 
 from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function
@@ -22,6 +25,96 @@ from ..output import (
     print_success,
     print_warning,
 )
+
+
+class ChatSession:
+    """Manages conversation history with automatic compaction.
+
+    Keeps system prompt intact, compacts older messages when history grows large,
+    and maintains recent exchanges for context.
+    """
+
+    # Threshold for compaction (estimated tokens, ~4 chars per token)
+    COMPACTION_THRESHOLD = 8000 * 4  # ~32000 chars
+    RECENT_EXCHANGES_TO_KEEP = 3  # Keep last N user/assistant pairs
+
+    def __init__(self, system_prompt: str) -> None:
+        """Initialize session with system prompt.
+
+        Args:
+            system_prompt: Initial system message
+        """
+        self.system_prompt = system_prompt
+        self.messages: list[dict[str, str]] = [
+            {"role": "system", "content": system_prompt}
+        ]
+
+    def add_message(self, role: str, content: str) -> None:
+        """Add message to history and compact if needed.
+
+        Args:
+            role: Message role (user/assistant)
+            content: Message content
+        """
+        self.messages.append({"role": role, "content": content})
+
+        # Check if compaction needed
+        total_chars = sum(len(msg["content"]) for msg in self.messages)
+        if total_chars > self.COMPACTION_THRESHOLD:
+            self._compact_history()
+
+    def _compact_history(self) -> None:
+        """Compact conversation history by summarizing older exchanges.
+
+        Strategy:
+        1. Keep system prompt intact
+        2. Summarize older exchanges into brief context
+        3. Keep recent N exchanges verbatim
+        """
+        logger.debug("Compacting conversation history")
+
+        # Separate system prompt and conversation
+        system_msg = self.messages[0]
+        conversation = self.messages[1:]
+
+        # Keep recent exchanges (last N user/assistant pairs)
+        recent_start = max(0, len(conversation) - (self.RECENT_EXCHANGES_TO_KEEP * 2))
+        older_messages = conversation[:recent_start]
+        recent_messages = conversation[recent_start:]
+
+        # Summarize older messages
+        if older_messages:
+            summary_parts = []
+            for msg in older_messages:
+                role = msg["role"].capitalize()
+                content_preview = msg["content"][:100].replace("\n", " ")
+                summary_parts.append(f"{role}: {content_preview}...")
+
+            summary = "\n".join(summary_parts)
+            summary_msg = {
+                "role": "system",
+                "content": f"[Previous conversation summary]\n{summary}\n[End summary]",
+            }
+
+            # Rebuild messages: system + summary + recent
+            self.messages = [system_msg, summary_msg] + recent_messages
+
+            logger.debug(
+                f"Compacted {len(older_messages)} old messages, kept {len(recent_messages)} recent"
+            )
+
+    def get_messages(self) -> list[dict[str, str]]:
+        """Get current message history.
+
+        Returns:
+            List of message dictionaries
+        """
+        return self.messages.copy()
+
+    def clear(self) -> None:
+        """Clear conversation history, keeping only system prompt."""
+        self.messages = [{"role": "system", "content": self.system_prompt}]
+
 
 # Create chat subcommand app with "did you mean" functionality
 chat_app = create_enhanced_typer(
@@ -172,9 +265,9 @@ def chat_main(
             )
             raise typer.Exit(1)
 
-        # Run the chat search
+        # Run the chat with intent detection and routing
         asyncio.run(
-            run_chat_search(
+            run_chat_with_intent(
                 project_root=project_root,
                 query=query,
                 limit=limit,
@@ -188,9 +281,359 @@ def chat_main(
         )
 
     except Exception as e:
-        logger.error(f"Chat search failed: {e}")
-        print_error(f"Chat search failed: {e}")
+        logger.error(f"Chat failed: {e}")
+        print_error(f"Chat failed: {e}")
         raise typer.Exit(1)
+
+
+async def run_chat_with_intent(
+    project_root: Path,
+    query: str,
+    limit: int = 5,
+    model: str | None = None,
+    provider: str | None = None,
+    timeout: float = 30.0,
+    json_output: bool = False,
+    files: str | None = None,
+    think: bool = False,
+) -> None:
+    """Route to appropriate chat mode based on detected intent.
+
+    Args:
+        project_root: Project root directory
+        query: User's natural language query
+        limit: Maximum results to return
+        model: Model to use (optional)
+        provider: LLM provider
+        timeout: API timeout
+        json_output: Whether to output JSON
+        files: File pattern filter
+        think: Use advanced model
+    """
+    # Initialize LLM client for intent detection
+    from ...core.config_utils import (
+        get_openai_api_key,
+        get_openrouter_api_key,
+        get_preferred_llm_provider,
+    )
+
+    config_dir = project_root / ".mcp-vector-search"
+    openai_key = get_openai_api_key(config_dir)
+    openrouter_key = get_openrouter_api_key(config_dir)
+
+    # Determine provider (same logic as before)
+    if not provider:
+        preferred_provider = get_preferred_llm_provider(config_dir)
+        if preferred_provider == "openai" and openai_key:
+            provider = "openai"
+        elif preferred_provider == "openrouter" and openrouter_key:
+            provider = "openrouter"
+        elif openai_key:
+            provider = "openai"
+        elif openrouter_key:
+            provider = "openrouter"
+        else:
+            print_error("No LLM API key found.")
+            raise typer.Exit(1)
+
+    # Create temporary client for intent detection (use fast model)
+    try:
+        intent_client = LLMClient(
+            openai_api_key=openai_key,
+            openrouter_api_key=openrouter_key,
+            provider=provider,
+            timeout=timeout,
+            think=False,  # Use fast model for intent detection
+        )
+
+        # Detect intent
+        intent = await intent_client.detect_intent(query)
+
+        # Show intent to user
+        if intent == "find":
+            console.print("\n[cyan]🔍 Intent: Find[/cyan] - Searching codebase\n")
+            await run_chat_search(
+                project_root=project_root,
+                query=query,
+                limit=limit,
+                model=model,
+                provider=provider,
+                timeout=timeout,
+                json_output=json_output,
+                files=files,
+                think=think,
+            )
+        else:
+            # Answer mode - force think mode and enter interactive session
+            console.print(
+                "\n[cyan]💬 Intent: Answer[/cyan] - Entering interactive mode\n"
+            )
+            await run_chat_answer(
+                project_root=project_root,
+                initial_query=query,
+                limit=limit,
+                model=model,
+                provider=provider,
+                timeout=timeout,
+                files=files,
+            )
+
+    except Exception as e:
+        logger.error(f"Intent detection failed: {e}")
+        # Default to find mode on error
+        console.print("\n[yellow]⚠ Using default search mode[/yellow]\n")
+        await run_chat_search(
+            project_root=project_root,
+            query=query,
+            limit=limit,
+            model=model,
+            provider=provider,
+            timeout=timeout,
+            json_output=json_output,
+            files=files,
+            think=think,
+        )
+
+
+async def run_chat_answer(
+    project_root: Path,
+    initial_query: str,
+    limit: int = 5,
+    model: str | None = None,
+    provider: str | None = None,
+    timeout: float = 30.0,
+    files: str | None = None,
+) -> None:
+    """Run interactive answer mode with streaming responses.
+
+    Args:
+        project_root: Project root directory
+        initial_query: Initial user question
+        limit: Max search results for context
+        model: Model to use (optional, defaults to advanced model)
+        provider: LLM provider
+        timeout: API timeout
+        files: File pattern filter
+    """
+    from ...core.config_utils import get_openai_api_key, get_openrouter_api_key
+
+    config_dir = project_root / ".mcp-vector-search"
+    openai_key = get_openai_api_key(config_dir)
+    openrouter_key = get_openrouter_api_key(config_dir)
+
+    # Load project configuration
+    project_manager = ProjectManager(project_root)
+    if not project_manager.is_initialized():
+        raise ProjectNotFoundError(
+            f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
+        )
+
+    config = project_manager.load_config()
+
+    # Initialize LLM client with advanced model (force think mode)
+    try:
+        llm_client = LLMClient(
+            openai_api_key=openai_key,
+            openrouter_api_key=openrouter_key,
+            model=model,
+            provider=provider,
+            timeout=timeout,
+            think=True,  # Always use advanced model for answer mode
+        )
+        provider_display = llm_client.provider.capitalize()
+        model_info = f"{llm_client.model} [bold magenta](thinking mode)[/bold magenta]"
+        print_success(f"Connected to {provider_display}: {model_info}")
+    except ValueError as e:
+        print_error(str(e))
+        raise typer.Exit(1)
+
+    # Initialize search engine
+    embedding_function, _ = create_embedding_function(config.embedding_model)
+    database = ChromaVectorDatabase(
+        persist_directory=config.index_path,
+        embedding_function=embedding_function,
+    )
+    search_engine = SemanticSearchEngine(
+        database=database,
+        project_root=project_root,
+        similarity_threshold=config.similarity_threshold,
+    )
+
+    # Initialize session (cleared on startup)
+    system_prompt = """You are a helpful code assistant analyzing a codebase. Answer questions based on provided code context.
+
+Guidelines:
+- Be concise but thorough
+- Reference specific functions, classes, or files
+- Use code examples when helpful
+- If context is insufficient, say so
+- Use markdown formatting"""
+
+    session = ChatSession(system_prompt)
+
+    # Process initial query
+    await _process_answer_query(
+        query=initial_query,
+        llm_client=llm_client,
+        search_engine=search_engine,
+        database=database,
+        session=session,
+        project_root=project_root,
+        limit=limit,
+        files=files,
+        config=config,
+    )
+
+    # Interactive loop
+    console.print("\n[dim]Type your questions or '/exit' to quit[/dim]\n")
+
+    while True:
+        try:
+            # Get user input
+            user_input = console.input("\n[bold cyan]You:[/bold cyan] ").strip()
+
+            if not user_input:
+                continue
+
+            # Check for exit command
+            if user_input.lower() in ("/exit", "/quit", "exit", "quit"):
+                console.print("\n[cyan]👋 Session ended.[/cyan]")
+                break
+
+            # Process query
+            await _process_answer_query(
+                query=user_input,
+                llm_client=llm_client,
+                search_engine=search_engine,
+                database=database,
+                session=session,
+                project_root=project_root,
+                limit=limit,
+                files=files,
+                config=config,
+            )
+
+        except KeyboardInterrupt:
+            console.print("\n\n[cyan]👋 Session ended.[/cyan]")
+            break
+        except EOFError:
+            console.print("\n\n[cyan]👋 Session ended.[/cyan]")
+            break
+        except Exception as e:
+            logger.error(f"Error processing query: {e}")
+            print_error(f"Error: {e}")
+
+
+async def _process_answer_query(
+    query: str,
+    llm_client: LLMClient,
+    search_engine: SemanticSearchEngine,
+    database: ChromaVectorDatabase,
+    session: ChatSession,
+    project_root: Path,
+    limit: int,
+    files: str | None,
+    config: Any,
+) -> None:
+    """Process a single answer query with streaming response.
+
+    Args:
+        query: User query
+        llm_client: LLM client instance
+        search_engine: Search engine instance
+        database: Vector database
+        session: Chat session
+        project_root: Project root path
+        limit: Max results
+        files: File pattern filter
+        config: Project config
+    """
+    # Search for relevant context
+    console.print("\n[dim]🔍 Searching for relevant code...[/dim]")
+
+    try:
+        async with database:
+            results = await search_engine.search(
+                query=query,
+                limit=limit,
+                similarity_threshold=config.similarity_threshold,
+                include_context=True,
+            )
+
+            # Post-filter by file pattern if specified
+            if files and results:
+                filtered_results = []
+                for result in results:
+                    try:
+                        rel_path = str(result.file_path.relative_to(project_root))
+                    except ValueError:
+                        rel_path = str(result.file_path)
+
+                    if fnmatch(rel_path, files) or fnmatch(
+                        os.path.basename(rel_path), files
+                    ):
+                        filtered_results.append(result)
+                results = filtered_results
+
+    except Exception as e:
+        logger.error(f"Search failed: {e}")
+        print_error(f"Search failed: {e}")
+        return
+
+    # Format context from search results
+    if results:
+        context_parts = []
+        for i, result in enumerate(results[:5], 1):  # Top 5 results
+            context_parts.append(
+                f"[Result {i}: {result.file_path.name}]\n"
+                f"Location: {result.location}\n"
+                f"```\n{result.content}\n```\n"
+            )
+        context = "\n".join(context_parts)
+    else:
+        context = "No relevant code found in the codebase."
+
+    # Build messages for streaming
+    system_prompt_with_context = f"""You are a helpful code assistant analyzing a codebase. Answer questions based on the provided code context.
+
+Code Context:
+{context}
+
+Guidelines:
+- Be concise but thorough
+- Reference specific functions, classes, or files when relevant
+- Use code examples from the context when helpful
+- If context is insufficient, say so
+- Use markdown formatting for code snippets"""
+
+    # Get conversation history (excluding system prompt)
+    conversation_history = session.get_messages()[1:]  # Skip system prompt
+
+    # Build messages: system with context + history + current query
+    messages = [{"role": "system", "content": system_prompt_with_context}]
+    messages.extend(conversation_history)
+    messages.append({"role": "user", "content": query})
+
+    # Stream response
+    console.print("\n[bold cyan]🤖 Assistant:[/bold cyan]\n")
+
+    try:
+        accumulated_response = ""
+
+        # Use Rich Live for real-time streaming
+        with Live("", console=console, auto_refresh=True) as live:
+            async for chunk in llm_client.stream_chat_completion(messages):
+                accumulated_response += chunk
+                # Update live display with markdown rendering
+                live.update(Markdown(accumulated_response))
+
+        # Add to session history
+        session.add_message("user", query)
+        session.add_message("assistant", accumulated_response)
+
+    except Exception as e:
+        logger.error(f"Streaming failed: {e}")
+        print_error(f"Failed to generate response: {e}")
 
 
 async def run_chat_search(
