@@ -676,3 +676,76 @@ Guidelines:
         except Exception as e:
             logger.error(f"Failed to generate answer: {e}")
             raise SearchError(f"Failed to generate answer: {e}") from e
+
+    async def chat_with_tools(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Chat completion with tool/function calling support.
+
+        Args:
+            messages: List of message dictionaries
+            tools: List of tool definitions
+
+        Returns:
+            API response with tool calls or final message
+
+        Raises:
+            SearchError: If API request fails
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        if self.provider == "openrouter":
+            headers["HTTP-Referer"] = "https://github.com/bobmatnyc/mcp-vector-search"
+            headers["X-Title"] = "MCP Vector Search"
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+
+        provider_name = self.provider.capitalize()
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    self.api_endpoint,
+                    headers=headers,
+                    json=payload,
+                )
+
+                response.raise_for_status()
+                return response.json()
+
+        except httpx.TimeoutException as e:
+            logger.error(f"{provider_name} API timeout after {self.timeout}s")
+            raise SearchError(
+                f"LLM request timed out after {self.timeout} seconds."
+            ) from e
+
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            error_msg = f"{provider_name} API error (HTTP {status_code})"
+
+            if status_code == 401:
+                env_var = (
+                    "OPENAI_API_KEY"
+                    if self.provider == "openai"
+                    else "OPENROUTER_API_KEY"
+                )
+                error_msg = f"Invalid {provider_name} API key. Check {env_var}."
+            elif status_code == 429:
+                error_msg = f"{provider_name} API rate limit exceeded."
+            elif status_code >= 500:
+                error_msg = f"{provider_name} API server error."
+
+            logger.error(error_msg)
+            raise SearchError(error_msg) from e
+
+        except Exception as e:
+            logger.error(f"{provider_name} API request failed: {e}")
+            raise SearchError(f"LLM request failed: {e}") from e

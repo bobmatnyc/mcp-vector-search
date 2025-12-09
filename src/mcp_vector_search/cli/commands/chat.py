@@ -535,7 +535,7 @@ async def _process_answer_query(
     files: str | None,
     config: Any,
 ) -> None:
-    """Process a single answer query with streaming response.
+    """Process a single answer query with agentic tool use.
 
     Args:
         query: User query
@@ -548,92 +548,302 @@ async def _process_answer_query(
         files: File pattern filter
         config: Project config
     """
-    # Search for relevant context
-    console.print("\n[dim]🔍 Searching for relevant code...[/dim]")
+    # Define search tools for the LLM
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_code",
+                "description": "Search the codebase for relevant code snippets using semantic search",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query to find relevant code (e.g., 'authentication logic', 'database connection', 'error handling')",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return (default: 5, max: 10)",
+                            "default": 5,
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read the full content of a specific file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Relative path to the file from project root",
+                        }
+                    },
+                    "required": ["file_path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_files",
+                "description": "List files in the codebase matching a pattern",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": "Glob pattern to match files (e.g., '*.py', 'src/**/*.ts', 'tests/')",
+                        }
+                    },
+                    "required": ["pattern"],
+                },
+            },
+        },
+    ]
 
-    try:
-        async with database:
-            results = await search_engine.search(
-                query=query,
-                limit=limit,
-                similarity_threshold=config.similarity_threshold,
-                include_context=True,
-            )
+    # System prompt for tool use
+    system_prompt = """You are a helpful code assistant with access to search tools. Use these tools to find and analyze code in the codebase.
 
-            # Post-filter by file pattern if specified
-            if files and results:
-                filtered_results = []
-                for result in results:
-                    try:
-                        rel_path = str(result.file_path.relative_to(project_root))
-                    except ValueError:
-                        rel_path = str(result.file_path)
-
-                    if fnmatch(rel_path, files) or fnmatch(
-                        os.path.basename(rel_path), files
-                    ):
-                        filtered_results.append(result)
-                results = filtered_results
-
-    except Exception as e:
-        logger.error(f"Search failed: {e}")
-        print_error(f"Search failed: {e}")
-        return
-
-    # Format context from search results
-    if results:
-        context_parts = []
-        for i, result in enumerate(results[:5], 1):  # Top 5 results
-            context_parts.append(
-                f"[Result {i}: {result.file_path.name}]\n"
-                f"Location: {result.location}\n"
-                f"```\n{result.content}\n```\n"
-            )
-        context = "\n".join(context_parts)
-    else:
-        context = "No relevant code found in the codebase."
-
-    # Build messages for streaming
-    system_prompt_with_context = f"""You are a helpful code assistant analyzing a codebase. Answer questions based on the provided code context.
-
-Code Context:
-{context}
+Available tools:
+- search_code: Search for relevant code using semantic search
+- read_file: Read the full content of a specific file
+- list_files: List files matching a pattern
 
 Guidelines:
-- Be concise but thorough
-- Reference specific functions, classes, or files when relevant
-- Use code examples from the context when helpful
-- If context is insufficient, say so
-- Use markdown formatting for code snippets"""
+1. Use search_code to find relevant code snippets
+2. Use read_file when you need to see the full file context
+3. Use list_files to understand the project structure
+4. Make multiple searches if needed to gather enough context
+5. After gathering sufficient information, provide your analysis
 
-    # Get conversation history (excluding system prompt)
+Always base your answers on actual code from the tools. If you can't find relevant code, say so."""
+
+    # Tool execution functions
+    async def execute_search_code(query_str: str, limit_val: int = 5) -> str:
+        """Execute search_code tool."""
+        try:
+            limit_val = min(limit_val, 10)  # Cap at 10
+            async with database:
+                results = await search_engine.search(
+                    query=query_str,
+                    limit=limit_val,
+                    similarity_threshold=config.similarity_threshold,
+                    include_context=True,
+                )
+
+                # Post-filter by file pattern if specified
+                if files and results:
+                    filtered_results = []
+                    for result in results:
+                        try:
+                            rel_path = str(result.file_path.relative_to(project_root))
+                        except ValueError:
+                            rel_path = str(result.file_path)
+
+                        if fnmatch(rel_path, files) or fnmatch(
+                            os.path.basename(rel_path), files
+                        ):
+                            filtered_results.append(result)
+                    results = filtered_results
+
+            if not results:
+                return "No results found for this query."
+
+            # Format results
+            result_parts = []
+            for i, result in enumerate(results, 1):
+                try:
+                    rel_path = str(result.file_path.relative_to(project_root))
+                except ValueError:
+                    rel_path = str(result.file_path)
+
+                result_parts.append(
+                    f"[Result {i}: {rel_path}]\n"
+                    f"Location: {result.location}\n"
+                    f"Lines {result.start_line}-{result.end_line}\n"
+                    f"Similarity: {result.similarity_score:.3f}\n"
+                    f"```\n{result.content}\n```\n"
+                )
+            return "\n".join(result_parts)
+
+        except Exception as e:
+            logger.error(f"search_code tool failed: {e}")
+            return f"Error searching code: {e}"
+
+    async def execute_read_file(file_path: str) -> str:
+        """Execute read_file tool."""
+        try:
+            # Normalize path
+            if file_path.startswith("/"):
+                full_path = Path(file_path)
+            else:
+                full_path = project_root / file_path
+
+            # Security check: file must be within project
+            try:
+                full_path.relative_to(project_root)
+            except ValueError:
+                return f"Error: File must be within project root: {project_root}"
+
+            if not full_path.exists():
+                return f"Error: File not found: {file_path}"
+
+            if not full_path.is_file():
+                return f"Error: Not a file: {file_path}"
+
+            # Read file with size limit
+            max_size = 100_000  # 100KB
+            file_size = full_path.stat().st_size
+            if file_size > max_size:
+                return f"Error: File too large ({file_size} bytes). Use search_code instead."
+
+            content = full_path.read_text(errors="replace")
+            return f"File: {file_path}\n```\n{content}\n```"
+
+        except Exception as e:
+            logger.error(f"read_file tool failed: {e}")
+            return f"Error reading file: {e}"
+
+    async def execute_list_files(pattern: str) -> str:
+        """Execute list_files tool."""
+        try:
+            from glob import glob
+
+            # Use glob to find matching files
+            matches = glob(str(project_root / pattern), recursive=True)
+
+            if not matches:
+                return f"No files found matching pattern: {pattern}"
+
+            # Get relative paths and limit results
+            rel_paths = []
+            for match in matches[:50]:  # Limit to 50 files
+                try:
+                    rel_path = Path(match).relative_to(project_root)
+                    rel_paths.append(str(rel_path))
+                except ValueError:
+                    continue
+
+            if not rel_paths:
+                return f"No files found matching pattern: {pattern}"
+
+            return f"Files matching '{pattern}':\n" + "\n".join(
+                f"- {p}" for p in sorted(rel_paths)
+            )
+
+        except Exception as e:
+            logger.error(f"list_files tool failed: {e}")
+            return f"Error listing files: {e}"
+
+    # Get conversation history
     conversation_history = session.get_messages()[1:]  # Skip system prompt
 
-    # Build messages: system with context + history + current query
-    messages = [{"role": "system", "content": system_prompt_with_context}]
+    # Build messages: system + history + current query
+    messages = [{"role": "system", "content": system_prompt}]
     messages.extend(conversation_history)
     messages.append({"role": "user", "content": query})
 
-    # Stream response
-    console.print("\n[bold cyan]🤖 Assistant:[/bold cyan]\n")
+    # Agentic loop
+    max_iterations = 10
+    for _iteration in range(max_iterations):
+        try:
+            response = await llm_client.chat_with_tools(messages, tools)
 
-    try:
-        accumulated_response = ""
+            # Extract message from response
+            choice = response.get("choices", [{}])[0]
+            message = choice.get("message", {})
 
-        # Use Rich Live for real-time streaming
-        with Live("", console=console, auto_refresh=True) as live:
-            async for chunk in llm_client.stream_chat_completion(messages):
-                accumulated_response += chunk
-                # Update live display with markdown rendering
-                live.update(Markdown(accumulated_response))
+            # Check for tool calls
+            tool_calls = message.get("tool_calls", [])
 
-        # Add to session history
-        session.add_message("user", query)
-        session.add_message("assistant", accumulated_response)
+            if tool_calls:
+                # Add assistant message with tool calls
+                messages.append(message)
 
-    except Exception as e:
-        logger.error(f"Streaming failed: {e}")
-        print_error(f"Failed to generate response: {e}")
+                # Execute each tool call
+                for tool_call in tool_calls:
+                    tool_id = tool_call.get("id")
+                    function = tool_call.get("function", {})
+                    function_name = function.get("name")
+                    arguments_str = function.get("arguments", "{}")
+
+                    # Parse arguments
+                    try:
+                        import json
+
+                        arguments = json.loads(arguments_str)
+                    except json.JSONDecodeError:
+                        arguments = {}
+
+                    # Display tool usage
+                    console.print(
+                        f"\n[dim]🔧 Using tool: {function_name}({', '.join(f'{k}={repr(v)}' for k, v in arguments.items())})[/dim]"
+                    )
+
+                    # Execute tool
+                    if function_name == "search_code":
+                        result = await execute_search_code(
+                            arguments.get("query", ""),
+                            arguments.get("limit", 5),
+                        )
+                        console.print(
+                            f"[dim]   Found {len(result.split('[Result')) - 1} results[/dim]"
+                        )
+                    elif function_name == "read_file":
+                        result = await execute_read_file(arguments.get("file_path", ""))
+                        console.print("[dim]   Read file[/dim]")
+                    elif function_name == "list_files":
+                        result = await execute_list_files(arguments.get("pattern", ""))
+                        console.print("[dim]   Listed files[/dim]")
+                    else:
+                        result = f"Error: Unknown tool: {function_name}"
+
+                    # Add tool result to messages
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_id,
+                            "content": result,
+                        }
+                    )
+
+            else:
+                # No tool calls - final response
+                final_content = message.get("content", "")
+
+                if not final_content:
+                    print_error("LLM returned empty response")
+                    return
+
+                # Stream the final response
+                console.print("\n[bold cyan]🤖 Assistant:[/bold cyan]\n")
+
+                # Use Rich Live for rendering
+                with Live("", console=console, auto_refresh=True) as live:
+                    live.update(Markdown(final_content))
+
+                # Add to session history
+                session.add_message("user", query)
+                session.add_message("assistant", final_content)
+
+                return
+
+        except Exception as e:
+            logger.error(f"Tool execution loop failed: {e}")
+            print_error(f"Error: {e}")
+            return
+
+    # Max iterations reached
+    print_warning(
+        "\n⚠ Maximum iterations reached. The assistant may not have gathered enough information."
+    )
 
 
 async def run_chat_search(
