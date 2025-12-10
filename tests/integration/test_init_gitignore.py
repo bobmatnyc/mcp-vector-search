@@ -195,7 +195,9 @@ build/
     def test_init_with_utf8_gitignore(self, git_project_dir: Path):
         """Test init with UTF-8 characters in .gitignore."""
         gitignore_path = git_project_dir / ".gitignore"
-        gitignore_path.write_text("# コメント (Japanese comment)\n*.pyc\n", encoding="utf-8")
+        gitignore_path.write_text(
+            "# コメント (Japanese comment)\n*.pyc\n", encoding="utf-8"
+        )
 
         pm = ProjectManager(project_root=git_project_dir)
         config = pm.initialize(force=True)

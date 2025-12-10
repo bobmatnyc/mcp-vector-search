@@ -43,7 +43,12 @@ def test_gitignore():
         # Use the optimized version with is_directory hint
         ignored = parser.is_ignored(path, is_directory=is_dir)
         status = "✓ IGNORED" if ignored else "✗ NOT IGNORED"
-        expected = "✓ IGNORED" if is_dir and any(p in path_str for p in ["node_modules", "dist", "build", ".vscode"]) else "✗ NOT IGNORED"
+        expected = (
+            "✓ IGNORED"
+            if is_dir
+            and any(p in path_str for p in ["node_modules", "dist", "build", ".vscode"])
+            else "✗ NOT IGNORED"
+        )
         match = "✓" if status == expected else "❌ MISMATCH"
         print(f"  {match} {path_str}: {status}")
 

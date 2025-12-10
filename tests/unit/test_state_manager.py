@@ -19,7 +19,7 @@ import pytest
 # Skip all tests except TestViewMode and TestNodeState due to ViewMode enum changes
 pytestmark = pytest.mark.skipif(
     True,
-    reason="Tests need update for new ViewMode enum values (TREE_ROOT, TREE_EXPANDED, FILE_DETAIL)"
+    reason="Tests need update for new ViewMode enum values (TREE_ROOT, TREE_EXPANDED, FILE_DETAIL)",
 )
 
 from src.mcp_vector_search.cli.commands.visualize.state_manager import (
