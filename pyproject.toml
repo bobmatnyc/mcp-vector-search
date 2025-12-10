@@ -139,7 +139,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"tests/**/*" = ["B011", "B018"]
+"tests/**/*" = ["B011", "B017", "B018", "B023", "E402", "E722"]  # Allow test-specific patterns
+"tests/unit/test_state_manager.py" = ["E402"]  # Required path manipulation before imports
+"tests/manual/*" = ["E402", "E722"]  # Allow path manipulation and broad exceptions in manual tests
+"scripts/**/*" = ["F401", "B023", "E402"]  # Scripts may import for availability checks
 "src/mcp_vector_search/cli/commands/*.py" = ["F821"]  # CLI commands may have undefined names
 
 [tool.mypy]

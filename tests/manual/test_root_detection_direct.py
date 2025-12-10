@@ -23,7 +23,7 @@ def test_root_node_detection():
     print(f"Total links: {len(data['links'])}")
 
     # Link-based root detection (same as JavaScript)
-    target_ids = set(link["target"] for link in data["links"])
+    target_ids = {link["target"] for link in data["links"]}
     root_nodes = [node for node in data["nodes"] if node["id"] not in target_ids]
 
     print(f"\n{'=' * 60}")

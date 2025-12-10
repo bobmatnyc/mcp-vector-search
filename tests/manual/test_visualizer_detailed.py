@@ -61,7 +61,6 @@ async def test_visualizer_detailed():
             )
 
             # Get network requests
-            network_requests = []
 
             # Try to manually fetch the JSON to see the response
             json_response = await page.evaluate(

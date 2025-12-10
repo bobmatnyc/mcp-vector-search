@@ -72,7 +72,7 @@ class TestChromaConnectionPool:
         initial_created = initial_stats["connections_created"]
 
         # Use multiple connections
-        for i in range(5):
+        for _i in range(5):
             async with connection_pool.get_connection() as conn:
                 assert conn is not None
 
@@ -91,7 +91,7 @@ class TestChromaConnectionPool:
         """Test concurrent connection usage."""
 
         async def use_connection(connection_id: int):
-            async with connection_pool.get_connection() as conn:
+            async with connection_pool.get_connection():
                 # Simulate some work
                 await asyncio.sleep(0.1)
                 return connection_id
@@ -122,7 +122,7 @@ class TestChromaConnectionPool:
 
         try:
             # Use connections sequentially to test pool reuse
-            for i in range(5):
+            for _i in range(5):
                 async with pool.get_connection() as conn:
                     assert conn is not None
 
@@ -156,8 +156,8 @@ class TestChromaConnectionPool:
 
         try:
             # Use several connections to create them
-            for i in range(3):
-                async with pool.get_connection() as conn:
+            for _i in range(3):
+                async with pool.get_connection():
                     pass
 
             initial_stats = pool.get_stats()
@@ -193,14 +193,14 @@ class TestChromaConnectionPool:
         try:
             # Use a connection
             async with pool.get_connection() as conn:
-                original_id = id(conn)
+                id(conn)
 
             # Wait for age limit
             await asyncio.sleep(0.2)
 
             # Get connection again - should be a new one due to age limit
             async with pool.get_connection() as conn:
-                new_id = id(conn)
+                id(conn)
 
             # Note: Due to the nature of connection pooling, we might get the same
             # connection object but it should have been refreshed internally
@@ -215,8 +215,8 @@ class TestChromaConnectionPool:
         initial_stats = connection_pool.get_stats()
 
         # Use some connections
-        for i in range(5):
-            async with connection_pool.get_connection() as conn:
+        for _i in range(5):
+            async with connection_pool.get_connection():
                 pass
 
         final_stats = connection_pool.get_stats()
@@ -267,7 +267,7 @@ class TestChromaConnectionPool:
         await pool.initialize()
 
         # Use some connections
-        async with pool.get_connection() as conn:
+        async with pool.get_connection():
             pass
 
         stats_before = pool.get_stats()
@@ -334,7 +334,7 @@ class TestChromaConnectionPool:
         # Time connection acquisition
         times = []
 
-        for i in range(10):
+        for _i in range(10):
             start_time = time.perf_counter()
             async with connection_pool.get_connection() as conn:
                 assert conn is not None

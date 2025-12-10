@@ -65,7 +65,7 @@ function validateEmail(email) {
         """Initialize a project with indexing."""
         # Initialize project
         project_manager = ProjectManager(project_root)
-        config = project_manager.initialize(
+        project_manager.initialize(
             file_extensions=[".py", ".js"],
             embedding_model="sentence-transformers/all-MiniLM-L6-v2",
         )

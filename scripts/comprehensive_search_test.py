@@ -310,7 +310,7 @@ class ComprehensiveSearchTester:
 
             # Verify filter was applied correctly
             if filters.get("language") and results:
-                languages = set(r.language for r in results)
+                languages = {r.language for r in results}
                 print(f"    Languages found: {languages}")
 
         except Exception as e:
@@ -329,7 +329,7 @@ class ComprehensiveSearchTester:
                 continue
 
             query = " ".join(words)
-            result = await self._test_single_query(
+            await self._test_single_query(
                 query, f"Query length {length} words", expect_results=False
             )
 

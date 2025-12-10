@@ -443,6 +443,6 @@ class TestPooledChromaVectorDatabase:
             await db.add_chunks([invalid_chunk])
         except Exception as e:
             # Should be a specific database error, not a generic exception
-            assert isinstance(e, (DocumentAdditionError, Exception))
+            assert isinstance(e, DocumentAdditionError | Exception)
 
         await db.close()

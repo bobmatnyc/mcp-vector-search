@@ -440,7 +440,7 @@ class TestSemanticSearchEngine:
             for result in results:
                 assert isinstance(result, SearchResult)
                 assert result.content is not None
-                assert isinstance(result.similarity_score, (int, float))
+                assert isinstance(result.similarity_score, int | float)
                 assert 0.0 <= result.similarity_score <= 1.0
                 assert result.file_path is not None
                 assert isinstance(result.start_line, int)

@@ -86,7 +86,7 @@ class TestIndexingWorkflow:
             initial_count = await components.indexer.index_project(force_reindex=False)
             assert initial_count > 0
 
-            initial_stats = await components.indexer.get_indexing_stats()
+            await components.indexer.get_indexing_stats()
 
             # Incremental indexing without changes
             incremental_count = await components.indexer.index_project(
@@ -352,7 +352,7 @@ class TestIndexingWorkflow:
             indexed_files = list(temp_project_dir.glob("*.py"))
             for file_path in indexed_files:
                 assert str(file_path) in metadata
-                assert isinstance(metadata[str(file_path)], (int, float))
+                assert isinstance(metadata[str(file_path)], int | float)
 
             # Modify a file and reindex
             test_file = temp_project_dir / "main.py"

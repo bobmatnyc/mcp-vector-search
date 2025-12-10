@@ -89,7 +89,7 @@ async def test_visualization():
         legend = await page.query_selector("#legend")
         if legend:
             is_visible = await legend.is_visible()
-            legend_html = await legend.inner_html()
+            await legend.inner_html()
             print(f"    ✅ Legend: {'Visible' if is_visible else 'Hidden'}")
         else:
             print("    ❌ Legend: Not found")

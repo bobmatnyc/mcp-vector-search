@@ -465,5 +465,5 @@ class TestSemanticIndexer:
         indexed_files = list(temp_project_dir.glob("*.py"))
         for file_path in indexed_files:
             assert str(file_path) in metadata
-            assert isinstance(metadata[str(file_path)], (int, float))
+            assert isinstance(metadata[str(file_path)], int | float)
             assert metadata[str(file_path)] > 0

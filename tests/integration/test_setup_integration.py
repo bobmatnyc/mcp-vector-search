@@ -835,7 +835,7 @@ class TestSetupConfiguration:
             # Verify types
             assert isinstance(config["file_extensions"], list)
             assert isinstance(config["embedding_model"], str)
-            assert isinstance(config["similarity_threshold"], (int, float))
+            assert isinstance(config["similarity_threshold"], int | float)
 
     @pytest.mark.asyncio
     async def test_setup_mcp_config_structure(self, python_project, mock_typer_context):
