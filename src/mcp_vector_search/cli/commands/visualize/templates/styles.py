@@ -344,8 +344,8 @@ def get_link_styles() -> str:
     return """
         .link {
             fill: none;
-            stroke: #8b949e;
-            stroke-opacity: 0.6;
+            stroke: #c9d1d9;
+            stroke-opacity: 0.8;
             stroke-width: 1.5px;
         }
 

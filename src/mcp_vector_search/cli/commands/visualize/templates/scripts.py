@@ -523,6 +523,12 @@ function drawExternalCallLines(svg, root) {
         nodePositions.set(d.data.id, { x: d.x, y: d.y, node: d });
     });
 
+    // Build a map from node ID to tree node (for parent traversal)
+    const treeNodeMap = new Map();
+    root.descendants().forEach(d => {
+        treeNodeMap.set(d.data.id, d);
+    });
+
     // Helper: Find position for a node, falling back to visible ancestors
     // If the target node is not visible (collapsed), find its closest visible ancestor
     function getPositionWithFallback(nodeId) {
@@ -531,34 +537,42 @@ function drawExternalCallLines(svg, root) {
             return nodePositions.get(nodeId);
         }
 
-        // Node not visible - find it in allNodes and trace to visible ancestor
+        // Node not visible - try to find via tree traversal
+        // Strategy 1: Find by file_path matching in visible nodes
         const targetNode = allNodes.find(n => n.id === nodeId);
-        if (!targetNode) return null;
+        if (!targetNode) {
+            return null;
+        }
 
-        // Strategy: Look for a file/directory that contains this node (based on file_path)
-        // Find files that match the node's file_path
+        // Strategy 2: Look for the file that contains this chunk
         if (targetNode.file_path) {
-            // Find the file node for this chunk
-            const fileNode = allNodes.find(n =>
-                n.type === 'file' &&
-                (n.path === targetNode.file_path || n.file_path === targetNode.file_path)
-            );
-            if (fileNode && nodePositions.has(fileNode.id)) {
-                return nodePositions.get(fileNode.id);
+            // Look for visible file nodes that match this path
+            for (const [id, pos] of nodePositions) {
+                const visibleNode = allNodes.find(n => n.id === id);
+                if (visibleNode) {
+                    // Check if this is the file containing our chunk
+                    if (visibleNode.type === 'file' &&
+                        (visibleNode.path === targetNode.file_path ||
+                         visibleNode.file_path === targetNode.file_path ||
+                         visibleNode.name === targetNode.file_path.split('/').pop())) {
+                        return pos;
+                    }
+                }
             }
 
-            // Try to find a visible directory containing this file
+            // Strategy 3: Look for directory containing the file
             const pathParts = targetNode.file_path.split('/');
+            // Go from most specific (file's directory) to least specific (root)
             for (let i = pathParts.length - 1; i >= 0; i--) {
-                const dirPath = pathParts.slice(0, i).join('/');
-                // Find directory by name (last segment of path)
-                const dirName = pathParts[i - 1];
-                const dirNode = allNodes.find(n =>
-                    n.type === 'directory' &&
-                    n.name === dirName
-                );
-                if (dirNode && nodePositions.has(dirNode.id)) {
-                    return nodePositions.get(dirNode.id);
+                const dirName = pathParts[i];
+                if (!dirName) continue;
+
+                // Find a visible directory with this name
+                for (const [id, pos] of nodePositions) {
+                    const visibleNode = allNodes.find(n => n.id === id);
+                    if (visibleNode && visibleNode.type === 'directory' && visibleNode.name === dirName) {
+                        return pos;
+                    }
                 }
             }
         }
@@ -576,11 +590,17 @@ function drawExternalCallLines(svg, root) {
     // Respect the toggle state
     lineGroup.style('display', showCallLines ? 'block' : 'none');
 
+    console.log(`[CallLines] Drawing lines for ${externalCallData.length} nodes with external calls`);
+
+    let linesDrawn = 0;
     externalCallData.forEach(data => {
         const sourcePos = getPositionWithFallback(data.nodeId);
-        if (!sourcePos) return;
+        if (!sourcePos) {
+            console.log(`[CallLines] No source position for ${data.nodeId}`);
+            return;
+        }
 
-        // Draw lines to inbound nodes (callers) - dashed blue
+        // Draw lines to inbound nodes (callers) - dashed blue (fainter)
         data.inboundNodes.forEach(caller => {
             const targetPos = getPositionWithFallback(caller.id);
             if (targetPos) {
@@ -591,12 +611,13 @@ function drawExternalCallLines(svg, root) {
                     .attr('stroke', '#58a6ff')
                     .attr('stroke-width', 1)
                     .attr('stroke-dasharray', '4,2')
-                    .attr('opacity', 0.4)
+                    .attr('opacity', 0.35)
                     .attr('pointer-events', 'none');
+                linesDrawn++;
             }
         });
 
-        // Draw lines to outbound nodes (callees) - dashed orange
+        // Draw lines to outbound nodes (callees) - dashed orange (fainter)
         data.outboundNodes.forEach(callee => {
             const targetPos = getPositionWithFallback(callee.id);
             if (targetPos) {
@@ -607,11 +628,14 @@ function drawExternalCallLines(svg, root) {
                     .attr('stroke', '#f0883e')
                     .attr('stroke-width', 1)
                     .attr('stroke-dasharray', '4,2')
-                    .attr('opacity', 0.4)
+                    .attr('opacity', 0.35)
                     .attr('pointer-events', 'none');
+                linesDrawn++;
             }
         });
     });
+
+    console.log(`[CallLines] Drew ${linesDrawn} call lines`);
 }
 
 // Get color based on complexity (darker = more complex)
@@ -1195,6 +1219,9 @@ function displayDirectoryInfo(dirData, addToHistory = true) {
     }
 
     content.innerHTML = html;
+
+    // Hide section dropdown for directories (no code sections)
+    populateSectionDropdown([]);
 }
 
 function displayFileInfo(fileData, addToHistory = true) {
@@ -1264,6 +1291,9 @@ function displayFileInfo(fileData, addToHistory = true) {
     }
 
     content.innerHTML = html;
+
+    // Hide section dropdown for files (no code sections in file view)
+    populateSectionDropdown([]);
 }
 
 function displayChunkContent(chunkData, addToHistory = true) {
@@ -1759,24 +1789,19 @@ function closeViewerPanel() {
 function toggleViewerExpand() {
     const panel = document.getElementById('viewer-panel');
     const icon = document.getElementById('expand-icon');
-    const container = document.getElementById('main-container');
 
     isViewerExpanded = !isViewerExpanded;
 
     if (isViewerExpanded) {
         panel.classList.add('expanded');
-        container.style.right = '70vw';  // Match expanded width
         if (icon) icon.textContent = '➡';
     } else {
         panel.classList.remove('expanded');
-        container.style.right = '450px';  // Default width
         if (icon) icon.textContent = '⬅';
     }
 
-    // Re-render visualization to adjust to new viewport size
-    setTimeout(() => {
-        renderVisualization();
-    }, 300);
+    // Don't re-render graph on expand - only affects panel width
+    // Graph will adjust on close via closeViewerPanel()
 }
 
 function jumpToSection(sectionId) {
