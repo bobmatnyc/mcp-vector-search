@@ -412,8 +412,8 @@ class TestPerformance:
         # Create 10 levels of nesting
         for i in range(10):
             node_type = "directory" if i < 9 else "file"
-            parent = f"node{i-1}" if i > 0 else None
-            state.expand_node(f"node{i}", node_type, [f"node{i+1}"], parent_id=parent)
+            parent = f"node{i - 1}" if i > 0 else None
+            state.expand_node(f"node{i}", node_type, [f"node{i + 1}"], parent_id=parent)
 
         assert len(state.expansion_path) == 10
 
@@ -443,7 +443,7 @@ class TestPerformance:
 
         # Create many edges
         edges = [
-            {"source": f"func{i}", "target": f"func{i+1}", "type": "caller"}
+            {"source": f"func{i}", "target": f"func{i + 1}", "type": "caller"}
             for i in range(99)
         ]
 

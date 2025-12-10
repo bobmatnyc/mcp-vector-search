@@ -140,9 +140,9 @@ def test_multiple_paths_no_cycle():
         "C": [{"chunk_id": "D"}],
     }
     cycles = detect_cycles_test(chunks, caller_map)
-    assert (
-        len(cycles) == 0
-    ), f"Expected no cycles (multiple paths to C), found: {cycles}"
+    assert len(cycles) == 0, (
+        f"Expected no cycles (multiple paths to C), found: {cycles}"
+    )
     print("✓ Test passed: A → C ← B → C → D (multiple paths, no cycle)")
 
 
