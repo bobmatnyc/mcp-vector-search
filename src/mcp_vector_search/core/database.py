@@ -44,11 +44,14 @@ class VectorDatabase(ABC):
         ...
 
     @abstractmethod
-    async def add_chunks(self, chunks: list[CodeChunk]) -> None:
-        """Add code chunks to the database.
+    async def add_chunks(
+        self, chunks: list[CodeChunk], metrics: dict[str, Any] | None = None
+    ) -> None:
+        """Add code chunks to the database with optional structural metrics.
 
         Args:
             chunks: List of code chunks to add
+            metrics: Optional dict mapping chunk IDs to ChunkMetrics.to_metadata() dicts
         """
         ...
 
@@ -245,8 +248,16 @@ class ChromaVectorDatabase(VectorDatabase):
             self._collection = None
             logger.debug("ChromaDB connections closed")
 
-    async def add_chunks(self, chunks: list[CodeChunk]) -> None:
-        """Add code chunks to the database."""
+    async def add_chunks(
+        self, chunks: list[CodeChunk], metrics: dict[str, Any] | None = None
+    ) -> None:
+        """Add code chunks to the database with optional structural metrics.
+
+        Args:
+            chunks: List of code chunks to add
+            metrics: Optional dict mapping chunk IDs to ChunkMetrics.to_metadata() dicts
+                    Example: {"chunk_id_1": {"cognitive_complexity": 5, ...}, ...}
+        """
         if not self._collection:
             raise DatabaseNotInitializedError("Database not initialized")
 
@@ -304,6 +315,12 @@ class ChromaVectorDatabase(VectorDatabase):
                     "subproject_name": chunk.subproject_name or "",
                     "subproject_path": chunk.subproject_path or "",
                 }
+
+                # Merge structural metrics if provided
+                if metrics and chunk.chunk_id and chunk.chunk_id in metrics:
+                    chunk_metrics = metrics[chunk.chunk_id]
+                    metadata.update(chunk_metrics)
+
                 metadatas.append(metadata)
 
                 # Use chunk ID
@@ -600,7 +617,24 @@ class ChromaVectorDatabase(VectorDatabase):
         return "\n".join(parts)
 
     def _build_where_clause(self, filters: dict[str, Any]) -> dict[str, Any]:
-        """Build ChromaDB where clause from filters."""
+        """Build ChromaDB where clause from filters.
+
+        Supports filtering by:
+        - language, file_path, chunk_type (standard fields)
+        - complexity_grade (A, B, C, D, F)
+        - smell_count (0, >0)
+        - cognitive_complexity (range queries using $and)
+
+        Args:
+            filters: Dictionary of filter criteria
+
+        Returns:
+            ChromaDB where clause
+        """
+        # If filters already contain ChromaDB operators ($and, $or), pass through
+        if "$and" in filters or "$or" in filters:
+            return filters
+
         where = {}
 
         for key, value in filters.items():
@@ -608,6 +642,9 @@ class ChromaVectorDatabase(VectorDatabase):
                 where[key] = {"$in": value}
             elif isinstance(value, str) and value.startswith("!"):
                 where[key] = {"$ne": value[1:]}
+            elif isinstance(value, dict):
+                # Support operator queries like {"$gte": 10}
+                where[key] = value
             else:
                 where[key] = value
 
@@ -783,8 +820,15 @@ class PooledChromaVectorDatabase(VectorDatabase):
         await self._pool.close()
         logger.debug("Pooled ChromaDB connections closed")
 
-    async def add_chunks(self, chunks: list[CodeChunk]) -> None:
-        """Add code chunks to the database using pooled connection."""
+    async def add_chunks(
+        self, chunks: list[CodeChunk], metrics: dict[str, Any] | None = None
+    ) -> None:
+        """Add code chunks to the database using pooled connection with optional metrics.
+
+        Args:
+            chunks: List of code chunks to add
+            metrics: Optional dict mapping chunk IDs to ChunkMetrics.to_metadata() dicts
+        """
         if not chunks:
             return
 
@@ -802,34 +846,38 @@ class PooledChromaVectorDatabase(VectorDatabase):
                 for chunk in chunks:
                     # Store original content in documents (no metadata appended)
                     documents.append(chunk.content)
-                    metadatas.append(
-                        {
-                            "file_path": str(chunk.file_path),
-                            "start_line": chunk.start_line,
-                            "end_line": chunk.end_line,
-                            "language": chunk.language,
-                            "chunk_type": chunk.chunk_type,
-                            "function_name": chunk.function_name or "",
-                            "class_name": chunk.class_name or "",
-                            "docstring": chunk.docstring or "",
-                            "complexity_score": chunk.complexity_score,
-                            # Hierarchy fields (convert lists to JSON strings for ChromaDB)
-                            "chunk_id": chunk.chunk_id or "",
-                            "parent_chunk_id": chunk.parent_chunk_id or "",
-                            "child_chunk_ids": json.dumps(chunk.child_chunk_ids or []),
-                            "chunk_depth": chunk.chunk_depth,
-                            # Additional metadata (convert lists/dicts to JSON strings)
-                            "decorators": json.dumps(chunk.decorators or []),
-                            "parameters": json.dumps(chunk.parameters or []),
-                            "return_type": chunk.return_type or "",
-                            "type_annotations": json.dumps(
-                                chunk.type_annotations or {}
-                            ),
-                            # Monorepo support
-                            "subproject_name": chunk.subproject_name or "",
-                            "subproject_path": chunk.subproject_path or "",
-                        }
-                    )
+
+                    metadata = {
+                        "file_path": str(chunk.file_path),
+                        "start_line": chunk.start_line,
+                        "end_line": chunk.end_line,
+                        "language": chunk.language,
+                        "chunk_type": chunk.chunk_type,
+                        "function_name": chunk.function_name or "",
+                        "class_name": chunk.class_name or "",
+                        "docstring": chunk.docstring or "",
+                        "complexity_score": chunk.complexity_score,
+                        # Hierarchy fields (convert lists to JSON strings for ChromaDB)
+                        "chunk_id": chunk.chunk_id or "",
+                        "parent_chunk_id": chunk.parent_chunk_id or "",
+                        "child_chunk_ids": json.dumps(chunk.child_chunk_ids or []),
+                        "chunk_depth": chunk.chunk_depth,
+                        # Additional metadata (convert lists/dicts to JSON strings)
+                        "decorators": json.dumps(chunk.decorators or []),
+                        "parameters": json.dumps(chunk.parameters or []),
+                        "return_type": chunk.return_type or "",
+                        "type_annotations": json.dumps(chunk.type_annotations or {}),
+                        # Monorepo support
+                        "subproject_name": chunk.subproject_name or "",
+                        "subproject_path": chunk.subproject_path or "",
+                    }
+
+                    # Merge structural metrics if provided
+                    if metrics and chunk.chunk_id and chunk.chunk_id in metrics:
+                        chunk_metrics = metrics[chunk.chunk_id]
+                        metadata.update(chunk_metrics)
+
+                    metadatas.append(metadata)
                     ids.append(chunk.id)
 
                 # Add to collection
