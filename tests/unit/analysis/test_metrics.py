@@ -77,7 +77,7 @@ class TestChunkMetrics:
         assert metadata["parameter_count"] == 4
         assert metadata["lines_of_code"] == 50
         assert metadata["complexity_grade"] == "C"
-        assert metadata["code_smells"] == []
+        assert metadata["code_smells"] == "[]"  # JSON string for ChromaDB compatibility
         assert metadata["smell_count"] == 0
 
     def test_to_metadata_with_smells(self):
@@ -92,12 +92,15 @@ class TestChunkMetrics:
         # Verify all values are ChromaDB-compatible types
         assert isinstance(metadata["cognitive_complexity"], int)
         assert isinstance(metadata["complexity_grade"], str)
-        assert isinstance(metadata["code_smells"], list)
+        assert isinstance(metadata["code_smells"], str)  # JSON string for ChromaDB
         assert isinstance(metadata["smell_count"], int)
 
-        # Verify smell data
-        assert "long_method" in metadata["code_smells"]
-        assert "too_many_params" in metadata["code_smells"]
+        # Verify smell data (stored as JSON string)
+        import json
+
+        smells = json.loads(metadata["code_smells"])
+        assert "long_method" in smells
+        assert "too_many_params" in smells
         assert metadata["smell_count"] == 2
 
     def test_to_metadata_chromadb_compatibility(self):

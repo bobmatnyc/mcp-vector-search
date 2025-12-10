@@ -67,12 +67,14 @@ class ChunkMetrics:
     def to_metadata(self) -> dict[str, Any]:
         """Flatten metrics for ChromaDB metadata storage.
 
-        ChromaDB supports: str, int, float, bool, list[str].
-        All metrics are flattened to these types.
+        ChromaDB supports: str, int, float, bool.
+        Lists are converted to JSON strings for compatibility.
 
         Returns:
             Dictionary of flattened metrics compatible with ChromaDB
         """
+        import json
+
         return {
             "cognitive_complexity": self.cognitive_complexity,
             "cyclomatic_complexity": self.cyclomatic_complexity,
@@ -80,7 +82,7 @@ class ChunkMetrics:
             "parameter_count": self.parameter_count,
             "lines_of_code": self.lines_of_code,
             "complexity_grade": self.complexity_grade,
-            "code_smells": self.smells,  # list[str] - compatible with ChromaDB
+            "code_smells": json.dumps(self.smells),  # Convert list to JSON string
             "smell_count": len(self.smells),
         }
 
