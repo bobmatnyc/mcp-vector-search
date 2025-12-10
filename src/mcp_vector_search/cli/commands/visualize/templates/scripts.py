@@ -52,9 +52,9 @@ const chunkTypes = ['function', 'class', 'method', 'text', 'imports', 'module'];
 
 // Size scaling configuration
 const sizeConfig = {
-    minRadius: 4,       // Minimum node radius
+    minRadius: 8,       // Minimum node radius (increased for readability)
     maxRadius: 20,      // Maximum node radius
-    chunkMinRadius: 3,  // Minimum for chunks
+    chunkMinRadius: 6,  // Minimum for chunks (increased for readability)
     chunkMaxRadius: 12  // Maximum for chunks
 };
 
