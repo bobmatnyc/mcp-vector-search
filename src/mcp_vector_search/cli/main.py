@@ -115,6 +115,7 @@ explore unfamiliar projects, and integrate with AI coding tools via MCP.
 )
 
 # Import command modules
+from .commands.analyze import analyze_app  # noqa: E402
 from .commands.chat import chat_app  # noqa: E402
 from .commands.config import config_app  # noqa: E402
 from .commands.demo import demo_app  # noqa: E402
@@ -173,15 +174,20 @@ app.add_typer(mcp_app, name="mcp", help="🔌 MCP server operations")
 # 10. CONFIG - Configuration
 app.add_typer(config_app, name="config", help="⚙️  Manage project configuration")
 
-# 11. VISUALIZE - Code graph visualization
+# 11. ANALYZE - Code complexity analysis
+app.add_typer(
+    analyze_app, name="analyze", help="📈 Analyze code complexity and quality"
+)
+
+# 12. VISUALIZE - Code graph visualization
 app.add_typer(
     visualize_app, name="visualize", help="📊 Visualize code chunk relationships"
 )
 
-# 12. HELP - Enhanced help
+# 13. HELP - Enhanced help
 # (defined below inline)
 
-# 13. VERSION - Version info
+# 14. VERSION - Version info
 # (defined below inline)
 
 
