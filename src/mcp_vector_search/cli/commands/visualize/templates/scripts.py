@@ -939,8 +939,13 @@ function displayDirectoryInfo(dirData, addToHistory = true) {
     content.innerHTML = html;
 }
 
-function displayFileInfo(fileData) {
+function displayFileInfo(fileData, addToHistory = true) {
     openViewerPanel();
+
+    // Add to navigation history
+    if (addToHistory) {
+        addToNavHistory({type: 'file', data: fileData});
+    }
 
     const title = document.getElementById('viewer-title');
     const content = document.getElementById('viewer-content');
@@ -950,7 +955,12 @@ function displayFileInfo(fileData) {
     // Get chunks
     const chunks = fileData.children || fileData._children || [];
 
-    let html = '<div class="viewer-section">';
+    let html = '';
+
+    // Navigation bar with breadcrumbs and back/forward
+    html += renderNavigationBar(fileData);
+
+    html += '<div class="viewer-section">';
     html += '<div class="viewer-section-title">File Information</div>';
     html += '<div class="viewer-info-grid">';
     html += `<div class="viewer-info-row">`;
@@ -998,8 +1008,13 @@ function displayFileInfo(fileData) {
     content.innerHTML = html;
 }
 
-function displayChunkContent(chunkData) {
+function displayChunkContent(chunkData, addToHistory = true) {
     openViewerPanel();
+
+    // Add to navigation history
+    if (addToHistory) {
+        addToNavHistory({type: 'chunk', data: chunkData});
+    }
 
     const title = document.getElementById('viewer-title');
     const content = document.getElementById('viewer-content');
@@ -1008,6 +1023,9 @@ function displayChunkContent(chunkData) {
     title.textContent = `${getChunkIcon(chunkData.type)} ${chunkName}`;
 
     let html = '';
+
+    // Navigation bar with breadcrumbs and back/forward
+    html += renderNavigationBar(chunkData);
 
     // === ORDER: Docstring (comments), Code, Metadata ===
 
@@ -1460,7 +1478,10 @@ function goBack() {
             displayDirectoryInfo(item.data, false);  // false = don't add to history
             focusNodeInTree(item.data.id);
         } else if (item.type === 'file') {
-            displayFileInfo(item.data);
+            displayFileInfo(item.data, false);  // false = don't add to history
+            focusNodeInTree(item.data.id);
+        } else if (item.type === 'chunk') {
+            displayChunkContent(item.data, false);  // false = don't add to history
             focusNodeInTree(item.data.id);
         }
     }
@@ -1475,7 +1496,10 @@ function goForward() {
             displayDirectoryInfo(item.data, false);  // false = don't add to history
             focusNodeInTree(item.data.id);
         } else if (item.type === 'file') {
-            displayFileInfo(item.data);
+            displayFileInfo(item.data, false);  // false = don't add to history
+            focusNodeInTree(item.data.id);
+        } else if (item.type === 'chunk') {
+            displayChunkContent(item.data, false);  // false = don't add to history
             focusNodeInTree(item.data.id);
         }
     }
