@@ -133,8 +133,18 @@ def generate_html_template() -> str:
 
     <div id="viewer-panel" class="viewer-panel">
         <div class="viewer-header">
-            <button class="viewer-close-btn" onclick="closeViewerPanel()" title="Close panel">×</button>
+            <div class="viewer-header-buttons">
+                <button class="viewer-expand-btn" onclick="toggleViewerExpand()" title="Expand/Collapse panel">
+                    <span id="expand-icon">⬅</span>
+                </button>
+                <button class="viewer-close-btn" onclick="closeViewerPanel()" title="Close panel">×</button>
+            </div>
             <h2 class="viewer-title" id="viewer-title">Viewer</h2>
+            <div class="section-nav" id="section-nav">
+                <select id="section-dropdown" onchange="jumpToSection(this.value)" title="Jump to section">
+                    <option value="">Jump to section...</option>
+                </select>
+            </div>
         </div>
         <div class="viewer-content" id="viewer-content">
             <p style="color: #8b949e; text-align: center; padding: 40px;">Select a node to view details</p>

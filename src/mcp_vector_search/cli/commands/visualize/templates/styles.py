@@ -232,6 +232,8 @@ def get_graph_styles() -> str:
             right: 450px;
         }
 
+        /* When viewer is expanded, handled via JS style.right */
+
         #graph {
             width: 100%;
             height: 100%;
@@ -497,27 +499,85 @@ def get_content_pane_styles() -> str:
             transform: translateX(0);
         }
 
+        .viewer-panel.expanded {
+            width: 70vw;
+            max-width: 1200px;
+        }
+
         .viewer-header {
             position: sticky;
             top: 0;
             background: rgba(13, 17, 23, 0.98);
-            padding: 20px;
+            padding: 16px 20px;
             border-bottom: 1px solid #30363d;
             z-index: 1;
+        }
+
+        .viewer-header-buttons {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .viewer-expand-btn {
+            cursor: pointer;
+            color: #8b949e;
+            font-size: 18px;
+            line-height: 1;
+            background: none;
+            border: none;
+            padding: 4px;
+            transition: color 0.2s, background 0.2s;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+        }
+
+        .viewer-expand-btn:hover {
+            color: #c9d1d9;
+            background: rgba(255, 255, 255, 0.1);
         }
 
         .viewer-title {
             font-size: 16px;
             font-weight: bold;
             color: #58a6ff;
-            margin: 0;
-            padding-right: 30px;
+            margin: 0 0 8px 0;
+            padding-right: 80px;
+        }
+
+        .section-nav {
+            margin-top: 8px;
+        }
+
+        .section-nav select {
+            background: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            width: 100%;
+            max-width: 250px;
+        }
+
+        .section-nav select:hover {
+            border-color: #58a6ff;
+        }
+
+        .section-nav select:focus {
+            outline: none;
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
         }
 
         .viewer-close-btn {
-            position: absolute;
-            top: 16px;
-            right: 16px;
             cursor: pointer;
             color: #8b949e;
             font-size: 28px;

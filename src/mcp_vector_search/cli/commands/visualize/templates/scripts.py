@@ -517,11 +517,54 @@ function drawExternalCallLines(svg, root) {
     // Remove existing external call lines
     svg.selectAll('.external-call-line').remove();
 
-    // Build a map of node positions from the tree
+    // Build a map of node positions from the tree (visible nodes only)
     const nodePositions = new Map();
     root.descendants().forEach(d => {
         nodePositions.set(d.data.id, { x: d.x, y: d.y, node: d });
     });
+
+    // Helper: Find position for a node, falling back to visible ancestors
+    // If the target node is not visible (collapsed), find its closest visible ancestor
+    function getPositionWithFallback(nodeId) {
+        // First check if node is directly visible
+        if (nodePositions.has(nodeId)) {
+            return nodePositions.get(nodeId);
+        }
+
+        // Node not visible - find it in allNodes and trace to visible ancestor
+        const targetNode = allNodes.find(n => n.id === nodeId);
+        if (!targetNode) return null;
+
+        // Strategy: Look for a file/directory that contains this node (based on file_path)
+        // Find files that match the node's file_path
+        if (targetNode.file_path) {
+            // Find the file node for this chunk
+            const fileNode = allNodes.find(n =>
+                n.type === 'file' &&
+                (n.path === targetNode.file_path || n.file_path === targetNode.file_path)
+            );
+            if (fileNode && nodePositions.has(fileNode.id)) {
+                return nodePositions.get(fileNode.id);
+            }
+
+            // Try to find a visible directory containing this file
+            const pathParts = targetNode.file_path.split('/');
+            for (let i = pathParts.length - 1; i >= 0; i--) {
+                const dirPath = pathParts.slice(0, i).join('/');
+                // Find directory by name (last segment of path)
+                const dirName = pathParts[i - 1];
+                const dirNode = allNodes.find(n =>
+                    n.type === 'directory' &&
+                    n.name === dirName
+                );
+                if (dirNode && nodePositions.has(dirNode.id)) {
+                    return nodePositions.get(dirNode.id);
+                }
+            }
+        }
+
+        return null;
+    }
 
     // Create a group for external call lines (behind nodes)
     let lineGroup = svg.select('.external-lines-group');
@@ -534,12 +577,12 @@ function drawExternalCallLines(svg, root) {
     lineGroup.style('display', showCallLines ? 'block' : 'none');
 
     externalCallData.forEach(data => {
-        const sourcePos = nodePositions.get(data.nodeId);
+        const sourcePos = getPositionWithFallback(data.nodeId);
         if (!sourcePos) return;
 
         // Draw lines to inbound nodes (callers) - dashed blue
         data.inboundNodes.forEach(caller => {
-            const targetPos = nodePositions.get(caller.id);
+            const targetPos = getPositionWithFallback(caller.id);
             if (targetPos) {
                 lineGroup.append('path')
                     .attr('class', 'external-call-line inbound-line')
@@ -555,7 +598,7 @@ function drawExternalCallLines(svg, root) {
 
         // Draw lines to outbound nodes (callees) - dashed orange
         data.outboundNodes.forEach(callee => {
-            const targetPos = nodePositions.get(callee.id);
+            const targetPos = getPositionWithFallback(callee.id);
             if (targetPos) {
                 lineGroup.append('path')
                     .attr('class', 'external-call-line outbound-line')
@@ -1242,11 +1285,15 @@ function displayChunkContent(chunkData, addToHistory = true) {
     // Navigation bar with breadcrumbs and back/forward
     html += renderNavigationBar(chunkData);
 
+    // Track sections for dropdown navigation
+    const sections = [];
+
     // === ORDER: Docstring (comments), Code, Metadata ===
 
     // === 1. Docstring Section (Comments) ===
     if (chunkData.docstring) {
-        html += '<div class="viewer-section">';
+        sections.push({ id: 'docstring', label: '📖 Docstring' });
+        html += '<div class="viewer-section" data-section="docstring">';
         html += '<div class="viewer-section-title">📖 Docstring</div>';
         html += `<div style="color: #8b949e; font-style: italic; padding: 8px 12px; background: #161b22; border-radius: 4px; white-space: pre-wrap;">${escapeHtml(chunkData.docstring)}</div>`;
         html += '</div>';
@@ -1254,7 +1301,8 @@ function displayChunkContent(chunkData, addToHistory = true) {
 
     // === 2. Source Code Section ===
     if (chunkData.content) {
-        html += '<div class="viewer-section">';
+        sections.push({ id: 'source-code', label: '📝 Source Code' });
+        html += '<div class="viewer-section" data-section="source-code">';
         html += '<div class="viewer-section-title">📝 Source Code</div>';
         html += `<pre><code>${escapeHtml(chunkData.content)}</code></pre>`;
         html += '</div>';
@@ -1263,7 +1311,8 @@ function displayChunkContent(chunkData, addToHistory = true) {
     }
 
     // === 3. Metadata Section ===
-    html += '<div class="viewer-section">';
+    sections.push({ id: 'metadata', label: 'ℹ️ Metadata' });
+    html += '<div class="viewer-section" data-section="metadata">';
     html += '<div class="viewer-section-title">ℹ️ Metadata</div>';
     html += '<div class="viewer-info-grid">';
 
@@ -1366,7 +1415,8 @@ function displayChunkContent(chunkData, addToHistory = true) {
 
         // === External Callers Section (functions from other files that call this) ===
         if (externalCallers.length > 0) {
-            html += '<div class="viewer-section">';
+            sections.push({ id: 'external-callers', label: '📥 External Callers' });
+            html += '<div class="viewer-section" data-section="external-callers">';
             html += '<div class="viewer-section-title">📥 External Callers <span style="color: #8b949e; font-weight: normal;">(functions from other files calling this)</span></div>';
             html += '<div style="display: flex; flex-direction: column; gap: 6px;">';
             externalCallers.slice(0, 10).forEach(({ link, node }) => {
@@ -1385,7 +1435,8 @@ function displayChunkContent(chunkData, addToHistory = true) {
 
         // === External Calls Section (functions in other files this calls) ===
         if (externalCallees.length > 0) {
-            html += '<div class="viewer-section">';
+            sections.push({ id: 'external-calls', label: '📤 External Calls' });
+            html += '<div class="viewer-section" data-section="external-calls">';
             html += '<div class="viewer-section-title">📤 External Calls <span style="color: #8b949e; font-weight: normal;">(functions in other files this calls)</span></div>';
             html += '<div style="display: flex; flex-direction: column; gap: 6px;">';
             externalCallees.slice(0, 10).forEach(({ link, node }) => {
@@ -1404,7 +1455,8 @@ function displayChunkContent(chunkData, addToHistory = true) {
 
         // === Local (Same-File) Relationships Section ===
         if (localCallers.length > 0 || localCallees.length > 0) {
-            html += '<div class="viewer-section">';
+            sections.push({ id: 'local-references', label: '🔗 Local References' });
+            html += '<div class="viewer-section" data-section="local-references">';
             html += '<div class="viewer-section-title">🔗 Local References <span style="color: #8b949e; font-weight: normal;">(same file)</span></div>';
 
             if (localCallers.length > 0) {
@@ -1439,7 +1491,8 @@ function displayChunkContent(chunkData, addToHistory = true) {
         // === Semantically Similar Section ===
         const semanticLinks = allLinks.filter(l => l.type === 'semantic' && l.source === chunkId);
         if (semanticLinks.length > 0) {
-            html += '<div class="viewer-section">';
+            sections.push({ id: 'semantic', label: '🧠 Semantically Similar' });
+            html += '<div class="viewer-section" data-section="semantic">';
             html += '<div class="viewer-section-title">🧠 Semantically Similar</div>';
             html += '<div style="display: flex; flex-direction: column; gap: 4px;">';
             semanticLinks.slice(0, 5).forEach(link => {
@@ -1460,6 +1513,9 @@ function displayChunkContent(chunkData, addToHistory = true) {
     }
 
     content.innerHTML = html;
+
+    // Populate section dropdown for navigation
+    populateSectionDropdown(sections);
 }
 
 // Focus on a node in the tree (expand path, scroll, highlight)
@@ -1662,6 +1718,8 @@ function toggleLayout() {
 // VIEWER PANEL CONTROLS
 // ============================================================================
 
+let isViewerExpanded = false;
+
 function openViewerPanel() {
     const panel = document.getElementById('viewer-panel');
     const container = document.getElementById('main-container');
@@ -1683,13 +1741,86 @@ function closeViewerPanel() {
     const container = document.getElementById('main-container');
 
     panel.classList.remove('open');
+    panel.classList.remove('expanded');
     container.classList.remove('viewer-open');
     isViewerOpen = false;
+    isViewerExpanded = false;
+
+    // Update icon
+    const icon = document.getElementById('expand-icon');
+    if (icon) icon.textContent = '⬅';
 
     // Re-render visualization to adjust to new viewport size
     setTimeout(() => {
         renderVisualization();
     }, 300); // Wait for transition
+}
+
+function toggleViewerExpand() {
+    const panel = document.getElementById('viewer-panel');
+    const icon = document.getElementById('expand-icon');
+    const container = document.getElementById('main-container');
+
+    isViewerExpanded = !isViewerExpanded;
+
+    if (isViewerExpanded) {
+        panel.classList.add('expanded');
+        container.style.right = '70vw';  // Match expanded width
+        if (icon) icon.textContent = '➡';
+    } else {
+        panel.classList.remove('expanded');
+        container.style.right = '450px';  // Default width
+        if (icon) icon.textContent = '⬅';
+    }
+
+    // Re-render visualization to adjust to new viewport size
+    setTimeout(() => {
+        renderVisualization();
+    }, 300);
+}
+
+function jumpToSection(sectionId) {
+    if (!sectionId) return;
+
+    const viewerContent = document.getElementById('viewer-content');
+    const sectionElement = viewerContent.querySelector(`[data-section="${sectionId}"]`);
+
+    if (sectionElement) {
+        sectionElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        // Briefly highlight the section
+        sectionElement.style.transition = 'background-color 0.3s';
+        sectionElement.style.backgroundColor = 'rgba(88, 166, 255, 0.15)';
+        setTimeout(() => {
+            sectionElement.style.backgroundColor = '';
+        }, 1000);
+    }
+
+    // Reset dropdown to default
+    const dropdown = document.getElementById('section-dropdown');
+    if (dropdown) dropdown.value = '';
+}
+
+function populateSectionDropdown(sections) {
+    const dropdown = document.getElementById('section-dropdown');
+    if (!dropdown) return;
+
+    // Clear existing options except the first one
+    dropdown.innerHTML = '<option value="">Jump to section...</option>';
+
+    // Add section options
+    sections.forEach(section => {
+        const option = document.createElement('option');
+        option.value = section.id;
+        option.textContent = section.label;
+        dropdown.appendChild(option);
+    });
+
+    // Show/hide dropdown based on whether we have sections
+    const sectionNav = document.getElementById('section-nav');
+    if (sectionNav) {
+        sectionNav.style.display = sections.length > 1 ? 'block' : 'none';
+    }
 }
 
 // ============================================================================
