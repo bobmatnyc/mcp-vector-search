@@ -12,7 +12,7 @@ from rich.traceback import install
 
 from .. import __build__, __version__
 from .didyoumean import add_common_suggestions, create_enhanced_typer
-from .output import print_warning, setup_logging
+from .output import setup_logging
 from .suggestions import get_contextual_suggestions
 
 
@@ -183,140 +183,6 @@ app.add_typer(
 
 # 13. VERSION - Version info
 # (defined below inline)
-
-
-# ============================================================================
-# DEPRECATED COMMANDS - With helpful suggestions
-# ============================================================================
-
-
-def _deprecated_command(old_cmd: str, new_cmd: str):
-    """Helper to create deprecated command with suggestion."""
-
-    def wrapper(*args, **kwargs):
-        print_warning(
-            f"⚠️  The command '{old_cmd}' is deprecated.\n"
-            f"   Please use '{new_cmd}' instead.\n"
-            f"   Run: [cyan]mcp-vector-search {new_cmd} --help[/cyan] for details."
-        )
-        raise typer.Exit(1)
-
-    return wrapper
-
-
-# NOTE: 'install' command is now the primary command for project installation
-# Old 'install' was deprecated in favor of 'init' in v0.7.0
-# Now 'install' is back as the hierarchical installation command in v0.13.0
-
-
-# Deprecated: find -> search
-@app.command("find", hidden=True)
-def deprecated_find():
-    """[DEPRECATED] Use 'search' instead."""
-    _deprecated_command("find", "search")()
-
-
-# Deprecated: search-similar -> search --similar
-@app.command("search-similar", hidden=True)
-def deprecated_search_similar():
-    """[DEPRECATED] Use 'search --similar' instead."""
-    _deprecated_command("search-similar", "search --similar")()
-
-
-# Deprecated: search-context -> search --context
-@app.command("search-context", hidden=True)
-def deprecated_search_context():
-    """[DEPRECATED] Use 'search --context' instead."""
-    _deprecated_command("search-context", "search --context")()
-
-
-# Deprecated: interactive -> search interactive
-@app.command("interactive", hidden=True)
-def deprecated_interactive():
-    """[DEPRECATED] Use 'search interactive' instead."""
-    _deprecated_command("interactive", "search interactive")()
-
-
-# Deprecated: history -> search history
-@app.command("history", hidden=True)
-def deprecated_history():
-    """[DEPRECATED] Use 'search history' instead."""
-    _deprecated_command("history", "search history")()
-
-
-# Deprecated: favorites -> search favorites
-@app.command("favorites", hidden=True)
-def deprecated_favorites():
-    """[DEPRECATED] Use 'search favorites' instead."""
-    _deprecated_command("favorites", "search favorites")()
-
-
-# Deprecated: add-favorite -> search favorites add
-@app.command("add-favorite", hidden=True)
-def deprecated_add_favorite():
-    """[DEPRECATED] Use 'search favorites add' instead."""
-    _deprecated_command("add-favorite", "search favorites add")()
-
-
-# Deprecated: remove-favorite -> search favorites remove
-@app.command("remove-favorite", hidden=True)
-def deprecated_remove_favorite():
-    """[DEPRECATED] Use 'search favorites remove' instead."""
-    _deprecated_command("remove-favorite", "search favorites remove")()
-
-
-# Deprecated: health -> index health
-@app.command("health", hidden=True)
-def deprecated_health():
-    """[DEPRECATED] Use 'index health' instead."""
-    _deprecated_command("health", "index health")()
-
-
-# Deprecated: watch -> index watch
-@app.command("watch", hidden=True)
-def deprecated_watch():
-    """[DEPRECATED] Use 'index watch' instead."""
-    _deprecated_command("watch", "index watch")()
-
-
-# Deprecated: auto-index -> index auto
-@app.command("auto-index", hidden=True)
-def deprecated_auto_index():
-    """[DEPRECATED] Use 'index auto' instead."""
-    _deprecated_command("auto-index", "index auto")()
-
-
-# Deprecated: reset -> mcp reset or config reset
-@app.command("reset", hidden=True)
-def deprecated_reset():
-    """[DEPRECATED] Use 'mcp reset' or 'config reset' instead."""
-    print_warning(
-        "⚠️  The 'reset' command is deprecated.\n"
-        "   Use [cyan]mcp-vector-search mcp reset[/cyan] for MCP reset\n"
-        "   Use [cyan]mcp-vector-search config reset[/cyan] for config reset"
-    )
-    raise typer.Exit(1)
-
-
-# Deprecated: init-check -> init check
-@app.command("init-check", hidden=True)
-def deprecated_init_check():
-    """[DEPRECATED] Use 'init check' instead."""
-    _deprecated_command("init-check", "init check")()
-
-
-# Deprecated: init-mcp -> mcp install
-@app.command("init-mcp", hidden=True)
-def deprecated_init_mcp():
-    """[DEPRECATED] Use 'mcp install' instead."""
-    _deprecated_command("init-mcp", "mcp install")()
-
-
-# Deprecated: init-models -> config models
-@app.command("init-models", hidden=True)
-def deprecated_init_models():
-    """[DEPRECATED] Use 'config models' instead."""
-    _deprecated_command("init-models", "config models")()
 
 
 # ============================================================================

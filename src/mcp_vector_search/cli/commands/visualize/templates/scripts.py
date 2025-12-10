@@ -55,10 +55,10 @@ const chunkTypes = ['function', 'class', 'method', 'text', 'imports', 'module'];
 
 // Size scaling configuration
 const sizeConfig = {
-    minRadius: 8,       // Minimum node radius (increased for readability)
-    maxRadius: 20,      // Maximum node radius
-    chunkMinRadius: 6,  // Minimum for chunks (increased for readability)
-    chunkMaxRadius: 12  // Maximum for chunks
+    minRadius: 12,      // Minimum node radius (50% larger for readability)
+    maxRadius: 24,      // Maximum node radius
+    chunkMinRadius: 9,  // Minimum for chunks (50% larger for readability)
+    chunkMaxRadius: 16  // Maximum for chunks
 };
 
 // Dynamic dimensions that update when viewer opens/closes
@@ -379,9 +379,11 @@ function buildTreeStructure() {
 
     console.log('Tree structure built with all directories and files collapsed');
 
-    // Calculate sizes for all nodes (for proportional node rendering)
+    // Calculate line counts for all nodes (for proportional node rendering)
+    allLineCounts = [];  // Reset for fresh calculation
     calculateNodeSizes(treeData);
-    console.log('Node sizes calculated');
+    calculatePercentiles();  // Calculate 20th/80th percentile thresholds
+    console.log('Node sizes calculated with percentile-based sizing');
 
     // DEBUG: Check a few file nodes to see if they have chunks in _children
     console.log('=== POST-COLLAPSE FILE CHECK ===');
@@ -412,44 +414,63 @@ function buildTreeStructure() {
 // NODE SIZE CALCULATION
 // ============================================================================
 
-// Global variables for size scaling
-let globalMinSize = Infinity;
-let globalMaxSize = 0;
+// Global variables for size scaling - now tracking line counts
+let globalMinLines = Infinity;
+let globalMaxLines = 0;
+let allLineCounts = [];  // Collect all line counts for percentile calculation
 
 function calculateNodeSizes(node) {
     if (!node) return 0;
 
-    // For chunks: use content length or line count
+    // For chunks: use line count directly
     if (chunkTypes.includes(node.type)) {
-        const contentLen = (node.content || '').length;
         const lineCount = (node.start_line && node.end_line)
             ? node.end_line - node.start_line + 1
-            : 0;
-        // Prefer content length, fall back to line count * avg chars per line
-        node._size = contentLen || (lineCount * 40);
-        if (node._size > 0) {
-            globalMinSize = Math.min(globalMinSize, node._size);
-            globalMaxSize = Math.max(globalMaxSize, node._size);
+            : 1;
+        node._lineCount = lineCount;
+        allLineCounts.push(lineCount);
+
+        if (lineCount > 0) {
+            globalMinLines = Math.min(globalMinLines, lineCount);
+            globalMaxLines = Math.max(globalMaxLines, lineCount);
         }
-        return node._size;
+        return lineCount;
     }
 
-    // For files and directories: sum of children sizes
+    // For files and directories: sum of children line counts
     const children = node.children || node._children || [];
-    let totalSize = 0;
+    let totalLines = 0;
 
     children.forEach(child => {
-        totalSize += calculateNodeSizes(child);
+        totalLines += calculateNodeSizes(child);
     });
 
-    node._size = totalSize || 1;  // Minimum 1 for empty dirs/files
+    node._lineCount = totalLines || 1;  // Minimum 1 for empty dirs/files
+    allLineCounts.push(node._lineCount);
 
-    if (node._size > 0) {
-        globalMinSize = Math.min(globalMinSize, node._size);
-        globalMaxSize = Math.max(globalMaxSize, node._size);
+    if (node._lineCount > 0) {
+        globalMinLines = Math.min(globalMinLines, node._lineCount);
+        globalMaxLines = Math.max(globalMaxLines, node._lineCount);
     }
 
-    return node._size;
+    return node._lineCount;
+}
+
+// Calculate percentile thresholds after all nodes are processed
+let percentile20 = 0;
+let percentile80 = 0;
+
+function calculatePercentiles() {
+    if (allLineCounts.length === 0) return;
+
+    const sorted = [...allLineCounts].sort((a, b) => a - b);
+    const p20Index = Math.floor(sorted.length * 0.20);
+    const p80Index = Math.floor(sorted.length * 0.80);
+
+    percentile20 = sorted[p20Index] || 1;
+    percentile80 = sorted[p80Index] || sorted[sorted.length - 1] || 1;
+
+    console.log(`Line count percentiles: 20th=${percentile20}, 80th=${percentile80}, min=${globalMinLines}, max=${globalMaxLines}`);
 }
 
 // Count external calls for a node
@@ -638,6 +659,139 @@ function drawExternalCallLines(svg, root) {
     console.log(`[CallLines] Drew ${linesDrawn} call lines`);
 }
 
+// Draw external call lines for CIRCULAR layout
+// Converts polar coordinates (angle, radius) to Cartesian (x, y)
+function drawExternalCallLinesCircular(svg, root) {
+    // Remove existing external call lines
+    svg.selectAll('.external-call-line').remove();
+
+    // Helper: Convert polar to Cartesian coordinates
+    // In D3 radial layout: d.x = angle (radians), d.y = radius
+    function polarToCartesian(angle, radius) {
+        return {
+            x: radius * Math.cos(angle - Math.PI / 2),
+            y: radius * Math.sin(angle - Math.PI / 2)
+        };
+    }
+
+    // Build a map of node positions from the tree (visible nodes only)
+    const nodePositions = new Map();
+    root.descendants().forEach(d => {
+        const cartesian = polarToCartesian(d.x, d.y);
+        nodePositions.set(d.data.id, { x: cartesian.x, y: cartesian.y, angle: d.x, radius: d.y, node: d });
+    });
+
+    // Helper: Find position for a node, falling back to visible ancestors
+    function getPositionWithFallback(nodeId) {
+        // First check if node is directly visible
+        if (nodePositions.has(nodeId)) {
+            return nodePositions.get(nodeId);
+        }
+
+        // Node not visible - try to find via tree traversal
+        const targetNode = allNodes.find(n => n.id === nodeId);
+        if (!targetNode) {
+            return null;
+        }
+
+        // Look for the file that contains this chunk
+        if (targetNode.file_path) {
+            // Look for visible file nodes that match this path
+            for (const [id, pos] of nodePositions) {
+                const visibleNode = allNodes.find(n => n.id === id);
+                if (visibleNode) {
+                    if (visibleNode.type === 'file' &&
+                        (visibleNode.path === targetNode.file_path ||
+                         visibleNode.file_path === targetNode.file_path ||
+                         visibleNode.name === targetNode.file_path.split('/').pop())) {
+                        return pos;
+                    }
+                }
+            }
+
+            // Look for directory containing the file
+            const pathParts = targetNode.file_path.split('/');
+            for (let i = pathParts.length - 1; i >= 0; i--) {
+                const dirName = pathParts[i];
+                if (!dirName) continue;
+
+                for (const [id, pos] of nodePositions) {
+                    const visibleNode = allNodes.find(n => n.id === id);
+                    if (visibleNode && visibleNode.type === 'directory' && visibleNode.name === dirName) {
+                        return pos;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // Create a group for external call lines (behind nodes)
+    let lineGroup = svg.select('.external-lines-group');
+    if (lineGroup.empty()) {
+        lineGroup = svg.insert('g', ':first-child')
+            .attr('class', 'external-lines-group');
+    }
+
+    // Respect the toggle state
+    lineGroup.style('display', showCallLines ? 'block' : 'none');
+
+    console.log(`[CallLines Circular] Drawing lines for ${externalCallData.length} nodes with external calls`);
+
+    let linesDrawn = 0;
+    externalCallData.forEach(data => {
+        const sourcePos = getPositionWithFallback(data.nodeId);
+        if (!sourcePos) {
+            return;
+        }
+
+        // Draw lines to inbound nodes (callers) - dashed blue (fainter)
+        data.inboundNodes.forEach(caller => {
+            const targetPos = getPositionWithFallback(caller.id);
+            if (targetPos) {
+                // Use quadratic bezier curves that go through the center for circular layout
+                const midX = (sourcePos.x + targetPos.x) / 2 * 0.3;
+                const midY = (sourcePos.y + targetPos.y) / 2 * 0.3;
+
+                lineGroup.append('path')
+                    .attr('class', 'external-call-line inbound-line')
+                    .attr('d', `M${targetPos.x},${targetPos.y} Q${midX},${midY} ${sourcePos.x},${sourcePos.y}`)
+                    .attr('fill', 'none')
+                    .attr('stroke', '#58a6ff')
+                    .attr('stroke-width', 1)
+                    .attr('stroke-dasharray', '4,2')
+                    .attr('opacity', 0.35)
+                    .attr('pointer-events', 'none');
+                linesDrawn++;
+            }
+        });
+
+        // Draw lines to outbound nodes (callees) - dashed orange (fainter)
+        data.outboundNodes.forEach(callee => {
+            const targetPos = getPositionWithFallback(callee.id);
+            if (targetPos) {
+                // Use quadratic bezier curves that go through the center for circular layout
+                const midX = (sourcePos.x + targetPos.x) / 2 * 0.3;
+                const midY = (sourcePos.y + targetPos.y) / 2 * 0.3;
+
+                lineGroup.append('path')
+                    .attr('class', 'external-call-line outbound-line')
+                    .attr('d', `M${sourcePos.x},${sourcePos.y} Q${midX},${midY} ${targetPos.x},${targetPos.y}`)
+                    .attr('fill', 'none')
+                    .attr('stroke', '#f0883e')
+                    .attr('stroke-width', 1)
+                    .attr('stroke-dasharray', '4,2')
+                    .attr('opacity', 0.35)
+                    .attr('pointer-events', 'none');
+                linesDrawn++;
+            }
+        });
+    });
+
+    console.log(`[CallLines Circular] Drew ${linesDrawn} call lines`);
+}
+
 // Get color based on complexity (darker = more complex)
 // Uses HSL color model for smooth gradients
 function getComplexityColor(d, baseHue) {
@@ -733,7 +887,7 @@ function calculateAverageComplexity(node) {
 
 function getNodeRadius(d) {
     const nodeData = d.data;
-    const nodeSize = nodeData._size || 1;
+    const lineCount = nodeData._lineCount || 1;
 
     // Determine min/max based on node type
     let minR, maxR;
@@ -745,18 +899,26 @@ function getNodeRadius(d) {
         maxR = sizeConfig.maxRadius;
     }
 
-    // Logarithmic scaling for better distribution
-    // Using log scale because file sizes can vary by orders of magnitude
-    if (globalMaxSize <= globalMinSize) {
+    // Percentile-based relative sizing:
+    // - Below 20th percentile → minimum size
+    // - Above 80th percentile → maximum size
+    // - Between 20th-80th → linear interpolation
+
+    if (percentile80 <= percentile20) {
         return (minR + maxR) / 2;  // Default if no range
     }
 
-    const logMin = Math.log(globalMinSize + 1);
-    const logMax = Math.log(globalMaxSize + 1);
-    const logSize = Math.log(nodeSize + 1);
-
-    // Normalize to 0-1 range
-    const normalized = (logSize - logMin) / (logMax - logMin);
+    let normalized;
+    if (lineCount <= percentile20) {
+        // Below 20th percentile - use minimum size
+        normalized = 0;
+    } else if (lineCount >= percentile80) {
+        // Above 80th percentile - use maximum size
+        normalized = 1;
+    } else {
+        // Linear interpolation between 20th and 80th percentile
+        normalized = (lineCount - percentile20) / (percentile80 - percentile20);
+    }
 
     // Scale to radius range
     return minR + (normalized * (maxR - minR));
@@ -928,9 +1090,12 @@ function renderLinearTree() {
         .attr('dominant-baseline', 'middle')
         .attr('text-anchor', 'start')
         .text(d => d.data.name)
-        .style('font-size', d => chunkTypes.includes(d.data.type) ? '10px' : '12px')
+        .style('font-size', d => chunkTypes.includes(d.data.type) ? '15px' : '18px')
         .style('font-family', 'Arial, sans-serif')
-        .style('fill', d => chunkTypes.includes(d.data.type) ? '#bb86fc' : '#adbac7');
+        .style('fill', d => chunkTypes.includes(d.data.type) ? '#bb86fc' : '#adbac7')
+        .style('cursor', 'pointer')
+        .style('pointer-events', 'all')
+        .on('click', handleNodeClick);
 
     console.log(`Created ${labels.size()} label elements`);
     console.log('=== END RENDER LINEAR TREE ===');
@@ -1056,9 +1221,16 @@ function renderCircularTree() {
         .attr('dominant-baseline', 'middle')
         .attr('text-anchor', d => d.x >= Math.PI ? 'end' : 'start')
         .text(d => d.data.name)
-        .style('font-size', d => chunkTypes.includes(d.data.type) ? '10px' : '12px')
+        .style('font-size', d => chunkTypes.includes(d.data.type) ? '15px' : '18px')
         .style('font-family', 'Arial, sans-serif')
-        .style('fill', d => chunkTypes.includes(d.data.type) ? '#bb86fc' : '#adbac7');
+        .style('fill', d => chunkTypes.includes(d.data.type) ? '#bb86fc' : '#adbac7')
+        .style('cursor', 'pointer')
+        .style('pointer-events', 'all')
+        .on('click', handleNodeClick);
+
+    // Collect and draw external call lines (circular version)
+    collectExternalCallData();
+    drawExternalCallLinesCircular(g, root);
 }
 
 // ============================================================================
@@ -1092,8 +1264,7 @@ function handleNodeClick(event, d) {
         // Re-render to show/hide children
         renderVisualization();
 
-        // Also show directory info in viewer
-        displayDirectoryInfo(nodeData);
+        // Don't auto-open viewer panel for directories - just expand/collapse
     } else if (nodeData.type === 'file') {
         // Toggle file: swap children <-> _children
         if (nodeData.children) {
@@ -1113,8 +1284,7 @@ function handleNodeClick(event, d) {
         // Re-render to show/hide children
         renderVisualization();
 
-        // Show file info in viewer
-        displayFileInfo(nodeData);
+        // Don't auto-open viewer panel for files - just expand/collapse
     } else if (chunkTypes.includes(nodeData.type)) {
         // Chunks can have children too (e.g., imports -> functions, class -> methods)
         // If chunk has children, toggle expand/collapse
@@ -1334,7 +1504,8 @@ function displayChunkContent(chunkData, addToHistory = true) {
         sections.push({ id: 'source-code', label: '📝 Source Code' });
         html += '<div class="viewer-section" data-section="source-code">';
         html += '<div class="viewer-section-title">📝 Source Code</div>';
-        html += `<pre><code>${escapeHtml(chunkData.content)}</code></pre>`;
+        const langClass = getLanguageClass(chunkData.file_path);
+        html += `<pre><code class="hljs${langClass ? ' language-' + langClass : ''}">${escapeHtml(chunkData.content)}</code></pre>`;
         html += '</div>';
     } else {
         html += '<p style="color: #8b949e; padding: 20px; text-align: center;">No content available for this chunk.</p>';
@@ -1357,12 +1528,13 @@ function displayChunkContent(chunkData, addToHistory = true) {
     html += `<span class="viewer-info-value">${escapeHtml(chunkData.type || 'code')}</span>`;
     html += `</div>`;
 
-    // File path
+    // File path (clickable - navigates to file node)
     if (chunkData.file_path) {
         const shortPath = chunkData.file_path.split('/').slice(-3).join('/');
+        const escapedPath = escapeHtml(chunkData.file_path).replace(/'/g, "\\'");
         html += `<div class="viewer-info-row">`;
         html += `<span class="viewer-info-label">File:</span>`;
-        html += `<span class="viewer-info-value" title="${escapeHtml(chunkData.file_path)}">.../${escapeHtml(shortPath)}</span>`;
+        html += `<span class="viewer-info-value clickable" onclick="navigateToFileByPath('${escapedPath}')" title="Click to navigate to file: ${escapeHtml(chunkData.file_path)}">.../${escapeHtml(shortPath)}</span>`;
         html += `</div>`;
     }
 
@@ -1544,6 +1716,13 @@ function displayChunkContent(chunkData, addToHistory = true) {
 
     content.innerHTML = html;
 
+    // Apply syntax highlighting to code blocks
+    content.querySelectorAll('pre code').forEach((block) => {
+        if (typeof hljs !== 'undefined') {
+            hljs.highlightElement(block);
+        }
+    });
+
     // Populate section dropdown for navigation
     populateSectionDropdown(sections);
 }
@@ -1707,6 +1886,62 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Get language class for highlight.js based on file extension
+function getLanguageClass(filePath) {
+    if (!filePath) return '';
+    const ext = filePath.split('.').pop().toLowerCase();
+    const langMap = {
+        'py': 'python',
+        'js': 'javascript',
+        'ts': 'typescript',
+        'tsx': 'typescript',
+        'jsx': 'javascript',
+        'java': 'java',
+        'go': 'go',
+        'rs': 'rust',
+        'rb': 'ruby',
+        'php': 'php',
+        'c': 'c',
+        'cpp': 'cpp',
+        'cc': 'cpp',
+        'h': 'c',
+        'hpp': 'cpp',
+        'cs': 'csharp',
+        'swift': 'swift',
+        'kt': 'kotlin',
+        'scala': 'scala',
+        'sh': 'bash',
+        'bash': 'bash',
+        'zsh': 'bash',
+        'sql': 'sql',
+        'html': 'html',
+        'htm': 'html',
+        'css': 'css',
+        'scss': 'scss',
+        'less': 'less',
+        'json': 'json',
+        'yaml': 'yaml',
+        'yml': 'yaml',
+        'xml': 'xml',
+        'md': 'markdown',
+        'markdown': 'markdown',
+        'toml': 'ini',
+        'ini': 'ini',
+        'cfg': 'ini',
+        'lua': 'lua',
+        'r': 'r',
+        'dart': 'dart',
+        'ex': 'elixir',
+        'exs': 'elixir',
+        'erl': 'erlang',
+        'hs': 'haskell',
+        'clj': 'clojure',
+        'vim': 'vim',
+        'dockerfile': 'dockerfile'
+    };
+    return langMap[ext] || '';
 }
 
 // ============================================================================
@@ -1908,6 +2143,36 @@ function navigateToFile(fileData) {
     console.log(`Navigating to file: ${fileData.name}`);
     // Focus on the node in the tree (expand path and highlight)
     focusNodeInTree(fileData.id);
+}
+
+// Navigate to a file by its file path (used when clicking on file paths in chunk metadata)
+function navigateToFileByPath(filePath) {
+    console.log(`Navigating to file by path: ${filePath}`);
+
+    // Find the file node in allNodes that matches this path
+    const fileNode = allNodes.find(n => {
+        if (n.type !== 'file') return false;
+        // Match against various path properties
+        return n.path === filePath ||
+               n.file_path === filePath ||
+               (n.path && n.path.endsWith(filePath)) ||
+               (n.file_path && n.file_path.endsWith(filePath)) ||
+               filePath.endsWith(n.name);
+    });
+
+    if (fileNode) {
+        console.log(`Found file node: ${fileNode.name} (id: ${fileNode.id})`);
+        focusNodeInTree(fileNode.id);
+    } else {
+        console.log(`File node not found for path: ${filePath}`);
+        // Try to find by just the filename
+        const fileName = filePath.split('/').pop();
+        const fileByName = allNodes.find(n => n.type === 'file' && n.name === fileName);
+        if (fileByName) {
+            console.log(`Found file by name: ${fileByName.name}`);
+            focusNodeInTree(fileByName.id);
+        }
+    }
 }
 
 function renderNavigationBar(currentItem) {

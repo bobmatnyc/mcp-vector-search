@@ -25,9 +25,20 @@ from .server import find_free_port, start_visualization_server
 
 app = typer.Typer(
     help="Visualize code chunk relationships",
-    no_args_is_help=True,
 )
 console = Console()
+
+
+@app.callback(invoke_without_command=True)
+def visualize_callback(ctx: typer.Context) -> None:
+    """Visualize code chunk relationships.
+
+    When called without a subcommand, automatically starts the visualization server.
+    """
+    # If no subcommand was invoked, run serve with defaults
+    if ctx.invoked_subcommand is None:
+        # Call serve directly with default parameters
+        serve(port=8080, graph_file=Path("chunk-graph.json"), code_only=False)
 
 
 @app.command()

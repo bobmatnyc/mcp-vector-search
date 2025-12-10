@@ -635,6 +635,19 @@ def get_content_pane_styles() -> str:
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
         }
 
+        .viewer-info-value.clickable {
+            color: #58a6ff;
+            cursor: pointer;
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            text-underline-offset: 2px;
+        }
+
+        .viewer-info-value.clickable:hover {
+            color: #79c0ff;
+            text-decoration-style: solid;
+        }
+
         .viewer-content pre {
             margin: 0;
             padding: 16px;
