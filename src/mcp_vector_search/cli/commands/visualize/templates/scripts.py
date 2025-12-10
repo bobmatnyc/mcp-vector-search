@@ -847,10 +847,11 @@ function renderLinearTree() {
     collectExternalCallData();
     drawExternalCallLines(g, root);
 
-    // Node labels - offset based on node radius
+    // Node labels - positioned to the right of node, left-aligned
     const labels = nodes.append('text')
-        .attr('dx', d => getNodeRadius(d) + 6)
-        .attr('dy', 4)
+        .attr('x', d => getNodeRadius(d) + 8)
+        .attr('y', 4)
+        .attr('text-anchor', 'start')
         .text(d => {
             // For chunks, show the name (function/class name)
             return d.data.name;
@@ -971,10 +972,10 @@ function renderCircularTree() {
         }
     });
 
-    // Node labels - offset based on node radius
+    // Node labels - positioned to the right of node, left-aligned
     nodes.append('text')
-        .attr('dx', d => getNodeRadius(d) + 6)
-        .attr('dy', 4)
+        .attr('x', d => getNodeRadius(d) + 8)
+        .attr('y', 4)
         .attr('transform', d => d.x >= Math.PI ? 'rotate(180)' : null)
         .attr('text-anchor', d => d.x >= Math.PI ? 'end' : 'start')
         .text(d => {
