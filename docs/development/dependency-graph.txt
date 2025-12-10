@@ -1,0 +1,202 @@
+Structural Code Analysis - Issue Dependency Graph
+==================================================
+
+LEGEND:
+  [X]  = Issue number
+  →    = Blocks (X blocks Y means Y depends on X)
+  ├─→  = Blocks multiple issues
+  └─→  = Last block in chain
+
+CRITICAL PATH (longest chain):
+#2 → #8 → #10 → #14 → #35 → #37
+
+================================================================================
+PHASE 1: Core Metrics (v0.17.0) - Issues #1-11
+================================================================================
+
+START HERE (no dependencies):
+[#2] Core metric dataclasses
+  ├─→ [#3] Cognitive complexity collector
+  ├─→ [#4] Cyclomatic complexity collector
+  ├─→ [#5] Nesting depth collector
+  ├─→ [#6] Parameter count collector
+  ├─→ [#7] Method count collector
+  ├─→ [#8] Integrate collectors into indexer
+  └─→ [#9] Extend ChromaDB metadata schema
+
+[#8] Integrate collectors (DEPENDS: #2, #3, #4, #5, #6, #7)
+  ├─→ [#10] Add `analyze --quick` CLI command
+  ├─→ [#14] Define code smells and thresholds (Phase 2)
+  ├─→ [#20] Efferent coupling collector (Phase 3)
+  ├─→ [#26] LCOM4 collector (Phase 3)
+  └─→ [#31] Halstead complexity (Phase 4)
+
+[#9] Extend ChromaDB schema (DEPENDS: #2)
+  └─→ [#10] Add `analyze --quick` CLI command
+
+[#10] Add `analyze --quick` CLI (DEPENDS: #8, #9) ★ CRITICAL PATH ★
+  ├─→ [#11] Console metric reporter
+  ├─→ [#14] Define code smells (Phase 2)
+  ├─→ [#15] SARIF output format (Phase 2)
+  ├─→ [#17] Diff-aware analysis (Phase 2)
+  ├─→ [#29] JSON exporter for visualizer (Phase 4)
+  ├─→ [#33] Extend `status --metrics` (Phase 4)
+  └─→ [#35] Quality filters for search (Phase 5)
+
+[#11] Console metric reporter (DEPENDS: #10)
+  (No further blocks - terminal node)
+
+================================================================================
+PHASE 2: Quality Gates (v0.18.0) - Issues #12-18
+================================================================================
+
+[#13] Configurable thresholds (DEPENDS: #2)
+  └─→ [#14] Define code smells
+
+[#14] Define code smells (DEPENDS: #8, #13) ★ CRITICAL PATH ★
+  ├─→ [#15] SARIF output format
+  ├─→ [#16] Add --fail-on-smell exit codes
+  ├─→ [#32] Tech debt calculation (Phase 4)
+  └─→ [#35] Quality filters (Phase 5)
+
+[#15] SARIF output format (DEPENDS: #10, #14)
+  └─→ [#16] Add --fail-on-smell
+
+[#16] Add --fail-on-smell (DEPENDS: #14, #15)
+  (No further blocks - terminal node)
+
+[#17] Diff-aware analysis (DEPENDS: #10)
+  └─→ [#18] Baseline metrics storage
+
+[#18] Baseline metrics storage (DEPENDS: #17)
+  (No further blocks - terminal node)
+
+================================================================================
+PHASE 3: Cross-File Analysis (v0.19.0) - Issues #19-26
+================================================================================
+
+[#20] Efferent coupling (DEPENDS: #2, #8)
+  ├─→ [#21] Afferent coupling collector
+  ├─→ [#22] Instability index
+  └─→ [#23] Circular dependency detection
+
+[#21] Afferent coupling (DEPENDS: #20)
+  └─→ [#22] Instability index
+
+[#22] Instability index (DEPENDS: #20, #21)
+  (No further blocks - terminal node)
+
+[#23] Circular deps (DEPENDS: #20)
+  (No further blocks - terminal node)
+
+[#24] SQLite metrics store (DEPENDS: #2)
+  ├─→ [#25] Historical trend tracking
+  ├─→ [#32] Tech debt calculation (Phase 4)
+  └─→ [#33] Extend `status --metrics` (Phase 4)
+
+[#25] Historical trend tracking (DEPENDS: #24)
+  (No further blocks - terminal node)
+
+[#26] LCOM4 collector (DEPENDS: #2, #8)
+  (No further blocks - terminal node)
+
+================================================================================
+PHASE 4: Visualization Export (v0.20.0) - Issues #27-33
+================================================================================
+
+[#28] Define JSON schema (DEPENDS: #2)
+  └─→ [#29] JSON exporter for visualizer
+
+[#29] JSON exporter (DEPENDS: #28, #10)
+  └─→ [#30] HTML standalone report
+
+[#30] HTML standalone report (DEPENDS: #29)
+  (No further blocks - terminal node)
+
+[#31] Halstead complexity (DEPENDS: #2, #8)
+  (No further blocks - terminal node)
+
+[#32] Tech debt calculation (DEPENDS: #14, #24)
+  (No further blocks - terminal node)
+
+[#33] Extend `status --metrics` (DEPENDS: #10, #24)
+  (No further blocks - terminal node)
+
+================================================================================
+PHASE 5: Search Integration (v0.21.0) - Issues #34-37
+================================================================================
+
+[#35] Quality filters (DEPENDS: #10, #14) ★ CRITICAL PATH ★
+  ├─→ [#36] Quality-aware ranking
+  └─→ [#37] MCP search tools
+
+[#36] Quality-aware ranking (DEPENDS: #35)
+  (No further blocks - terminal node)
+
+[#37] MCP search tools (DEPENDS: #10, #35) ★ CRITICAL PATH END ★
+  (No further blocks - terminal node)
+
+================================================================================
+SUMMARY STATISTICS
+================================================================================
+
+Total Issues: 37 (excluding epic #1, #12, #19, #27, #34)
+Issues with Dependencies: 30
+
+Start Points (no dependencies):
+  - #2 (Core dataclasses) ★ START HERE ★
+
+Critical Path (7 issues):
+  #2 → #8 → #10 → #14 → #35 → #37 (6 hops)
+
+Most Blocking Issues:
+  - #10: Blocks 7 issues (most critical)
+  - #2:  Blocks 7 issues
+  - #8:  Blocks 5 issues
+  - #14: Blocks 4 issues
+
+Terminal Issues (don't block anything):
+  #11, #16, #18, #22, #23, #25, #26, #30, #31, #32, #33, #36, #37
+
+Milestone Distribution:
+  - Phase 1 (v0.17.0): 11 issues
+  - Phase 2 (v0.18.0):  7 issues
+  - Phase 3 (v0.19.0):  8 issues
+  - Phase 4 (v0.20.0):  7 issues
+  - Phase 5 (v0.21.0):  4 issues
+
+Average Dependencies per Issue: 2.4
+Max Dependencies (blocked by): #8 (6 dependencies)
+Max Blocks: #10 (7 issues)
+
+================================================================================
+WORK PRIORITY
+================================================================================
+
+Week 1-2 (Start Immediately):
+  1. #2  - Core dataclasses (NO DEPS) ★ START ★
+  2. #13 - Thresholds (DEPENDS: #2)
+
+Week 1-2 (After #2):
+  3. #3, #4, #5, #6, #7 - All tier 1 collectors (DEPENDS: #2)
+  4. #9  - ChromaDB schema (DEPENDS: #2)
+  5. #8  - Integrate collectors (DEPENDS: #2, #3, #4, #5, #6, #7)
+
+Week 2 (After #8, #9):
+  6. #10 - Analyze CLI (DEPENDS: #8, #9) ★ CRITICAL ★
+  7. #11 - Console reporter (DEPENDS: #10)
+
+Week 3 (Quality Gates):
+  8. #14 - Code smells (DEPENDS: #8, #13)
+  9. #15, #16, #17, #18 - Quality gate features
+
+Week 4 (Cross-File):
+  10. #20-#26 - Coupling and cross-file metrics
+
+Week 5 (Visualization):
+  11. #28-#33 - Export and reporting
+
+Week 8+ (Search):
+  12. #35-#37 - Search integration
+
+================================================================================

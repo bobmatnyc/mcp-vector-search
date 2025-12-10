@@ -251,6 +251,69 @@ python scripts/test_reindexing_workflow.py [options]
 - Performance impact analysis
 - Automation verification
 
+### GitHub Project Management Scripts
+
+#### setup_github_milestones.py
+Automates creation of GitHub milestones and issue dependencies for project management.
+
+**Usage:**
+```bash
+# Using GITHUB_TOKEN environment variable
+export GITHUB_TOKEN="your_github_token_here"
+python scripts/setup_github_milestones.py
+
+# Using command-line argument
+python scripts/setup_github_milestones.py --token "your_github_token_here"
+
+# Dry run (test without making changes)
+python scripts/setup_github_milestones.py --dry-run
+
+# Skip milestone creation (only add dependencies)
+python scripts/setup_github_milestones.py --skip-milestones
+
+# Skip dependency updates (only create milestones)
+python scripts/setup_github_milestones.py --skip-dependencies
+```
+
+**Features:**
+- Automated milestone creation with due dates
+- Issue assignment to milestones
+- Dependency graph management
+- Dry-run mode for testing
+- Cross-platform compatibility
+
+**Prerequisites:**
+```bash
+pip install PyGithub
+```
+
+**Documentation:** See [GitHub Milestones Setup Guide](../docs/development/github-milestones-setup.md)
+
+#### setup_milestones.sh
+Bash script alternative for creating GitHub milestones and assigning issues.
+
+**Usage:**
+```bash
+./scripts/setup_milestones.sh
+```
+
+**Prerequisites:**
+- GitHub CLI (`gh`) installed and authenticated
+- `jq` for JSON parsing
+
+#### add_issue_dependencies.sh
+Adds dependency information to GitHub issue descriptions.
+
+**Usage:**
+```bash
+./scripts/add_issue_dependencies.sh
+```
+
+**Features:**
+- Automatic dependency section creation
+- Blocked by / Blocks relationship tracking
+- Idempotent operation (safe to run multiple times)
+
 ## Deprecated Scripts
 
 ⚠️ **These scripts are deprecated and should not be used.** Use the unified Makefile workflow instead.
@@ -551,6 +614,11 @@ For more information, see the [Contributing Guidelines](../docs/developer/CONTRI
 - `run_tests.py` - Test runner
 - `test_connection_pooling.py` - Connection pool tests
 - `test_reindexing_workflow.py` - Reindexing tests
+
+### GitHub Project Management (Active)
+- `setup_github_milestones.py` - Automated milestone and dependency setup
+- `setup_milestones.sh` - Bash alternative for milestone creation
+- `add_issue_dependencies.sh` - Add dependency information to issues
 
 ### Deprecated (Do Not Use)
 - `build.sh` - Use `make release-*` instead

@@ -305,3 +305,6 @@ tmp/
 
 # MCP configuration (contains tokens)
 .mcp.json
+
+# Added by Claude MPM /mpm-init
+.claude.json

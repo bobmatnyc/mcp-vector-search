@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2025-12-09
+
+### Added
+- **Structural Code Analysis project roadmap**
+  - Created GitHub Project with 38 issues across 5 phases
+  - Added milestones: v0.17.0 through v0.21.0
+  - Full dependency tracking between issues
+  - Roadmap view with start/target dates
+
+- **Project documentation improvements**
+  - Added `docs/projects/` directory for active project tracking
+  - Created comprehensive project tracking doc for Structural Analysis
+  - Added PR workflow guide with branch naming conventions
+  - HyperDev December 2025 feature write-up
+
+- **Optimized CLAUDE.md**
+  - Reduced from 235 to 120 lines (49% reduction)
+  - Added Active Projects section
+  - Added quick reference tables
+  - Streamlined for AI assistant consumption
+
+### Documentation
+- New: `docs/projects/structural-code-analysis.md` - Full project tracking
+- New: `docs/projects/README.md` - Projects index
+- New: `docs/development/pr-workflow-guide.md` - PR workflow
+- New: `docs/internal/hyperdev-2025-12.md` - Feature write-up
+- Updated: `CLAUDE.md` - Optimized AI instructions
+
+## [0.16.0] - 2025-12-09
+
+### Added
+- **Agentic chat mode with search tools**
+  - Dual-intent mode: automatically detects question vs find requests
+  - `--think` flag for complex reasoning with advanced models
+  - `--files` filter support for scoped chat
+
 ## [0.15.17] - 2025-12-08
 
 ### Fixed
