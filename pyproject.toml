@@ -180,6 +180,8 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",
+    "--ignore=tests/manual",
+    "--ignore=tests/e2e",
 ]
 asyncio_mode = "auto"
 markers = [
