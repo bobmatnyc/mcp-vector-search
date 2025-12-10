@@ -11,6 +11,7 @@ from loguru import logger
 
 from ..config.constants import DEFAULT_CACHE_SIZE
 from .auto_indexer import AutoIndexer, SearchTriggeredIndexer
+from .boilerplate import BoilerplateFilter
 from .database import VectorDatabase
 from .exceptions import SearchError
 from .models import SearchResult
@@ -67,6 +68,7 @@ class SemanticSearchEngine:
     _BOOST_SHALLOW_PATH = 0.02
     _PENALTY_TEST_FILE = -0.02
     _PENALTY_DEEP_PATH = -0.01
+    _PENALTY_BOILERPLATE = -0.15
 
     def __init__(
         self,
@@ -105,6 +107,9 @@ class SemanticSearchEngine:
         # Health check throttling (only check every 60 seconds)
         self._last_health_check: float = 0.0
         self._health_check_interval: float = 60.0
+
+        # Boilerplate filter for smart result ranking
+        self._boilerplate_filter = BoilerplateFilter()
 
     async def search(
         self,
@@ -566,6 +571,17 @@ class SemanticSearchEngine:
                 score += self._BOOST_SHALLOW_PATH
             elif path_depth > 5:
                 score += self._PENALTY_DEEP_PATH
+
+            # Factor 7: Boilerplate penalty (penalize common boilerplate patterns)
+            # Apply penalty to function names (constructors, lifecycle methods, etc.)
+            if result.function_name:
+                boilerplate_penalty = self._boilerplate_filter.get_penalty(
+                    name=result.function_name,
+                    language=result.language,
+                    query=query,
+                    penalty=self._PENALTY_BOILERPLATE,
+                )
+                score += boilerplate_penalty
 
             # Ensure score doesn't exceed 1.0
             result.similarity_score = min(1.0, score)
