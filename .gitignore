@@ -184,10 +184,11 @@ yarn-error.log*
 *.swo
 *~
 
-# Test files
-test_*.py
-*_test.py
+# Test files (but NOT in tests/ directory)
+/test_*.py
+/*_test.py
 debug_*.py
+!tests/
 test_js_project/
 test-screenshots/
 chunk-graph.json

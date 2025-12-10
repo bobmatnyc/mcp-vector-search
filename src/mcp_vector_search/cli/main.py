@@ -1,5 +1,8 @@
 """Main CLI application for MCP Vector Search."""
 
+import faulthandler
+import signal
+import sys
 from pathlib import Path
 
 import typer
@@ -11,6 +14,49 @@ from .. import __build__, __version__
 from .didyoumean import add_common_suggestions, create_enhanced_typer
 from .output import print_warning, setup_logging
 from .suggestions import get_contextual_suggestions
+
+
+# ============================================================================
+# SIGNAL HANDLERS - Register early for crash diagnostics
+# ============================================================================
+def _handle_segfault(signum: int, frame) -> None:
+    """Handle segmentation faults with helpful error message.
+
+    Segmentation faults typically occur due to corrupted ChromaDB index data
+    or issues with native libraries (sentence-transformers, tree-sitter).
+
+    Args:
+        signum: Signal number (SIGSEGV = 11)
+        frame: Current stack frame (unused)
+    """
+    error_message = """
+╭─────────────────────────────────────────────────────────────────╮
+│ ⚠️  Segmentation Fault Detected                                  │
+├─────────────────────────────────────────────────────────────────┤
+│ This usually indicates corrupted index data or a crash in       │
+│ native libraries (ChromaDB, sentence-transformers, tree-sitter).│
+│                                                                 │
+│ To fix this, please run:                                        │
+│   1. mcp-vector-search index clean                              │
+│   2. mcp-vector-search index                                    │
+│                                                                 │
+│ This will rebuild your search index from scratch.               │
+│                                                                 │
+│ If the problem persists:                                        │
+│   - Try updating dependencies: pip install -U mcp-vector-search │
+│   - Check GitHub issues: github.com/bobmatnyc/mcp-vector-search │
+╰─────────────────────────────────────────────────────────────────╯
+"""
+    print(error_message, file=sys.stderr)
+    sys.exit(139)  # Standard segfault exit code (128 + 11)
+
+
+# Register signal handler for segmentation faults
+signal.signal(signal.SIGSEGV, _handle_segfault)
+
+# Enable faulthandler for better crash diagnostics
+# This prints Python traceback on segfaults before signal handler runs
+faulthandler.enable()
 
 # Install rich traceback handler
 install(show_locals=True)

@@ -10,6 +10,7 @@ import typer
 from loguru import logger
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.panel import Panel
 
 from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function
@@ -25,6 +26,34 @@ from ..output import (
     print_success,
     print_warning,
 )
+
+
+def show_api_key_help() -> None:
+    """Display helpful error message when API key is missing."""
+    message = """[bold yellow]⚠️  No LLM API Key Found[/bold yellow]
+
+The chat feature requires an API key for an LLM provider.
+
+[bold cyan]Set one of these environment variables:[/bold cyan]
+  • [green]OPENAI_API_KEY[/green]       - For OpenAI (GPT-4, etc.) [dim](recommended)[/dim]
+  • [green]OPENROUTER_API_KEY[/green]  - For OpenRouter (Claude, GPT, etc.)
+
+[bold cyan]Example:[/bold cyan]
+  [yellow]export OPENAI_API_KEY="sk-..."[/yellow]
+  [yellow]export OPENROUTER_API_KEY="sk-or-..."[/yellow]
+
+[bold cyan]Get API keys at:[/bold cyan]
+  • OpenAI: [link=https://platform.openai.com/api-keys]https://platform.openai.com/api-keys[/link]
+  • OpenRouter: [link=https://openrouter.ai/keys]https://openrouter.ai/keys[/link]
+
+[dim]Alternatively, run: [cyan]mcp-vector-search setup[/cyan] for interactive setup[/dim]"""
+
+    panel = Panel(
+        message,
+        border_style="yellow",
+        padding=(1, 2),
+    )
+    console.print(panel)
 
 
 class ChatSession:
@@ -280,10 +309,18 @@ def chat_main(
             )
         )
 
+    except (typer.Exit, SystemExit):
+        # Re-raise exit exceptions without printing additional error messages
+        # The error message has already been shown to the user
+        raise
     except Exception as e:
-        logger.error(f"Chat failed: {e}")
-        print_error(f"Chat failed: {e}")
-        raise typer.Exit(1)
+        #  Log real exceptions (not typer.Exit)
+        if not isinstance(e, (typer.Exit, SystemExit)):
+            logger.error(f"Chat failed: {e}")
+            print_error(f"Chat failed: {e}")
+        raise typer.Exit(
+            1
+        ) from None  # Suppress exception chain to avoid double-printing
 
 
 async def run_chat_with_intent(
@@ -333,7 +370,8 @@ async def run_chat_with_intent(
         elif openrouter_key:
             provider = "openrouter"
         else:
-            print_error("No LLM API key found.")
+            console.print()  # Blank line for spacing
+            show_api_key_help()
             raise typer.Exit(1)
 
     # Create temporary client for intent detection (use fast model)
@@ -879,7 +917,6 @@ async def run_chat_search(
     """
     # Check for API keys (environment variable or config file)
     from ...core.config_utils import (
-        get_config_file_path,
         get_openai_api_key,
         get_openrouter_api_key,
         get_preferred_llm_provider,
@@ -925,22 +962,8 @@ async def run_chat_search(
         elif openrouter_key:
             provider = "openrouter"
         else:
-            print_error("No LLM API key found.")
-            print_info("\n[bold]To use the chat command, set up an API key:[/bold]")
-            print_info("")
-            print_info("[cyan]Option A - OpenAI (recommended):[/cyan]")
-            print_info(
-                "1. Get a key from [cyan]https://platform.openai.com/api-keys[/cyan]"
-            )
-            print_info("2. [yellow]export OPENAI_API_KEY='your-key'[/yellow]")
-            print_info("")
-            print_info("[cyan]Option B - OpenRouter:[/cyan]")
-            print_info("1. Get a key from [cyan]https://openrouter.ai/keys[/cyan]")
-            print_info("2. [yellow]export OPENROUTER_API_KEY='your-key'[/yellow]")
-            print_info("")
-            print_info("Or run: [cyan]mcp-vector-search setup[/cyan]")
-            config_path = get_config_file_path(config_dir)
-            print_info(f"\n[dim]Config file location: {config_path}[/dim]\n")
+            console.print()  # Blank line for spacing
+            show_api_key_help()
             raise typer.Exit(1)
 
     # Load project configuration

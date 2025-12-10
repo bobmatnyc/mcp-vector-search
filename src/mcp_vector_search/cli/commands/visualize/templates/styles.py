@@ -44,6 +44,7 @@ def get_controls_styles() -> str:
             max-height: 80vh;
             overflow-y: auto;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            z-index: 500;
         }
 
         .control-group {
@@ -157,8 +158,13 @@ def get_controls_styles() -> str:
 
         .toggle-switch input {
             opacity: 0;
-            width: 0;
-            height: 0;
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            cursor: pointer;
+            z-index: 2;
         }
 
         .toggle-slider {
@@ -611,6 +617,127 @@ def get_content_pane_styles() -> str:
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
         }
 
+        /* Relationship tags for callers/callees */
+        .relationship-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .relationship-tag.caller {
+            background: rgba(88, 166, 255, 0.15);
+            color: #58a6ff;
+            border: 1px solid rgba(88, 166, 255, 0.3);
+        }
+
+        .relationship-tag.caller:hover {
+            background: rgba(88, 166, 255, 0.3);
+            border-color: #58a6ff;
+        }
+
+        .relationship-tag.callee {
+            background: rgba(240, 136, 62, 0.15);
+            color: #f0883e;
+            border: 1px solid rgba(240, 136, 62, 0.3);
+        }
+
+        .relationship-tag.callee:hover {
+            background: rgba(240, 136, 62, 0.3);
+            border-color: #f0883e;
+        }
+
+        /* Semantic similarity items */
+        .semantic-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .semantic-item:hover {
+            background: #21262d;
+            border-color: #a371f7;
+        }
+
+        .semantic-score {
+            font-size: 11px;
+            font-weight: 600;
+            color: #a371f7;
+            background: rgba(163, 113, 247, 0.15);
+            padding: 2px 6px;
+            border-radius: 4px;
+            min-width: 36px;
+            text-align: center;
+        }
+
+        .semantic-name {
+            flex: 1;
+            color: #c9d1d9;
+            font-size: 12px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .semantic-type {
+            font-size: 10px;
+            color: #8b949e;
+            text-transform: uppercase;
+        }
+
+        /* External Calls/Callers Styles */
+        .external-call-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .external-call-item:hover {
+            background: #21262d;
+            border-color: #58a6ff;
+            transform: translateX(4px);
+        }
+
+        .external-call-icon {
+            font-size: 14px;
+            font-weight: bold;
+            color: #58a6ff;
+            width: 20px;
+            text-align: center;
+        }
+
+        .external-call-name {
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 12px;
+            font-weight: 600;
+            color: #58a6ff;
+            flex-shrink: 0;
+        }
+
+        .external-call-path {
+            font-size: 11px;
+            color: #8b949e;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            text-align: right;
+        }
+
         .chunk-icon {
             font-size: 16px;
             flex-shrink: 0;
@@ -678,6 +805,106 @@ def get_content_pane_styles() -> str:
             font-size: 11px;
             color: #8b949e;
             text-transform: uppercase;
+        }
+
+        .dir-arrow {
+            color: #58a6ff;
+            font-size: 14px;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .dir-list-item:hover .dir-arrow {
+            opacity: 1;
+        }
+
+        .dir-list-item.clickable {
+            cursor: pointer;
+        }
+
+        /* Navigation bar styles */
+        .navigation-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 0;
+            margin-bottom: 12px;
+            border-bottom: 1px solid #30363d;
+        }
+
+        .nav-btn {
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            color: #c9d1d9;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+
+        .nav-btn:hover:not(.disabled) {
+            background: #30363d;
+            border-color: #58a6ff;
+        }
+
+        .nav-btn.disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .breadcrumb-trail {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 4px;
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .breadcrumb-separator {
+            color: #484f58;
+            font-size: 12px;
+        }
+
+        .breadcrumb-item {
+            font-size: 12px;
+            color: #8b949e;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .breadcrumb-item.clickable {
+            color: #58a6ff;
+            cursor: pointer;
+        }
+
+        .breadcrumb-item.clickable:hover {
+            text-decoration: underline;
+        }
+
+        .breadcrumb-item.current {
+            color: #c9d1d9;
+            font-weight: 500;
+        }
+
+        /* Node highlight animation */
+        .node-highlight circle {
+            stroke: #58a6ff !important;
+            stroke-width: 3px !important;
+            filter: drop-shadow(0 0 6px rgba(88, 166, 255, 0.6));
+        }
+
+        .node-highlight text {
+            fill: #58a6ff !important;
+            font-weight: bold !important;
         }
     """
 
@@ -847,6 +1074,150 @@ def get_spinner_styles() -> str:
     """
 
 
+def get_search_styles() -> str:
+    """Get styles for the search box and results dropdown.
+
+    Returns:
+        CSS string for search styling
+    """
+    return """
+        /* Search box styles */
+        .search-container {
+            position: relative;
+            margin-bottom: 16px;
+            z-index: 100;
+        }
+
+        #search-input {
+            width: 100%;
+            padding: 10px 12px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            box-sizing: border-box;
+            position: relative;
+            z-index: 101;
+            cursor: text;
+        }
+
+        #search-input:focus {
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+        }
+
+        #search-input::placeholder {
+            color: #8b949e;
+        }
+
+        /* Search results dropdown */
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            max-height: 300px;
+            overflow-y: auto;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-top: none;
+            border-radius: 0 0 6px 6px;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+
+        .search-results.visible {
+            display: block;
+        }
+
+        .search-result-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #21262d;
+            transition: background 0.15s;
+        }
+
+        .search-result-item:last-child {
+            border-bottom: none;
+        }
+
+        .search-result-item:hover,
+        .search-result-item.selected {
+            background: #21262d;
+        }
+
+        .search-result-icon {
+            font-size: 14px;
+            flex-shrink: 0;
+            width: 20px;
+            text-align: center;
+        }
+
+        .search-result-info {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .search-result-name {
+            font-size: 13px;
+            color: #c9d1d9;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .search-result-name mark {
+            background: rgba(88, 166, 255, 0.3);
+            color: #58a6ff;
+            border-radius: 2px;
+            padding: 0 2px;
+        }
+
+        .search-result-path {
+            font-size: 11px;
+            color: #8b949e;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            margin-top: 2px;
+        }
+
+        .search-result-type {
+            font-size: 10px;
+            color: #8b949e;
+            background: #21262d;
+            padding: 2px 6px;
+            border-radius: 10px;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+
+        .search-no-results {
+            padding: 20px;
+            text-align: center;
+            color: #8b949e;
+            font-size: 13px;
+        }
+
+        .search-hint {
+            padding: 8px 12px;
+            font-size: 11px;
+            color: #6e7681;
+            background: #0d1117;
+            border-top: 1px solid #21262d;
+        }
+    """
+
+
 def get_all_styles() -> str:
     """Get all CSS styles combined.
 
@@ -866,5 +1237,6 @@ def get_all_styles() -> str:
             get_code_chunks_styles(),
             get_reset_button_styles(),
             get_spinner_styles(),
+            get_search_styles(),
         ]
     )

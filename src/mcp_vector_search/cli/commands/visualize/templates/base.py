@@ -41,6 +41,11 @@ def generate_html_template() -> str:
     <div id="controls">
         <h1>🔍 Code Tree</h1>
 
+        <div class="search-container">
+            <input type="text" id="search-input" placeholder="Search nodes..." oninput="handleSearchInput(event)" onkeydown="handleSearchKeydown(event)">
+            <div id="search-results" class="search-results"></div>
+        </div>
+
         <div class="control-group">
             <label style="color: #c9d1d9; margin-bottom: 8px;">Layout Mode</label>
             <div class="toggle-switch-container">
