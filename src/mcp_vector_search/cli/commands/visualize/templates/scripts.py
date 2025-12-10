@@ -337,8 +337,24 @@ function buildTreeStructure() {
                         id: onlyChild.id
                     };
                 } else {
-                    // Chunk has no children - just keep as is (will show chunk content on click)
-                    console.log(`File ${node.name} has single chunk ${onlyChild.type} with no children - keeping as is`);
+                    // Collapse file+chunk into combined name (like directory chains)
+                    console.log(`Collapsing file+chunk: ${node.name}/${onlyChild.name}`);
+                    node.name = `${node.name}/${onlyChild.name}`;
+                    node.children = null;  // Remove chunk child - now a leaf node
+                    node._children = null;
+                    node.collapsed_ids = node.collapsed_ids || [node.id];
+                    node.collapsed_ids.push(onlyChild.id);
+
+                    // Store chunk data for display when clicked
+                    node.collapsed_chunk = {
+                        type: onlyChild.type,
+                        name: onlyChild.name,
+                        id: onlyChild.id,
+                        content: onlyChild.content,
+                        start_line: onlyChild.start_line,
+                        end_line: onlyChild.end_line,
+                        complexity: onlyChild.complexity
+                    };
                 }
             }
         }
@@ -1266,6 +1282,40 @@ function handleNodeClick(event, d) {
 
         // Don't auto-open viewer panel for directories - just expand/collapse
     } else if (nodeData.type === 'file') {
+        // Check if this file has a collapsed chunk (single chunk with no children)
+        if (nodeData.collapsed_chunk) {
+            console.log(`Collapsed file+chunk: ${nodeData.name}, showing content directly`);
+            displayChunkContent({
+                ...nodeData.collapsed_chunk,
+                name: nodeData.collapsed_chunk.name,
+                type: nodeData.collapsed_chunk.type
+            });
+            return;
+        }
+
+        // Check if this is a single-chunk file - skip to content directly
+        const childrenArray = nodeData._children || nodeData.children;
+
+        if (childrenArray && childrenArray.length === 1) {
+            const onlyChild = childrenArray[0];
+
+            if (chunkTypes.includes(onlyChild.type)) {
+                console.log(`Single-chunk file: ${nodeData.name}, showing content directly`);
+
+                // Expand the file visually (for tree consistency)
+                if (nodeData._children) {
+                    nodeData.children = nodeData._children;
+                    nodeData._children = null;
+                    renderVisualization();
+                }
+
+                // Auto-display the chunk content
+                displayChunkContent(onlyChild);
+                return; // Skip normal file toggle behavior
+            }
+        }
+
+        // Continue with existing toggle logic for multi-chunk files
         // Toggle file: swap children <-> _children
         if (nodeData.children) {
             // Currently expanded - collapse it

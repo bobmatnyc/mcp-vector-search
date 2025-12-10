@@ -2,6 +2,26 @@
 
 Documentation for contributors, maintainers, and developers working on MCP Vector Search.
 
+## 🚀 Sprint Planning (NEW - Structural Code Analysis Project)
+
+**Active Project**: [Structural Code Analysis](../projects/structural-code-analysis.md)
+**GitHub Project**: https://github.com/users/bobmatnyc/projects/13
+
+| Document | Purpose | Audience |
+|----------|---------|----------|
+| **[Sprint Quickstart](./sprint-quickstart.md)** | Get started with issue #2 immediately | Developers starting work |
+| **[Sprint Plan Summary](./sprint-plan-summary.md)** | Quick reference for sprint meetings | Team leads, PMs |
+| **[Sprint Plan (Full)](./sprint-plan.md)** | Comprehensive sprint breakdown | Project managers |
+| **[Sprint Board](./sprint-board.md)** | Visual tracking board | All team members |
+| **[Dependency Graph](./dependency-graph.txt)** | Issue dependencies visualization | Architects, tech leads |
+
+**Quick Navigation**:
+- 👉 **Just starting?** [Sprint Quickstart](./sprint-quickstart.md)
+- 👉 **Planning a sprint?** [Sprint Plan Summary](./sprint-plan-summary.md)
+- 👉 **Tracking progress?** [Sprint Board](./sprint-board.md)
+
+---
+
 ## 🎯 Quick Links for Developers
 
 - **[Development Setup](setup.md)** - Get your development environment ready
