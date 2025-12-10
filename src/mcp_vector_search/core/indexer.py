@@ -5,11 +5,14 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 from packaging import version
 
 from .. import __version__
+from ..analysis.collectors.base import MetricCollector
+from ..analysis.metrics import ChunkMetrics
 from ..config.defaults import ALLOWED_DOTFILES, DEFAULT_IGNORE_PATTERNS
 from ..config.settings import ProjectConfig
 from ..parsers.registry import get_parser_registry
@@ -19,6 +22,19 @@ from .database import VectorDatabase
 from .directory_index import DirectoryIndex
 from .exceptions import ParsingError
 from .models import CodeChunk, IndexStats
+
+# Extension to language mapping for metric collection
+EXTENSION_TO_LANGUAGE = {
+    ".py": "python",
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".jsx": "javascript",
+    ".tsx": "typescript",
+    ".java": "java",
+    ".rs": "rust",
+    ".php": "php",
+    ".rb": "ruby",
+}
 
 
 class SemanticIndexer:
@@ -33,6 +49,7 @@ class SemanticIndexer:
         max_workers: int | None = None,
         batch_size: int = 10,
         debug: bool = False,
+        collectors: list[MetricCollector] | None = None,
     ) -> None:
         """Initialize semantic indexer.
 
@@ -44,6 +61,7 @@ class SemanticIndexer:
             max_workers: Maximum number of worker threads for parallel processing
             batch_size: Number of files to process in each batch
             debug: Enable debug output for hierarchy building
+            collectors: Metric collectors to run during indexing (defaults to all complexity collectors)
         """
         self.database = database
         self.project_root = project_root
@@ -62,6 +80,11 @@ class SemanticIndexer:
         self.parser_registry = get_parser_registry()
         self._ignore_patterns = set(DEFAULT_IGNORE_PATTERNS)
         self.debug = debug
+
+        # Initialize metric collectors
+        self.collectors = (
+            collectors if collectors is not None else self._default_collectors()
+        )
 
         # Safely get event loop for max_workers
         try:
@@ -109,6 +132,144 @@ class SemanticIndexer:
         )
         # Load existing directory index
         self.directory_index.load()
+
+    def _default_collectors(self) -> list[MetricCollector]:
+        """Return default set of metric collectors.
+
+        Returns:
+            List of all complexity collectors (cognitive, cyclomatic, nesting, parameters, methods)
+        """
+        from ..analysis.collectors.complexity import (
+            CognitiveComplexityCollector,
+            CyclomaticComplexityCollector,
+            MethodCountCollector,
+            NestingDepthCollector,
+            ParameterCountCollector,
+        )
+
+        return [
+            CognitiveComplexityCollector(),
+            CyclomaticComplexityCollector(),
+            NestingDepthCollector(),
+            ParameterCountCollector(),
+            MethodCountCollector(),
+        ]
+
+    def _collect_metrics(
+        self, chunk: CodeChunk, source_code: bytes, language: str
+    ) -> ChunkMetrics | None:
+        """Collect metrics for a code chunk.
+
+        This is a simplified version that estimates metrics from chunk content
+        without full TreeSitter traversal. Future implementation will use
+        TreeSitter node traversal for accurate metric collection.
+
+        Args:
+            chunk: The parsed code chunk
+            source_code: Raw source code bytes
+            language: Programming language identifier
+
+        Returns:
+            ChunkMetrics for the chunk, or None if no metrics collected
+        """
+        # For now, create basic metrics from chunk content
+        # TODO: Implement full TreeSitter traversal in Phase 2
+        lines_of_code = chunk.line_count
+
+        # Estimate complexity from simple heuristics
+        content = chunk.content
+        cognitive_complexity = self._estimate_cognitive_complexity(content)
+        cyclomatic_complexity = self._estimate_cyclomatic_complexity(content)
+        max_nesting_depth = self._estimate_nesting_depth(content)
+        parameter_count = len(chunk.parameters) if chunk.parameters else 0
+
+        metrics = ChunkMetrics(
+            cognitive_complexity=cognitive_complexity,
+            cyclomatic_complexity=cyclomatic_complexity,
+            max_nesting_depth=max_nesting_depth,
+            parameter_count=parameter_count,
+            lines_of_code=lines_of_code,
+        )
+
+        return metrics
+
+    def _estimate_cognitive_complexity(self, content: str) -> int:
+        """Estimate cognitive complexity from content (simplified heuristic).
+
+        Args:
+            content: Code content
+
+        Returns:
+            Estimated cognitive complexity score
+        """
+        # Simple heuristic: count control flow keywords
+        keywords = [
+            "if",
+            "elif",
+            "else",
+            "for",
+            "while",
+            "try",
+            "except",
+            "case",
+            "when",
+        ]
+        complexity = 0
+        for keyword in keywords:
+            complexity += content.count(f" {keyword} ")
+            complexity += content.count(f"\t{keyword} ")
+            complexity += content.count(f"\n{keyword} ")
+        return complexity
+
+    def _estimate_cyclomatic_complexity(self, content: str) -> int:
+        """Estimate cyclomatic complexity from content (simplified heuristic).
+
+        Args:
+            content: Code content
+
+        Returns:
+            Estimated cyclomatic complexity score (minimum 1)
+        """
+        # Start with baseline of 1
+        complexity = 1
+
+        # Count decision points
+        keywords = [
+            "if",
+            "elif",
+            "for",
+            "while",
+            "case",
+            "when",
+            "&&",
+            "||",
+            "and",
+            "or",
+        ]
+        for keyword in keywords:
+            complexity += content.count(keyword)
+
+        return complexity
+
+    def _estimate_nesting_depth(self, content: str) -> int:
+        """Estimate maximum nesting depth from indentation (simplified heuristic).
+
+        Args:
+            content: Code content
+
+        Returns:
+            Estimated maximum nesting depth
+        """
+        max_depth = 0
+        for line in content.split("\n"):
+            # Count leading whitespace (4 spaces or 1 tab = 1 level)
+            leading = len(line) - len(line.lstrip())
+            if "\t" in line[:leading]:
+                depth = line[:leading].count("\t")
+            else:
+                depth = leading // 4
+            max_depth = max(max_depth, depth)
+        return max_depth
 
     async def index_project(
         self,
@@ -379,8 +540,34 @@ class SemanticIndexer:
                 f"After hierarchy build: {methods_with_parents}/{len([c for c in chunks_with_hierarchy if c.chunk_type in ('method', 'function')])} methods have parents"
             )
 
-            # Add chunks to database
-            await self.database.add_chunks(chunks_with_hierarchy)
+            # Collect metrics for chunks (if collectors are enabled)
+            chunk_metrics: dict[str, Any] | None = None
+            if self.collectors:
+                try:
+                    # Read source code
+                    source_code = file_path.read_bytes()
+
+                    # Detect language from file extension
+                    language = EXTENSION_TO_LANGUAGE.get(
+                        file_path.suffix.lower(), "unknown"
+                    )
+
+                    # Collect metrics for each chunk
+                    chunk_metrics = {}
+                    for chunk in chunks_with_hierarchy:
+                        metrics = self._collect_metrics(chunk, source_code, language)
+                        if metrics:
+                            chunk_metrics[chunk.chunk_id] = metrics.to_metadata()
+
+                    logger.debug(
+                        f"Collected metrics for {len(chunk_metrics)} chunks from {file_path}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to collect metrics for {file_path}: {e}")
+                    chunk_metrics = None
+
+            # Add chunks to database with metrics
+            await self.database.add_chunks(chunks_with_hierarchy, metrics=chunk_metrics)
 
             # Update metadata after successful indexing
             metadata = self._load_index_metadata()
@@ -839,8 +1026,38 @@ class SemanticIndexer:
                         # Build hierarchical relationships
                         chunks_with_hierarchy = self._build_chunk_hierarchy(chunks)
 
-                        # Add chunks to database
-                        await self.database.add_chunks(chunks_with_hierarchy)
+                        # Collect metrics for chunks (if collectors are enabled)
+                        chunk_metrics: dict[str, Any] | None = None
+                        if self.collectors:
+                            try:
+                                # Read source code
+                                source_code = file_path.read_bytes()
+
+                                # Detect language from file extension
+                                language = EXTENSION_TO_LANGUAGE.get(
+                                    file_path.suffix.lower(), "unknown"
+                                )
+
+                                # Collect metrics for each chunk
+                                chunk_metrics = {}
+                                for chunk in chunks_with_hierarchy:
+                                    metrics = self._collect_metrics(
+                                        chunk, source_code, language
+                                    )
+                                    if metrics:
+                                        chunk_metrics[chunk.chunk_id] = (
+                                            metrics.to_metadata()
+                                        )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to collect metrics for {file_path}: {e}"
+                                )
+                                chunk_metrics = None
+
+                        # Add chunks to database with metrics
+                        await self.database.add_chunks(
+                            chunks_with_hierarchy, metrics=chunk_metrics
+                        )
                         chunks_added = len(chunks)
                         logger.debug(f"Indexed {chunks_added} chunks from {file_path}")
 

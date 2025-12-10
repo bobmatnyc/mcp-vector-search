@@ -271,8 +271,13 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
         async def close(self) -> None:
             self.initialized = False
 
-        async def add_chunks(self, chunks: list[CodeChunk]) -> None:
+        async def add_chunks(
+            self, chunks: list[CodeChunk], metrics: dict[str, Any] | None = None
+        ) -> None:
             self.chunks.extend(chunks)
+            # Store metrics if provided (for testing purposes)
+            if metrics:
+                self._metrics = metrics
 
         async def search(
             self,

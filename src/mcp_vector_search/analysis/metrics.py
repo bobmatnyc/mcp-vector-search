@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..config.thresholds import ThresholdConfig
 
 
 @dataclass
@@ -40,10 +43,14 @@ class ChunkMetrics:
         """Initialize computed fields after dataclass initialization."""
         self.complexity_grade = self._compute_grade()
 
-    def _compute_grade(self) -> str:
+    def _compute_grade(self, thresholds: ThresholdConfig | None = None) -> str:
         """Compute A-F grade based on cognitive complexity.
 
-        Grade thresholds:
+        Args:
+            thresholds: Optional custom threshold configuration.
+                       If None, uses default thresholds.
+
+        Grade thresholds (defaults):
         - A: 0-5 (excellent)
         - B: 6-10 (good)
         - C: 11-20 (acceptable)
@@ -53,16 +60,21 @@ class ChunkMetrics:
         Returns:
             Letter grade from A to F
         """
-        if self.cognitive_complexity <= 5:
-            return "A"
-        elif self.cognitive_complexity <= 10:
-            return "B"
-        elif self.cognitive_complexity <= 20:
-            return "C"
-        elif self.cognitive_complexity <= 30:
-            return "D"
+        if thresholds is None:
+            # Use default thresholds
+            if self.cognitive_complexity <= 5:
+                return "A"
+            elif self.cognitive_complexity <= 10:
+                return "B"
+            elif self.cognitive_complexity <= 20:
+                return "C"
+            elif self.cognitive_complexity <= 30:
+                return "D"
+            else:
+                return "F"
         else:
-            return "F"
+            # Use custom thresholds
+            return thresholds.get_grade(self.cognitive_complexity)
 
     def to_metadata(self) -> dict[str, Any]:
         """Flatten metrics for ChromaDB metadata storage.

@@ -1,0 +1,52 @@
+# Code Quality Threshold Configuration
+# Customize these values to match your project's standards
+
+complexity:
+  # Cognitive complexity grade thresholds
+  cognitive_a: 5      # Grade A: 0-5 (excellent)
+  cognitive_b: 10     # Grade B: 6-10 (good)
+  cognitive_c: 20     # Grade C: 11-20 (acceptable)
+  cognitive_d: 30     # Grade D: 21-30 (needs improvement)
+  # Grade F: 31+ (refactor recommended)
+
+  # Cyclomatic complexity thresholds
+  cyclomatic_low: 4       # Low: 1-4
+  cyclomatic_moderate: 10 # Moderate: 5-10
+  cyclomatic_high: 20     # High: 11-20
+  # Very high: 21+
+
+  # Nesting depth thresholds
+  nesting_warning: 3    # Warning level
+  nesting_error: 5      # Error level
+
+  # Parameter count thresholds
+  parameters_warning: 4   # Warning level
+  parameters_error: 7     # Error level
+
+  # Method count thresholds (per class)
+  methods_warning: 10     # Warning level
+  methods_error: 20       # Error level
+
+smells:
+  # Long method (lines of code)
+  long_method_lines: 50
+
+  # Too many parameters
+  too_many_parameters: 5
+
+  # Deep nesting
+  deep_nesting_depth: 4
+
+  # High complexity
+  high_complexity: 15
+
+  # God class (too many methods)
+  god_class_methods: 20
+
+  # Feature envy (external calls)
+  feature_envy_external_calls: 5
+
+# Quality gate settings
+fail_on_f_grade: true       # Fail quality gate on F grade
+fail_on_smell_count: 10     # Fail if more than N smells total
+warn_on_d_grade: true       # Warn on D grade
