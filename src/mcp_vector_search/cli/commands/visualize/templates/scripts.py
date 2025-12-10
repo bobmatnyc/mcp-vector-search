@@ -451,36 +451,118 @@ function calculateNodeSizes(node) {
 
 // Count external calls for a node
 function getExternalCallCounts(nodeData) {
-    if (!nodeData.id) return { inbound: 0, outbound: 0 };
+    if (!nodeData.id) return { inbound: 0, outbound: 0, inboundNodes: [], outboundNodes: [] };
 
     const nodeFilePath = nodeData.file_path;
-    let inbound = 0;  // External functions calling this
-    let outbound = 0; // This calls external functions
+    const inboundNodes = [];  // Array of {id, name, file_path}
+    const outboundNodes = []; // Array of {id, name, file_path}
 
     // Use a Set to deduplicate by source/target node
-    const inboundSources = new Set();
-    const outboundTargets = new Set();
+    const inboundSeen = new Set();
+    const outboundSeen = new Set();
 
     allLinks.forEach(link => {
         if (link.type === 'caller') {
             if (link.target === nodeData.id) {
                 // Something calls this node
                 const callerNode = allNodes.find(n => n.id === link.source);
-                if (callerNode && callerNode.file_path !== nodeFilePath) {
-                    inboundSources.add(link.source);
+                if (callerNode && callerNode.file_path !== nodeFilePath && !inboundSeen.has(callerNode.id)) {
+                    inboundSeen.add(callerNode.id);
+                    inboundNodes.push({ id: callerNode.id, name: callerNode.name, file_path: callerNode.file_path });
                 }
             }
             if (link.source === nodeData.id) {
                 // This node calls something
                 const calleeNode = allNodes.find(n => n.id === link.target);
-                if (calleeNode && calleeNode.file_path !== nodeFilePath) {
-                    outboundTargets.add(link.target);
+                if (calleeNode && calleeNode.file_path !== nodeFilePath && !outboundSeen.has(calleeNode.id)) {
+                    outboundSeen.add(calleeNode.id);
+                    outboundNodes.push({ id: calleeNode.id, name: calleeNode.name, file_path: calleeNode.file_path });
                 }
             }
         }
     });
 
-    return { inbound: inboundSources.size, outbound: outboundTargets.size };
+    return {
+        inbound: inboundNodes.length,
+        outbound: outboundNodes.length,
+        inboundNodes,
+        outboundNodes
+    };
+}
+
+// Store external call data for line drawing
+let externalCallData = [];
+
+function collectExternalCallData() {
+    externalCallData = [];
+
+    allNodes.forEach(nodeData => {
+        if (!chunkTypes.includes(nodeData.type)) return;
+
+        const counts = getExternalCallCounts(nodeData);
+        if (counts.inbound > 0 || counts.outbound > 0) {
+            externalCallData.push({
+                nodeId: nodeData.id,
+                inboundNodes: counts.inboundNodes,
+                outboundNodes: counts.outboundNodes
+            });
+        }
+    });
+}
+
+function drawExternalCallLines(svg, root) {
+    // Remove existing external call lines
+    svg.selectAll('.external-call-line').remove();
+
+    // Build a map of node positions from the tree
+    const nodePositions = new Map();
+    root.descendants().forEach(d => {
+        nodePositions.set(d.data.id, { x: d.x, y: d.y, node: d });
+    });
+
+    // Create a group for external call lines (behind nodes)
+    let lineGroup = svg.select('.external-lines-group');
+    if (lineGroup.empty()) {
+        lineGroup = svg.insert('g', ':first-child')
+            .attr('class', 'external-lines-group');
+    }
+
+    externalCallData.forEach(data => {
+        const sourcePos = nodePositions.get(data.nodeId);
+        if (!sourcePos) return;
+
+        // Draw lines to inbound nodes (callers) - dashed blue
+        data.inboundNodes.forEach(caller => {
+            const targetPos = nodePositions.get(caller.id);
+            if (targetPos) {
+                lineGroup.append('path')
+                    .attr('class', 'external-call-line inbound-line')
+                    .attr('d', `M${targetPos.y},${targetPos.x} C${(targetPos.y + sourcePos.y)/2},${targetPos.x} ${(targetPos.y + sourcePos.y)/2},${sourcePos.x} ${sourcePos.y},${sourcePos.x}`)
+                    .attr('fill', 'none')
+                    .attr('stroke', '#58a6ff')
+                    .attr('stroke-width', 1)
+                    .attr('stroke-dasharray', '4,2')
+                    .attr('opacity', 0.4)
+                    .attr('pointer-events', 'none');
+            }
+        });
+
+        // Draw lines to outbound nodes (callees) - dashed orange
+        data.outboundNodes.forEach(callee => {
+            const targetPos = nodePositions.get(callee.id);
+            if (targetPos) {
+                lineGroup.append('path')
+                    .attr('class', 'external-call-line outbound-line')
+                    .attr('d', `M${sourcePos.y},${sourcePos.x} C${(sourcePos.y + targetPos.y)/2},${sourcePos.x} ${(sourcePos.y + targetPos.y)/2},${targetPos.x} ${targetPos.y},${targetPos.x}`)
+                    .attr('fill', 'none')
+                    .attr('stroke', '#f0883e')
+                    .attr('stroke-width', 1)
+                    .attr('stroke-dasharray', '4,2')
+                    .attr('opacity', 0.4)
+                    .attr('pointer-events', 'none');
+            }
+        });
+    });
 }
 
 // Get color based on complexity (darker = more complex)
@@ -713,7 +795,7 @@ function renderLinearTree() {
         .attr('stroke', '#fff')
         .attr('stroke-width', 2);
 
-    // Add external call chevron indicators (only for chunk nodes)
+    // Add external call arrow indicators (only for chunk nodes)
     nodes.each(function(d) {
         const node = d3.select(this);
         const nodeData = d.data;
@@ -724,53 +806,46 @@ function renderLinearTree() {
         const counts = getExternalCallCounts(nodeData);
         const radius = getNodeRadius(d);
 
-        // Inbound chevrons (left side, pointing in) - functions that call this from other files
+        // Inbound arrow: ← before the node (functions from other files call this)
         if (counts.inbound > 0) {
-            const chevronCount = Math.min(counts.inbound, 3); // Max 3 chevrons
-            for (let i = 0; i < chevronCount; i++) {
-                node.append('text')
-                    .attr('x', -(radius + 8 + i * 6))
-                    .attr('y', 4)
-                    .attr('fill', '#58a6ff')  // Blue for inbound
-                    .attr('font-size', '12px')
-                    .attr('font-weight', 'bold')
-                    .text('‹');
-            }
-            // Show count if more than 3
-            if (counts.inbound > 3) {
-                node.append('text')
-                    .attr('x', -(radius + 8 + 3 * 6 + 4))
-                    .attr('y', 4)
-                    .attr('fill', '#58a6ff')
-                    .attr('font-size', '9px')
-                    .text(counts.inbound);
-            }
+            node.append('text')
+                .attr('class', 'call-indicator inbound')
+                .attr('x', -(radius + 8))
+                .attr('y', 5)
+                .attr('text-anchor', 'end')
+                .attr('fill', '#58a6ff')
+                .attr('font-size', '14px')
+                .attr('font-weight', 'bold')
+                .attr('cursor', 'pointer')
+                .text(counts.inbound > 1 ? `${counts.inbound}←` : '←')
+                .append('title')
+                .text(`Called by ${counts.inbound} external function(s):\n${counts.inboundNodes.map(n => n.name).join(', ')}`);
         }
 
-        // Outbound chevrons (right side of label, pointing out) - functions this calls in other files
-        // These go after the label, so we need to measure label width
+        // Outbound arrow: → after the label (this calls functions in other files)
         if (counts.outbound > 0) {
-            const labelWidth = (nodeData.name || '').length * 6 + 10; // Approximate
-            const chevronCount = Math.min(counts.outbound, 3);
-            for (let i = 0; i < chevronCount; i++) {
-                node.append('text')
-                    .attr('x', radius + labelWidth + 10 + i * 6)
-                    .attr('y', 4)
-                    .attr('fill', '#f0883e')  // Orange for outbound
-                    .attr('font-size', '12px')
-                    .attr('font-weight', 'bold')
-                    .text('›');
-            }
-            if (counts.outbound > 3) {
-                node.append('text')
-                    .attr('x', radius + labelWidth + 10 + 3 * 6 + 4)
-                    .attr('y', 4)
-                    .attr('fill', '#f0883e')
-                    .attr('font-size', '9px')
-                    .text(counts.outbound);
-            }
+            // Get approximate label width
+            const labelText = nodeData.name || '';
+            const labelWidth = labelText.length * 7;
+
+            node.append('text')
+                .attr('class', 'call-indicator outbound')
+                .attr('x', radius + labelWidth + 16)
+                .attr('y', 5)
+                .attr('text-anchor', 'start')
+                .attr('fill', '#f0883e')
+                .attr('font-size', '14px')
+                .attr('font-weight', 'bold')
+                .attr('cursor', 'pointer')
+                .text(counts.outbound > 1 ? `→${counts.outbound}` : '→')
+                .append('title')
+                .text(`Calls ${counts.outbound} external function(s):\n${counts.outboundNodes.map(n => n.name).join(', ')}`);
         }
     });
+
+    // Collect and draw external call lines
+    collectExternalCallData();
+    drawExternalCallLines(g, root);
 
     // Node labels - offset based on node radius
     const labels = nodes.append('text')
@@ -857,7 +932,7 @@ function renderCircularTree() {
         .attr('stroke', '#fff')
         .attr('stroke-width', 2);
 
-    // Add external call chevron indicators (only for chunk nodes)
+    // Add external call arrow indicators (only for chunk nodes)
     nodes.each(function(d) {
         const node = d3.select(this);
         const nodeData = d.data;
@@ -867,23 +942,32 @@ function renderCircularTree() {
         const counts = getExternalCallCounts(nodeData);
         const radius = getNodeRadius(d);
 
-        // Simplified indicators for circular layout (just show dots/markers)
+        // Inbound indicator
         if (counts.inbound > 0) {
-            node.append('circle')
-                .attr('cx', 0)
-                .attr('cy', -(radius + 5))
-                .attr('r', 3)
+            node.append('text')
+                .attr('x', 0)
+                .attr('y', -(radius + 8))
+                .attr('text-anchor', 'middle')
                 .attr('fill', '#58a6ff')
-                .append('title').text(`${counts.inbound} external caller(s)`);
+                .attr('font-size', '10px')
+                .attr('font-weight', 'bold')
+                .text(counts.inbound > 1 ? `↓${counts.inbound}` : '↓')
+                .append('title')
+                .text(`Called by ${counts.inbound} external function(s)`);
         }
 
+        // Outbound indicator
         if (counts.outbound > 0) {
-            node.append('circle')
-                .attr('cx', 0)
-                .attr('cy', radius + 5)
-                .attr('r', 3)
+            node.append('text')
+                .attr('x', 0)
+                .attr('y', radius + 12)
+                .attr('text-anchor', 'middle')
                 .attr('fill', '#f0883e')
-                .append('title').text(`${counts.outbound} external call(s)`);
+                .attr('font-size', '10px')
+                .attr('font-weight', 'bold')
+                .text(counts.outbound > 1 ? `↑${counts.outbound}` : '↑')
+                .append('title')
+                .text(`Calls ${counts.outbound} external function(s)`);
         }
     });
 
