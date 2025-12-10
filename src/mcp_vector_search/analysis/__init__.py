@@ -41,6 +41,13 @@ Example:
 """
 
 from .collectors.base import CollectorContext, MetricCollector
+from .collectors.complexity import (
+    CognitiveComplexityCollector,
+    CyclomaticComplexityCollector,
+    MethodCountCollector,
+    NestingDepthCollector,
+    ParameterCountCollector,
+)
 from .metrics import ChunkMetrics, FileMetrics, ProjectMetrics
 
 __all__ = [
@@ -49,4 +56,9 @@ __all__ = [
     "ProjectMetrics",
     "CollectorContext",
     "MetricCollector",
+    "CognitiveComplexityCollector",
+    "CyclomaticComplexityCollector",
+    "NestingDepthCollector",
+    "ParameterCountCollector",
+    "MethodCountCollector",
 ]

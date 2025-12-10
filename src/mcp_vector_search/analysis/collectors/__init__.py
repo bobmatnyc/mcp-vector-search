@@ -20,8 +20,20 @@ Example:
 """
 
 from .base import CollectorContext, MetricCollector
+from .complexity import (
+    CognitiveComplexityCollector,
+    CyclomaticComplexityCollector,
+    MethodCountCollector,
+    NestingDepthCollector,
+    ParameterCountCollector,
+)
 
 __all__ = [
     "CollectorContext",
     "MetricCollector",
+    "CognitiveComplexityCollector",
+    "CyclomaticComplexityCollector",
+    "NestingDepthCollector",
+    "ParameterCountCollector",
+    "MethodCountCollector",
 ]
