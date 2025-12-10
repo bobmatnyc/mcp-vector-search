@@ -306,7 +306,7 @@ def get_node_styles() -> str:
         .node text {
             font-size: 14px;
             fill: #c9d1d9;
-            text-anchor: middle;
+            /* text-anchor set by JS based on layout */
             pointer-events: none;
             user-select: none;
         }

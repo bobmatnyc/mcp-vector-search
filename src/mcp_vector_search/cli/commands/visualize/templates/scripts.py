@@ -848,14 +848,13 @@ function renderLinearTree() {
     drawExternalCallLines(g, root);
 
     // Node labels - positioned to the right of node, left-aligned
+    // Use transform to position text, as x attribute can have rendering issues
     const labels = nodes.append('text')
-        .attr('x', d => getNodeRadius(d) + 8)
-        .attr('y', 4)
+        .attr('class', 'node-label')
+        .attr('transform', d => `translate(${getNodeRadius(d) + 6}, 0)`)
+        .attr('dominant-baseline', 'middle')
         .attr('text-anchor', 'start')
-        .text(d => {
-            // For chunks, show the name (function/class name)
-            return d.data.name;
-        })
+        .text(d => d.data.name)
         .style('font-size', d => chunkTypes.includes(d.data.type) ? '10px' : '12px')
         .style('font-family', 'Arial, sans-serif')
         .style('fill', d => chunkTypes.includes(d.data.type) ? '#bb86fc' : '#adbac7');
@@ -973,15 +972,17 @@ function renderCircularTree() {
     });
 
     // Node labels - positioned to the right of node, left-aligned
+    // Use transform to position text, as x attribute can have rendering issues
     nodes.append('text')
-        .attr('x', d => getNodeRadius(d) + 8)
-        .attr('y', 4)
-        .attr('transform', d => d.x >= Math.PI ? 'rotate(180)' : null)
-        .attr('text-anchor', d => d.x >= Math.PI ? 'end' : 'start')
-        .text(d => {
-            // For chunks, show the name (function/class name)
-            return d.data.name;
+        .attr('class', 'node-label')
+        .attr('transform', d => {
+            const offset = getNodeRadius(d) + 6;
+            const rotate = d.x >= Math.PI ? 'rotate(180)' : '';
+            return `translate(${offset}, 0) ${rotate}`;
         })
+        .attr('dominant-baseline', 'middle')
+        .attr('text-anchor', d => d.x >= Math.PI ? 'end' : 'start')
+        .text(d => d.data.name)
         .style('font-size', d => chunkTypes.includes(d.data.type) ? '10px' : '12px')
         .style('font-family', 'Arial, sans-serif')
         .style('fill', d => chunkTypes.includes(d.data.type) ? '#bb86fc' : '#adbac7');
