@@ -315,7 +315,7 @@ def chat_main(
         raise
     except Exception as e:
         #  Log real exceptions (not typer.Exit)
-        if not isinstance(e, (typer.Exit, SystemExit)):
+        if not isinstance(e, typer.Exit | SystemExit):
             logger.error(f"Chat failed: {e}")
             print_error(f"Chat failed: {e}")
         raise typer.Exit(

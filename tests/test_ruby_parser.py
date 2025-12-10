@@ -5,8 +5,9 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from mcp_vector_search.parsers.ruby import RubyParser
 import pytest
+
+from mcp_vector_search.parsers.ruby import RubyParser
 
 
 @pytest.mark.asyncio
@@ -250,7 +251,8 @@ end
     special_methods = [
         c
         for c in chunks
-        if c.function_name and (c.function_name.endswith("?") or c.function_name.endswith("!"))
+        if c.function_name
+        and (c.function_name.endswith("?") or c.function_name.endswith("!"))
     ]
     print(f"✅ Methods with ?/! found: {len(special_methods)}")
     assert len(special_methods) >= 2, "Should find methods with ? or ! suffixes"
@@ -372,9 +374,7 @@ end
 
     # Verify controller detection
     controller_classes = [
-        c
-        for c in chunks
-        if c.class_name and "Controller" in c.class_name
+        c for c in chunks if c.class_name and "Controller" in c.class_name
     ]
     print(f"✅ Controller classes found: {len(controller_classes)}")
 
@@ -382,7 +382,9 @@ end
     instance_methods = [
         c
         for c in chunks
-        if c.chunk_type == "method" and c.function_name and not c.function_name.startswith("self.")
+        if c.chunk_type == "method"
+        and c.function_name
+        and not c.function_name.startswith("self.")
     ]
     print(f"✅ Instance methods found: {len(instance_methods)}")
 

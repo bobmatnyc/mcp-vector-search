@@ -33,33 +33,35 @@ def create_test_graph_data():
 
         # Create folder nodes
         for i in range(folder_count):
-            nodes.append({
-                "id": f"folder_{i}",
-                "name": f"folder_{i}",
-                "type": "directory",
-                "file_path": f"/test/folder_{i}",
-                "depth": 0,
-                "color": "#79c0ff"
-            })
+            nodes.append(
+                {
+                    "id": f"folder_{i}",
+                    "name": f"folder_{i}",
+                    "type": "directory",
+                    "file_path": f"/test/folder_{i}",
+                    "depth": 0,
+                    "color": "#79c0ff",
+                }
+            )
 
         # Add some files to a few folders to test expansion
         for i in range(min(3, folder_count)):
             file_id = f"file_in_folder_{i}"
-            nodes.append({
-                "id": file_id,
-                "name": f"test_file_{i}.py",
-                "type": "file",
-                "file_path": f"/test/folder_{i}/test_file_{i}.py",
-                "depth": 1,
-                "color": "#58a6ff"
-            })
+            nodes.append(
+                {
+                    "id": file_id,
+                    "name": f"test_file_{i}.py",
+                    "type": "file",
+                    "file_path": f"/test/folder_{i}/test_file_{i}.py",
+                    "depth": 1,
+                    "color": "#58a6ff",
+                }
+            )
 
             # Link file to folder
-            links.append({
-                "source": f"folder_{i}",
-                "target": file_id,
-                "type": "dir_containment"
-            })
+            links.append(
+                {"source": f"folder_{i}", "target": file_id, "type": "dir_containment"}
+            )
 
         # Create graph data
         graph_data = {
@@ -67,8 +69,8 @@ def create_test_graph_data():
             "links": links,
             "metadata": {
                 "total_files": len([n for n in nodes if n["type"] == "file"]),
-                "is_monorepo": False
-            }
+                "is_monorepo": False,
+            },
         }
 
         # Save to file
@@ -78,8 +80,10 @@ def create_test_graph_data():
 
         print(f"  ✓ Created {output_file}")
         print(f"  - {folder_count} folders")
-        print(f"  - Expected grid: {folder_count // int(folder_count**0.5)}×{int(folder_count**0.5)}")
-        print(f"  - Spacing: 150px")
+        print(
+            f"  - Expected grid: {folder_count // int(folder_count**0.5)}×{int(folder_count**0.5)}"
+        )
+        print("  - Spacing: 150px")
 
 
 def create_test_instructions():

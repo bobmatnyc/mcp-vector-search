@@ -1,6 +1,5 @@
 """Tests for gitignore updater utility."""
 
-import tempfile
 from pathlib import Path
 
 import pytest

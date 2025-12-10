@@ -3,8 +3,6 @@
 Tests end-to-end workflows for hierarchical list-based navigation.
 """
 
-import pytest
-
 # Note: These are conceptual integration tests that would run in a browser environment
 # They serve as documentation and can be adapted to Selenium/Playwright tests
 

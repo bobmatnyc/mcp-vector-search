@@ -13,12 +13,14 @@ import sys
 from pathlib import Path
 
 # Add vendor path to sys.path
-vendor_path = Path(__file__).parent.parent.parent / "vendor" / "py-mcp-installer-service" / "src"
+vendor_path = (
+    Path(__file__).parent.parent.parent / "vendor" / "py-mcp-installer-service" / "src"
+)
 sys.path.insert(0, str(vendor_path))
 
+from py_mcp_installer.exceptions import PlatformNotSupportedError
 from py_mcp_installer.installer import MCPInstaller
 from py_mcp_installer.types import Platform
-from py_mcp_installer.exceptions import PlatformNotSupportedError
 
 
 def test_forced_platform_detection():
@@ -31,18 +33,20 @@ def test_forced_platform_detection():
         # claude_desktop has higher confidence
         installer = MCPInstaller(platform=Platform.CLAUDE_CODE, verbose=True)
 
-        print(f"✅ Successfully initialized with forced platform: {installer.platform_info.platform.value}")
+        print(
+            f"✅ Successfully initialized with forced platform: {installer.platform_info.platform.value}"
+        )
         print(f"   Confidence: {installer.platform_info.confidence:.2f}")
         print(f"   Config path: {installer.platform_info.config_path}")
 
         return True
 
     except PlatformNotSupportedError as e:
-        print(f"❌ FAILED: PlatformNotSupportedError raised")
+        print("❌ FAILED: PlatformNotSupportedError raised")
         print(f"   Error: {e}")
         return False
     except Exception as e:
-        print(f"❌ FAILED: Unexpected error")
+        print("❌ FAILED: Unexpected error")
         print(f"   Error: {e}")
         return False
 
@@ -55,15 +59,15 @@ def test_undetectable_platform():
         # Try to force ANTIGRAVITY platform (should be undetectable)
         installer = MCPInstaller(platform=Platform.ANTIGRAVITY, verbose=True)
 
-        print(f"❌ FAILED: Should have raised PlatformNotSupportedError")
+        print("❌ FAILED: Should have raised PlatformNotSupportedError")
         print(f"   Got: {installer.platform_info.platform.value}")
         return False
 
     except PlatformNotSupportedError:
-        print(f"✅ Correctly raised PlatformNotSupportedError for undetectable platform")
+        print("✅ Correctly raised PlatformNotSupportedError for undetectable platform")
         return True
     except Exception as e:
-        print(f"❌ FAILED: Unexpected error")
+        print("❌ FAILED: Unexpected error")
         print(f"   Error: {e}")
         return False
 

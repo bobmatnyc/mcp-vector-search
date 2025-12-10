@@ -1,14 +1,9 @@
 """Test AST-based function call extraction in graph builder."""
 
-import pytest
-
 
 def test_extract_function_calls_basic():
     """Test basic function call extraction."""
     # Import the function from graph_builder
-    from mcp_vector_search.cli.commands.visualize.graph_builder import (
-        build_graph_data,
-    )
 
     # Create a local version for testing
     import ast

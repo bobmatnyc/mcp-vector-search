@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Test script to verify the visualization is working correctly."""
 
-from playwright.sync_api import sync_playwright
 import sys
-import json
+
+from playwright.sync_api import sync_playwright
+
 
 def test_visualization():
     """Test the visualization page for correct rendering."""
@@ -15,10 +16,10 @@ def test_visualization():
 
         # Capture console messages
         console_messages = []
-        page.on("console", lambda msg: console_messages.append({
-            "type": msg.type,
-            "text": msg.text
-        }))
+        page.on(
+            "console",
+            lambda msg: console_messages.append({"type": msg.type, "text": msg.text}),
+        )
 
         # Capture errors
         errors = []
@@ -33,7 +34,9 @@ def test_visualization():
             page.wait_for_timeout(2000)
 
             # Take screenshot
-            screenshot_path = "/Users/masa/Projects/mcp-vector-search/visualization_test.png"
+            screenshot_path = (
+                "/Users/masa/Projects/mcp-vector-search/visualization_test.png"
+            )
             page.screenshot(path=screenshot_path, full_page=True)
             print(f"✅ Screenshot saved to: {screenshot_path}")
 
@@ -61,7 +64,13 @@ def test_visualization():
             print("\n🖥️  Console Messages:")
             if console_messages:
                 for msg in console_messages:
-                    icon = "❌" if msg["type"] == "error" else "⚠️" if msg["type"] == "warning" else "ℹ️"
+                    icon = (
+                        "❌"
+                        if msg["type"] == "error"
+                        else "⚠️"
+                        if msg["type"] == "warning"
+                        else "ℹ️"
+                    )
                     print(f"  {icon} [{msg['type']}] {msg['text']}")
             else:
                 print("  ✅ No console messages (clean)")
@@ -83,7 +92,7 @@ def test_visualization():
             print(f"\n📝 Page has content: {len(body_text) > 0}")
 
             # Final verdict
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             if errors:
                 print("❌ FAILED: JavaScript errors detected")
                 return False
@@ -98,7 +107,7 @@ def test_visualization():
                 print(f"   - {svg_count} SVG element(s)")
                 print(f"   - {node_count} graph node(s)")
                 print(f"   - {text_count} label(s)")
-                print(f"   - No JavaScript errors")
+                print("   - No JavaScript errors")
                 return True
 
         except Exception as e:
@@ -106,6 +115,7 @@ def test_visualization():
             return False
         finally:
             browser.close()
+
 
 if __name__ == "__main__":
     success = test_visualization()

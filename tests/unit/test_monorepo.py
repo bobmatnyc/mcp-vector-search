@@ -1,9 +1,6 @@
 """Tests for monorepo detection."""
 
-import tempfile
 from pathlib import Path
-
-import pytest
 
 from src.mcp_vector_search.utils.monorepo import (
     EXCLUDED_SUBPROJECT_DIRS,

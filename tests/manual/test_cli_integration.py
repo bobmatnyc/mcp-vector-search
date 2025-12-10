@@ -11,15 +11,15 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+from mcp_vector_search.cli.commands.install import (
+    check_claude_cli_available as install_check_claude,
+)
+from mcp_vector_search.cli.commands.install import (
+    check_uv_available as install_check_uv,
+)
 from mcp_vector_search.cli.commands.setup import (
     check_claude_cli_available,
     check_uv_available,
-    register_with_claude_cli,
-)
-from mcp_vector_search.cli.commands.install import (
-    check_claude_cli_available as install_check_claude,
-    check_uv_available as install_check_uv,
-    register_with_claude_cli as install_register,
 )
 
 
@@ -79,7 +79,7 @@ def test_command_structure():
     ]
 
     print(f"✓ Test project path: {test_project.absolute()}")
-    print(f"✓ Expected command structure:")
+    print("✓ Expected command structure:")
     print(f"  {' '.join(expected_cmd)}")
 
     print("\n✅ Command structure test passed!")

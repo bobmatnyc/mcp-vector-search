@@ -1,14 +1,13 @@
 """Unit tests for core models."""
 
-import pytest
 from pathlib import Path
 
-from mcp_vector_search.core.models import CodeChunk, SearchResult, IndexStats
+from mcp_vector_search.core.models import CodeChunk, IndexStats, SearchResult
 
 
 class TestCodeChunk:
     """Test cases for CodeChunk model."""
-    
+
     def test_code_chunk_creation(self):
         """Test basic CodeChunk creation."""
         chunk = CodeChunk(
@@ -20,7 +19,7 @@ class TestCodeChunk:
             chunk_type="function",
             function_name="hello",
         )
-        
+
         assert chunk.content == "def hello():\n    print('Hello, World!')"
         assert chunk.file_path == Path("test.py")
         assert chunk.start_line == 1
@@ -28,7 +27,7 @@ class TestCodeChunk:
         assert chunk.language == "python"
         assert chunk.chunk_type == "function"
         assert chunk.function_name == "hello"
-    
+
     def test_code_chunk_id_property(self):
         """Test CodeChunk ID generation."""
         chunk = CodeChunk(
@@ -38,10 +37,10 @@ class TestCodeChunk:
             end_line=15,
             language="python",
         )
-        
+
         expected_id = "test.py:10:15"
         assert chunk.id == expected_id
-    
+
     def test_code_chunk_line_count(self):
         """Test line count calculation."""
         chunk = CodeChunk(
@@ -51,9 +50,9 @@ class TestCodeChunk:
             end_line=3,
             language="python",
         )
-        
+
         assert chunk.line_count == 3
-    
+
     def test_code_chunk_to_dict(self):
         """Test CodeChunk serialization."""
         chunk = CodeChunk(
@@ -65,9 +64,9 @@ class TestCodeChunk:
             chunk_type="function",
             function_name="test",
         )
-        
+
         chunk_dict = chunk.to_dict()
-        
+
         assert chunk_dict["content"] == "def test(): pass"
         assert chunk_dict["file_path"] == "test.py"
         assert chunk_dict["start_line"] == 1
@@ -75,7 +74,7 @@ class TestCodeChunk:
         assert chunk_dict["language"] == "python"
         assert chunk_dict["chunk_type"] == "function"
         assert chunk_dict["function_name"] == "test"
-    
+
     def test_code_chunk_from_dict(self):
         """Test CodeChunk deserialization."""
         data = {
@@ -87,9 +86,9 @@ class TestCodeChunk:
             "chunk_type": "function",
             "function_name": "test",
         }
-        
+
         chunk = CodeChunk.from_dict(data)
-        
+
         assert chunk.content == "def test(): pass"
         assert chunk.file_path == Path("test.py")
         assert chunk.start_line == 1
@@ -101,7 +100,7 @@ class TestCodeChunk:
 
 class TestSearchResult:
     """Test cases for SearchResult model."""
-    
+
     def test_search_result_creation(self):
         """Test basic SearchResult creation."""
         result = SearchResult(
@@ -115,7 +114,7 @@ class TestSearchResult:
             chunk_type="function",
             function_name="hello",
         )
-        
+
         assert result.content == "def hello(): pass"
         assert result.file_path == Path("test.py")
         assert result.start_line == 1
@@ -125,7 +124,7 @@ class TestSearchResult:
         assert result.rank == 1
         assert result.chunk_type == "function"
         assert result.function_name == "hello"
-    
+
     def test_search_result_line_count(self):
         """Test line count calculation."""
         result = SearchResult(
@@ -137,9 +136,9 @@ class TestSearchResult:
             similarity_score=0.8,
             rank=1,
         )
-        
+
         assert result.line_count == 3
-    
+
     def test_search_result_location(self):
         """Test location string generation."""
         result = SearchResult(
@@ -151,9 +150,9 @@ class TestSearchResult:
             similarity_score=0.8,
             rank=1,
         )
-        
+
         assert result.location == "test.py:10-15"
-    
+
     def test_search_result_to_dict(self):
         """Test SearchResult serialization."""
         result = SearchResult(
@@ -170,9 +169,9 @@ class TestSearchResult:
             context_after=["# End"],
             highlights=["test"],
         )
-        
+
         result_dict = result.to_dict()
-        
+
         assert result_dict["content"] == "def test(): pass"
         assert result_dict["file_path"] == "test.py"
         assert result_dict["start_line"] == 1
@@ -189,7 +188,7 @@ class TestSearchResult:
 
 class TestIndexStats:
     """Test cases for IndexStats model."""
-    
+
     def test_index_stats_creation(self):
         """Test basic IndexStats creation."""
         stats = IndexStats(
@@ -209,7 +208,7 @@ class TestIndexStats:
         assert stats.index_size_mb == 5.2
         assert stats.last_updated == "2024-01-01T00:00:00Z"
         assert stats.embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
-    
+
     def test_index_stats_to_dict(self):
         """Test IndexStats serialization."""
         stats = IndexStats(

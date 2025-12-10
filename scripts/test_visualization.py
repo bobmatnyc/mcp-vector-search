@@ -8,6 +8,7 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
+
 from playwright.async_api import async_playwright
 
 
@@ -27,7 +28,7 @@ async def test_visualization():
         "console_messages": [],
         "network_requests": [],
         "errors": [],
-        "observations": []
+        "observations": [],
     }
 
     async with async_playwright() as p:
@@ -37,27 +38,38 @@ async def test_visualization():
         page = await context.new_page()
 
         # Capture console messages
-        page.on("console", lambda msg: results["console_messages"].append({
-            "type": msg.type,
-            "text": msg.text
-        }))
+        page.on(
+            "console",
+            lambda msg: results["console_messages"].append(
+                {"type": msg.type, "text": msg.text}
+            ),
+        )
 
         # Capture console errors
         page.on("pageerror", lambda err: results["errors"].append(str(err)))
 
         # Capture network requests
-        page.on("request", lambda req: results["network_requests"].append({
-            "url": req.url,
-            "method": req.method,
-            "resource_type": req.resource_type
-        }))
+        page.on(
+            "request",
+            lambda req: results["network_requests"].append(
+                {
+                    "url": req.url,
+                    "method": req.method,
+                    "resource_type": req.resource_type,
+                }
+            ),
+        )
 
         print("🌐 Loading http://localhost:8090...")
         try:
             # Navigate to the page
-            response = await page.goto("http://localhost:8090", wait_until="networkidle", timeout=30000)
+            response = await page.goto(
+                "http://localhost:8090", wait_until="networkidle", timeout=30000
+            )
             print(f"✅ Page loaded with status: {response.status}")
-            results["observations"].append(f"Page loaded successfully with status {response.status}")
+            results["observations"].append(
+                f"Page loaded successfully with status {response.status}"
+            )
 
         except Exception as e:
             print(f"❌ Failed to load page: {e}")
@@ -83,9 +95,11 @@ async def test_visualization():
 
         # Count initial nodes
         try:
-            node_count = await page.evaluate("""
+            node_count = await page.evaluate(
+                """
                 () => document.querySelectorAll('circle').length
-            """)
+            """
+            )
             results["initial_node_count"] = node_count
             print(f"📊 Initial node count: {node_count}")
             results["observations"].append(f"Initial node count: {node_count}")
@@ -95,9 +109,11 @@ async def test_visualization():
 
         # Get node labels
         try:
-            node_labels = await page.evaluate("""
+            node_labels = await page.evaluate(
+                """
                 () => Array.from(document.querySelectorAll('text')).map(t => t.textContent)
-            """)
+            """
+            )
             print(f"📝 Visible node labels: {node_labels[:20]}")  # First 20
             results["initial_node_labels"] = node_labels
             results["observations"].append(f"Found {len(node_labels)} node labels")
@@ -107,8 +123,7 @@ async def test_visualization():
 
         # Check if chunk-graph.json loaded
         chunk_graph_loaded = any(
-            "chunk-graph.json" in req["url"]
-            for req in results["network_requests"]
+            "chunk-graph.json" in req["url"] for req in results["network_requests"]
         )
         if chunk_graph_loaded:
             print("✅ chunk-graph.json was loaded")
@@ -121,7 +136,8 @@ async def test_visualization():
         print("\n🖱️  Attempting to click 'scripts' directory node...")
         try:
             # Method 1: Try to find by text content and dispatch click event
-            scripts_clicked = await page.evaluate("""
+            scripts_clicked = await page.evaluate(
+                """
                 () => {
                     const textElements = Array.from(document.querySelectorAll('text'));
                     const scriptsText = textElements.find(t => t.textContent === 'scripts');
@@ -142,7 +158,8 @@ async def test_visualization():
                     }
                     return false;
                 }
-            """)
+            """
+            )
 
             if scripts_clicked:
                 print("✅ Clicked 'scripts' node via text search")
@@ -152,33 +169,41 @@ async def test_visualization():
                 await asyncio.sleep(2)
 
                 # Take screenshot after click
-                after_click_screenshot = screenshots_dir / f"after_click_{timestamp}.png"
+                after_click_screenshot = (
+                    screenshots_dir / f"after_click_{timestamp}.png"
+                )
                 await page.screenshot(path=str(after_click_screenshot), full_page=True)
                 print(f"📸 After-click screenshot saved: {after_click_screenshot}")
                 results["screenshots"].append(str(after_click_screenshot))
 
                 # Count nodes after expansion
-                expanded_node_count = await page.evaluate("""
+                expanded_node_count = await page.evaluate(
+                    """
                     () => document.querySelectorAll('circle').length
-                """)
+                """
+                )
                 results["expanded_node_count"] = expanded_node_count
                 print(f"📊 Node count after expansion: {expanded_node_count}")
-                print(f"➕ New nodes added: {expanded_node_count - results['initial_node_count']}")
+                print(
+                    f"➕ New nodes added: {expanded_node_count - results['initial_node_count']}"
+                )
                 results["observations"].append(
                     f"Expanded from {results['initial_node_count']} to {expanded_node_count} nodes "
                     f"(+{expanded_node_count - results['initial_node_count']} nodes)"
                 )
 
                 # Get new node labels
-                expanded_labels = await page.evaluate("""
+                expanded_labels = await page.evaluate(
+                    """
                     () => Array.from(document.querySelectorAll('text')).map(t => t.textContent)
-                """)
+                """
+                )
                 new_labels = set(expanded_labels) - set(node_labels)
                 print(f"📝 New visible labels: {list(new_labels)[:20]}")  # First 20
                 results["new_node_labels"] = list(new_labels)
 
                 # Check if new nodes are files or directories
-                file_count = sum(1 for label in new_labels if '.' in label)
+                file_count = sum(1 for label in new_labels if "." in label)
                 dir_count = len(new_labels) - file_count
                 print(f"📁 New directories: {dir_count}, 📄 New files: {file_count}")
                 results["observations"].append(
@@ -187,11 +212,14 @@ async def test_visualization():
 
             else:
                 print("⚠️  Could not find/click 'scripts' node via text search")
-                results["observations"].append("WARNING: Could not locate 'scripts' node")
+                results["observations"].append(
+                    "WARNING: Could not locate 'scripts' node"
+                )
 
                 # Try alternative method: click first directory-looking node
                 print("🔍 Attempting to click first circle element...")
-                alternative_clicked = await page.evaluate("""
+                alternative_clicked = await page.evaluate(
+                    """
                     () => {
                         const circles = document.querySelectorAll('circle');
                         if (circles.length > 0) {
@@ -205,20 +233,25 @@ async def test_visualization():
                         }
                         return false;
                     }
-                """)
+                """
+                )
 
                 if alternative_clicked:
                     print("✅ Clicked first circle node as fallback")
                     await asyncio.sleep(2)
 
-                    fallback_screenshot = screenshots_dir / f"fallback_click_{timestamp}.png"
+                    fallback_screenshot = (
+                        screenshots_dir / f"fallback_click_{timestamp}.png"
+                    )
                     await page.screenshot(path=str(fallback_screenshot), full_page=True)
                     print(f"📸 Fallback screenshot saved: {fallback_screenshot}")
                     results["screenshots"].append(str(fallback_screenshot))
 
-                    expanded_node_count = await page.evaluate("""
+                    expanded_node_count = await page.evaluate(
+                        """
                         () => document.querySelectorAll('circle').length
-                    """)
+                    """
+                    )
                     results["expanded_node_count"] = expanded_node_count
                     results["observations"].append(
                         f"Fallback click: expanded to {expanded_node_count} nodes"
@@ -249,7 +282,7 @@ async def test_visualization():
 
     # Save results to JSON
     results_file = screenshots_dir / f"test_results_{timestamp}.json"
-    with open(results_file, 'w') as f:
+    with open(results_file, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\n💾 Test results saved: {results_file}")
 
@@ -258,37 +291,39 @@ async def test_visualization():
 
 def print_summary(results):
     """Print a summary of the test results."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("📊 TEST SUMMARY")
-    print("="*80)
+    print("=" * 80)
     print(f"URL: {results['url']}")
     print(f"Timestamp: {results['timestamp']}")
     print(f"\nInitial nodes: {results['initial_node_count']}")
     print(f"Expanded nodes: {results['expanded_node_count']}")
-    print(f"New nodes added: {results['expanded_node_count'] - results['initial_node_count']}")
+    print(
+        f"New nodes added: {results['expanded_node_count'] - results['initial_node_count']}"
+    )
 
     print(f"\n📸 Screenshots: {len(results.get('screenshots', []))}")
-    for screenshot in results.get('screenshots', []):
+    for screenshot in results.get("screenshots", []):
         print(f"  - {screenshot}")
 
     print(f"\n📝 Observations: {len(results['observations'])}")
-    for obs in results['observations']:
+    for obs in results["observations"]:
         print(f"  ✓ {obs}")
 
-    if results['errors']:
+    if results["errors"]:
         print(f"\n❌ Errors: {len(results['errors'])}")
-        for error in results['errors']:
+        for error in results["errors"]:
             print(f"  ! {error}")
     else:
         print("\n✅ No errors detected")
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
 
 
 async def main():
     """Main entry point."""
     print("🧪 Starting Visualization Test")
-    print("="*80)
+    print("=" * 80)
 
     # Check if Playwright is installed
     try:

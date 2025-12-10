@@ -5,8 +5,6 @@ Tests for visualization V2.0 layout calculations (list and fan layouts).
 
 import math
 
-import pytest
-
 from mcp_vector_search.cli.commands.visualize.layout_engine import (
     _build_tree_levels,
     calculate_compact_folder_layout,

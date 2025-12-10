@@ -1,9 +1,8 @@
 """Tests for version-based automatic reindexing."""
 
-import asyncio
 import json
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -131,7 +130,7 @@ def test_needs_reindex_patch_version(initialized_project):
         json.dump(
             {
                 "index_version": "0.5.0",
-                "indexed_at": datetime.now(timezone.utc).isoformat(),
+                "indexed_at": datetime.now(UTC).isoformat(),
                 "file_mtimes": {},
             },
             f,
@@ -158,7 +157,7 @@ def test_needs_reindex_minor_version(initialized_project):
         json.dump(
             {
                 "index_version": "0.4.0",
-                "indexed_at": datetime.now(timezone.utc).isoformat(),
+                "indexed_at": datetime.now(UTC).isoformat(),
                 "file_mtimes": {},
             },
             f,
@@ -181,7 +180,7 @@ def test_needs_reindex_major_version(initialized_project):
         json.dump(
             {
                 "index_version": "0.5.1",
-                "indexed_at": datetime.now(timezone.utc).isoformat(),
+                "indexed_at": datetime.now(UTC).isoformat(),
                 "file_mtimes": {},
             },
             f,
@@ -234,7 +233,7 @@ def test_metadata_backward_compatibility(initialized_project):
     # Test 2: New format (with structure)
     new_data = {
         "index_version": "0.5.1",
-        "indexed_at": datetime.now(timezone.utc).isoformat(),
+        "indexed_at": datetime.now(UTC).isoformat(),
         "file_mtimes": {
             "file1.py": 1234567890.0,
             "file2.py": 1234567891.0,

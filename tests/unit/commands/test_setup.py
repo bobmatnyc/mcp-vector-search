@@ -13,22 +13,19 @@ from py_mcp_installer. These tests need to be updated to use the new PlatformInf
 data structure.
 """
 
-import asyncio
 import json
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
 from mcp_vector_search.cli.commands.setup import (
+    _run_smart_setup,
     scan_project_file_extensions,
     select_optimal_embedding_model,
-    _run_smart_setup,
 )
-from mcp_vector_search.config.defaults import DEFAULT_FILE_EXTENSIONS
 from mcp_vector_search.core.project import ProjectManager
-
 
 # ==============================================================================
 # Test Fixtures
@@ -238,7 +235,9 @@ class TestSelectOptimalEmbeddingModel:
 # ==============================================================================
 
 
-@pytest.mark.skip(reason="Tests need update for py_mcp_installer PlatformInfo data structure")
+@pytest.mark.skip(
+    reason="Tests need update for py_mcp_installer PlatformInfo data structure"
+)
 class TestSetupCommand:
     """Test suite for main setup command functionality."""
 
@@ -248,25 +247,25 @@ class TestSetupCommand:
         # Arrange
         mock_typer_context.obj = {"project_root": mock_python_project}
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
-        ) as mock_check_claude, patch(
-            "mcp_vector_search.cli.commands.setup.check_uv_available"
-        ) as mock_check_uv, patch(
-            "subprocess.run"
-        ) as mock_subprocess, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
+            ) as mock_check_claude,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_uv_available"
+            ) as mock_check_uv,
+            patch("subprocess.run") as mock_subprocess,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {"claude-code": Path(".mcp.json")}
             mock_check_claude.return_value = True
             mock_check_uv.return_value = True
-            mock_subprocess.return_value = type('obj', (object,), {
-                'returncode': 0,
-                'stdout': '',
-                'stderr': ''
-            })()
+            mock_subprocess.return_value = type(
+                "obj", (object,), {"returncode": 0, "stdout": "", "stderr": ""}
+            )()
             mock_index.return_value = None
 
             # Act
@@ -297,13 +296,15 @@ class TestSetupCommand:
             file_extensions=[".py"], embedding_model="test-model"
         )
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.configure_platform"
-        ) as mock_configure, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.configure_platform"
+            ) as mock_configure,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {}
             mock_configure.return_value = True
 
@@ -326,13 +327,15 @@ class TestSetupCommand:
             file_extensions=[".py"], embedding_model="test-model"
         )
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.configure_platform"
-        ) as mock_configure, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.configure_platform"
+            ) as mock_configure,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {}
             mock_configure.return_value = True
             mock_index.return_value = None
@@ -352,13 +355,15 @@ class TestSetupCommand:
         # Arrange
         mock_typer_context.obj = {"project_root": mock_multi_language_project}
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.configure_platform"
-        ) as mock_configure, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.configure_platform"
+            ) as mock_configure,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {}
             mock_configure.return_value = True
             mock_index.return_value = None
@@ -379,30 +384,31 @@ class TestSetupCommand:
         # Arrange
         mock_typer_context.obj = {"project_root": mock_python_project}
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
-        ) as mock_check_claude, patch(
-            "mcp_vector_search.cli.commands.setup.check_uv_available"
-        ) as mock_check_uv, patch(
-            "subprocess.run"
-        ) as mock_subprocess, patch(
-            "mcp_vector_search.cli.commands.setup.configure_platform"
-        ) as mock_configure, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
+            ) as mock_check_claude,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_uv_available"
+            ) as mock_check_uv,
+            patch("subprocess.run") as mock_subprocess,
+            patch(
+                "mcp_vector_search.cli.commands.setup.configure_platform"
+            ) as mock_configure,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {
                 "claude-code": Path(".mcp.json"),
                 "cursor": Path("~/.cursor/mcp.json"),
             }
             mock_check_claude.return_value = True
             mock_check_uv.return_value = True
-            mock_subprocess.return_value = type('obj', (object,), {
-                'returncode': 0,
-                'stdout': '',
-                'stderr': ''
-            })()
+            mock_subprocess.return_value = type(
+                "obj", (object,), {"returncode": 0, "stdout": "", "stderr": ""}
+            )()
             mock_configure.return_value = True
             mock_index.return_value = None
 
@@ -424,13 +430,15 @@ class TestSetupCommand:
         gitignore_path = mock_python_project / ".gitignore"
         gitignore_path.write_text("*.pyc\n")
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.configure_platform"
-        ) as mock_configure, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.configure_platform"
+            ) as mock_configure,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {}
             mock_configure.return_value = True
             mock_index.return_value = None
@@ -450,25 +458,25 @@ class TestSetupCommand:
         # Arrange
         mock_typer_context.obj = {"project_root": mock_python_project}
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
-        ) as mock_check_claude, patch(
-            "mcp_vector_search.cli.commands.setup.check_uv_available"
-        ) as mock_check_uv, patch(
-            "subprocess.run"
-        ) as mock_subprocess, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
+            ) as mock_check_claude,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_uv_available"
+            ) as mock_check_uv,
+            patch("subprocess.run") as mock_subprocess,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {"claude-code": Path(".mcp.json")}
             mock_check_claude.return_value = True
             mock_check_uv.return_value = True
-            mock_subprocess.return_value = type('obj', (object,), {
-                'returncode': 0,
-                'stdout': '',
-                'stderr': ''
-            })()
+            mock_subprocess.return_value = type(
+                "obj", (object,), {"returncode": 0, "stdout": "", "stderr": ""}
+            )()
             mock_index.return_value = None
 
             # Act
@@ -491,13 +499,15 @@ class TestSetupCommand:
         # Arrange
         mock_typer_context.obj = {"project_root": mock_python_project}
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.configure_platform"
-        ) as mock_configure, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.configure_platform"
+            ) as mock_configure,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {}
             mock_configure.return_value = True
             mock_index.return_value = None
@@ -519,19 +529,22 @@ class TestSetupCommand:
         # Arrange
         mock_typer_context.obj = {"project_root": mock_python_project}
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
-        ) as mock_check_claude, patch(
-            "mcp_vector_search.cli.commands.setup.check_uv_available"
-        ) as mock_check_uv, patch(
-            "subprocess.run"
-        ) as mock_subprocess, patch(
-            "mcp_vector_search.cli.commands.setup.configure_platform"
-        ) as mock_configure, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
+            ) as mock_check_claude,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_uv_available"
+            ) as mock_check_uv,
+            patch("subprocess.run") as mock_subprocess,
+            patch(
+                "mcp_vector_search.cli.commands.setup.configure_platform"
+            ) as mock_configure,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {
                 "claude-code": Path(".mcp.json"),
                 "cursor": Path("~/.cursor/mcp.json"),
@@ -539,11 +552,9 @@ class TestSetupCommand:
             }
             mock_check_claude.return_value = True
             mock_check_uv.return_value = True
-            mock_subprocess.return_value = type('obj', (object,), {
-                'returncode': 0,
-                'stdout': '',
-                'stderr': ''
-            })()
+            mock_subprocess.return_value = type(
+                "obj", (object,), {"returncode": 0, "stdout": "", "stderr": ""}
+            )()
             mock_configure.return_value = True
             mock_index.return_value = None
 
@@ -559,8 +570,8 @@ class TestSetupCommand:
             for call in mock_configure.call_args_list:
                 if call[0]:
                     platforms_configured.append(call[0][0])
-                elif 'platform' in call[1]:
-                    platforms_configured.append(call[1]['platform'])
+                elif "platform" in call[1]:
+                    platforms_configured.append(call[1]["platform"])
 
             assert "cursor" in platforms_configured
             assert "windsurf" in platforms_configured
@@ -571,7 +582,9 @@ class TestSetupCommand:
 # ==============================================================================
 
 
-@pytest.mark.skip(reason="Tests need update for py_mcp_installer PlatformInfo data structure")
+@pytest.mark.skip(
+    reason="Tests need update for py_mcp_installer PlatformInfo data structure"
+)
 class TestSetupErrorHandling:
     """Test suite for error handling in setup command."""
 
@@ -583,13 +596,15 @@ class TestSetupErrorHandling:
         # Arrange
         mock_typer_context.obj = {"project_root": mock_python_project}
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.configure_platform"
-        ) as mock_configure, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.configure_platform"
+            ) as mock_configure,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {}
             mock_configure.return_value = True
             # Simulate permission error during indexing
@@ -609,13 +624,15 @@ class TestSetupErrorHandling:
         mock_typer_context.obj = {"project_root": tmp_path}
         (tmp_path / "main.py").write_text("print('hello')")
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.configure_platform"
-        ) as mock_configure, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.configure_platform"
+            ) as mock_configure,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {}
             mock_configure.return_value = True
             mock_index.return_value = None
@@ -635,13 +652,15 @@ class TestSetupErrorHandling:
         # Arrange
         mock_typer_context.obj = {"project_root": mock_large_project}
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.configure_platform"
-        ) as mock_configure, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.configure_platform"
+            ) as mock_configure,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {}
             mock_configure.return_value = True
             mock_index.return_value = None
@@ -662,13 +681,15 @@ class TestSetupErrorHandling:
         # Arrange
         mock_typer_context.obj = {"project_root": mock_python_project}
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.configure_platform"
-        ) as mock_configure, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.configure_platform"
+            ) as mock_configure,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {
                 "claude-code": Path(".mcp.json"),
                 "cursor": Path("~/.cursor/mcp.json"),
@@ -692,25 +713,25 @@ class TestSetupErrorHandling:
         # Arrange
         mock_typer_context.obj = {"project_root": mock_python_project}
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
-        ) as mock_check_claude, patch(
-            "mcp_vector_search.cli.commands.setup.check_uv_available"
-        ) as mock_check_uv, patch(
-            "subprocess.run"
-        ) as mock_subprocess, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
+            ) as mock_check_claude,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_uv_available"
+            ) as mock_check_uv,
+            patch("subprocess.run") as mock_subprocess,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {"claude-code": Path(".mcp.json")}
             mock_check_claude.return_value = True
             mock_check_uv.return_value = True
-            mock_subprocess.return_value = type('obj', (object,), {
-                'returncode': 0,
-                'stdout': '',
-                'stderr': ''
-            })()
+            mock_subprocess.return_value = type(
+                "obj", (object,), {"returncode": 0, "stdout": "", "stderr": ""}
+            )()
             mock_index.side_effect = Exception("Indexing failed")
 
             # Act - Should complete setup despite indexing failure
@@ -728,7 +749,9 @@ class TestSetupErrorHandling:
 # ==============================================================================
 
 
-@pytest.mark.skip(reason="Tests need update for py_mcp_installer PlatformInfo data structure")
+@pytest.mark.skip(
+    reason="Tests need update for py_mcp_installer PlatformInfo data structure"
+)
 class TestSetupVerboseMode:
     """Test suite for verbose output in setup command."""
 
@@ -740,13 +763,15 @@ class TestSetupVerboseMode:
         # Arrange
         mock_typer_context.obj = {"project_root": mock_python_project}
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.configure_platform"
-        ) as mock_configure, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.configure_platform"
+            ) as mock_configure,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {"claude-code": Path(".mcp.json")}
             mock_configure.return_value = True
             mock_index.return_value = None
@@ -765,7 +790,9 @@ class TestSetupVerboseMode:
 # ==============================================================================
 
 
-@pytest.mark.skip(reason="Tests need update for py_mcp_installer PlatformInfo data structure")
+@pytest.mark.skip(
+    reason="Tests need update for py_mcp_installer PlatformInfo data structure"
+)
 class TestSetupEdgeCases:
     """Test suite for edge cases in setup command."""
 
@@ -809,25 +836,25 @@ class TestSetupEdgeCases:
         # Arrange
         mock_typer_context.obj = {"project_root": mock_python_project}
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
-        ) as mock_check_claude, patch(
-            "mcp_vector_search.cli.commands.setup.check_uv_available"
-        ) as mock_check_uv, patch(
-            "subprocess.run"
-        ) as mock_subprocess, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
+            ) as mock_check_claude,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_uv_available"
+            ) as mock_check_uv,
+            patch("subprocess.run") as mock_subprocess,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {}  # No platforms detected
             mock_check_claude.return_value = True
             mock_check_uv.return_value = True
-            mock_subprocess.return_value = type('obj', (object,), {
-                'returncode': 0,
-                'stdout': '',
-                'stderr': ''
-            })()
+            mock_subprocess.return_value = type(
+                "obj", (object,), {"returncode": 0, "stdout": "", "stderr": ""}
+            )()
             mock_index.return_value = None
 
             # Act
@@ -857,25 +884,25 @@ class TestSetupEdgeCases:
             json.dumps({"mcpServers": {"other-server": {"command": "other"}}})
         )
 
-        with patch(
-            "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
-        ) as mock_detect, patch(
-            "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
-        ) as mock_check_claude, patch(
-            "mcp_vector_search.cli.commands.setup.check_uv_available"
-        ) as mock_check_uv, patch(
-            "subprocess.run"
-        ) as mock_subprocess, patch(
-            "mcp_vector_search.cli.commands.index.run_indexing"
-        ) as mock_index:
+        with (
+            patch(
+                "mcp_vector_search.cli.commands.setup.detect_installed_platforms"
+            ) as mock_detect,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_claude_cli_available"
+            ) as mock_check_claude,
+            patch(
+                "mcp_vector_search.cli.commands.setup.check_uv_available"
+            ) as mock_check_uv,
+            patch("subprocess.run") as mock_subprocess,
+            patch("mcp_vector_search.cli.commands.index.run_indexing") as mock_index,
+        ):
             mock_detect.return_value = {"claude-code": Path(".mcp.json")}
             mock_check_claude.return_value = True
             mock_check_uv.return_value = True
-            mock_subprocess.return_value = type('obj', (object,), {
-                'returncode': 0,
-                'stdout': '',
-                'stderr': ''
-            })()
+            mock_subprocess.return_value = type(
+                "obj", (object,), {"returncode": 0, "stdout": "", "stderr": ""}
+            )()
             mock_index.return_value = None
 
             # Act

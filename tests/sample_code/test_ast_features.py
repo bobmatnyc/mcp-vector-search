@@ -16,11 +16,11 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from mcp_vector_search.parsers.python import PythonParser
-from mcp_vector_search.parsers.javascript import JavaScriptParser
-from mcp_vector_search.core.indexer import SemanticIndexer
-from mcp_vector_search.core.models import CodeChunk
 import pytest
+
+from mcp_vector_search.core.models import CodeChunk
+from mcp_vector_search.parsers.javascript import JavaScriptParser
+from mcp_vector_search.parsers.python import PythonParser
 
 
 def _build_hierarchy(chunks: list[CodeChunk]) -> list[CodeChunk]:
@@ -30,15 +30,18 @@ def _build_hierarchy(chunks: list[CodeChunk]) -> list[CodeChunk]:
 
     # Group chunks by type
     module_chunks = [c for c in chunks if c.chunk_type in ("module", "imports")]
-    class_chunks = [c for c in chunks if c.chunk_type in ("class", "interface", "mixin")]
-    function_chunks = [c for c in chunks if c.chunk_type in ("function", "method", "constructor")]
+    class_chunks = [
+        c for c in chunks if c.chunk_type in ("class", "interface", "mixin")
+    ]
+    function_chunks = [
+        c for c in chunks if c.chunk_type in ("function", "method", "constructor")
+    ]
 
     # Link functions to parent classes
     for func in function_chunks:
         if func.class_name:
             parent_class = next(
-                (c for c in class_chunks if c.class_name == func.class_name),
-                None
+                (c for c in class_chunks if c.class_name == func.class_name), None
             )
             if parent_class:
                 func.parent_chunk_id = parent_class.chunk_id
@@ -75,7 +78,7 @@ async def test_python_parser():
 
     file_path = Path(__file__).parent / "ast_test_python.py"
 
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     parser = PythonParser()
@@ -126,30 +129,42 @@ async def test_python_parser():
     print("TEST 4: Specific Function Checks")
     print("-" * 40)
 
-    simple_func = next((c for c in chunks if c.function_name == "simple_function"), None)
+    simple_func = next(
+        (c for c in chunks if c.function_name == "simple_function"), None
+    )
     if simple_func:
-        print(f"  ✓ simple_function found")
+        print("  ✓ simple_function found")
         print(f"    Complexity: {simple_func.complexity_score} (expected: 1.0)")
-        assert simple_func.complexity_score == 1.0, "simple_function should have complexity 1.0"
+        assert simple_func.complexity_score == 1.0, (
+            "simple_function should have complexity 1.0"
+        )
 
     grade_func = next((c for c in chunks if c.function_name == "calculate_grade"), None)
     if grade_func:
-        print(f"  ✓ calculate_grade found")
+        print("  ✓ calculate_grade found")
         print(f"    Complexity: {grade_func.complexity_score} (expected: 5.0)")
-        assert grade_func.complexity_score == 5.0, "calculate_grade should have complexity 5.0"
+        assert grade_func.complexity_score == 5.0, (
+            "calculate_grade should have complexity 5.0"
+        )
 
-    complex_func = next((c for c in chunks if c.function_name == "complex_validator"), None)
+    complex_func = next(
+        (c for c in chunks if c.function_name == "complex_validator"), None
+    )
     if complex_func:
-        print(f"  ✓ complex_validator found")
+        print("  ✓ complex_validator found")
         print(f"    Complexity: {complex_func.complexity_score} (expected: 10.0+)")
-        assert complex_func.complexity_score >= 10.0, "complex_validator should have high complexity"
+        assert complex_func.complexity_score >= 10.0, (
+            "complex_validator should have high complexity"
+        )
 
     user_class = next((c for c in chunks if c.class_name == "User"), None)
     if user_class:
-        print(f"  ✓ User class found")
+        print("  ✓ User class found")
         print(f"    Decorators: {user_class.decorators}")
         print(f"    Children: {len(user_class.child_chunk_ids)}")
-        assert len(user_class.child_chunk_ids) > 0, "User class should have child methods"
+        assert len(user_class.child_chunk_ids) > 0, (
+            "User class should have child methods"
+        )
 
     print()
     print("✓ Python parser tests PASSED")
@@ -165,7 +180,7 @@ async def test_javascript_parser():
 
     file_path = Path(__file__).parent / "ast_test_javascript.js"
 
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     parser = JavaScriptParser()
@@ -180,7 +195,7 @@ async def test_javascript_parser():
     # Test 1: Verify tree-sitter is being used (not regex fallback)
     print("TEST 1: Tree-Sitter AST Parsing")
     print("-" * 40)
-    if hasattr(parser, '_use_tree_sitter'):
+    if hasattr(parser, "_use_tree_sitter"):
         print(f"  Tree-sitter enabled: {parser._use_tree_sitter}")
         assert parser._use_tree_sitter, "JavaScript parser should use tree-sitter"
     print()
@@ -220,25 +235,31 @@ async def test_javascript_parser():
     print("TEST 5: Specific Function Checks")
     print("-" * 40)
 
-    simple_greeting = next((c for c in chunks if c.function_name == "simpleGreeting"), None)
+    simple_greeting = next(
+        (c for c in chunks if c.function_name == "simpleGreeting"), None
+    )
     if simple_greeting:
-        print(f"  ✓ simpleGreeting found")
+        print("  ✓ simpleGreeting found")
         print(f"    Complexity: {simple_greeting.complexity_score}")
 
-    calculate_grade = next((c for c in chunks if c.function_name == "calculateGrade"), None)
+    calculate_grade = next(
+        (c for c in chunks if c.function_name == "calculateGrade"), None
+    )
     if calculate_grade:
-        print(f"  ✓ calculateGrade found")
+        print("  ✓ calculateGrade found")
         print(f"    Complexity: {calculate_grade.complexity_score} (expected: ~5.0)")
 
     user_class = next((c for c in chunks if c.class_name == "User"), None)
     if user_class:
-        print(f"  ✓ User class found")
+        print("  ✓ User class found")
         print(f"    Children: {len(user_class.child_chunk_ids)}")
         assert len(user_class.child_chunk_ids) > 0, "User class should have methods"
 
-    auth_class = next((c for c in chunks if c.class_name == "AuthenticationManager"), None)
+    auth_class = next(
+        (c for c in chunks if c.class_name == "AuthenticationManager"), None
+    )
     if auth_class:
-        print(f"  ✓ AuthenticationManager class found")
+        print("  ✓ AuthenticationManager class found")
         print(f"    Children: {len(auth_class.child_chunk_ids)}")
 
     print()
@@ -255,7 +276,7 @@ async def test_typescript_parser():
 
     file_path = Path(__file__).parent / "ast_test_typescript.ts"
 
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     # JavaScript parser handles both JS and TS
@@ -271,7 +292,7 @@ async def test_typescript_parser():
     # Test 1: Verify tree-sitter is being used
     print("TEST 1: Tree-Sitter AST Parsing")
     print("-" * 40)
-    if hasattr(parser, '_use_tree_sitter'):
+    if hasattr(parser, "_use_tree_sitter"):
         print(f"  Tree-sitter enabled: {parser._use_tree_sitter}")
     print()
 
@@ -300,17 +321,17 @@ async def test_typescript_parser():
 
     process_items = next((c for c in chunks if c.function_name == "processItems"), None)
     if process_items:
-        print(f"  ✓ processItems (generic) found")
+        print("  ✓ processItems (generic) found")
         print(f"    Complexity: {process_items.complexity_score}")
 
     user_class = next((c for c in chunks if c.class_name == "User"), None)
     if user_class:
-        print(f"  ✓ User class found")
+        print("  ✓ User class found")
         print(f"    Children: {len(user_class.child_chunk_ids)}")
 
     base_manager = next((c for c in chunks if c.class_name == "BaseManager"), None)
     if base_manager:
-        print(f"  ✓ BaseManager (abstract, generic) found")
+        print("  ✓ BaseManager (abstract, generic) found")
         print(f"    Children: {len(base_manager.child_chunk_ids)}")
 
     print()
@@ -329,7 +350,7 @@ async def test_hierarchy_building():
     file_path = Path(__file__).parent / "ast_test_python.py"
     print(f"\nParsing: {file_path.name}")
 
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     parser = PythonParser()
@@ -418,6 +439,7 @@ async def main():
         print("=" * 80)
         print(f"Error: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

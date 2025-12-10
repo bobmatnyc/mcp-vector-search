@@ -59,8 +59,8 @@ async def test_glob_filtering():
         )
 
         # Apply post-filtering (simulating the fix)
-        from fnmatch import fnmatch
         import os
+        from fnmatch import fnmatch
 
         filtered_results = []
         pattern = "*.py"

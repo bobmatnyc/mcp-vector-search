@@ -2,8 +2,11 @@
 """
 Detailed browser test to capture exact JavaScript errors.
 """
+
 import asyncio
+
 from playwright.async_api import async_playwright
+
 
 async def test_visualizer_detailed():
     async with async_playwright() as p:
@@ -16,44 +19,53 @@ async def test_visualizer_detailed():
 
         # Capture all console messages with full details
         def handle_console(msg):
-            console_messages.append({
-                'type': msg.type,
-                'text': msg.text,
-                'location': msg.location,
-                'args': [str(arg) for arg in msg.args]
-            })
+            console_messages.append(
+                {
+                    "type": msg.type,
+                    "text": msg.text,
+                    "location": msg.location,
+                    "args": [str(arg) for arg in msg.args],
+                }
+            )
 
         # Capture page errors with stack traces
         def handle_error(error):
-            page_errors.append({
-                'message': str(error),
-                'name': error.name if hasattr(error, 'name') else 'Error',
-                'stack': error.stack if hasattr(error, 'stack') else ''
-            })
+            page_errors.append(
+                {
+                    "message": str(error),
+                    "name": error.name if hasattr(error, "name") else "Error",
+                    "stack": error.stack if hasattr(error, "stack") else "",
+                }
+            )
 
-        page.on('console', handle_console)
-        page.on('pageerror', handle_error)
+        page.on("console", handle_console)
+        page.on("pageerror", handle_error)
 
         # Navigate
         try:
-            await page.goto('http://localhost:8095', wait_until='networkidle', timeout=15000)
+            await page.goto(
+                "http://localhost:8095", wait_until="networkidle", timeout=15000
+            )
             await asyncio.sleep(3)
 
             # Check if data was loaded
-            graph_data_loaded = await page.evaluate("""
+            graph_data_loaded = await page.evaluate(
+                """
                 () => {
                     return {
                         hasGraphData: typeof window.currentGraphData !== 'undefined',
                         dataLoaded: window.currentGraphData ? true : false
                     };
                 }
-            """)
+            """
+            )
 
             # Get network requests
             network_requests = []
 
             # Try to manually fetch the JSON to see the response
-            json_response = await page.evaluate("""
+            json_response = await page.evaluate(
+                """
                 async () => {
                     try {
                         const response = await fetch('chunk-graph.json');
@@ -76,14 +88,15 @@ async def test_visualizer_detailed():
                         return { error: e.toString() };
                     }
                 }
-            """)
+            """
+            )
 
             print("=" * 70)
             print("CONSOLE MESSAGES:")
             print("=" * 70)
             for msg in console_messages:
                 print(f"\n[{msg['type'].upper()}] {msg['text']}")
-                if msg['location']:
+                if msg["location"]:
                     print(f"  Location: {msg['location']}")
 
             print("\n" + "=" * 70)
@@ -91,7 +104,7 @@ async def test_visualizer_detailed():
             print("=" * 70)
             for error in page_errors:
                 print(f"\n{error['name']}: {error['message']}")
-                if error['stack']:
+                if error["stack"]:
                     print(f"Stack: {error['stack']}")
 
             print("\n" + "=" * 70)
@@ -108,5 +121,6 @@ async def test_visualizer_detailed():
             print(f"Test failed: {e}")
 
         await browser.close()
+
 
 asyncio.run(test_visualizer_detailed())

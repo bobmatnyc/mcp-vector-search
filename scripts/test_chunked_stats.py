@@ -4,9 +4,11 @@
 import asyncio
 import tempfile
 from pathlib import Path
-from typing import List
 
-from mcp_vector_search.core.database import ChromaVectorDatabase, PooledChromaVectorDatabase
+from mcp_vector_search.core.database import (
+    ChromaVectorDatabase,
+    PooledChromaVectorDatabase,
+)
 from mcp_vector_search.core.models import CodeChunk
 
 
@@ -38,7 +40,7 @@ class MockEmbeddingFunction:
         return self.__call__(input=[text])[0]
 
 
-async def create_large_dataset(count: int) -> List[CodeChunk]:
+async def create_large_dataset(count: int) -> list[CodeChunk]:
     """Create a large dataset of code chunks for testing."""
     chunks = []
 
@@ -75,24 +77,26 @@ async def test_regular_database(count: int):
             print(f"  Creating {count} chunks...")
             chunks = await create_large_dataset(count)
 
-            print(f"  Adding chunks to database...")
+            print("  Adding chunks to database...")
             await db.add_chunks(chunks)
 
             # Get stats (should use chunked processing)
-            print(f"  Fetching stats with chunked processing...")
+            print("  Fetching stats with chunked processing...")
             stats = await db.get_stats()
 
             # Verify stats
-            print(f"\n  ✅ Stats retrieved successfully:")
+            print("\n  ✅ Stats retrieved successfully:")
             print(f"     Total chunks: {stats.total_chunks}")
             print(f"     Total files: {stats.total_files}")
             print(f"     Languages: {stats.languages}")
             print(f"     Index size: {stats.index_size_mb:.2f} MB")
 
-            assert stats.total_chunks == count, f"Expected {count} chunks, got {stats.total_chunks}"
+            assert stats.total_chunks == count, (
+                f"Expected {count} chunks, got {stats.total_chunks}"
+            )
             assert stats.total_files > 0, "Expected files to be counted"
 
-            print(f"\n  ✅ All assertions passed!")
+            print("\n  ✅ All assertions passed!")
 
         finally:
             await db.close()
@@ -118,15 +122,15 @@ async def test_pooled_database(count: int):
             print(f"  Creating {count} chunks...")
             chunks = await create_large_dataset(count)
 
-            print(f"  Adding chunks to database...")
+            print("  Adding chunks to database...")
             await db.add_chunks(chunks)
 
             # Get stats (should use chunked processing)
-            print(f"  Fetching stats with chunked processing...")
+            print("  Fetching stats with chunked processing...")
             stats = await db.get_stats()
 
             # Verify stats
-            print(f"\n  ✅ Stats retrieved successfully:")
+            print("\n  ✅ Stats retrieved successfully:")
             print(f"     Total chunks: {stats.total_chunks}")
             print(f"     Total files: {stats.total_files}")
             print(f"     Languages: {stats.languages}")
@@ -134,15 +138,17 @@ async def test_pooled_database(count: int):
 
             # Check pool stats
             pool_stats = db.get_pool_stats()
-            print(f"\n  📊 Pool statistics:")
+            print("\n  📊 Pool statistics:")
             print(f"     Pool size: {pool_stats['pool_size']}")
             print(f"     Connections created: {pool_stats['connections_created']}")
             print(f"     Connections reused: {pool_stats['connections_reused']}")
 
-            assert stats.total_chunks == count, f"Expected {count} chunks, got {stats.total_chunks}"
+            assert stats.total_chunks == count, (
+                f"Expected {count} chunks, got {stats.total_chunks}"
+            )
             assert stats.total_files > 0, "Expected files to be counted"
 
-            print(f"\n  ✅ All assertions passed!")
+            print("\n  ✅ All assertions passed!")
 
         finally:
             await db.close()
@@ -168,6 +174,7 @@ async def main():
         except Exception as e:
             print(f"\n❌ Test failed with error: {e}")
             import traceback
+
             traceback.print_exc()
             return 1
 

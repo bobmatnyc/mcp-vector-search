@@ -1,15 +1,12 @@
 """Integration tests for MCP functionality."""
 
-import asyncio
-import json
-import subprocess
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from mcp_vector_search.mcp.server import MCPVectorSearchServer, create_mcp_server
 from mcp_vector_search.core.project import ProjectManager
+from mcp_vector_search.mcp.server import MCPVectorSearchServer, create_mcp_server
 
 
 class TestMCPIntegration:
@@ -20,9 +17,10 @@ class TestMCPIntegration:
         """Create a temporary project for testing."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
-            
+
             # Create some test files
-            (project_root / "test.py").write_text("""
+            (project_root / "test.py").write_text(
+                """
 def hello_world():
     '''A simple hello world function.'''
     print('Hello, World!')
@@ -33,19 +31,21 @@ def add_numbers(a, b):
 
 class Calculator:
     '''A simple calculator class.'''
-    
+
     def multiply(self, x, y):
         '''Multiply two numbers.'''
         return x * y
-    
+
     def divide(self, x, y):
         '''Divide two numbers.'''
         if y == 0:
             raise ValueError("Cannot divide by zero")
         return x / y
-""")
-            
-            (project_root / "utils.js").write_text("""
+"""
+            )
+
+            (project_root / "utils.js").write_text(
+                """
 function formatString(str) {
     // Format a string with proper capitalization
     return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
@@ -56,8 +56,9 @@ function validateEmail(email) {
     const emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
     return emailRegex.test(email);
 }
-""")
-            
+"""
+            )
+
             yield project_root
 
     async def _initialize_project(self, project_root):
@@ -66,15 +67,14 @@ function validateEmail(email) {
         project_manager = ProjectManager(project_root)
         config = project_manager.initialize(
             file_extensions=[".py", ".js"],
-            embedding_model="sentence-transformers/all-MiniLM-L6-v2"
+            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
         )
 
         # Index the project
         from mcp_vector_search.cli.commands.index import run_indexing
+
         await run_indexing(
-            project_root=project_root,
-            force_reindex=True,
-            show_progress=False
+            project_root=project_root, force_reindex=True, show_progress=False
         )
 
         return project_root
@@ -163,16 +163,19 @@ function validateEmail(email) {
         """Test MCP server can be created."""
         server = create_mcp_server()
         assert server is not None
-        assert hasattr(server, '_mcp_server')
+        assert hasattr(server, "_mcp_server")
 
     def test_claude_code_commands_available(self):
         """Test that Claude Code commands are available."""
-        from mcp_vector_search.cli.commands.mcp import check_claude_code_available, get_claude_command
-        
+        from mcp_vector_search.cli.commands.mcp import (
+            check_claude_code_available,
+            get_claude_command,
+        )
+
         # This will depend on the test environment
         # In CI, Claude Code might not be available
         claude_available = check_claude_code_available()
-        
+
         if claude_available:
             claude_cmd = get_claude_command()
             assert claude_cmd is not None
@@ -181,10 +184,10 @@ function validateEmail(email) {
     def test_mcp_server_command_generation(self):
         """Test MCP server command generation."""
         from mcp_vector_search.cli.commands.mcp import get_mcp_server_command
-        
+
         project_root = Path("/test/project")
         command = get_mcp_server_command(project_root)
-        
+
         assert "python" in command
         assert "mcp_vector_search.mcp.server" in command
         assert str(project_root) in command

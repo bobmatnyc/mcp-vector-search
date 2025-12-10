@@ -7,7 +7,8 @@ Tests UI controls, graph rendering, data loading, and JavaScript errors.
 import asyncio
 import json
 from pathlib import Path
-from playwright.async_api import async_playwright, Page
+
+from playwright.async_api import async_playwright
 
 
 async def test_visualization():
@@ -24,23 +25,19 @@ async def test_visualization():
         errors = []
 
         def handle_console(msg):
-            console_messages.append({
-                "type": msg.type,
-                "text": msg.text,
-                "location": msg.location
-            })
+            console_messages.append(
+                {"type": msg.type, "text": msg.text, "location": msg.location}
+            )
             if msg.type in ["error", "warning"]:
-                errors.append({
-                    "type": msg.type,
-                    "text": msg.text,
-                    "location": msg.location
-                })
+                errors.append(
+                    {"type": msg.type, "text": msg.text, "location": msg.location}
+                )
 
         page.on("console", handle_console)
-        page.on("pageerror", lambda err: errors.append({
-            "type": "pageerror",
-            "text": str(err)
-        }))
+        page.on(
+            "pageerror",
+            lambda err: errors.append({"type": "pageerror", "text": str(err)}),
+        )
 
         print("=" * 80)
         print("TESTING CODE GRAPH VISUALIZATION")
@@ -49,7 +46,9 @@ async def test_visualization():
         # Navigate to page
         print("\n[1] Navigating to http://localhost:8082...")
         try:
-            response = await page.goto("http://localhost:8082", wait_until="networkidle", timeout=30000)
+            response = await page.goto(
+                "http://localhost:8082", wait_until="networkidle", timeout=30000
+            )
             print(f"    ✅ Page loaded: {response.status} {response.status_text}")
         except Exception as e:
             print(f"    ❌ Failed to load page: {e}")
@@ -60,7 +59,9 @@ async def test_visualization():
         await page.wait_for_timeout(2000)
 
         # Take initial screenshot
-        screenshot_dir = Path("/Users/masa/Projects/mcp-vector-search/docs/research/screenshots")
+        screenshot_dir = Path(
+            "/Users/masa/Projects/mcp-vector-search/docs/research/screenshots"
+        )
         screenshot_dir.mkdir(parents=True, exist_ok=True)
 
         screenshot_path = screenshot_dir / "visualization_initial.png"
@@ -76,11 +77,13 @@ async def test_visualization():
             is_visible = await layout_selector.is_visible()
             print(f"    ✅ Layout selector: {'Visible' if is_visible else 'Hidden'}")
         else:
-            print(f"    ❌ Layout selector: Not found")
+            print("    ❌ Layout selector: Not found")
 
         # Edge filters
         edge_filters = await page.query_selector_all("input[type='checkbox']")
-        print(f"    {'✅' if edge_filters else '❌'} Edge filter checkboxes: {len(edge_filters)} found")
+        print(
+            f"    {'✅' if edge_filters else '❌'} Edge filter checkboxes: {len(edge_filters)} found"
+        )
 
         # Legend
         legend = await page.query_selector("#legend")
@@ -89,7 +92,7 @@ async def test_visualization():
             legend_html = await legend.inner_html()
             print(f"    ✅ Legend: {'Visible' if is_visible else 'Hidden'}")
         else:
-            print(f"    ❌ Legend: Not found")
+            print("    ❌ Legend: Not found")
 
         # Check Graph Container
         print("\n[4] Checking Graph Container...")
@@ -98,7 +101,7 @@ async def test_visualization():
         if cy_container:
             is_visible = await cy_container.is_visible()
             box = await cy_container.bounding_box()
-            print(f"    ✅ Cytoscape container (#cy): Found")
+            print("    ✅ Cytoscape container (#cy): Found")
             print(f"       Visible: {is_visible}")
             if box:
                 print(f"       Dimensions: {box['width']}x{box['height']}")
@@ -108,7 +111,7 @@ async def test_visualization():
             children = await page.query_selector_all("#cy > *")
             print(f"       Child elements: {len(children)}")
         else:
-            print(f"    ❌ Cytoscape container (#cy): Not found")
+            print("    ❌ Cytoscape container (#cy): Not found")
 
         # Check SVG elements
         print("\n[5] Checking SVG/Canvas Elements...")
@@ -122,14 +125,17 @@ async def test_visualization():
             for i, canvas in enumerate(canvas_elements):
                 box = await canvas.bounding_box()
                 if box:
-                    print(f"       Canvas {i}: {box['width']}x{box['height']} at ({box['x']}, {box['y']})")
+                    print(
+                        f"       Canvas {i}: {box['width']}x{box['height']} at ({box['x']}, {box['y']})"
+                    )
 
         # Check Data Loading
         print("\n[6] Checking Data Loading...")
 
         # Check if chunk-graph.json was loaded
         try:
-            graph_data = await page.evaluate("""
+            graph_data = await page.evaluate(
+                """
                 () => {
                     // Try to access global variables
                     if (typeof window.cy !== 'undefined') {
@@ -141,27 +147,33 @@ async def test_visualization():
                     }
                     return { cyExists: false };
                 }
-            """)
+            """
+            )
 
             if graph_data.get("cyExists"):
-                print(f"    ✅ Cytoscape instance exists")
+                print("    ✅ Cytoscape instance exists")
                 print(f"       Nodes: {graph_data.get('nodeCount', 0)}")
                 print(f"       Edges: {graph_data.get('edgeCount', 0)}")
             else:
-                print(f"    ❌ Cytoscape instance not found in window object")
+                print("    ❌ Cytoscape instance not found in window object")
         except Exception as e:
             print(f"    ❌ Error checking Cytoscape data: {e}")
 
         # Check for data loading in console
-        data_loaded = any("loaded" in msg["text"].lower() and "data" in msg["text"].lower()
-                         for msg in console_messages)
-        print(f"    {'✅' if data_loaded else '⚠️'} Data loading messages in console: {data_loaded}")
+        data_loaded = any(
+            "loaded" in msg["text"].lower() and "data" in msg["text"].lower()
+            for msg in console_messages
+        )
+        print(
+            f"    {'✅' if data_loaded else '⚠️'} Data loading messages in console: {data_loaded}"
+        )
 
         # Check Layout Execution
         print("\n[7] Checking Layout Execution...")
 
         try:
-            layout_info = await page.evaluate("""
+            layout_info = await page.evaluate(
+                """
                 () => {
                     if (typeof window.cy !== 'undefined') {
                         // Get positions of first few nodes
@@ -178,15 +190,16 @@ async def test_visualization():
                     }
                     return { hasPositions: false };
                 }
-            """)
+            """
+            )
 
             if layout_info.get("hasPositions"):
-                print(f"    ✅ Layout executed: Nodes have positions")
-                print(f"       Sample positions:")
+                print("    ✅ Layout executed: Nodes have positions")
+                print("       Sample positions:")
                 for pos in layout_info.get("positions", [])[:3]:
                     print(f"         {pos['id']}: ({pos['x']:.2f}, {pos['y']:.2f})")
             else:
-                print(f"    ❌ Layout not executed: Nodes missing positions")
+                print("    ❌ Layout not executed: Nodes missing positions")
         except Exception as e:
             print(f"    ❌ Error checking layout: {e}")
 
@@ -200,9 +213,11 @@ async def test_visualization():
             print("\n    JavaScript Errors/Warnings:")
             for err in errors:
                 print(f"      [{err['type'].upper()}] {err['text']}")
-                if 'location' in err and err['location']:
-                    loc = err['location']
-                    print(f"        at {loc.get('url', 'unknown')}:{loc.get('lineNumber', '?')}")
+                if "location" in err and err["location"]:
+                    loc = err["location"]
+                    print(
+                        f"        at {loc.get('url', 'unknown')}:{loc.get('lineNumber', '?')}"
+                    )
 
         # Check Network Requests
         print("\n[9] Checking Network Requests...")
@@ -211,11 +226,13 @@ async def test_visualization():
         network_requests = []
 
         async def handle_request(request):
-            network_requests.append({
-                "url": request.url,
-                "method": request.method,
-                "resource_type": request.resource_type
-            })
+            network_requests.append(
+                {
+                    "url": request.url,
+                    "method": request.method,
+                    "resource_type": request.resource_type,
+                }
+            )
 
         page.on("request", handle_request)
 
@@ -226,11 +243,13 @@ async def test_visualization():
         print(f"    Total network requests: {len(network_requests)}")
 
         # Check for chunk-graph.json
-        graph_request = next((r for r in network_requests if "chunk-graph.json" in r["url"]), None)
+        graph_request = next(
+            (r for r in network_requests if "chunk-graph.json" in r["url"]), None
+        )
         if graph_request:
             print(f"    ✅ chunk-graph.json requested: {graph_request['url']}")
         else:
-            print(f"    ❌ chunk-graph.json NOT requested")
+            print("    ❌ chunk-graph.json NOT requested")
 
         # Take final screenshot
         screenshot_path_final = screenshot_dir / "visualization_final.png"
@@ -241,7 +260,8 @@ async def test_visualization():
         print("\n[11] Visual Node Detection...")
 
         try:
-            visual_check = await page.evaluate("""
+            visual_check = await page.evaluate(
+                """
                 () => {
                     if (typeof window.cy === 'undefined') {
                         return { status: 'no_cy' };
@@ -271,20 +291,23 @@ async def test_visualization():
                         extent: extent
                     };
                 }
-            """)
+            """
+            )
 
             if visual_check.get("status") == "no_cy":
-                print(f"    ❌ Cytoscape not initialized")
+                print("    ❌ Cytoscape not initialized")
             elif visual_check.get("status") == "no_nodes":
-                print(f"    ❌ No nodes in graph")
+                print("    ❌ No nodes in graph")
             else:
                 print(f"    ✅ Nodes in graph: {visual_check.get('nodeCount')}")
                 print(f"    ✅ All nodes visible: {visual_check.get('allVisible')}")
                 print(f"    Zoom level: {visual_check.get('zoom', 'N/A')}")
                 print(f"    Pan: {visual_check.get('pan', 'N/A')}")
-                extent = visual_check.get('extent', {})
+                extent = visual_check.get("extent", {})
                 if extent:
-                    print(f"    Graph extent: ({extent.get('x1', '?')}, {extent.get('y1', '?')}) to ({extent.get('x2', '?')}, {extent.get('y2', '?')})")
+                    print(
+                        f"    Graph extent: ({extent.get('x1', '?')}, {extent.get('y1', '?')}) to ({extent.get('x2', '?')}, {extent.get('y2', '?')})"
+                    )
         except Exception as e:
             print(f"    ❌ Error checking visual state: {e}")
 
@@ -299,19 +322,21 @@ async def test_visualization():
             for err in errors[:5]:
                 print(f"  • {err['text'][:100]}")
         else:
-            print(f"\n✅ No JavaScript errors detected")
+            print("\n✅ No JavaScript errors detected")
 
         print(f"\nScreenshots saved to: {screenshot_dir}")
-        print(f"  - visualization_initial.png")
-        print(f"  - visualization_final.png")
+        print("  - visualization_initial.png")
+        print("  - visualization_final.png")
 
         # Save detailed report
-        report_path = Path("/Users/masa/Projects/mcp-vector-search/docs/research/visualization_test_report.json")
+        report_path = Path(
+            "/Users/masa/Projects/mcp-vector-search/docs/research/visualization_test_report.json"
+        )
         report = {
             "console_messages": console_messages,
             "errors": errors,
             "network_requests": network_requests,
-            "test_timestamp": page.evaluate("() => new Date().toISOString()")
+            "test_timestamp": page.evaluate("() => new Date().toISOString()"),
         }
 
         with open(report_path, "w") as f:

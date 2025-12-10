@@ -5,8 +5,9 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from mcp_vector_search.parsers.dart import DartParser
 import pytest
+
+from mcp_vector_search.parsers.dart import DartParser
 
 
 @pytest.mark.asyncio
@@ -324,17 +325,13 @@ class _LoginFormState extends State<LoginForm> {
 
     # Verify StatelessWidget detection
     stateless_widgets = [
-        c
-        for c in chunks
-        if c.class_name and "StatelessWidget" in str(c.class_name)
+        c for c in chunks if c.class_name and "StatelessWidget" in str(c.class_name)
     ]
     print(f"✅ StatelessWidget classes found: {len(stateless_widgets)}")
 
     # Verify StatefulWidget detection
     stateful_widgets = [
-        c
-        for c in chunks
-        if c.class_name and "StatefulWidget" in str(c.class_name)
+        c for c in chunks if c.class_name and "StatefulWidget" in str(c.class_name)
     ]
     print(f"✅ StatefulWidget classes found: {len(stateful_widgets)}")
 

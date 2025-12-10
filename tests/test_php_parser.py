@@ -5,8 +5,9 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from mcp_vector_search.parsers.php import PHPParser
 import pytest
+
+from mcp_vector_search.parsers.php import PHPParser
 
 
 @pytest.mark.asyncio
@@ -277,7 +278,9 @@ function isValidEmail(string $email): bool
     print(f"✅ Namespaced chunks found: {len(namespaced_chunks)}")
     print(f"✅ Import chunks found: {len(imports_chunks)}")
     # Either approach is valid - namespace in class name OR separate import chunk
-    assert len(namespaced_chunks) >= 1 or len(imports_chunks) >= 1, "Should handle namespaces"
+    assert len(namespaced_chunks) >= 1 or len(imports_chunks) >= 1, (
+        "Should handle namespaces"
+    )
 
     # Verify public/private/protected methods
     public_methods = [
@@ -502,7 +505,9 @@ class Post extends Model
     # Verify CRUD methods
     crud_methods = ["index", "create", "store", "show", "update", "destroy"]
     found_crud = [
-        c for c in chunks if c.function_name and any(crud in c.function_name for crud in crud_methods)
+        c
+        for c in chunks
+        if c.function_name and any(crud in c.function_name for crud in crud_methods)
     ]
     print(f"✅ CRUD methods found: {len(found_crud)}")
 
@@ -510,7 +515,8 @@ class Post extends Model
     relationship_methods = [
         c
         for c in chunks
-        if c.function_name and any(rel in c.content for rel in ["belongsTo", "hasMany", "hasOne"])
+        if c.function_name
+        and any(rel in c.content for rel in ["belongsTo", "hasMany", "hasOne"])
     ]
     print(f"✅ Relationship methods found: {len(relationship_methods)}")
 

@@ -9,7 +9,8 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+
+from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 
 class BreadcrumbTestResults:
@@ -30,7 +31,7 @@ class BreadcrumbTestResults:
             "root_button_works": self.root_button_works,
             "console_errors": self.console_errors,
             "screenshots": self.screenshots,
-            "passed": self.passed
+            "passed": self.passed,
         }
 
 
@@ -38,23 +39,15 @@ async def capture_console_messages(page: Page, results: BreadcrumbTestResults):
     """Capture console messages, especially errors."""
 
     def handle_console(msg):
-        if msg.type in ['error', 'warning']:
-            error_info = {
-                "type": msg.type,
-                "text": msg.text,
-                "location": msg.location
-            }
+        if msg.type in ["error", "warning"]:
+            error_info = {"type": msg.type, "text": msg.text, "location": msg.location}
             results.console_errors.append(error_info)
             print(f"  [CONSOLE {msg.type.upper()}] {msg.text}")
 
     page.on("console", handle_console)
 
     def handle_page_error(error):
-        error_info = {
-            "type": "page_error",
-            "text": str(error),
-            "location": None
-        }
+        error_info = {"type": "page_error", "text": str(error), "location": None}
         results.console_errors.append(error_info)
         print(f"  [PAGE ERROR] {error}")
 
@@ -72,7 +65,7 @@ async def get_breadcrumb_text(page: Page) -> str:
             ".breadcrumb-nav",
             ".breadcrumb-root",
             "[class*='breadcrumb']",
-            "#breadcrumb"
+            "#breadcrumb",
         ]
 
         for selector in breadcrumb_selectors:
@@ -113,7 +106,7 @@ async def click_root_button(page: Page) -> bool:
         root_selectors = [
             "text=/🏠.*Root/",
             ".breadcrumb-root",
-            ".breadcrumb-nav >> text=/Root/"
+            ".breadcrumb-nav >> text=/Root/",
         ]
 
         for selector in root_selectors:
@@ -138,7 +131,8 @@ async def get_visible_nodes(page: Page) -> list:
         await page.wait_for_selector("svg", timeout=5000)
 
         # Get all text elements (node labels)
-        node_labels = await page.evaluate("""
+        node_labels = await page.evaluate(
+            """
             () => {
                 const texts = Array.from(document.querySelectorAll('svg text'));
                 return texts
@@ -146,7 +140,8 @@ async def get_visible_nodes(page: Page) -> list:
                     .filter(t => t.length > 0)
                     .slice(0, 10);  // Limit to first 10 nodes
             }
-        """)
+        """
+        )
 
         return node_labels
 
@@ -159,7 +154,8 @@ async def click_node_by_label(page: Page, label: str) -> bool:
     """Click a node by its label text."""
     try:
         # Try to click the node
-        await page.evaluate(f"""
+        await page.evaluate(
+            f"""
             () => {{
                 const texts = Array.from(document.querySelectorAll('svg text'));
                 const node = texts.find(t => t.textContent.includes('{label}'));
@@ -169,7 +165,8 @@ async def click_node_by_label(page: Page, label: str) -> bool:
                 }}
                 return false;
             }}
-        """)
+        """
+        )
 
         await page.wait_for_timeout(500)  # Wait for breadcrumb update
         return True
@@ -179,16 +176,20 @@ async def click_node_by_label(page: Page, label: str) -> bool:
         return False
 
 
-async def run_breadcrumb_test(url: str = "http://localhost:8080") -> BreadcrumbTestResults:
+async def run_breadcrumb_test(
+    url: str = "http://localhost:8080",
+) -> BreadcrumbTestResults:
     """Run comprehensive breadcrumb test."""
 
     results = BreadcrumbTestResults()
-    screenshot_dir = Path("/Users/masa/Projects/mcp-vector-search/tests/manual/screenshots")
+    screenshot_dir = Path(
+        "/Users/masa/Projects/mcp-vector-search/tests/manual/screenshots"
+    )
     screenshot_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("🧪 BREADCRUMB ROOT DISPLAY BUG FIX - VERIFICATION TEST")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     async with async_playwright() as p:
         # Launch browser
@@ -204,7 +205,7 @@ async def run_breadcrumb_test(url: str = "http://localhost:8080") -> BreadcrumbT
 
         try:
             # Test 1: Initial page load and breadcrumb check
-            print(f"\n📋 TEST 1: Initial Page Load")
+            print("\n📋 TEST 1: Initial Page Load")
             print(f"  → Navigating to {url}")
 
             await page.goto(url, wait_until="networkidle", timeout=30000)
@@ -214,7 +215,7 @@ async def run_breadcrumb_test(url: str = "http://localhost:8080") -> BreadcrumbT
             initial_breadcrumb = await get_breadcrumb_text(page)
             results.initial_breadcrumb = initial_breadcrumb
 
-            print(f"  ✓ Page loaded successfully")
+            print("  ✓ Page loaded successfully")
             print(f"  📍 Initial breadcrumb: '{initial_breadcrumb}'")
 
             # Take screenshot
@@ -224,16 +225,19 @@ async def run_breadcrumb_test(url: str = "http://localhost:8080") -> BreadcrumbT
             print(f"  📸 Screenshot saved: {screenshot_path.name}")
 
             # Check for the bug: should NOT show subdirectory as root
-            if "tests / manual" in initial_breadcrumb or "tests/manual" in initial_breadcrumb:
-                print(f"  ❌ BUG DETECTED: Breadcrumb shows subdirectory as root!")
+            if (
+                "tests / manual" in initial_breadcrumb
+                or "tests/manual" in initial_breadcrumb
+            ):
+                print("  ❌ BUG DETECTED: Breadcrumb shows subdirectory as root!")
                 results.passed = False
             elif "🏠 Root" in initial_breadcrumb or "Root" in initial_breadcrumb:
-                print(f"  ✅ Breadcrumb correctly shows Root")
+                print("  ✅ Breadcrumb correctly shows Root")
             else:
-                print(f"  ⚠️  WARNING: Unexpected breadcrumb format")
+                print("  ⚠️  WARNING: Unexpected breadcrumb format")
 
             # Test 2: Node navigation
-            print(f"\n📋 TEST 2: Node Navigation and Breadcrumb Updates")
+            print("\n📋 TEST 2: Node Navigation and Breadcrumb Updates")
 
             # Get visible nodes
             nodes = await get_visible_nodes(page)
@@ -254,7 +258,7 @@ async def run_breadcrumb_test(url: str = "http://localhost:8080") -> BreadcrumbT
                         result = {
                             "node_label": node_label,
                             "breadcrumb": breadcrumb,
-                            "breadcrumb_parts": breadcrumb_parts
+                            "breadcrumb_parts": breadcrumb_parts,
                         }
                         results.node_navigation_results.append(result)
 
@@ -268,18 +272,20 @@ async def run_breadcrumb_test(url: str = "http://localhost:8080") -> BreadcrumbT
                         print(f"    📸 Screenshot: {screenshot_path.name}")
 
                         # Check if Root is still the first element
-                        if breadcrumb_parts and ("Root" in breadcrumb_parts[0] or "🏠" in breadcrumb_parts[0]):
-                            print(f"    ✅ Root still at beginning of breadcrumb")
+                        if breadcrumb_parts and (
+                            "Root" in breadcrumb_parts[0] or "🏠" in breadcrumb_parts[0]
+                        ):
+                            print("    ✅ Root still at beginning of breadcrumb")
                         else:
-                            print(f"    ❌ Root not at beginning of breadcrumb!")
+                            print("    ❌ Root not at beginning of breadcrumb!")
                     else:
-                        print(f"    ⚠️  Failed to click node")
+                        print("    ⚠️  Failed to click node")
             else:
                 print("  ⚠️  No nodes found in visualization")
 
             # Test 3: Root button functionality
-            print(f"\n📋 TEST 3: Root Button Functionality")
-            print(f"  → Attempting to click 'Root' button")
+            print("\n📋 TEST 3: Root Button Functionality")
+            print("  → Attempting to click 'Root' button")
 
             root_clicked = await click_root_button(page)
             results.root_button_works = root_clicked
@@ -287,7 +293,7 @@ async def run_breadcrumb_test(url: str = "http://localhost:8080") -> BreadcrumbT
             if root_clicked:
                 await page.wait_for_timeout(1000)
                 breadcrumb = await get_breadcrumb_text(page)
-                print(f"  ✓ Root button clicked successfully")
+                print("  ✓ Root button clicked successfully")
                 print(f"  📍 Breadcrumb after click: '{breadcrumb}'")
 
                 # Take screenshot
@@ -296,18 +302,21 @@ async def run_breadcrumb_test(url: str = "http://localhost:8080") -> BreadcrumbT
                 results.screenshots.append(str(screenshot_path))
                 print(f"  📸 Screenshot: {screenshot_path.name}")
             else:
-                print(f"  ⚠️  Could not click root button")
+                print("  ⚠️  Could not click root button")
 
             # Final verdict
-            print(f"\n{'='*70}")
+            print(f"\n{'=' * 70}")
             print("📊 TEST RESULTS SUMMARY")
-            print(f"{'='*70}\n")
+            print(f"{'=' * 70}\n")
 
             # Determine pass/fail
             passed = True
 
             # Check 1: Initial breadcrumb should show Root correctly
-            if "tests / manual" in results.initial_breadcrumb or "tests/manual" in results.initial_breadcrumb:
+            if (
+                "tests / manual" in results.initial_breadcrumb
+                or "tests/manual" in results.initial_breadcrumb
+            ):
                 print("  ❌ FAIL: Initial breadcrumb shows subdirectory as root")
                 passed = False
             elif "Root" in results.initial_breadcrumb:
@@ -319,7 +328,10 @@ async def run_breadcrumb_test(url: str = "http://localhost:8080") -> BreadcrumbT
             # Check 2: Node navigation should maintain Root at start
             if results.node_navigation_results:
                 all_have_root = all(
-                    any("Root" in part or "🏠" in part for part in r["breadcrumb_parts"][:1])
+                    any(
+                        "Root" in part or "🏠" in part
+                        for part in r["breadcrumb_parts"][:1]
+                    )
                     for r in results.node_navigation_results
                 )
 
@@ -333,23 +345,28 @@ async def run_breadcrumb_test(url: str = "http://localhost:8080") -> BreadcrumbT
 
             # Check 3: Console errors
             if results.console_errors:
-                print(f"  ⚠️  WARNING: {len(results.console_errors)} console errors/warnings detected")
+                print(
+                    f"  ⚠️  WARNING: {len(results.console_errors)} console errors/warnings detected"
+                )
                 passed = False
             else:
                 print("  ✅ PASS: No console errors detected")
 
             results.passed = passed
 
-            print(f"\n{'='*70}")
+            print(f"\n{'=' * 70}")
             if passed:
                 print("🎉 FINAL VERDICT: ✅ PASS - Breadcrumb bug is FIXED")
             else:
-                print("⚠️  FINAL VERDICT: ❌ FAIL - Breadcrumb bug still present or new issues")
-            print(f"{'='*70}\n")
+                print(
+                    "⚠️  FINAL VERDICT: ❌ FAIL - Breadcrumb bug still present or new issues"
+                )
+            print(f"{'=' * 70}\n")
 
         except Exception as e:
             print(f"\n❌ TEST FAILED WITH EXCEPTION: {e}")
             import traceback
+
             traceback.print_exc()
             results.passed = False
 
@@ -364,12 +381,14 @@ async def main():
     results = await run_breadcrumb_test()
 
     # Save results to JSON
-    results_path = Path("/Users/masa/Projects/mcp-vector-search/tests/manual/breadcrumb_test_results.json")
+    results_path = Path(
+        "/Users/masa/Projects/mcp-vector-search/tests/manual/breadcrumb_test_results.json"
+    )
     with open(results_path, "w") as f:
         json.dump(results.to_dict(), f, indent=2)
 
     print(f"💾 Detailed results saved to: {results_path}")
-    print(f"📸 Screenshots saved to: tests/manual/screenshots/")
+    print("📸 Screenshots saved to: tests/manual/screenshots/")
 
     # Exit with appropriate code
     sys.exit(0 if results.passed else 1)

@@ -9,8 +9,8 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from mcp_vector_search.utils.gitignore import GitignoreParser
 from mcp_vector_search.config.defaults import DEFAULT_FILE_EXTENSIONS
+from mcp_vector_search.utils.gitignore import GitignoreParser
 
 
 def test_file_scan():
@@ -45,9 +45,7 @@ def test_file_scan():
         # Filter directories IN-PLACE
         original_dir_count = len(dirs)
         dirs[:] = [
-            d
-            for d in dirs
-            if not parser.is_ignored(root_path / d, is_directory=True)
+            d for d in dirs if not parser.is_ignored(root_path / d, is_directory=True)
         ]
         dirs_filtered += original_dir_count - len(dirs)
 
@@ -70,15 +68,17 @@ def test_file_scan():
 
     print(f"✓ Scan completed in {elapsed:.2f}s")
     print()
-    print(f"Statistics:")
+    print("Statistics:")
     print(f"  Directories checked: {dirs_checked:,}")
-    print(f"  Directories filtered: {dirs_filtered:,} ({dirs_filtered/max(dirs_checked, 1)*100:.1f}%)")
+    print(
+        f"  Directories filtered: {dirs_filtered:,} ({dirs_filtered / max(dirs_checked, 1) * 100:.1f}%)"
+    )
     print(f"  Files checked: {files_checked:,}")
     print(f"  Indexable files found: {len(indexable_files):,}")
     print()
 
     if indexable_files:
-        print(f"Sample indexable files (first 10):")
+        print("Sample indexable files (first 10):")
         for f in indexable_files[:10]:
             print(f"  - {f.relative_to(project_root)}")
         print()
@@ -86,8 +86,10 @@ def test_file_scan():
     # Expected: ~1,259 files if node_modules is properly excluded
     expected_max = 5000
     if len(indexable_files) > expected_max:
-        print(f"⚠️  WARNING: Found {len(indexable_files):,} files (expected <{expected_max:,})")
-        print(f"   This suggests gitignore filtering may not be working correctly")
+        print(
+            f"⚠️  WARNING: Found {len(indexable_files):,} files (expected <{expected_max:,})"
+        )
+        print("   This suggests gitignore filtering may not be working correctly")
     else:
         print(f"✓ File count looks reasonable ({len(indexable_files):,} files)")
 

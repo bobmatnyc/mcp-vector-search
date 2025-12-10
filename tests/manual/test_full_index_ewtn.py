@@ -12,9 +12,9 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 async def test_full_index():
     """Test the complete indexing flow."""
+    from mcp_vector_search.config.defaults import DEFAULT_FILE_EXTENSIONS
     from mcp_vector_search.core.database import ChromaVectorDatabase
     from mcp_vector_search.core.indexer import SemanticIndexer
-    from mcp_vector_search.config.defaults import DEFAULT_FILE_EXTENSIONS
 
     project_root = Path("/Users/masa/Clients/EWTN/projects")
 
@@ -27,8 +27,12 @@ async def test_full_index():
     from mcp_vector_search.core.embeddings import create_embedding_function
 
     db_path = project_root / ".mcp-vector-search" / "chroma_db"
-    embedding_function = create_embedding_function("sentence-transformers/all-MiniLM-L6-v2")
-    database = ChromaVectorDatabase(persist_directory=db_path, embedding_function=embedding_function)
+    embedding_function = create_embedding_function(
+        "sentence-transformers/all-MiniLM-L6-v2"
+    )
+    database = ChromaVectorDatabase(
+        persist_directory=db_path, embedding_function=embedding_function
+    )
     await database.initialize()
     elapsed = time.time() - start
     print(f"  ✓ Database initialized in {elapsed:.2f}s")

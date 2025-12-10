@@ -5,15 +5,16 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from mcp_vector_search.parsers.javascript import JavaScriptParser, TypeScriptParser
 import pytest
+
+from mcp_vector_search.parsers.javascript import JavaScriptParser, TypeScriptParser
 
 
 @pytest.mark.asyncio
 async def test_javascript_parser():
     """Test JavaScript parser functionality."""
     print("🔍 Testing JavaScript parser...")
-    
+
     # Create test JavaScript file
     js_content = """
 import React from 'react';
@@ -26,11 +27,11 @@ import { useState } from 'react';
  */
 function Counter(props) {
     const [count, setCount] = useState(0);
-    
+
     const increment = () => {
         setCount(count + 1);
     };
-    
+
     return (
         <div>
             <p>Count: {count}</p>
@@ -46,7 +47,7 @@ class DataProcessor {
     constructor() {
         this.data = [];
     }
-    
+
     /**
      * Add an item to the data array
      * @param {any} item - Item to add
@@ -54,7 +55,7 @@ class DataProcessor {
     addItem(item) {
         this.data.push(item);
     }
-    
+
     /**
      * Process all data items
      * @returns {Array} Processed data
@@ -83,17 +84,17 @@ async function fetchData(url) {
 export default Counter;
 export { DataProcessor, calculateArea, fetchData };
 """
-    
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False) as f:
         f.write(js_content)
         test_file = Path(f.name)
-    
+
     print(f"📁 Created test file: {test_file}")
-    
+
     # Test JavaScript parser
     js_parser = JavaScriptParser()
     chunks = await js_parser.parse_file(test_file)
-    
+
     print(f"📊 JavaScript parser extracted {len(chunks)} chunks:")
     for i, chunk in enumerate(chunks, 1):
         print(f"\n📄 Chunk {i}:")
@@ -103,7 +104,7 @@ export { DataProcessor, calculateArea, fetchData };
         print(f"  Class: {chunk.class_name}")
         print(f"  Docstring: {chunk.docstring}")
         print(f"  Content preview: {chunk.content[:100]}...")
-    
+
     # Clean up
     test_file.unlink()
     print("\n✅ JavaScript parser test completed!")
@@ -113,7 +114,7 @@ export { DataProcessor, calculateArea, fetchData };
 async def test_typescript_parser():
     """Test TypeScript parser functionality."""
     print("\n🔍 Testing TypeScript parser...")
-    
+
     # Create test TypeScript file
     ts_content = """
 interface User {
@@ -127,7 +128,7 @@ interface User {
  */
 class UserService {
     private users: User[] = [];
-    
+
     /**
      * Add a new user
      * @param user - User to add
@@ -135,7 +136,7 @@ class UserService {
     addUser(user: User): void {
         this.users.push(user);
     }
-    
+
     /**
      * Find user by ID
      * @param id - User ID
@@ -176,17 +177,17 @@ function processUsers<T extends User>(users: T[], callback: UserCallback): void 
 export { UserService, fetchUser, processUsers };
 export type { User, ApiResponse, UserCallback };
 """
-    
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.ts', delete=False) as f:
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ts", delete=False) as f:
         f.write(ts_content)
         test_file = Path(f.name)
-    
+
     print(f"📁 Created test file: {test_file}")
-    
+
     # Test TypeScript parser
     ts_parser = TypeScriptParser()
     chunks = await ts_parser.parse_file(test_file)
-    
+
     print(f"📊 TypeScript parser extracted {len(chunks)} chunks:")
     for i, chunk in enumerate(chunks, 1):
         print(f"\n📄 Chunk {i}:")
@@ -196,7 +197,7 @@ export type { User, ApiResponse, UserCallback };
         print(f"  Class: {chunk.class_name}")
         print(f"  Docstring: {chunk.docstring}")
         print(f"  Content preview: {chunk.content[:100]}...")
-    
+
     # Clean up
     test_file.unlink()
     print("\n✅ TypeScript parser test completed!")
