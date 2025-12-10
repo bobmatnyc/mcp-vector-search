@@ -523,24 +523,23 @@ def get_content_pane_styles() -> str:
 
         .viewer-expand-btn {
             cursor: pointer;
-            color: #8b949e;
-            font-size: 18px;
+            color: #c9d1d9;
+            font-size: 16px;
             line-height: 1;
-            background: none;
-            border: none;
-            padding: 4px;
-            transition: color 0.2s, background 0.2s;
-            width: 28px;
-            height: 28px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            padding: 6px 8px;
+            transition: color 0.2s, background 0.2s, border-color 0.2s;
+            border-radius: 4px;
             display: flex;
             align-items: center;
             justify-content: center;
-            border-radius: 4px;
         }
 
         .viewer-expand-btn:hover {
-            color: #c9d1d9;
-            background: rgba(255, 255, 255, 0.1);
+            color: #58a6ff;
+            background: #30363d;
+            border-color: #58a6ff;
         }
 
         .viewer-title {
@@ -579,24 +578,23 @@ def get_content_pane_styles() -> str:
 
         .viewer-close-btn {
             cursor: pointer;
-            color: #8b949e;
-            font-size: 28px;
+            color: #c9d1d9;
+            font-size: 18px;
             line-height: 1;
-            background: none;
-            border: none;
-            padding: 0;
-            transition: color 0.2s;
-            width: 28px;
-            height: 28px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            padding: 6px 10px;
+            transition: color 0.2s, background 0.2s, border-color 0.2s;
+            border-radius: 4px;
             display: flex;
             align-items: center;
             justify-content: center;
         }
 
         .viewer-close-btn:hover {
-            color: #c9d1d9;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 4px;
+            color: #f85149;
+            background: #30363d;
+            border-color: #f85149;
         }
 
         .viewer-content {
