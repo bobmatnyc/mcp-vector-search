@@ -47,6 +47,9 @@ let isViewerOpen = false;
 let navigationHistory = [];
 let navigationIndex = -1;
 
+// Call lines visibility
+let showCallLines = true;
+
 // Chunk types for code nodes (function, class, method, text, imports, module)
 const chunkTypes = ['function', 'class', 'method', 'text', 'imports', 'module'];
 
@@ -526,6 +529,9 @@ function drawExternalCallLines(svg, root) {
         lineGroup = svg.insert('g', ':first-child')
             .attr('class', 'external-lines-group');
     }
+
+    // Respect the toggle state
+    lineGroup.style('display', showCallLines ? 'block' : 'none');
 
     externalCallData.forEach(data => {
         const sourcePos = nodePositions.get(data.nodeId);
@@ -1620,6 +1626,15 @@ function escapeHtml(text) {
 // ============================================================================
 // LAYOUT TOGGLE
 // ============================================================================
+
+function toggleCallLines(show) {
+    showCallLines = show;
+    const lineGroup = d3.select('.external-lines-group');
+    if (!lineGroup.empty()) {
+        lineGroup.style('display', show ? 'block' : 'none');
+    }
+    console.log(`Call lines ${show ? 'shown' : 'hidden'}`);
+}
 
 function toggleLayout() {
     const toggleCheckbox = document.getElementById('layout-toggle');

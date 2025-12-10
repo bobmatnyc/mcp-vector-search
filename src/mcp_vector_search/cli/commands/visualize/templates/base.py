@@ -83,6 +83,31 @@ def generate_html_template() -> str:
             </div>
 
             <div class="legend-category">
+                <div class="legend-title">Call Relationships</div>
+                <div class="legend-item">
+                    <svg width="40" height="16" style="margin-right: 8px;">
+                        <line x1="0" y1="8" x2="35" y2="8" stroke="#58a6ff" stroke-width="2" stroke-dasharray="4,2"/>
+                        <text x="38" y="12" fill="#58a6ff" font-size="12">←</text>
+                    </svg>
+                    <span>Inbound calls (called by)</span>
+                </div>
+                <div class="legend-item">
+                    <svg width="40" height="16" style="margin-right: 8px;">
+                        <line x1="0" y1="8" x2="35" y2="8" stroke="#f0883e" stroke-width="2" stroke-dasharray="4,2"/>
+                        <text x="38" y="12" fill="#f0883e" font-size="12">→</text>
+                    </svg>
+                    <span>Outbound calls (calls to)</span>
+                </div>
+                <div class="legend-item" style="margin-top: 8px;">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="show-call-lines" checked onchange="toggleCallLines(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span style="margin-left: 8px;">Show call lines</span>
+                </div>
+            </div>
+
+            <div class="legend-category">
                 <div class="legend-title">Interactions</div>
                 <div class="legend-item" style="padding-left: 16px;">
                     <span>Click directory → expand/collapse</span>
