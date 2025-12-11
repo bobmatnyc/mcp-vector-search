@@ -82,27 +82,58 @@ def reset_index(
                 console.print("[yellow]Reset cancelled[/yellow]")
                 raise typer.Exit(0)
 
-        # Get the database directory
-        project_manager.load_config()
-        db_path = root / ".mcp_vector_search" / "db"
+        # Get the database directory from config
+        config = project_manager.load_config()
+        db_path = Path(config.index_path)
 
-        if not db_path.exists():
+        # Check if index exists (look for chroma.sqlite3 or collection directories)
+        has_index = (db_path / "chroma.sqlite3").exists()
+
+        if not has_index:
             print_warning("No index found. Nothing to reset.")
             raise typer.Exit(0)
 
+        # Files/dirs to remove (index data)
+        index_files = [
+            "chroma.sqlite3",
+            "cache",
+            "indexing_errors.log",
+            "index_metadata.json",
+            "directory_index.json",
+        ]
+
+        # Also remove any UUID-named directories (ChromaDB collections)
+        if db_path.exists():
+            for item in db_path.iterdir():
+                if item.is_dir() and len(item.name) == 36 and "-" in item.name:
+                    # Looks like a UUID directory
+                    index_files.append(item.name)
+
         # Create backup if requested
         if backup:
-            backup_dir = root / ".mcp_vector_search" / "backups"
+            backup_dir = db_path / "backups"
             backup_dir.mkdir(exist_ok=True)
 
             import time
 
             timestamp = int(time.time())
-            backup_path = backup_dir / f"db_backup_{timestamp}"
+            backup_path = backup_dir / f"index_backup_{timestamp}"
+            backup_path.mkdir(exist_ok=True)
 
             try:
-                shutil.copytree(db_path, backup_path)
-                print_success(f"Created backup at: {backup_path.relative_to(root)}")
+                backed_up = []
+                for file in index_files:
+                    src = db_path / file
+                    if src.exists():
+                        dest = backup_path / file
+                        if src.is_dir():
+                            shutil.copytree(src, dest)
+                        else:
+                            shutil.copy2(src, dest)
+                        backed_up.append(file)
+
+                if backed_up:
+                    print_success(f"Created backup at: {backup_path.relative_to(root)}")
             except Exception as e:
                 print_warning(f"Could not create backup: {e}")
                 if not force:
@@ -110,12 +141,23 @@ def reset_index(
                         console.print("[yellow]Reset cancelled[/yellow]")
                         raise typer.Exit(0)
 
-        # Clear the index
+        # Clear the index files
         console.print("[cyan]Clearing index...[/cyan]")
+        removed_count = 0
         try:
-            shutil.rmtree(db_path)
-            db_path.mkdir(parents=True, exist_ok=True)
-            print_success("Index cleared successfully!")
+            for file in index_files:
+                path = db_path / file
+                if path.exists():
+                    if path.is_dir():
+                        shutil.rmtree(path)
+                    else:
+                        path.unlink()
+                    removed_count += 1
+
+            if removed_count > 0:
+                print_success(f"Index cleared successfully! ({removed_count} items removed)")
+            else:
+                print_warning("No index files found to remove.")
         except Exception as e:
             print_error(f"Failed to clear index: {e}")
             raise typer.Exit(1)
@@ -215,19 +257,9 @@ def reset_all(
         raise typer.Exit(1)
 
 
-@reset_app.command("health")
 async def check_health(
-    project_root: Path = typer.Option(
-        None,
-        "--project-root",
-        "-p",
-        help="Project root directory",
-    ),
-    fix: bool = typer.Option(
-        False,
-        "--fix",
-        help="Attempt to fix issues if found",
-    ),
+    project_root: Path,
+    fix: bool,
 ) -> None:
     """Check the health of the search index.
 
@@ -254,7 +286,7 @@ async def check_health(
         from ...core.embeddings import create_embedding_function
 
         config = project_manager.load_config()
-        db_path = root / ".mcp_vector_search" / "db"
+        db_path = Path(config.index_path)
 
         # Setup embedding function and cache
         cache_dir = get_default_cache_path(root) if config.cache_embeddings else None
@@ -376,6 +408,7 @@ main = reset_main
 
 
 # Make health check synchronous for CLI
+@reset_app.command("health")
 def health_main(
     project_root: Path = typer.Option(
         None,
@@ -389,5 +422,12 @@ def health_main(
         help="Attempt to fix issues if found",
     ),
 ) -> None:
-    """Check the health of the search index (sync wrapper)."""
+    """Check the health of the search index.
+
+    This command will:
+    - Verify database connectivity
+    - Check for index corruption
+    - Validate collection integrity
+    - Optionally attempt repairs with --fix
+    """
     asyncio.run(check_health(project_root, fix))
