@@ -472,33 +472,92 @@ class ConsoleReporter:
                 )
             console.print()
 
-        # Show new/deleted files summary
-        if comparison_result.new_files:
+    def print_circular_dependencies(self, cycles: list) -> None:
+        """Print detected circular dependencies.
+
+        Args:
+            cycles: List of CircularDependency objects from detector
+        """
+        from ..collectors.coupling import CircularDependency
+
+        if not cycles:
+            console.print("[bold]🔄 Circular Dependencies[/bold]")
+            console.print("  [green]✓ No circular dependencies detected![/green]")
+            console.print()
+            return
+
+        console.print(
+            f"[bold red]🔄 Circular Dependencies Detected[/bold red] - Found {len(cycles)} cycles"
+        )
+        console.print()
+
+        # Summary statistics
+        total_affected = set()
+        for cycle in cycles:
+            if isinstance(cycle, CircularDependency):
+                total_affected.update(cycle.get_affected_files())
+
+        console.print(f"  [yellow]Total Cycles:[/yellow] {len(cycles)}")
+        console.print(f"  [yellow]Files Affected:[/yellow] {len(total_affected)}")
+        console.print()
+
+        # Show cycles grouped by length
+        cycles_by_length: dict[int, list] = {}
+        for cycle in cycles:
+            if isinstance(cycle, CircularDependency):
+                length = cycle.cycle_length
+                if length not in cycles_by_length:
+                    cycles_by_length[length] = []
+                cycles_by_length[length].append(cycle)
+
+        # Display cycles sorted by length (simplest first)
+        for length in sorted(cycles_by_length.keys()):
+            cycles_of_length = cycles_by_length[length]
+
             console.print(
-                f"[bold blue]📄 New Files ({len(comparison_result.new_files)})[/bold blue]"
+                f"[bold]Cycles of length {length}[/bold] ({len(cycles_of_length)} found)"
             )
-            for file_comp in comparison_result.new_files[:5]:
-                file_path = file_comp.file_path
-                if len(file_path) > 70:
-                    file_path = "..." + file_path[-67:]
-                console.print(f"  • {file_path}")
-            if len(comparison_result.new_files) > 5:
+
+            # Create table for this length
+            table = Table(show_header=True, header_style="bold cyan", box=None)
+            table.add_column("#", justify="right", width=5)
+            table.add_column("Cycle Chain", width=70)
+
+            # Show up to 10 cycles per length
+            for idx, cycle in enumerate(cycles_of_length[:10], 1):
+                if isinstance(cycle, CircularDependency):
+                    chain = cycle.format_chain()
+
+                    # Truncate if too long
+                    if len(chain) > 68:
+                        # Try to show start and end
+                        parts = cycle.cycle_chain
+                        if len(parts) > 3:
+                            chain = f"{parts[0]} → ... → {parts[-2]} → {parts[-1]}"
+                        else:
+                            chain = chain[:65] + "..."
+
+                    table.add_row(str(idx), chain)
+
+            console.print(table)
+
+            if len(cycles_of_length) > 10:
                 console.print(
-                    f"  [dim]... and {len(comparison_result.new_files) - 5} more[/dim]"
+                    f"  [dim]... and {len(cycles_of_length) - 10} more cycles of length {length}[/dim]"
                 )
             console.print()
 
-        if comparison_result.deleted_files:
-            console.print(
-                f"[bold yellow]🗑  Deleted Files ({len(comparison_result.deleted_files)})[/bold yellow]"
-            )
-            for file_comp in comparison_result.deleted_files[:5]:
-                file_path = file_comp.file_path
-                if len(file_path) > 70:
-                    file_path = "..." + file_path[-67:]
-                console.print(f"  • {file_path}")
-            if len(comparison_result.deleted_files) > 5:
-                console.print(
-                    f"  [dim]... and {len(comparison_result.deleted_files) - 5} more[/dim]"
-                )
-            console.print()
+        # Recommendations
+        console.print("[bold]💡 Recommendations[/bold]")
+        console.print("  [yellow]•[/yellow] Break circular dependencies by:")
+        console.print("    - Extracting shared code into a separate module")
+        console.print("    - Using dependency injection")
+        console.print("    - Moving imports inside functions (lazy imports)")
+        console.print("    - Refactoring to invert dependencies")
+        console.print()
+
+        console.print("  [yellow]•[/yellow] Start with simple cycles (length 2) first")
+        console.print(
+            "  [yellow]•[/yellow] Use dependency visualization tools for complex cycles"
+        )
+        console.print()
