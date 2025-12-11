@@ -29,9 +29,14 @@ from .complexity import (
 )
 from .coupling import (
     AfferentCouplingCollector,
+    CircularDependency,
+    CircularDependencyDetector,
     EfferentCouplingCollector,
+    ImportGraph,
     InstabilityCalculator,
+    NodeColor,
     build_import_graph,
+    build_import_graph_from_dict,
 )
 
 __all__ = [
@@ -46,4 +51,9 @@ __all__ = [
     "AfferentCouplingCollector",
     "InstabilityCalculator",
     "build_import_graph",
+    "build_import_graph_from_dict",
+    "ImportGraph",
+    "CircularDependency",
+    "CircularDependencyDetector",
+    "NodeColor",
 ]
