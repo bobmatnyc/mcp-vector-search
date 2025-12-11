@@ -155,7 +155,9 @@ def reset_index(
                     removed_count += 1
 
             if removed_count > 0:
-                print_success(f"Index cleared successfully! ({removed_count} items removed)")
+                print_success(
+                    f"Index cleared successfully! ({removed_count} items removed)"
+                )
             else:
                 print_warning("No index files found to remove.")
         except Exception as e:

@@ -543,6 +543,7 @@ class TestPooledChromaVectorDatabase:
         # Create mock that inherits from BaseException like pyo3_runtime.PanicException
         class MockPanicException(BaseException):
             """Mock for pyo3_runtime.PanicException which inherits from BaseException."""
+
             pass
 
         rust_panic_error = MockPanicException(
@@ -595,9 +596,12 @@ class TestPooledChromaVectorDatabase:
         # Create mock that inherits from BaseException like pyo3_runtime.PanicException
         class MockPanicException(BaseException):
             """Mock for pyo3_runtime.PanicException which inherits from BaseException."""
+
             pass
 
-        rust_panic_error = MockPanicException("thread panicked at 'index out of bounds'")
+        rust_panic_error = MockPanicException(
+            "thread panicked at 'index out of bounds'"
+        )
 
         with patch("chromadb.PersistentClient") as mock_client:
             # Always raise Rust panic (both initial and retry)

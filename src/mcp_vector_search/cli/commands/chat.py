@@ -789,7 +789,7 @@ Always base your answers on actual code from the tools. If you can't find releva
     messages.append({"role": "user", "content": query})
 
     # Agentic loop
-    max_iterations = 10
+    max_iterations = 25
     for _iteration in range(max_iterations):
         try:
             response = await llm_client.chat_with_tools(messages, tools)
