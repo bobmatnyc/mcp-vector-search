@@ -357,7 +357,11 @@ def cli_with_suggestions():
 
     try:
         # Call the app with standalone_mode=False to get exceptions instead of sys.exit
-        app(standalone_mode=False)
+        # Capture return value - when standalone_mode=False, typer.Exit returns code instead of raising
+        exit_code = app(standalone_mode=False)
+        # Propagate non-zero exit codes (e.g., from --fail-on-smell quality gate)
+        if exit_code is not None and exit_code != 0:
+            sys.exit(exit_code)
     except click.UsageError as e:
         # Check if it's a "No such command" error
         if "No such command" in str(e):
@@ -395,8 +399,12 @@ def cli_with_suggestions():
     except click.Abort:
         # User interrupted (Ctrl+C)
         sys.exit(1)
-    except (SystemExit, click.exceptions.Exit):
-        # Re-raise system exits and typer.Exit
+    except (SystemExit, click.exceptions.Exit) as e:
+        # Re-raise system exits and typer.Exit with their exit codes
+        if hasattr(e, "exit_code"):
+            sys.exit(e.exit_code)
+        elif hasattr(e, "code"):
+            sys.exit(e.code if e.code is not None else 0)
         raise
     except Exception as e:
         # For other exceptions, show error and exit if verbose logging is enabled

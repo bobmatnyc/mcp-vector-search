@@ -62,6 +62,11 @@ class EnhancedDidYouMeanTyper(typer.Typer):
         if click_group is None:
             return None
 
+        # If click_group is an integer, it's an exit code from standalone_mode=False
+        # Return it as-is to preserve exit code propagation
+        if isinstance(click_group, int):
+            return click_group
+
         # Create enhanced DYM group with original group's properties
         enhanced_group = EnhancedDidYouMeanGroup(
             name=click_group.name,

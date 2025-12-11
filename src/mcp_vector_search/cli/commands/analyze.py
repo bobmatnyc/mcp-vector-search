@@ -408,13 +408,16 @@ async def run_analysis(
         else:
             print_error(str(e))
         raise typer.Exit(1)
+    except typer.Exit:
+        # Let typer.Exit propagate for quality gate failures
+        raise
     except Exception as e:
         logger.error(f"Analysis failed: {e}", exc_info=True)
         if json_output:
             print_json({"error": str(e)})
         else:
             print_error(f"Analysis failed: {e}")
-        raise
+        raise typer.Exit(2)  # Exit code 2 for analysis errors
 
 
 def _find_analyzable_files(
