@@ -9,6 +9,7 @@ Key Components:
     - ProjectMetrics: Project-wide metric aggregates
     - MetricCollector: Abstract base class for metric collection
     - CollectorContext: Shared context during AST traversal
+    - visualizer: JSON export schemas for analysis results (Phase 4)
 
 Example:
     # Create chunk metrics
@@ -38,8 +39,15 @@ Example:
     project.files["src/module.py"] = file_metrics
     project.compute_aggregates()
     hotspots = project.get_hotspots(limit=5)
+
+    # Export to JSON (Phase 4)
+    from .visualizer import AnalysisExport, ExportMetadata, MetricsSummary
+    export = AnalysisExport(...)
+    json_output = export.model_dump_json(indent=2)
 """
 
+# Phase 4: JSON export schemas (available but not in __all__ to avoid namespace pollution)
+from . import visualizer
 from .collectors.base import CollectorContext, MetricCollector
 from .collectors.cohesion import (
     ClassCohesion,
@@ -62,6 +70,13 @@ from .collectors.coupling import (
     build_import_graph,
 )
 from .collectors.smells import CodeSmell, SmellDetector, SmellSeverity
+from .debt import (
+    DebtCategory,
+    DebtItem,
+    DebtSummary,
+    RemediationTime,
+    TechnicalDebtEstimator,
+)
 from .metrics import ChunkMetrics, CouplingMetrics, FileMetrics, ProjectMetrics
 
 __all__ = [
@@ -88,4 +103,9 @@ __all__ = [
     "LCOM4Calculator",
     "MethodAttributeAccess",
     "UnionFind",
+    "TechnicalDebtEstimator",
+    "DebtCategory",
+    "DebtItem",
+    "DebtSummary",
+    "RemediationTime",
 ]
