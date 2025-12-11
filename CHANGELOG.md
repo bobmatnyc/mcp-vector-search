@@ -7,12 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2025-12-11
+
+### Fixed
+- **ChromaDB Rust panic recovery**
+  - Added resilient corruption recovery for ChromaDB Rust panic errors
+  - Implemented SQLite integrity check and Rust panic recovery
+  - Use BaseException to properly catch pyo3_runtime.PanicException
+  - Improved database health checking with sync wrapper
+
 ### Added
-- **Segmentation fault handler for better crash diagnostics**
-  - Added signal handler to catch SIGSEGV and provide helpful error messages
-  - Suggests running `index clean` and `index` to fix corrupted index data
-  - Enabled faulthandler for better Python traceback on native crashes
-  - Helps users recover from ChromaDB, sentence-transformers, or tree-sitter crashes
+- **Reset command improvements**
+  - Registered reset command and updated error messages
+  - Corrected database path for reset operations
+  - Better guidance for users experiencing index corruption
+
+### Changed
+- **Chat mode improvements**
+  - Increased max iterations from 10 to 25 for better complex query handling
 
 ## [0.16.1] - 2025-12-09
 
