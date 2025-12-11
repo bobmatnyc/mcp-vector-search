@@ -48,7 +48,11 @@ from .collectors.complexity import (
     NestingDepthCollector,
     ParameterCountCollector,
 )
-from .collectors.coupling import EfferentCouplingCollector
+from .collectors.coupling import (
+    AfferentCouplingCollector,
+    EfferentCouplingCollector,
+    build_import_graph,
+)
 from .collectors.smells import CodeSmell, SmellDetector, SmellSeverity
 from .metrics import ChunkMetrics, CouplingMetrics, FileMetrics, ProjectMetrics
 
@@ -65,6 +69,8 @@ __all__ = [
     "ParameterCountCollector",
     "MethodCountCollector",
     "EfferentCouplingCollector",
+    "AfferentCouplingCollector",
+    "build_import_graph",
     "SmellDetector",
     "CodeSmell",
     "SmellSeverity",

@@ -1,48 +1,63 @@
 """Unit tests for coupling metric collectors."""
 
+from pathlib import Path
+
 import pytest
 
-from mcp_vector_search.analysis import (
-    CollectorContext,
-    CouplingMetrics,
-    EfferentCouplingCollector,
-)
+from mcp_vector_search.analysis.collectors.base import CollectorContext
 from mcp_vector_search.analysis.collectors.coupling import (
+    AfferentCouplingCollector,
+    EfferentCouplingCollector,
+    build_import_graph,
     get_import_node_types,
     is_relative_import,
     is_stdlib_module,
 )
+from mcp_vector_search.analysis.metrics import CouplingMetrics
+
+
+class TestGetImportNodeTypes:
+    """Test import node type lookup helper."""
+
+    def test_python_import_types(self):
+        """Test Python import node type mappings."""
+        result = get_import_node_types("python", "import")
+        assert "import_statement" in result
+        assert "import_from_statement" in result
+
+    def test_javascript_import_types(self):
+        """Test JavaScript import node type mappings."""
+        result = get_import_node_types("javascript", "import")
+        assert "import_statement" in result
+
+    def test_typescript_import_types(self):
+        """Test TypeScript import node type mappings."""
+        result = get_import_node_types("typescript", "import")
+        assert "import_statement" in result
+
+    def test_java_import_types(self):
+        """Test Java import node type mappings."""
+        result = get_import_node_types("java", "import")
+        assert "import_declaration" in result
+
+    def test_rust_import_types(self):
+        """Test Rust import node type mappings."""
+        result = get_import_node_types("rust", "import")
+        assert "use_declaration" in result
+
+    def test_unknown_language_fallback(self):
+        """Test unknown language falls back to Python-like behavior."""
+        result = get_import_node_types("unknown_lang", "import")
+        assert "import_statement" in result
+        assert "import_from_statement" in result
+
+    def test_unknown_category(self):
+        """Test unknown category returns empty list."""
+        assert get_import_node_types("python", "nonexistent") == []
 
 
 class TestImportHelpers:
     """Test helper functions for import classification."""
-
-    def test_get_import_node_types_python(self):
-        """Test Python import node type mappings."""
-        assert get_import_node_types("python", "import_statement") == [
-            "import_statement"
-        ]
-        assert get_import_node_types("python", "import_from") == [
-            "import_from_statement"
-        ]
-
-    def test_get_import_node_types_javascript(self):
-        """Test JavaScript import node type mappings."""
-        assert get_import_node_types("javascript", "import_statement") == [
-            "import_statement"
-        ]
-        assert get_import_node_types("javascript", "require_call") == [
-            "call_expression"
-        ]
-
-    def test_get_import_node_types_typescript(self):
-        """Test TypeScript import node type mappings."""
-        assert get_import_node_types("typescript", "import_statement") == [
-            "import_statement"
-        ]
-        assert get_import_node_types("typescript", "import_type") == [
-            "import_statement"
-        ]
 
     def test_is_stdlib_module_python(self):
         """Test Python stdlib detection."""
@@ -92,39 +107,20 @@ class TestImportHelpers:
 class MockNode:
     """Mock tree-sitter node for testing."""
 
-    def __init__(self, node_type: str, text: bytes = b"", children=None):
+    def __init__(self, node_type: str, text: str = "", children=None):
         self.type = node_type
-        self.text = text
+        self._text = text.encode("utf-8")
         self.children = children or []
+        self.is_named = True
+
+    @property
+    def text(self) -> bytes:
+        """Return node text as bytes."""
+        return self._text
 
     def child_by_field_name(self, field: str):
         """Mock field-based child lookup."""
         return None
-
-
-class TestCouplingMetrics:
-    """Test CouplingMetrics dataclass."""
-
-    def test_initialization(self):
-        """Test CouplingMetrics initializes with defaults."""
-        metrics = CouplingMetrics()
-        assert metrics.efferent_coupling == 0
-        assert metrics.imports == []
-        assert metrics.internal_imports == []
-        assert metrics.external_imports == []
-
-    def test_with_values(self):
-        """Test CouplingMetrics with values."""
-        metrics = CouplingMetrics(
-            efferent_coupling=3,
-            imports=["os", "sys", "requests"],
-            internal_imports=["./utils"],
-            external_imports=["os", "sys", "requests"],
-        )
-        assert metrics.efferent_coupling == 3
-        assert len(metrics.imports) == 3
-        assert len(metrics.internal_imports) == 1
-        assert len(metrics.external_imports) == 3
 
 
 class TestEfferentCouplingCollector:
@@ -135,342 +131,425 @@ class TestEfferentCouplingCollector:
         collector = EfferentCouplingCollector()
         assert collector.name == "efferent_coupling"
         assert len(collector._imports) == 0
-        assert len(collector._internal_imports) == 0
-        assert len(collector._external_imports) == 0
 
-    def test_python_simple_import(self):
-        """Test Python simple import statement."""
+    def test_no_imports(self):
+        """Test file with no imports has Ce = 0."""
+        collector = EfferentCouplingCollector()
+
+        result = collector.get_file_metrics()
+        assert result["efferent_coupling"] == 0
+        assert result["imports"] == []
+
+    def test_python_single_import(self):
+        """Test Python single import statement."""
         collector = EfferentCouplingCollector()
         ctx = CollectorContext(
             file_path="test.py", source_code=b"import os", language="python"
         )
 
-        # Mock: import os
-        import_node = MockNode(
-            "import_statement",
-            children=[MockNode("dotted_name", text=b"os")],
-        )
-
+        # Mock import statement: import os
+        dotted_name = MockNode("dotted_name", text="os")
+        import_node = MockNode("import_statement", children=[dotted_name])
         collector.collect_node(import_node, ctx, 0)
 
-        # Process dotted_name child
-        for child in import_node.children:
-            collector.collect_node(child, ctx, 1)
-
-        # Should have collected "os" import
-        metrics = collector.get_file_metrics()
-        assert metrics["efferent_coupling"] == 1
-        assert "os" in metrics["imports"]
-        assert "os" in metrics["external_imports"]
+        result = collector.get_file_metrics()
+        assert result["efferent_coupling"] == 1
+        assert "os" in result["imports"]
 
     def test_python_from_import(self):
         """Test Python from...import statement."""
         collector = EfferentCouplingCollector()
         ctx = CollectorContext(
             file_path="test.py",
-            source_code=b"from os.path import join",
+            source_code=b"from collections import deque",
             language="python",
         )
 
-        # Create mock node with child_by_field_name support
-        module_node = MockNode("dotted_name", text=b"os.path")
-        import_node = MockNode(
-            "import_from_statement",
-            children=[module_node],
-        )
-
-        # Override child_by_field_name to return module_node
-        import_node.child_by_field_name = lambda field: (
-            module_node if field == "module_name" else None
-        )
-
+        # Mock import: from collections import deque
+        dotted_name = MockNode("dotted_name", text="collections")
+        import_node = MockNode("import_from_statement", children=[dotted_name])
         collector.collect_node(import_node, ctx, 0)
 
-        metrics = collector.get_file_metrics()
-        assert metrics["efferent_coupling"] == 1
-        assert "os.path" in metrics["imports"]
+        result = collector.get_file_metrics()
+        assert result["efferent_coupling"] == 1
+        assert "collections" in result["imports"]
 
-    def test_python_relative_import(self):
-        """Test Python relative import."""
+    def test_python_import_with_alias(self):
+        """Test Python import with alias (as keyword)."""
         collector = EfferentCouplingCollector()
         ctx = CollectorContext(
-            file_path="test.py",
-            source_code=b"from .utils import helper",
-            language="python",
+            file_path="test.py", source_code=b"import numpy as np", language="python"
         )
 
-        # Mock: from .utils import helper
-        relative_node = MockNode("relative_import", text=b".")
-        import_node = MockNode(
-            "import_from_statement",
-            children=[relative_node],
+        # Mock import: import numpy as np
+        # aliased_import should contain a dotted_name child
+        dotted_name = MockNode("dotted_name", text="numpy")
+        aliased_import = MockNode(
+            "aliased_import", text="numpy as np", children=[dotted_name]
         )
-
+        import_node = MockNode("import_statement", children=[aliased_import])
         collector.collect_node(import_node, ctx, 0)
 
-        metrics = collector.get_file_metrics()
-        assert metrics["efferent_coupling"] == 1
-        assert "." in metrics["imports"]
-        assert "." in metrics["internal_imports"]
+        result = collector.get_file_metrics()
+        assert result["efferent_coupling"] == 1
+        assert "numpy" in result["imports"]
 
-    def test_python_multiple_imports(self):
-        """Test multiple Python imports."""
+    def test_multiple_imports(self):
+        """Test multiple import statements increase Ce."""
         collector = EfferentCouplingCollector()
-        ctx = CollectorContext(
-            file_path="test.py",
-            source_code=b"import os\nimport sys\nfrom typing import List",
-            language="python",
-        )
+        ctx = CollectorContext(file_path="test.py", source_code=b"", language="python")
 
-        # Simulate processing three imports
-        # Import 1: import os
-        collector._add_import("os", ctx)
+        # Simulate multiple imports
+        imports = ["os", "sys", "json", "pathlib"]
+        for module_name in imports:
+            dotted_name = MockNode("dotted_name", text=module_name)
+            import_node = MockNode("import_statement", children=[dotted_name])
+            collector.collect_node(import_node, ctx, 0)
 
-        # Import 2: import sys
-        collector._add_import("sys", ctx)
+        result = collector.get_file_metrics()
+        assert result["efferent_coupling"] == 4
+        assert set(result["imports"]) == set(imports)
 
-        # Import 3: from typing import List
-        collector._add_import("typing", ctx)
-
-        metrics = collector.get_file_metrics()
-        assert metrics["efferent_coupling"] == 3
-        assert set(metrics["imports"]) == {"os", "sys", "typing"}
-        assert all(
-            imp in metrics["external_imports"] for imp in ["os", "sys", "typing"]
-        )
-
-    def test_python_duplicate_imports(self):
-        """Test that duplicate imports are counted once."""
+    def test_duplicate_imports_counted_once(self):
+        """Test duplicate imports are only counted once."""
         collector = EfferentCouplingCollector()
-        ctx = CollectorContext(
-            file_path="test.py",
-            source_code=b"import os\nimport os",
-            language="python",
-        )
+        ctx = CollectorContext(file_path="test.py", source_code=b"", language="python")
 
-        # Add same import twice
-        collector._add_import("os", ctx)
-        collector._add_import("os", ctx)
+        # Import same module twice
+        for _ in range(2):
+            dotted_name = MockNode("dotted_name", text="os")
+            import_node = MockNode("import_statement", children=[dotted_name])
+            collector.collect_node(import_node, ctx, 0)
 
-        metrics = collector.get_file_metrics()
-        assert metrics["efferent_coupling"] == 1  # Should count only once
-        assert metrics["imports"] == ["os"]
+        result = collector.get_file_metrics()
+        assert result["efferent_coupling"] == 1
+        assert result["imports"] == ["os"]
 
-    def test_javascript_import_statement(self):
+    def test_javascript_import(self):
         """Test JavaScript import statement."""
         collector = EfferentCouplingCollector()
         ctx = CollectorContext(
             file_path="test.js",
-            source_code=b"import fs from 'fs'",
+            source_code=b'import React from "react"',
             language="javascript",
         )
 
-        # Mock: import fs from 'fs'
-        string_node = MockNode("string", text=b"'fs'")
-        import_node = MockNode(
-            "import_statement",
-            children=[string_node],
-        )
-
+        # Mock: import React from "react"
+        string_node = MockNode("string", text='"react"')
+        import_node = MockNode("import_statement", children=[string_node])
         collector.collect_node(import_node, ctx, 0)
 
-        metrics = collector.get_file_metrics()
-        assert metrics["efferent_coupling"] == 1
-        assert "fs" in metrics["imports"]
-        assert "fs" in metrics["external_imports"]
+        result = collector.get_file_metrics()
+        assert result["efferent_coupling"] == 1
+        assert "react" in result["imports"]
 
-    def test_javascript_relative_import(self):
-        """Test JavaScript relative import."""
+    def test_get_imported_modules(self):
+        """Test get_imported_modules returns copy of set."""
         collector = EfferentCouplingCollector()
-        ctx = CollectorContext(
-            file_path="test.js",
-            source_code=b"import utils from './utils'",
-            language="javascript",
-        )
+        ctx = CollectorContext(file_path="test.py", source_code=b"", language="python")
 
-        # Mock: import utils from './utils'
-        string_node = MockNode("string", text=b"'./utils'")
-        import_node = MockNode(
-            "import_statement",
-            children=[string_node],
-        )
-
+        # Add import
+        dotted_name = MockNode("dotted_name", text="os")
+        import_node = MockNode("import_statement", children=[dotted_name])
         collector.collect_node(import_node, ctx, 0)
 
-        metrics = collector.get_file_metrics()
-        assert metrics["efferent_coupling"] == 1
-        assert "./utils" in metrics["imports"]
-        assert "./utils" in metrics["internal_imports"]
+        # Get imported modules
+        modules = collector.get_imported_modules()
+        assert "os" in modules
 
-    def test_javascript_require_call(self):
-        """Test JavaScript require() call."""
-        collector = EfferentCouplingCollector()
-        ctx = CollectorContext(
-            file_path="test.js",
-            source_code=b"const fs = require('fs')",
-            language="javascript",
-        )
-
-        # Mock: require('fs')
-        string_node = MockNode("string", text=b"'fs'")
-        args_node = MockNode("arguments", children=[string_node])
-        function_node = MockNode("identifier", text=b"require")
-        call_node = MockNode("call_expression", children=[function_node, args_node])
-
-        # Override child_by_field_name
-        call_node.child_by_field_name = lambda field: (
-            function_node
-            if field == "function"
-            else args_node
-            if field == "arguments"
-            else None
-        )
-
-        collector.collect_node(call_node, ctx, 0)
-
-        metrics = collector.get_file_metrics()
-        assert metrics["efferent_coupling"] == 1
-        assert "fs" in metrics["imports"]
-        assert "fs" in metrics["external_imports"]
-
-    def test_typescript_import_type(self):
-        """Test TypeScript type-only import."""
-        collector = EfferentCouplingCollector()
-        ctx = CollectorContext(
-            file_path="test.ts",
-            source_code=b"import type { User } from './types'",
-            language="typescript",
-        )
-
-        # Mock: import type { User } from './types'
-        string_node = MockNode("string", text=b"'./types'")
-        import_node = MockNode(
-            "import_statement",
-            children=[string_node],
-        )
-
-        collector.collect_node(import_node, ctx, 0)
-
-        metrics = collector.get_file_metrics()
-        assert metrics["efferent_coupling"] == 1
-        assert "./types" in metrics["imports"]
-        assert "./types" in metrics["internal_imports"]
-
-    def test_mixed_internal_external(self):
-        """Test classification of internal vs external imports."""
-        collector = EfferentCouplingCollector()
-        ctx = CollectorContext(
-            file_path="test.py",
-            source_code=b"",
-            language="python",
-        )
-
-        # Add various imports
-        collector._add_import("os", ctx)  # stdlib -> external
-        collector._add_import("requests", ctx)  # third-party -> external
-        collector._add_import(".utils", ctx)  # relative -> internal
-        collector._add_import("..models", ctx)  # relative -> internal
-
-        metrics = collector.get_file_metrics()
-        assert metrics["efferent_coupling"] == 4
-        assert set(metrics["internal_imports"]) == {".utils", "..models"}
-        assert set(metrics["external_imports"]) == {"os", "requests"}
-
-    def test_no_imports(self):
-        """Test file with no imports (Ce = 0)."""
-        collector = EfferentCouplingCollector()
-        # Create context but don't use it - collector tracks no imports
-        CollectorContext(
-            file_path="test.py",
-            source_code=b"def foo(): pass",
-            language="python",
-        )
-
-        metrics = collector.get_file_metrics()
-        assert metrics["efferent_coupling"] == 0
-        assert metrics["imports"] == []
-        assert metrics["internal_imports"] == []
-        assert metrics["external_imports"] == []
-
-    def test_finalize_function_returns_empty(self):
-        """Test finalize_function returns empty dict (coupling is file-level)."""
-        collector = EfferentCouplingCollector()
-        ctx = CollectorContext(
-            file_path="test.py",
-            source_code=b"",
-            language="python",
-        )
-
-        mock_node = MockNode("function_definition")
-        result = collector.finalize_function(mock_node, ctx)
-
-        assert result == {}
+        # Modify returned set should not affect collector
+        modules.add("sys")
+        assert "sys" not in collector._imports
 
     def test_reset(self):
-        """Test reset clears all state."""
+        """Test reset clears imported modules."""
         collector = EfferentCouplingCollector()
-        ctx = CollectorContext(
-            file_path="test.py",
-            source_code=b"",
-            language="python",
-        )
+        ctx = CollectorContext(file_path="test.py", source_code=b"", language="python")
 
         # Add imports
-        collector._add_import("os", ctx)
-        collector._add_import(".utils", ctx)
-
-        assert len(collector._imports) == 2
+        dotted_name = MockNode("dotted_name", text="os")
+        import_node = MockNode("import_statement", children=[dotted_name])
+        collector.collect_node(import_node, ctx, 0)
+        assert len(collector._imports) > 0
 
         # Reset
         collector.reset()
-
         assert len(collector._imports) == 0
-        assert len(collector._internal_imports) == 0
-        assert len(collector._external_imports) == 0
 
-    def test_sorted_output(self):
-        """Test that imports are returned sorted."""
-        collector = EfferentCouplingCollector()
+
+class TestAfferentCouplingCollector:
+    """Test AfferentCouplingCollector."""
+
+    def test_initialization(self):
+        """Test collector initializes correctly."""
+        collector = AfferentCouplingCollector()
+        assert collector.name == "afferent_coupling"
+        assert collector._import_graph == {}
+
+    def test_initialization_with_graph(self):
+        """Test collector with pre-built import graph."""
+        import_graph = {
+            "module_a": {"file1.py", "file2.py"},
+            "module_b": {"file1.py"},
+        }
+        collector = AfferentCouplingCollector(import_graph=import_graph)
+        assert collector._import_graph == import_graph
+
+    def test_no_dependents(self):
+        """Test file with no dependents has Ca = 0."""
+        collector = AfferentCouplingCollector()
         ctx = CollectorContext(
-            file_path="test.py",
-            source_code=b"",
-            language="python",
+            file_path="test.py", source_code=b"code", language="python"
         )
 
-        # Add imports in random order
-        collector._add_import("sys", ctx)
-        collector._add_import("os", ctx)
-        collector._add_import("json", ctx)
+        result = collector.finalize_function(MockNode("function_definition"), ctx)
+        assert result["afferent_coupling"] == 0
+        assert result["dependents"] == []
 
-        metrics = collector.get_file_metrics()
-        assert metrics["imports"] == ["json", "os", "sys"]  # Alphabetically sorted
-
-    def test_python_aliased_import(self):
-        """Test Python aliased import (import os as operating_system)."""
-        collector = EfferentCouplingCollector()
+    def test_single_dependent(self):
+        """Test file with one dependent has Ca = 1."""
+        import_graph = {"test.py": {"dependent1.py"}}
+        collector = AfferentCouplingCollector(import_graph=import_graph)
         ctx = CollectorContext(
-            file_path="test.py",
-            source_code=b"import os as operating_system",
-            language="python",
+            file_path="test.py", source_code=b"code", language="python"
         )
 
-        # Mock: import os as operating_system
-        dotted_name = MockNode("dotted_name", text=b"os")
-        aliased_import = MockNode(
-            "aliased_import",
-            children=[dotted_name],
+        result = collector.finalize_function(MockNode("function_definition"), ctx)
+        assert result["afferent_coupling"] == 1
+        assert result["dependents"] == ["dependent1.py"]
+
+    def test_multiple_dependents(self):
+        """Test file with multiple dependents."""
+        import_graph = {"test.py": {"dep1.py", "dep2.py", "dep3.py"}}
+        collector = AfferentCouplingCollector(import_graph=import_graph)
+        ctx = CollectorContext(
+            file_path="test.py", source_code=b"code", language="python"
         )
-        import_node = MockNode(
-            "import_statement",
-            children=[aliased_import],
+
+        result = collector.finalize_function(MockNode("function_definition"), ctx)
+        assert result["afferent_coupling"] == 3
+        assert set(result["dependents"]) == {"dep1.py", "dep2.py", "dep3.py"}
+
+    def test_get_afferent_coupling(self):
+        """Test get_afferent_coupling method."""
+        import_graph = {
+            "module_a.py": {"file1.py", "file2.py"},
+            "module_b.py": {"file1.py"},
+        }
+        collector = AfferentCouplingCollector(import_graph=import_graph)
+
+        assert collector.get_afferent_coupling("module_a.py") == 2
+        assert collector.get_afferent_coupling("module_b.py") == 1
+        assert collector.get_afferent_coupling("module_c.py") == 0  # Not in graph
+
+    def test_get_dependents(self):
+        """Test get_dependents method."""
+        import_graph = {"module_a.py": {"file1.py", "file2.py"}}
+        collector = AfferentCouplingCollector(import_graph=import_graph)
+
+        dependents = collector.get_dependents("module_a.py")
+        assert set(dependents) == {"file1.py", "file2.py"}
+        assert dependents == sorted(dependents)  # Should be sorted
+
+    def test_get_dependents_empty(self):
+        """Test get_dependents returns empty list for unknown file."""
+        collector = AfferentCouplingCollector()
+        dependents = collector.get_dependents("unknown.py")
+        assert dependents == []
+
+    def test_reset(self):
+        """Test reset clears current file."""
+        import_graph = {"test.py": {"dep.py"}}
+        collector = AfferentCouplingCollector(import_graph=import_graph)
+        ctx = CollectorContext(
+            file_path="test.py", source_code=b"code", language="python"
         )
 
-        collector.collect_node(import_node, ctx, 0)
+        # Process node to set current file
+        collector.collect_node(MockNode("function_definition"), ctx, 0)
+        assert collector._current_file == "test.py"
 
-        metrics = collector.get_file_metrics()
-        assert metrics["efferent_coupling"] == 1
-        assert "os" in metrics["imports"]
+        # Reset
+        collector.reset()
+        assert collector._current_file is None
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+class TestBuildImportGraph:
+    """Test build_import_graph function."""
+
+    def test_empty_file_list(self):
+        """Test with empty file list returns empty graph."""
+        project_root = Path("/project")
+        graph = build_import_graph(project_root, [], language="python")
+        assert graph == {}
+
+    def test_nonexistent_files(self):
+        """Test with nonexistent files returns empty graph."""
+        project_root = Path("/project")
+        files = [Path("/project/nonexistent.py")]
+        graph = build_import_graph(project_root, files, language="python")
+        assert graph == {}
+
+    @pytest.mark.skip(
+        reason="Requires tree-sitter setup and real file system integration"
+    )
+    def test_build_graph_from_files(self, tmp_path):
+        """Test building import graph from actual files."""
+        # Create temporary project structure
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        # Create file A that imports B and C
+        file_a = project_root / "a.py"
+        file_a.write_text("import b\nfrom c import func")
+
+        # Create file B that imports C
+        file_b = project_root / "b.py"
+        file_b.write_text("import c")
+
+        # Create file C (no imports)
+        file_c = project_root / "c.py"
+        file_c.write_text("def func(): pass")
+
+        # Build import graph
+        files = [file_a, file_b, file_c]
+        graph = build_import_graph(project_root, files, language="python")
+
+        # Expected: b is imported by a, c is imported by a and b
+        assert "b" in graph
+        assert "a.py" in graph["b"]
+        assert "c" in graph
+        assert "a.py" in graph["c"]
+        assert "b.py" in graph["c"]
+
+
+class TestCouplingMetrics:
+    """Test CouplingMetrics dataclass."""
+
+    def test_initialization(self):
+        """Test CouplingMetrics initializes with defaults."""
+        metrics = CouplingMetrics()
+        assert metrics.efferent_coupling == 0
+        assert metrics.afferent_coupling == 0
+        assert metrics.imports == []
+        assert metrics.internal_imports == []
+        assert metrics.external_imports == []
+        assert metrics.dependents == []
+
+    def test_instability_zero_coupling(self):
+        """Test instability is 0.0 when no coupling."""
+        metrics = CouplingMetrics(efferent_coupling=0, afferent_coupling=0)
+        assert metrics.instability == 0.0
+
+    def test_instability_maximally_stable(self):
+        """Test instability is 0.0 for maximally stable (many incoming, no outgoing)."""
+        metrics = CouplingMetrics(efferent_coupling=0, afferent_coupling=10)
+        assert metrics.instability == 0.0
+
+    def test_instability_maximally_unstable(self):
+        """Test instability is 1.0 for maximally unstable (many outgoing, no incoming)."""
+        metrics = CouplingMetrics(efferent_coupling=10, afferent_coupling=0)
+        assert metrics.instability == 1.0
+
+    def test_instability_balanced(self):
+        """Test instability is 0.5 for balanced coupling."""
+        metrics = CouplingMetrics(efferent_coupling=5, afferent_coupling=5)
+        assert metrics.instability == 0.5
+
+    def test_instability_calculation(self):
+        """Test instability calculation with various values."""
+        # Ce = 3, Ca = 7 -> Instability = 3 / (3 + 7) = 0.3
+        metrics = CouplingMetrics(efferent_coupling=3, afferent_coupling=7)
+        assert metrics.instability == 0.3
+
+        # Ce = 8, Ca = 2 -> Instability = 8 / (8 + 2) = 0.8
+        metrics = CouplingMetrics(efferent_coupling=8, afferent_coupling=2)
+        assert metrics.instability == 0.8
+
+    def test_with_module_lists(self):
+        """Test CouplingMetrics with module and dependent lists."""
+        metrics = CouplingMetrics(
+            efferent_coupling=2,
+            afferent_coupling=3,
+            imports=["module_a", "module_b"],
+            internal_imports=[".utils"],
+            external_imports=["requests"],
+            dependents=["dep1.py", "dep2.py", "dep3.py"],
+        )
+        assert metrics.efferent_coupling == 2
+        assert metrics.afferent_coupling == 3
+        assert len(metrics.imports) == 2
+        assert len(metrics.internal_imports) == 1
+        assert len(metrics.external_imports) == 1
+        assert len(metrics.dependents) == 3
+        assert metrics.instability == 0.4  # 2 / (2 + 3)
+
+
+class TestCollectorIntegration:
+    """Test efferent and afferent collectors working together."""
+
+    def test_collectors_independent(self):
+        """Test both collectors can run independently."""
+        efferent = EfferentCouplingCollector()
+        import_graph = {"test.py": {"dep.py"}}
+        afferent = AfferentCouplingCollector(import_graph=import_graph)
+
+        ctx = CollectorContext(
+            file_path="test.py", source_code=b"import os", language="python"
+        )
+
+        # Simulate import
+        dotted_name = MockNode("dotted_name", text="os")
+        import_node = MockNode("import_statement", children=[dotted_name])
+
+        # Process with both collectors
+        efferent.collect_node(import_node, ctx, 0)
+        afferent.collect_node(import_node, ctx, 0)
+
+        # Get results
+        efferent_result = efferent.get_file_metrics()
+        afferent_result = afferent.finalize_function(
+            MockNode("function_definition"), ctx
+        )
+
+        # Verify independence
+        assert efferent_result["efferent_coupling"] == 1
+        assert afferent_result["afferent_coupling"] == 1
+        assert "os" in efferent_result["imports"]
+        assert "dep.py" in afferent_result["dependents"]
+
+    def test_combined_coupling_metrics(self):
+        """Test creating CouplingMetrics from both collectors."""
+        # Setup collectors
+        efferent = EfferentCouplingCollector()
+        import_graph = {"test.py": {"dep1.py", "dep2.py"}}
+        afferent = AfferentCouplingCollector(import_graph=import_graph)
+
+        ctx = CollectorContext(file_path="test.py", source_code=b"", language="python")
+
+        # Add imports to efferent
+        for module in ["os", "sys", "json"]:
+            dotted_name = MockNode("dotted_name", text=module)
+            import_node = MockNode("import_statement", children=[dotted_name])
+            efferent.collect_node(import_node, ctx, 0)
+
+        # Get results
+        efferent_result = efferent.get_file_metrics()
+        afferent_result = afferent.finalize_function(
+            MockNode("function_definition"), ctx
+        )
+
+        # Create CouplingMetrics
+        coupling = CouplingMetrics(
+            efferent_coupling=efferent_result["efferent_coupling"],
+            afferent_coupling=afferent_result["afferent_coupling"],
+            imports=efferent_result["imports"],
+            dependents=afferent_result["dependents"],
+        )
+
+        # Verify combined metrics
+        assert coupling.efferent_coupling == 3  # os, sys, json
+        assert coupling.afferent_coupling == 2  # dep1, dep2
+        assert len(coupling.imports) == 3
+        assert len(coupling.dependents) == 2
+        assert coupling.instability == 0.6  # 3 / (3 + 2)

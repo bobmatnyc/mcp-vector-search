@@ -101,21 +101,45 @@ class ChunkMetrics:
 
 @dataclass
 class CouplingMetrics:
-    """Coupling metrics for a file (Phase 3).
+    """Coupling metrics for a file.
 
-    Tracks import dependencies and efferent coupling (outgoing dependencies).
+    Tracks dependencies between files to measure coupling.
 
     Attributes:
-        efferent_coupling: Count of unique external dependencies
+        efferent_coupling: Number of files this file depends on (outgoing dependencies)
+        afferent_coupling: Number of files that depend on this file (incoming dependencies)
         imports: List of all imported modules
         internal_imports: Imports from same project
         external_imports: Third-party and standard library imports
+        dependents: List of files that import this file
+        instability: Ratio Ce / (Ce + Ca), measures resistance to change (0-1)
     """
 
-    efferent_coupling: int = 0
+    efferent_coupling: int = 0  # Ce - outgoing dependencies
+    afferent_coupling: int = 0  # Ca - incoming dependencies
     imports: list[str] = field(default_factory=list)
     internal_imports: list[str] = field(default_factory=list)
     external_imports: list[str] = field(default_factory=list)
+    dependents: list[str] = field(default_factory=list)
+
+    @property
+    def instability(self) -> float:
+        """Calculate instability metric (0-1).
+
+        Instability = Ce / (Ce + Ca)
+
+        Interpretation:
+        - 0.0: Maximally stable (many incoming, few outgoing)
+        - 0.5: Balanced (equal incoming and outgoing)
+        - 1.0: Maximally unstable (many outgoing, few incoming)
+
+        Returns:
+            Instability ratio from 0.0 to 1.0
+        """
+        total = self.efferent_coupling + self.afferent_coupling
+        if total == 0:
+            return 0.0
+        return self.efferent_coupling / total
 
 
 @dataclass
@@ -138,6 +162,7 @@ class FileMetrics:
         avg_complexity: Average cognitive complexity per chunk
         max_complexity: Maximum cognitive complexity in any chunk
         chunks: List of chunk metrics for each function/class
+        coupling: Coupling metrics for this file
     """
 
     file_path: str
@@ -165,6 +190,9 @@ class FileMetrics:
 
     # Chunk metrics for each function/class
     chunks: list[ChunkMetrics] = field(default_factory=list)
+
+    # Coupling metrics
+    coupling: CouplingMetrics = field(default_factory=CouplingMetrics)
 
     def compute_aggregates(self) -> None:
         """Compute aggregate metrics from chunk metrics.
