@@ -40,6 +40,7 @@ Example:
 """
 
 from .exporter import JSONExporter
+from .html_report import HTMLReportGenerator
 from .schemas import (
     AnalysisExport,
     ClassMetrics,
@@ -58,8 +59,9 @@ from .schemas import (
 )
 
 __all__ = [
-    # Exporter
+    # Exporters
     "JSONExporter",
+    "HTMLReportGenerator",
     # Main export schema
     "AnalysisExport",
     # Metadata and summary
