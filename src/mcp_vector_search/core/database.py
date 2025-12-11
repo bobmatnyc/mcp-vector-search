@@ -191,7 +191,9 @@ class ChromaVectorDatabase(VectorDatabase):
 
             except BaseException as init_error:
                 # Re-raise system exceptions we should never catch
-                if isinstance(init_error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                if isinstance(
+                    init_error, (KeyboardInterrupt, SystemExit, GeneratorExit)
+                ):
                     raise
 
                 # LAYER 2: Detect Rust panic patterns during initialization
@@ -241,7 +243,9 @@ class ChromaVectorDatabase(VectorDatabase):
 
                     except BaseException as retry_error:
                         # Re-raise system exceptions
-                        if isinstance(retry_error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                        if isinstance(
+                            retry_error, (KeyboardInterrupt, SystemExit, GeneratorExit)
+                        ):
                             raise
 
                         logger.error(
@@ -251,7 +255,7 @@ class ChromaVectorDatabase(VectorDatabase):
                         self._recovery_attempted = True
                         raise DatabaseError(
                             f"Failed to recover from database corruption. "
-                            f"Please run 'mcp-vector-search reset' manually to clear the database. "
+                            f"Please run 'mcp-vector-search reset index' to clear the database. "
                             f"Error: {retry_error}"
                         ) from retry_error
                 else:
@@ -285,7 +289,7 @@ class ChromaVectorDatabase(VectorDatabase):
                     )
                     raise DatabaseInitializationError(
                         f"Failed to recover from database corruption. "
-                        f"Please run 'mcp-vector-search reset' manually. Error: {e}"
+                        f"Please run 'mcp-vector-search reset index' to clear and rebuild the database. Error: {e}"
                     ) from e
 
                 logger.warning(f"Detected index corruption: {e}")

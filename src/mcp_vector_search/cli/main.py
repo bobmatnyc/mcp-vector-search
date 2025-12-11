@@ -37,7 +37,7 @@ def _handle_segfault(signum: int, frame) -> None:
 │ native libraries (ChromaDB, sentence-transformers, tree-sitter).│
 │                                                                 │
 │ To fix this, please run:                                        │
-│   1. mcp-vector-search index clean                              │
+│   1. mcp-vector-search reset index --force                      │
 │   2. mcp-vector-search index                                    │
 │                                                                 │
 │ This will rebuild your search index from scratch.               │
@@ -103,6 +103,7 @@ explore unfamiliar projects, and integrate with AI coding tools via MCP.
   demo       🎬 Run interactive demo
   doctor     🩺 Check system health
   index      📇 Index codebase
+  reset      🔄 Reset and recovery operations
   mcp        🔌 MCP server operations
   config     ⚙️  Configure settings
   help       ❓ Get help
@@ -123,6 +124,7 @@ from .commands.index import index_app  # noqa: E402
 from .commands.init import init_app  # noqa: E402
 from .commands.install import install_app  # noqa: E402
 from .commands.mcp import mcp_app  # noqa: E402
+from .commands.reset import reset_app  # noqa: E402
 from .commands.search import search_app, search_main  # noqa: E402, F401
 from .commands.setup import setup_app  # noqa: E402
 from .commands.status import main as status_main  # noqa: E402
@@ -173,6 +175,9 @@ app.add_typer(mcp_app, name="mcp", help="🔌 MCP server operations")
 
 # 10. CONFIG - Configuration
 app.add_typer(config_app, name="config", help="⚙️  Manage project configuration")
+
+# 10.5. RESET - Reset and recovery operations
+app.add_typer(reset_app, name="reset", help="🔄 Reset and recovery operations")
 
 # 11. ANALYZE - Code complexity analysis
 app.add_typer(
