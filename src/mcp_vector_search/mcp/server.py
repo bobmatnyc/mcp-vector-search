@@ -18,6 +18,12 @@ from mcp.types import (
     Tool,
 )
 
+from ..analysis import (
+    ProjectMetrics,
+    SmellDetector,
+    SmellSeverity,
+)
+from ..config.thresholds import ThresholdConfig
 from ..core.database import ChromaVectorDatabase
 from ..core.embeddings import create_embedding_function
 from ..core.exceptions import ProjectNotFoundError
@@ -25,6 +31,7 @@ from ..core.indexer import SemanticIndexer
 from ..core.project import ProjectManager
 from ..core.search import SemanticSearchEngine
 from ..core.watcher import FileWatcher
+from ..parsers.registry import ParserRegistry
 
 
 class MCPVectorSearchServer:
@@ -289,6 +296,90 @@ class MCPVectorSearchServer:
                     "required": [],
                 },
             ),
+            Tool(
+                name="analyze_project",
+                description="Returns project-wide metrics summary",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "threshold_preset": {
+                            "type": "string",
+                            "description": "Threshold preset: 'strict', 'standard', or 'relaxed'",
+                            "enum": ["strict", "standard", "relaxed"],
+                            "default": "standard",
+                        },
+                        "output_format": {
+                            "type": "string",
+                            "description": "Output format: 'summary' or 'detailed'",
+                            "enum": ["summary", "detailed"],
+                            "default": "summary",
+                        },
+                    },
+                    "required": [],
+                },
+            ),
+            Tool(
+                name="analyze_file",
+                description="Returns file-level metrics",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Path to the file to analyze (relative or absolute)",
+                        },
+                    },
+                    "required": ["file_path"],
+                },
+            ),
+            Tool(
+                name="find_smells",
+                description="Returns list of code smells",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "smell_type": {
+                            "type": "string",
+                            "description": "Filter by smell type: 'Long Method', 'Deep Nesting', 'Long Parameter List', 'God Class', 'Complex Method'",
+                            "enum": [
+                                "Long Method",
+                                "Deep Nesting",
+                                "Long Parameter List",
+                                "God Class",
+                                "Complex Method",
+                            ],
+                        },
+                        "severity": {
+                            "type": "string",
+                            "description": "Filter by severity level",
+                            "enum": ["info", "warning", "error"],
+                        },
+                    },
+                    "required": [],
+                },
+            ),
+            Tool(
+                name="get_complexity_hotspots",
+                description="Returns top N most complex functions",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of hotspots to return",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                    },
+                    "required": [],
+                },
+            ),
+            Tool(
+                name="check_circular_dependencies",
+                description="Returns circular dependency cycles",
+                inputSchema={"type": "object", "properties": {}, "required": []},
+            ),
         ]
 
         return tools
@@ -313,6 +404,16 @@ class MCPVectorSearchServer:
                 return await self._get_project_status(request.params.arguments)
             elif request.params.name == "index_project":
                 return await self._index_project(request.params.arguments)
+            elif request.params.name == "analyze_project":
+                return await self._analyze_project(request.params.arguments)
+            elif request.params.name == "analyze_file":
+                return await self._analyze_file(request.params.arguments)
+            elif request.params.name == "find_smells":
+                return await self._find_smells(request.params.arguments)
+            elif request.params.name == "get_complexity_hotspots":
+                return await self._get_complexity_hotspots(request.params.arguments)
+            elif request.params.name == "check_circular_dependencies":
+                return await self._check_circular_dependencies(request.params.arguments)
             else:
                 return CallToolResult(
                     content=[
@@ -660,6 +761,610 @@ class MCPVectorSearchServer:
                 ],
                 isError=True,
             )
+
+    async def _analyze_project(self, args: dict[str, Any]) -> CallToolResult:
+        """Handle analyze_project tool call."""
+        threshold_preset = args.get("threshold_preset", "standard")
+        output_format = args.get("output_format", "summary")
+
+        try:
+            # Load threshold configuration based on preset
+            threshold_config = self._get_threshold_config(threshold_preset)
+
+            # Run analysis using CLI analyze logic
+            from ..cli.commands.analyze import _analyze_file, _find_analyzable_files
+
+            parser_registry = ParserRegistry()
+            files_to_analyze = _find_analyzable_files(
+                self.project_root, None, None, parser_registry, None
+            )
+
+            if not files_to_analyze:
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text="No analyzable files found in project",
+                        )
+                    ],
+                    isError=True,
+                )
+
+            # Analyze files
+            from ..analysis import (
+                CognitiveComplexityCollector,
+                CyclomaticComplexityCollector,
+                MethodCountCollector,
+                NestingDepthCollector,
+                ParameterCountCollector,
+            )
+
+            collectors = [
+                CognitiveComplexityCollector(),
+                CyclomaticComplexityCollector(),
+                NestingDepthCollector(),
+                ParameterCountCollector(),
+                MethodCountCollector(),
+            ]
+
+            project_metrics = ProjectMetrics(project_root=str(self.project_root))
+
+            for file_path in files_to_analyze:
+                try:
+                    file_metrics = await _analyze_file(
+                        file_path, parser_registry, collectors
+                    )
+                    if file_metrics and file_metrics.chunks:
+                        project_metrics.files[str(file_path)] = file_metrics
+                except Exception as e:
+                    logger.debug(f"Failed to analyze {file_path}: {e}")
+                    continue
+
+            project_metrics.compute_aggregates()
+
+            # Detect code smells
+            smell_detector = SmellDetector(thresholds=threshold_config)
+            all_smells = []
+            for file_path, file_metrics in project_metrics.files.items():
+                file_smells = smell_detector.detect_all(file_metrics, file_path)
+                all_smells.extend(file_smells)
+
+            # Format response
+            if output_format == "detailed":
+                # Return full JSON output
+                import json
+
+                output = project_metrics.to_summary()
+                output["smells"] = {
+                    "total": len(all_smells),
+                    "by_severity": {
+                        "error": sum(
+                            1 for s in all_smells if s.severity == SmellSeverity.ERROR
+                        ),
+                        "warning": sum(
+                            1 for s in all_smells if s.severity == SmellSeverity.WARNING
+                        ),
+                        "info": sum(
+                            1 for s in all_smells if s.severity == SmellSeverity.INFO
+                        ),
+                    },
+                }
+                response_text = json.dumps(output, indent=2)
+            else:
+                # Return summary
+                summary = project_metrics.to_summary()
+                response_lines = [
+                    "# Project Analysis Summary\n",
+                    f"**Project Root:** {summary['project_root']}",
+                    f"**Total Files:** {summary['total_files']}",
+                    f"**Total Functions:** {summary['total_functions']}",
+                    f"**Total Classes:** {summary['total_classes']}",
+                    f"**Average File Complexity:** {summary['avg_file_complexity']}\n",
+                    "## Complexity Distribution",
+                ]
+
+                dist = summary["complexity_distribution"]
+                for grade in ["A", "B", "C", "D", "F"]:
+                    response_lines.append(f"- Grade {grade}: {dist[grade]} chunks")
+
+                response_lines.extend(
+                    [
+                        "\n## Health Metrics",
+                        f"- Average Health Score: {summary['health_metrics']['avg_health_score']:.2f}",
+                        f"- Files Needing Attention: {summary['health_metrics']['files_needing_attention']}",
+                        "\n## Code Smells",
+                        f"- Total: {len(all_smells)}",
+                        f"- Errors: {sum(1 for s in all_smells if s.severity == SmellSeverity.ERROR)}",
+                        f"- Warnings: {sum(1 for s in all_smells if s.severity == SmellSeverity.WARNING)}",
+                        f"- Info: {sum(1 for s in all_smells if s.severity == SmellSeverity.INFO)}",
+                    ]
+                )
+
+                response_text = "\n".join(response_lines)
+
+            return CallToolResult(
+                content=[TextContent(type="text", text=response_text)]
+            )
+
+        except Exception as e:
+            logger.error(f"Project analysis failed: {e}")
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text=f"Project analysis failed: {str(e)}")
+                ],
+                isError=True,
+            )
+
+    async def _analyze_file(self, args: dict[str, Any]) -> CallToolResult:
+        """Handle analyze_file tool call."""
+        file_path_str = args.get("file_path", "")
+
+        if not file_path_str:
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text="file_path parameter is required")
+                ],
+                isError=True,
+            )
+
+        try:
+            file_path = Path(file_path_str)
+            if not file_path.is_absolute():
+                file_path = self.project_root / file_path
+
+            if not file_path.exists():
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text", text=f"File not found: {file_path_str}"
+                        )
+                    ],
+                    isError=True,
+                )
+
+            # Analyze single file
+            from ..analysis import (
+                CognitiveComplexityCollector,
+                CyclomaticComplexityCollector,
+                MethodCountCollector,
+                NestingDepthCollector,
+                ParameterCountCollector,
+            )
+            from ..cli.commands.analyze import _analyze_file
+
+            parser_registry = ParserRegistry()
+            collectors = [
+                CognitiveComplexityCollector(),
+                CyclomaticComplexityCollector(),
+                NestingDepthCollector(),
+                ParameterCountCollector(),
+                MethodCountCollector(),
+            ]
+
+            file_metrics = await _analyze_file(file_path, parser_registry, collectors)
+
+            if not file_metrics:
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=f"Unable to analyze file: {file_path_str}",
+                        )
+                    ],
+                    isError=True,
+                )
+
+            # Detect smells
+            smell_detector = SmellDetector()
+            smells = smell_detector.detect_all(file_metrics, str(file_path))
+
+            # Format response
+            response_lines = [
+                f"# File Analysis: {file_path.name}\n",
+                f"**Path:** {file_path}",
+                f"**Total Lines:** {file_metrics.total_lines}",
+                f"**Code Lines:** {file_metrics.code_lines}",
+                f"**Comment Lines:** {file_metrics.comment_lines}",
+                f"**Functions:** {file_metrics.function_count}",
+                f"**Classes:** {file_metrics.class_count}",
+                f"**Methods:** {file_metrics.method_count}\n",
+                "## Complexity Metrics",
+                f"- Total Complexity: {file_metrics.total_complexity}",
+                f"- Average Complexity: {file_metrics.avg_complexity:.2f}",
+                f"- Max Complexity: {file_metrics.max_complexity}",
+                f"- Health Score: {file_metrics.health_score:.2f}\n",
+            ]
+
+            if smells:
+                response_lines.append(f"## Code Smells ({len(smells)})\n")
+                for smell in smells[:10]:  # Show top 10
+                    response_lines.append(
+                        f"- [{smell.severity.value.upper()}] {smell.name}: {smell.description}"
+                    )
+                if len(smells) > 10:
+                    response_lines.append(f"\n... and {len(smells) - 10} more")
+            else:
+                response_lines.append("## Code Smells\n- None detected")
+
+            response_text = "\n".join(response_lines)
+
+            return CallToolResult(
+                content=[TextContent(type="text", text=response_text)]
+            )
+
+        except Exception as e:
+            logger.error(f"File analysis failed: {e}")
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text=f"File analysis failed: {str(e)}")
+                ],
+                isError=True,
+            )
+
+    async def _find_smells(self, args: dict[str, Any]) -> CallToolResult:
+        """Handle find_smells tool call."""
+        smell_type_filter = args.get("smell_type")
+        severity_filter = args.get("severity")
+
+        try:
+            # Run full project analysis
+            from ..analysis import (
+                CognitiveComplexityCollector,
+                CyclomaticComplexityCollector,
+                MethodCountCollector,
+                NestingDepthCollector,
+                ParameterCountCollector,
+            )
+            from ..cli.commands.analyze import _analyze_file, _find_analyzable_files
+
+            parser_registry = ParserRegistry()
+            files_to_analyze = _find_analyzable_files(
+                self.project_root, None, None, parser_registry, None
+            )
+
+            collectors = [
+                CognitiveComplexityCollector(),
+                CyclomaticComplexityCollector(),
+                NestingDepthCollector(),
+                ParameterCountCollector(),
+                MethodCountCollector(),
+            ]
+
+            project_metrics = ProjectMetrics(project_root=str(self.project_root))
+
+            for file_path in files_to_analyze:
+                try:
+                    file_metrics = await _analyze_file(
+                        file_path, parser_registry, collectors
+                    )
+                    if file_metrics and file_metrics.chunks:
+                        project_metrics.files[str(file_path)] = file_metrics
+                except Exception:  # nosec B112 - intentional skip of unparseable files
+                    continue
+
+            # Detect all smells
+            smell_detector = SmellDetector()
+            all_smells = []
+            for file_path, file_metrics in project_metrics.files.items():
+                file_smells = smell_detector.detect_all(file_metrics, file_path)
+                all_smells.extend(file_smells)
+
+            # Apply filters
+            filtered_smells = all_smells
+
+            if smell_type_filter:
+                filtered_smells = [
+                    s for s in filtered_smells if s.name == smell_type_filter
+                ]
+
+            if severity_filter:
+                severity_enum = SmellSeverity(severity_filter)
+                filtered_smells = [
+                    s for s in filtered_smells if s.severity == severity_enum
+                ]
+
+            # Format response
+            if not filtered_smells:
+                filter_desc = []
+                if smell_type_filter:
+                    filter_desc.append(f"type={smell_type_filter}")
+                if severity_filter:
+                    filter_desc.append(f"severity={severity_filter}")
+                filter_str = f" ({', '.join(filter_desc)})" if filter_desc else ""
+                response_text = f"No code smells found{filter_str}"
+            else:
+                response_lines = [f"# Code Smells Found: {len(filtered_smells)}\n"]
+
+                # Group by severity
+                by_severity = {
+                    "error": [
+                        s for s in filtered_smells if s.severity == SmellSeverity.ERROR
+                    ],
+                    "warning": [
+                        s
+                        for s in filtered_smells
+                        if s.severity == SmellSeverity.WARNING
+                    ],
+                    "info": [
+                        s for s in filtered_smells if s.severity == SmellSeverity.INFO
+                    ],
+                }
+
+                for severity_level in ["error", "warning", "info"]:
+                    smells = by_severity[severity_level]
+                    if smells:
+                        response_lines.append(
+                            f"## {severity_level.upper()} ({len(smells)})\n"
+                        )
+                        for smell in smells[:20]:  # Show top 20 per severity
+                            response_lines.append(
+                                f"- **{smell.name}** at `{smell.location}`"
+                            )
+                            response_lines.append(f"  {smell.description}")
+                            if smell.suggestion:
+                                response_lines.append(
+                                    f"  *Suggestion: {smell.suggestion}*"
+                                )
+                            response_lines.append("")
+
+                response_text = "\n".join(response_lines)
+
+            return CallToolResult(
+                content=[TextContent(type="text", text=response_text)]
+            )
+
+        except Exception as e:
+            logger.error(f"Smell detection failed: {e}")
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text=f"Smell detection failed: {str(e)}")
+                ],
+                isError=True,
+            )
+
+    async def _get_complexity_hotspots(self, args: dict[str, Any]) -> CallToolResult:
+        """Handle get_complexity_hotspots tool call."""
+        limit = args.get("limit", 10)
+
+        try:
+            # Run full project analysis
+            from ..analysis import (
+                CognitiveComplexityCollector,
+                CyclomaticComplexityCollector,
+                MethodCountCollector,
+                NestingDepthCollector,
+                ParameterCountCollector,
+            )
+            from ..cli.commands.analyze import _analyze_file, _find_analyzable_files
+
+            parser_registry = ParserRegistry()
+            files_to_analyze = _find_analyzable_files(
+                self.project_root, None, None, parser_registry, None
+            )
+
+            collectors = [
+                CognitiveComplexityCollector(),
+                CyclomaticComplexityCollector(),
+                NestingDepthCollector(),
+                ParameterCountCollector(),
+                MethodCountCollector(),
+            ]
+
+            project_metrics = ProjectMetrics(project_root=str(self.project_root))
+
+            for file_path in files_to_analyze:
+                try:
+                    file_metrics = await _analyze_file(
+                        file_path, parser_registry, collectors
+                    )
+                    if file_metrics and file_metrics.chunks:
+                        project_metrics.files[str(file_path)] = file_metrics
+                except Exception:  # nosec B112 - intentional skip of unparseable files
+                    continue
+
+            # Get top N complex files
+            hotspots = project_metrics.get_hotspots(limit=limit)
+
+            # Format response
+            if not hotspots:
+                response_text = "No complexity hotspots found"
+            else:
+                response_lines = [f"# Top {len(hotspots)} Complexity Hotspots\n"]
+
+                for i, file_metrics in enumerate(hotspots, 1):
+                    response_lines.extend(
+                        [
+                            f"## {i}. {Path(file_metrics.file_path).name}",
+                            f"**Path:** `{file_metrics.file_path}`",
+                            f"**Average Complexity:** {file_metrics.avg_complexity:.2f}",
+                            f"**Max Complexity:** {file_metrics.max_complexity}",
+                            f"**Total Complexity:** {file_metrics.total_complexity}",
+                            f"**Functions:** {file_metrics.function_count}",
+                            f"**Health Score:** {file_metrics.health_score:.2f}\n",
+                        ]
+                    )
+
+                response_text = "\n".join(response_lines)
+
+            return CallToolResult(
+                content=[TextContent(type="text", text=response_text)]
+            )
+
+        except Exception as e:
+            logger.error(f"Hotspot detection failed: {e}")
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text=f"Hotspot detection failed: {str(e)}")
+                ],
+                isError=True,
+            )
+
+    async def _check_circular_dependencies(
+        self, args: dict[str, Any]
+    ) -> CallToolResult:
+        """Handle check_circular_dependencies tool call."""
+        try:
+            # Find analyzable files to build import graph
+            from ..cli.commands.analyze import _find_analyzable_files
+
+            parser_registry = ParserRegistry()
+            files_to_analyze = _find_analyzable_files(
+                self.project_root, None, None, parser_registry, None
+            )
+
+            if not files_to_analyze:
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text="No analyzable files found in project",
+                        )
+                    ],
+                    isError=True,
+                )
+
+            # Import circular dependency detection
+            from ..analysis.collectors.coupling import build_import_graph
+
+            # Build import graph for the project (reverse dependency graph)
+            import_graph = build_import_graph(
+                self.project_root, files_to_analyze, language="python"
+            )
+
+            # Convert to forward dependency graph for cycle detection
+            # import_graph maps: module -> set of files that import it (reverse)
+            # We need: file -> list of files it imports (forward)
+            forward_graph: dict[str, list[str]] = {}
+
+            # Build forward graph by reading imports from files
+            for file_path in files_to_analyze:
+                file_str = str(file_path.relative_to(self.project_root))
+                if file_str not in forward_graph:
+                    forward_graph[file_str] = []
+
+                # For each module in import_graph, if this file imports it, add edge
+                for module, importers in import_graph.items():
+                    for importer in importers:
+                        importer_str = str(
+                            Path(importer).relative_to(self.project_root)
+                            if Path(importer).is_absolute()
+                            else importer
+                        )
+                        if importer_str == file_str:
+                            # This file imports the module, add forward edge
+                            if module not in forward_graph[file_str]:
+                                forward_graph[file_str].append(module)
+
+            # Detect circular dependencies using DFS
+            def find_cycles(graph: dict[str, list[str]]) -> list[list[str]]:
+                """Find all cycles in the import graph using DFS."""
+                cycles = []
+                visited = set()
+                rec_stack = set()
+
+                def dfs(node: str, path: list[str]) -> None:
+                    visited.add(node)
+                    rec_stack.add(node)
+                    path.append(node)
+
+                    for neighbor in graph.get(node, []):
+                        if neighbor not in visited:
+                            dfs(neighbor, path.copy())
+                        elif neighbor in rec_stack:
+                            # Found a cycle
+                            try:
+                                cycle_start = path.index(neighbor)
+                                cycle = path[cycle_start:] + [neighbor]
+                                # Normalize cycle representation to avoid duplicates
+                                cycle_tuple = tuple(sorted(cycle))
+                                if not any(
+                                    tuple(sorted(c)) == cycle_tuple for c in cycles
+                                ):
+                                    cycles.append(cycle)
+                            except ValueError:
+                                pass
+
+                    rec_stack.remove(node)
+
+                for node in graph:
+                    if node not in visited:
+                        dfs(node, [])
+
+                return cycles
+
+            cycles = find_cycles(forward_graph)
+
+            # Format response
+            if not cycles:
+                response_text = "No circular dependencies detected"
+            else:
+                response_lines = [f"# Circular Dependencies Found: {len(cycles)}\n"]
+
+                for i, cycle in enumerate(cycles, 1):
+                    response_lines.append(f"## Cycle {i}")
+                    response_lines.append("```")
+                    for j, node in enumerate(cycle):
+                        if j < len(cycle) - 1:
+                            response_lines.append(f"{node}")
+                            response_lines.append("  ↓")
+                        else:
+                            response_lines.append(f"{node} (back to {cycle[0]})")
+                    response_lines.append("```\n")
+
+                response_text = "\n".join(response_lines)
+
+            return CallToolResult(
+                content=[TextContent(type="text", text=response_text)]
+            )
+
+        except Exception as e:
+            logger.error(f"Circular dependency check failed: {e}")
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Circular dependency check failed: {str(e)}",
+                    )
+                ],
+                isError=True,
+            )
+
+    def _get_threshold_config(self, preset: str) -> ThresholdConfig:
+        """Get threshold configuration based on preset.
+
+        Args:
+            preset: Threshold preset ('strict', 'standard', or 'relaxed')
+
+        Returns:
+            ThresholdConfig instance
+        """
+        if preset == "strict":
+            # Stricter thresholds
+            config = ThresholdConfig()
+            config.complexity.cognitive_a = 3
+            config.complexity.cognitive_b = 7
+            config.complexity.cognitive_c = 15
+            config.complexity.cognitive_d = 20
+            config.smells.long_method_lines = 30
+            config.smells.high_complexity = 10
+            config.smells.too_many_parameters = 3
+            config.smells.deep_nesting_depth = 3
+            return config
+        elif preset == "relaxed":
+            # More relaxed thresholds
+            config = ThresholdConfig()
+            config.complexity.cognitive_a = 7
+            config.complexity.cognitive_b = 15
+            config.complexity.cognitive_c = 25
+            config.complexity.cognitive_d = 40
+            config.smells.long_method_lines = 75
+            config.smells.high_complexity = 20
+            config.smells.too_many_parameters = 7
+            config.smells.deep_nesting_depth = 5
+            return config
+        else:
+            # Standard (default)
+            return ThresholdConfig()
 
 
 def create_mcp_server(
