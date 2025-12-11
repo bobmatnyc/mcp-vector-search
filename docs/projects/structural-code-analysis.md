@@ -1,6 +1,6 @@
 # Project: Structural Code Analysis
 
-> **Status**: Active | **Phase**: 2 of 5 | **Target**: v0.17.0 - v0.21.0
+> **Status**: Active | **Phase**: 4 of 5 | **Target**: v0.17.0 - v0.21.0
 
 ## Quick Links
 
@@ -31,8 +31,8 @@ Add structural code analysis capabilities to mcp-vector-search, enabling quality
 |-------|-----------|-------|-----|--------|--------|
 | 1 | v0.17.0 - Core Metrics | Dec 10 | Dec 23, 2024 | #1-11 | ✅ Done |
 | 2 | v0.18.0 - Quality Gates | Dec 24 | Dec 30, 2024 | #12-18 | ✅ Done |
-| 3 | v0.19.0 - Cross-File Analysis | Dec 31 | Jan 6, 2025 | #19-26 | 📋 Backlog |
-| 4 | v0.20.0 - Visualization Export | Jan 7 | Jan 13, 2025 | #27-33 | 📋 Backlog |
+| 3 | v0.19.0 - Cross-File Analysis | Dec 31 | Jan 6, 2025 | #19-26 | ✅ Done |
+| 4 | v0.20.0 - Visualization Export | Jan 7 | Jan 13, 2025 | #27-33 | 🎯 Ready |
 | 5 | v0.21.0 - Search Integration | Jan 20 | Feb 3, 2025 | #34-37 | 📋 Backlog |
 
 ## Workflow
@@ -67,17 +67,17 @@ The minimum timeline is determined by these dependent issues:
 
 | Issue | Title | Dependencies | Status |
 |-------|-------|--------------|--------|
-| #1 | [EPIC] Core Metrics | - | 🎯 Ready |
-| #2 | Create metric dataclasses | None | 🎯 Ready |
-| #3 | Cognitive Complexity Collector | #2 | 🎯 Ready |
-| #4 | Cyclomatic Complexity Collector | #2 | 🎯 Ready |
-| #5 | Nesting Depth Collector | #2 | 🎯 Ready |
-| #6 | Parameter Count Collector | #2 | 🎯 Ready |
-| #7 | Method Count Collector | #2 | 🎯 Ready |
-| #8 | Integrate collectors with indexer | #2-7 | 🎯 Ready |
-| #9 | Extend ChromaDB metadata | #2 | 🎯 Ready |
-| #10 | Create `analyze --quick` CLI | #8, #9 | 🎯 Ready |
-| #11 | Console reporter | #10 | 🎯 Ready |
+| #1 | [EPIC] Core Metrics | - | ✅ Done |
+| #2 | Create metric dataclasses | None | ✅ Done |
+| #3 | Cognitive Complexity Collector | #2 | ✅ Done |
+| #4 | Cyclomatic Complexity Collector | #2 | ✅ Done |
+| #5 | Nesting Depth Collector | #2 | ✅ Done |
+| #6 | Parameter Count Collector | #2 | ✅ Done |
+| #7 | Method Count Collector | #2 | ✅ Done |
+| #8 | Integrate collectors with indexer | #2-7 | ✅ Done |
+| #9 | Extend ChromaDB metadata | #2 | ✅ Done |
+| #10 | Create `analyze --quick` CLI | #8, #9 | ✅ Done |
+| #11 | Console reporter | #10 | ✅ Done |
 
 **Validation Criteria**:
 - Metrics match SonarQube on sample projects
@@ -87,56 +87,56 @@ The minimum timeline is determined by these dependent issues:
 
 **Goal**: Threshold configuration, CI integration, diff-aware analysis
 
-| Issue | Title | Dependencies |
-|-------|-------|--------------|
-| #12 | [EPIC] Quality Gates | Phase 1 |
-| #13 | Threshold configuration system | #2 |
-| #14 | Code smell detection | #8, #13 |
-| #15 | SARIF output format | #10, #14 |
-| #16 | `--fail-on-smell` exit codes | #14, #15 |
-| #17 | Diff-aware analysis | #10 |
-| #18 | Baseline comparison | #17 |
+| Issue | Title | Dependencies | Status |
+|-------|-------|--------------|--------|
+| #12 | [EPIC] Quality Gates | Phase 1 | ✅ Done |
+| #13 | Threshold configuration system | #2 | ✅ Done |
+| #14 | Code smell detection | #8, #13 | ✅ Done |
+| #15 | SARIF output format | #10, #14 | ✅ Done |
+| #16 | `--fail-on-smell` exit codes | #14, #15 | ✅ Done |
+| #17 | Diff-aware analysis | #10 | ✅ Done |
+| #18 | Baseline comparison | #17 | ✅ Done |
 
 ### Phase 3: Cross-File Analysis (v0.19.0)
 
 **Goal**: Coupling metrics, dependency graph, SQLite storage
 
-| Issue | Title | Dependencies |
-|-------|-------|--------------|
-| #19 | [EPIC] Cross-File Analysis | Phase 2 |
-| #20 | Efferent Coupling Collector | #2, #8 |
-| #21 | Afferent Coupling Collector | #20 |
-| #22 | Instability Index | #20, #21 |
-| #23 | Circular dependency detection | #20 |
-| #24 | SQLite metrics store | #2 |
-| #25 | Trend tracking | #24 |
-| #26 | LCOM4 cohesion metric | #2, #8 |
+| Issue | Title | Dependencies | Status |
+|-------|-------|--------------|--------|
+| #19 | [EPIC] Cross-File Analysis | Phase 2 | ✅ Done |
+| #20 | Efferent Coupling Collector | #2, #8 | ✅ Done |
+| #21 | Afferent Coupling Collector | #20 | ✅ Done |
+| #22 | Instability Index | #20, #21 | ✅ Done |
+| #23 | Circular dependency detection | #20 | ✅ Done |
+| #24 | SQLite metrics store | #2 | ✅ Done |
+| #25 | Trend tracking | #24 | ✅ Done |
+| #26 | LCOM4 cohesion metric | #2, #8 | ✅ Done |
 
 ### Phase 4: Visualization Export (v0.20.0)
 
 **Goal**: JSON/HTML reports, Halstead metrics, tech debt estimation
 
-| Issue | Title | Dependencies |
-|-------|-------|--------------|
-| #27 | [EPIC] Visualization Export | Phase 3 |
-| #28 | JSON export schema | #2 |
-| #29 | JSON exporter | #28, #10 |
-| #30 | HTML standalone report | #29 |
-| #31 | Halstead metrics collector | #2, #8 |
-| #32 | Technical debt estimation | #14, #24 |
-| #33 | `status --metrics` command | #10, #24 |
+| Issue | Title | Dependencies | Status |
+|-------|-------|--------------|--------|
+| #27 | [EPIC] Visualization Export | Phase 3 | 🎯 Ready |
+| #28 | JSON export schema | #2 | 🎯 Ready |
+| #29 | JSON exporter | #28, #10 | 🎯 Ready |
+| #30 | HTML standalone report | #29 | 🎯 Ready |
+| #31 | Halstead metrics collector | #2, #8 | 🎯 Ready |
+| #32 | Technical debt estimation | #14, #24 | 🎯 Ready |
+| #33 | `status --metrics` command | #10, #24 | 🎯 Ready |
 
 ### Phase 5: Search Integration (v0.21.0)
 
 **Goal**: Quality-aware search ranking, MCP tool exposure, LLM interpretation
 
-| Issue | Title | Dependencies |
-|-------|-------|--------------|
-| #34 | [EPIC] Search Integration | Phase 4 |
-| #35 | Quality filters for search | #10, #14 |
-| #36 | Quality-aware ranking | #35 |
-| #37 | Expose as MCP tools | #10, #35 |
-| #38 | LLM interpretation of analysis | #10, #14, #29, #37 |
+| Issue | Title | Dependencies | Status |
+|-------|-------|--------------|--------|
+| #34 | [EPIC] Search Integration | Phase 4 | 📋 Backlog |
+| #35 | Quality filters for search | #10, #14 | 📋 Backlog |
+| #36 | Quality-aware ranking | #35 | 📋 Backlog |
+| #37 | Expose as MCP tools | #10, #35 | 📋 Backlog |
+| #38 | LLM interpretation of analysis | #10, #14, #29, #37 | 📋 Backlog |
 
 ## Project Settings
 
@@ -213,5 +213,5 @@ src/mcp_vector_search/
 ---
 
 **Created**: December 9, 2024
-**Last Updated**: December 9, 2024
+**Last Updated**: December 11, 2024
 **Assignee**: @bobmatnyc
