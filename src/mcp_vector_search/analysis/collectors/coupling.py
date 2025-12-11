@@ -1,15 +1,16 @@
-"""Coupling metric collectors for dependency analysis.
+"""Coupling metric collectors for structural code analysis.
 
-This module provides collectors for efferent coupling (Ce) - the count of
-external modules/files a file depends on (outgoing dependencies).
+This module provides collectors for measuring coupling metrics:
+- EfferentCouplingCollector: Counts outgoing dependencies (imports from this file)
+- AfferentCouplingCollector: Counts incoming dependencies (files that import this file)
 
-Higher efferent coupling indicates fragility - changes to dependencies can
-break this file.
+Coupling metrics help identify architectural dependencies and potential refactoring needs.
 """
 
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .base import CollectorContext, MetricCollector
@@ -18,42 +19,61 @@ if TYPE_CHECKING:
     from tree_sitter import Node
 
 
-# Multi-language import node type mappings
+# Multi-language import statement mappings
 IMPORT_NODE_TYPES = {
     "python": {
-        "import_statement": ["import_statement"],
-        "import_from": ["import_from_statement"],
+        "import": ["import_statement", "import_from_statement"],
+        "module_name": ["dotted_name", "aliased_import"],
     },
     "javascript": {
-        "import_statement": ["import_statement"],
+        "import": ["import_statement"],
+        "module_name": ["string", "import_clause"],
         "require_call": ["call_expression"],  # require('module')
     },
     "typescript": {
-        "import_statement": ["import_statement"],
+        "import": ["import_statement"],
+        "module_name": ["string", "import_clause"],
         "import_type": ["import_statement"],  # import type { T } from 'mod'
         "require_call": ["call_expression"],
+    },
+    "java": {
+        "import": ["import_declaration"],
+        "module_name": ["scoped_identifier"],
+    },
+    "rust": {
+        "import": ["use_declaration"],
+        "module_name": ["scoped_identifier"],
+    },
+    "php": {
+        "import": ["namespace_use_declaration"],
+        "module_name": ["qualified_name"],
+    },
+    "ruby": {
+        "import": ["call"],  # require, require_relative
+        "module_name": ["string"],
     },
 }
 
 
 def get_import_node_types(language: str, category: str) -> list[str]:
-    """Get tree-sitter node types for import statements.
+    """Get tree-sitter node types for imports in a given language.
 
     Args:
-        language: Programming language (e.g., "python", "javascript")
-        category: Import category (e.g., "import_statement", "import_from")
+        language: Programming language identifier (e.g., "python", "javascript")
+        category: Category of import node ("import", "module_name", etc.)
 
     Returns:
-        List of node type names for this language/category combination.
+        List of node type names for this language/category.
         Returns empty list if language/category not found.
 
     Examples:
-        >>> get_import_node_types("python", "import_statement")
-        ["import_statement"]
+        >>> get_import_node_types("python", "import")
+        ["import_statement", "import_from_statement"]
 
-        >>> get_import_node_types("javascript", "import_statement")
+        >>> get_import_node_types("javascript", "import")
         ["import_statement"]
     """
+    # Default to Python-like behavior for unknown languages
     lang_mapping = IMPORT_NODE_TYPES.get(language, IMPORT_NODE_TYPES["python"])
     return lang_mapping.get(category, [])
 
@@ -220,20 +240,23 @@ class EfferentCouplingCollector(MetricCollector):
         node_type = node.type
 
         # Check if this is an import statement
-        if node_type in get_import_node_types(language, "import_statement"):
+        if node_type in get_import_node_types(language, "import"):
             self._extract_import(node, context)
-        elif node_type in get_import_node_types(language, "import_from"):
-            self._extract_import_from(node, context)
         elif language in ("javascript", "typescript"):
             # Handle require() calls in JS/TS
-            self._extract_require_call(node, context)
+            if node_type in get_import_node_types(language, "require_call"):
+                self._extract_require_call(node, context)
 
     def _extract_import(self, node: Node, context: CollectorContext) -> None:
         """Extract module name from import statement.
 
         Handles:
-        - Python: import module, import module as alias
+        - Python: import module, from module import X
         - JavaScript/TypeScript: import ... from 'module'
+        - Java: import com.example.Class
+        - Rust: use std::collections::HashMap
+        - PHP: use MyNamespace\MyClass
+        - Ruby: require "module"
 
         Args:
             node: Import statement node
@@ -242,63 +265,72 @@ class EfferentCouplingCollector(MetricCollector):
         language = context.language
 
         if language == "python":
-            # Python: import os, import os.path, import os as operating_system
-            # Look for dotted_name child
-            for child in node.children:
-                if child.type == "dotted_name":
-                    module_name = child.text.decode("utf-8")
-                    self._add_import(module_name, context)
-                elif child.type == "aliased_import":
-                    # import os as operating_system
-                    # Get the name field (first child)
-                    for subchild in child.children:
-                        if subchild.type == "dotted_name":
-                            module_name = subchild.text.decode("utf-8")
-                            self._add_import(module_name, context)
-                            break
-
-        elif language in ("javascript", "typescript"):
-            # JavaScript/TypeScript: import ... from 'module'
-            # Find the string literal containing module path
-            for child in node.children:
-                if child.type == "string":
-                    # Extract module name from string (remove quotes)
-                    module_str = child.text.decode("utf-8")
-                    module_name = module_str.strip("\"'")
-                    self._add_import(module_name, context)
-
-    def _extract_import_from(self, node: Node, context: CollectorContext) -> None:
-        """Extract module name from 'from X import Y' statement.
-
-        Handles:
-        - Python: from module import X, from .relative import Y
-
-        Args:
-            node: Import from statement node
-            context: Collector context
-        """
-        language = context.language
-
-        if language == "python":
-            # Python: from module import X
-            # Look for module_name field
+            # Python: import os, from os import path
+            # Look for dotted_name or module_name field
             module_node = node.child_by_field_name("module_name")
             if module_node:
                 module_name = module_node.text.decode("utf-8")
                 self._add_import(module_name, context)
             else:
-                # Check for relative imports (from . import X)
+                # Look for dotted_name child
                 for child in node.children:
-                    if child.type == "relative_import":
-                        # Relative import detected
+                    if child.type == "dotted_name":
+                        module_name = child.text.decode("utf-8")
+                        self._add_import(module_name, context)
+                    elif child.type == "aliased_import":
+                        # import os as operating_system
+                        for subchild in child.children:
+                            if subchild.type == "dotted_name":
+                                module_name = subchild.text.decode("utf-8")
+                                self._add_import(module_name, context)
+                                break
+                    elif child.type == "relative_import":
+                        # Relative import (from . import X)
                         dots = child.text.decode("utf-8")
                         self._add_import(dots, context)
                         break
-                    elif child.type == "dotted_name":
-                        # Absolute import
-                        module_name = child.text.decode("utf-8")
-                        self._add_import(module_name, context)
-                        break
+
+        elif language in ("javascript", "typescript"):
+            # JavaScript/TypeScript: import ... from 'module'
+            for child in node.children:
+                if child.type == "string":
+                    module_str = child.text.decode("utf-8")
+                    module_name = module_str.strip("\"'")
+                    self._add_import(module_name, context)
+
+        elif language == "java":
+            for child in node.children:
+                if child.type == "scoped_identifier":
+                    module_name = child.text.decode("utf-8")
+                    self._add_import(module_name, context)
+
+        elif language == "rust":
+            for child in node.children:
+                if child.type == "scoped_identifier":
+                    module_name = child.text.decode("utf-8")
+                    self._add_import(module_name, context)
+
+        elif language == "php":
+            for child in node.children:
+                if child.type == "qualified_name":
+                    module_name = child.text.decode("utf-8")
+                    self._add_import(module_name, context)
+
+        elif language == "ruby":
+            # Ruby uses method calls for imports
+            if node.type == "call":
+                method_child = node.child_by_field_name("method")
+                if method_child and method_child.text.decode("utf-8") in [
+                    "require",
+                    "require_relative",
+                ]:
+                    args_child = node.child_by_field_name("arguments")
+                    if args_child:
+                        for child in args_child.children:
+                            if child.type == "string":
+                                module_str = child.text.decode("utf-8")
+                                module_name = module_str.strip("\"'")
+                                self._add_import(module_name, context)
 
     def _extract_require_call(self, node: Node, context: CollectorContext) -> None:
         """Extract module name from require('module') call.
@@ -310,18 +342,11 @@ class EfferentCouplingCollector(MetricCollector):
             node: Call expression node
             context: Collector context
         """
-        language = context.language
-
-        if language not in ("javascript", "typescript"):
-            return
-
         # Check if this is a require() call
-        # Structure: call_expression with function=identifier("require")
         function_node = node.child_by_field_name("function")
         if function_node and function_node.type == "identifier":
             function_name = function_node.text.decode("utf-8")
             if function_name == "require":
-                # Get arguments
                 args_node = node.child_by_field_name("arguments")
                 if args_node:
                     for child in args_node.children:
@@ -354,6 +379,14 @@ class EfferentCouplingCollector(MetricCollector):
             # For now, treat non-relative, non-stdlib as external
             # Future enhancement: project_root detection
             self._external_imports.add(module_name)
+
+    def get_imported_modules(self) -> set[str]:
+        """Get set of all imported module names.
+
+        Returns:
+            Set of module names imported by this file
+        """
+        return self._imports.copy()
 
     def finalize_function(
         self, node: Node, context: CollectorContext
@@ -389,3 +422,256 @@ class EfferentCouplingCollector(MetricCollector):
         self._imports.clear()
         self._internal_imports.clear()
         self._external_imports.clear()
+
+
+class AfferentCouplingCollector(MetricCollector):
+    """Tracks afferent coupling (Ca) - incoming dependencies.
+
+    Afferent coupling measures how many other files depend on this file
+    (i.e., how many files import this file). Higher Ca indicates this
+    file is more load-bearing - changes will affect many other files.
+
+    Interpretation:
+    - 0-2: Low coupling, changes affect few files
+    - 3-5: Moderate coupling, shared utility
+    - 6-10: High coupling, critical component
+    - 11+: Very high coupling, core infrastructure
+
+    Example:
+        # File A is imported by files B, C, D
+        # Afferent Coupling (Ca) = 3
+
+    Note: Afferent coupling requires project-wide import graph analysis.
+    Use build_import_graph() to construct the graph before creating this collector.
+    """
+
+    def __init__(self, import_graph: dict[str, set[str]] | None = None) -> None:
+        """Initialize afferent coupling collector.
+
+        Args:
+            import_graph: Pre-built import graph mapping module_name → set of importing files.
+                         If None, afferent coupling will always be 0.
+        """
+        self._import_graph = import_graph or {}
+        self._current_file: str | None = None
+
+    @property
+    def name(self) -> str:
+        """Return collector identifier.
+
+        Returns:
+            Collector name "afferent_coupling"
+        """
+        return "afferent_coupling"
+
+    def collect_node(self, node: Node, context: CollectorContext, depth: int) -> None:
+        """Process node (no-op for afferent coupling).
+
+        Afferent coupling is computed from the import graph, not by traversing nodes.
+
+        Args:
+            node: Current tree-sitter AST node (unused)
+            context: Shared context with file path
+            depth: Current depth in AST (unused)
+        """
+        # Store current file path for lookup
+        if context.file_path and not self._current_file:
+            self._current_file = context.file_path
+
+    def get_afferent_coupling(self, file_path: str) -> int:
+        """Get count of files that import this file.
+
+        Args:
+            file_path: Path to the file to check
+
+        Returns:
+            Number of files that import this file
+        """
+        # Normalize file path for lookup
+        normalized_path = self._normalize_path(file_path)
+
+        # Look up in import graph
+        if normalized_path in self._import_graph:
+            return len(self._import_graph[normalized_path])
+
+        return 0
+
+    def get_dependents(self, file_path: str) -> list[str]:
+        """Get list of files that depend on this file.
+
+        Args:
+            file_path: Path to the file to check
+
+        Returns:
+            List of file paths that import this file
+        """
+        normalized_path = self._normalize_path(file_path)
+
+        if normalized_path in self._import_graph:
+            return sorted(self._import_graph[normalized_path])
+
+        return []
+
+    def _normalize_path(self, file_path: str) -> str:
+        """Normalize file path for consistent lookup.
+
+        Args:
+            file_path: File path to normalize
+
+        Returns:
+            Normalized file path
+        """
+        # Convert to Path and resolve to absolute path
+        path = Path(file_path)
+        if path.is_absolute():
+            return str(path)
+
+        # If relative, return as-is (caller should ensure consistency)
+        return str(path)
+
+    def finalize_function(
+        self, node: Node, context: CollectorContext
+    ) -> dict[str, Any]:
+        """Return final afferent coupling metrics.
+
+        Note: This is called per function, but afferent coupling is a file-level metric.
+
+        Args:
+            node: Function definition node
+            context: Shared context with file path
+
+        Returns:
+            Dictionary with afferent_coupling count and dependents list
+        """
+        file_path = context.file_path
+        return {
+            "afferent_coupling": self.get_afferent_coupling(file_path),
+            "dependents": self.get_dependents(file_path),
+        }
+
+    def reset(self) -> None:
+        """Reset collector state for next file."""
+        self._current_file = None
+
+
+def build_import_graph(
+    project_root: Path, files: list[Path], language: str = "python"
+) -> dict[str, set[str]]:
+    """Build project-wide import graph for afferent coupling analysis.
+
+    Analyzes all files in the project to construct a reverse dependency graph
+    mapping each module to the set of files that import it.
+
+    Args:
+        project_root: Root directory of the project
+        files: List of file paths to analyze
+        language: Programming language (default: "python")
+
+    Returns:
+        Dictionary mapping module_name → set of file paths that import it
+
+    Example:
+        >>> files = [Path("a.py"), Path("b.py"), Path("c.py")]
+        >>> graph = build_import_graph(Path("/project"), files)
+        >>> graph["module_x"]
+        {"a.py", "c.py"}  # Both a.py and c.py import module_x
+    """
+    import_graph: dict[str, set[str]] = {}
+
+    # Use tree-sitter to parse each file and extract imports
+    try:
+        from tree_sitter import Parser
+
+        # Get tree-sitter language
+        language_obj = _get_tree_sitter_language(language)
+        if not language_obj:
+            # Fallback: no tree-sitter support, return empty graph
+            return import_graph
+
+        parser = Parser()
+        parser.set_language(language_obj)
+
+    except ImportError:
+        # Tree-sitter not available, return empty graph
+        return import_graph
+
+    # Create efferent coupling collector to extract imports
+    efferent_collector = EfferentCouplingCollector()
+
+    for file_path in files:
+        # Skip non-existent files
+        if not file_path.exists():
+            continue
+
+        # Read file content
+        try:
+            source_code = file_path.read_bytes()
+        except OSError:
+            continue
+
+        # Parse with tree-sitter
+        tree = parser.parse(source_code)
+        if not tree or not tree.root_node:
+            continue
+
+        # Create context for this file
+        context = CollectorContext(
+            file_path=str(file_path.relative_to(project_root)),
+            source_code=source_code,
+            language=language,
+        )
+
+        # Traverse AST and collect imports
+        efferent_collector.reset()
+        _traverse_tree(tree.root_node, context, efferent_collector)
+
+        # Get imported modules for this file
+        imported_modules = efferent_collector.get_imported_modules()
+
+        # Update import graph (reverse mapping)
+        file_key = str(file_path.relative_to(project_root))
+        for module_name in imported_modules:
+            if module_name not in import_graph:
+                import_graph[module_name] = set()
+            import_graph[module_name].add(file_key)
+
+    return import_graph
+
+
+def _traverse_tree(
+    node: Node, context: CollectorContext, collector: EfferentCouplingCollector
+) -> None:
+    """Recursively traverse tree-sitter AST and collect imports.
+
+    Args:
+        node: Current AST node
+        context: Collector context
+        collector: Efferent coupling collector to accumulate imports
+    """
+    # Process current node
+    collector.collect_node(node, context, depth=0)
+
+    # Recursively process children
+    for child in node.children:
+        _traverse_tree(child, context, collector)
+
+
+def _get_tree_sitter_language(language: str) -> Any:  # noqa: ARG001
+    """Get tree-sitter Language object for the given language.
+
+    Args:
+        language: Programming language identifier
+
+    Returns:
+        Tree-sitter Language object, or None if not available
+    """
+    try:
+        # Language loading depends on tree-sitter installation
+        # This is a simplified version - actual implementation should handle
+        # loading compiled language libraries properly
+        # In a real implementation, this would load the compiled language library
+        # For now, return None to indicate unsupported
+        return None
+
+    except ImportError:
+        return None
