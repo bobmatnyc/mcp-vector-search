@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2025-12-11
+
+### Added
+- **Cross-File Analysis (Phase 3)** - Complete dependency and coupling analysis suite
+  - **Efferent Coupling Collector** (#20) - Measures outgoing dependencies (Ce) from each module
+  - **Afferent Coupling Collector** (#21) - Measures incoming dependencies (Ca) to each module
+  - **Instability Index Calculator** (#22) - Computes I = Ce/(Ce+Ca) with A-F grading system
+  - **Circular Dependency Detection** (#23) - DFS-based cycle detection with path visualization
+  - **SQLite Metrics Store** (#24) - Persistent storage for metrics with git commit metadata
+  - **Trend Tracking** (#25) - Regression detection with configurable thresholds (default 5%)
+  - **LCOM4 Cohesion Metric** (#26) - Lack of Cohesion of Methods calculator for class quality
+
+### Technical Details
+- Import graph builder for dependency analysis
+- Configurable instability thresholds (stable: I<0.3, unstable: I>0.7)
+- Git integration for historical trend analysis
+- Grade-based quality gates for coupling metrics
+- Full test coverage for all Phase 3 collectors
+
 ## [0.18.0] - 2025-12-11
 
 ### Added
