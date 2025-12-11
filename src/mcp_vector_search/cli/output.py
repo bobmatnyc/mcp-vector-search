@@ -250,16 +250,30 @@ def print_dependency_status(
 
 
 def print_json(data: Any, title: str | None = None) -> None:
-    """Print data as formatted JSON."""
+    """Print data as formatted JSON.
+
+    When title is None (typical for --json flag), outputs raw JSON to stdout
+    for machine consumption (e.g., piping to json.tool).
+    When title is provided, uses Rich formatting for human-readable display.
+
+    Args:
+        data: Data to serialize as JSON
+        title: Optional title for Rich panel display
+    """
     import json
 
-    json_str = json.dumps(data, indent=2, default=str)
-    syntax = Syntax(json_str, "json", theme="monokai")
-
     if title:
+        # Human-readable display with Rich formatting
+        json_str = json.dumps(data, indent=2, default=str)
+        syntax = Syntax(json_str, "json", theme="monokai")
         console.print(Panel(syntax, title=title, border_style="blue"))
     else:
-        console.print(syntax)
+        # Machine-readable output: raw JSON to stdout
+        # Use sys.stdout.write to bypass Rich console formatting
+        json_str = json.dumps(data, indent=2, default=str, ensure_ascii=False)
+        sys.stdout.write(json_str)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
 
 def print_panel(
