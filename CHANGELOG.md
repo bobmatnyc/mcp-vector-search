@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2024-12-11
+
+### Added
+- **Structural Code Analysis Module** (`src/mcp_vector_search/analysis/`)
+  - New analysis module with metric dataclasses and collector interfaces
+  - Multi-language support for Python, JavaScript, and TypeScript via TreeSitter
+  - Designed for <10ms overhead per 1000 LOC
+
+- **Five Complexity Metric Collectors**
+  - **Cognitive Complexity**: Measures code understandability and mental burden
+  - **Cyclomatic Complexity**: Counts independent execution paths through code
+  - **Nesting Depth**: Tracks maximum depth of nested control structures
+  - **Parameter Count**: Analyzes function parameter complexity
+  - **Method Count**: Enumerates class methods for complexity assessment
+
+- **New `analyze` CLI Command** (`mcp-vector-search analyze`)
+  - `--quick` mode for fast analysis (cognitive + cyclomatic complexity only)
+  - `--language` filter to analyze specific languages (python, javascript, typescript)
+  - `--path` filter to analyze specific directories or files
+  - `--top N` option to show top complexity hotspots
+  - `--json` output format for programmatic integration
+
+- **Rich Console Reporter**
+  - Project-wide summary statistics with file and function counts
+  - Complexity grade distribution (A-F) with visual breakdown
+  - Top complexity hotspots ranked by severity
+  - Actionable recommendations for code improvements
+  - Color-coded output with severity indicators
+
+- **ChromaDB Metadata Extension**
+  - Extended chunk metadata schema with structural metrics
+  - Configurable complexity thresholds for grading
+  - Automatic metrics storage during indexing
+  - Threshold-based quality gates
+
+### Technical Details
+- 14 new unit tests for analyze command with 100% coverage
+- Multi-language TreeSitter integration for accurate parsing
+- Efficient collector pipeline with minimal performance impact
+- Seamless integration with existing indexer workflow
+
 ## [1.0.3] - 2025-12-11
 
 ### Fixed
