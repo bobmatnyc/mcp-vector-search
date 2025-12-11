@@ -87,6 +87,18 @@ def main(
         help="Output file path (required for sarif format)",
         rich_help_panel="📊 Display Options",
     ),
+    fail_on_smell: bool = typer.Option(
+        False,
+        "--fail-on-smell",
+        help="Exit with code 1 if code smells are detected",
+        rich_help_panel="🚦 Quality Gates",
+    ),
+    severity_threshold: str = typer.Option(
+        "error",
+        "--severity-threshold",
+        help="Minimum severity to trigger failure: info, warning, error, none",
+        rich_help_panel="🚦 Quality Gates",
+    ),
 ) -> None:
     """📈 Analyze code complexity and quality.
 
@@ -117,6 +129,17 @@ def main(
 
     [green]Export to SARIF format:[/green]
         $ mcp-vector-search analyze --format sarif --output report.sarif
+
+    [bold cyan]CI/CD Quality Gates:[/bold cyan]
+
+    [green]Fail on ERROR-level smells (default):[/green]
+        $ mcp-vector-search analyze --fail-on-smell
+
+    [green]Fail on WARNING or ERROR smells:[/green]
+        $ mcp-vector-search analyze --fail-on-smell --severity-threshold warning
+
+    [green]CI/CD workflow with SARIF:[/green]
+        $ mcp-vector-search analyze --fail-on-smell --format sarif --output report.sarif
 
     [dim]💡 Tip: Use --quick for faster analysis on large projects.[/dim]
     """
@@ -159,13 +182,43 @@ def main(
                 show_smells=show_smells,
                 output_format=format_lower,
                 output_file=output,
+                fail_on_smell=fail_on_smell,
+                severity_threshold=severity_threshold,
             )
         )
 
+    except typer.Exit:
+        # Re-raise typer.Exit to preserve exit codes from run_analysis
+        raise
     except Exception as e:
         logger.error(f"Analysis failed: {e}")
         print_error(f"Analysis failed: {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(2)  # Exit code 2 for analysis errors
+
+
+def filter_smells_by_severity(smells: list, severity_threshold: str) -> list:
+    """Filter smells by minimum severity threshold.
+
+    Args:
+        smells: List of CodeSmell objects to filter
+        severity_threshold: Minimum severity level - "info", "warning", "error", or "none"
+
+    Returns:
+        Filtered list of smells matching or exceeding the severity threshold
+    """
+    from ...analysis.collectors.smells import SmellSeverity
+
+    if severity_threshold.lower() == "none":
+        return []
+
+    severity_levels = {
+        "info": [SmellSeverity.INFO, SmellSeverity.WARNING, SmellSeverity.ERROR],
+        "warning": [SmellSeverity.WARNING, SmellSeverity.ERROR],
+        "error": [SmellSeverity.ERROR],
+    }
+
+    allowed = severity_levels.get(severity_threshold.lower(), [SmellSeverity.ERROR])
+    return [s for s in smells if s.severity in allowed]
 
 
 async def run_analysis(
@@ -178,6 +231,8 @@ async def run_analysis(
     show_smells: bool = True,
     output_format: str = "console",
     output_file: Path | None = None,
+    fail_on_smell: bool = False,
+    severity_threshold: str = "error",
 ) -> None:
     """Run code complexity analysis.
 
@@ -191,6 +246,8 @@ async def run_analysis(
         show_smells: Show detected code smells in output
         output_format: Output format (console, json, sarif)
         output_file: Output file path (for sarif format)
+        fail_on_smell: Exit with code 1 if smells are detected
+        severity_threshold: Minimum severity to trigger failure
     """
     try:
         # Check if project is initialized (optional - we can analyze any directory)
@@ -334,6 +391,16 @@ async def run_analysis(
                 reporter.print_smells(all_smells, top=top_n)
 
             reporter.print_recommendations(project_metrics)
+
+        # Quality gate: check if we should fail on smells
+        if fail_on_smell and all_smells:
+            failing_smells = filter_smells_by_severity(all_smells, severity_threshold)
+            if failing_smells:
+                console.print(
+                    f"\n[red]❌ Quality gate failed: {len(failing_smells)} "
+                    f"{severity_threshold}+ severity smell(s) detected[/red]"
+                )
+                raise typer.Exit(1)
 
     except ProjectNotFoundError as e:
         if json_output:
