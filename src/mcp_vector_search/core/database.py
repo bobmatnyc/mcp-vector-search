@@ -189,7 +189,11 @@ class ChromaVectorDatabase(VectorDatabase):
 
                 logger.debug(f"ChromaDB initialized at {self.persist_directory}")
 
-            except Exception as init_error:
+            except BaseException as init_error:
+                # Re-raise system exceptions we should never catch
+                if isinstance(init_error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                    raise
+
                 # LAYER 2: Detect Rust panic patterns during initialization
                 error_msg = str(init_error).lower()
 
@@ -235,7 +239,11 @@ class ChromaVectorDatabase(VectorDatabase):
 
                         logger.info("ChromaDB successfully initialized after recovery")
 
-                    except Exception as retry_error:
+                    except BaseException as retry_error:
+                        # Re-raise system exceptions
+                        if isinstance(retry_error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                            raise
+
                         logger.error(
                             f"Failed to recover from database corruption: {retry_error}"
                         )

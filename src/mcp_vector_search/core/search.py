@@ -215,7 +215,11 @@ class SemanticSearchEngine:
 
                 return results
 
-            except Exception as e:
+            except BaseException as e:
+                # Re-raise system exceptions we should never catch
+                if isinstance(e, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                    raise
+
                 last_error = e
 
                 # Check if this is a Rust panic

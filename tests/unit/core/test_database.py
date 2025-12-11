@@ -540,7 +540,12 @@ class TestPooledChromaVectorDatabase:
         )
 
         # Mock chromadb.PersistentClient to raise Rust panic on first call
-        rust_panic_error = Exception(
+        # Create mock that inherits from BaseException like pyo3_runtime.PanicException
+        class MockPanicException(BaseException):
+            """Mock for pyo3_runtime.PanicException which inherits from BaseException."""
+            pass
+
+        rust_panic_error = MockPanicException(
             "range start index 5 out of range for slice of length 3"
         )
 
@@ -587,7 +592,12 @@ class TestPooledChromaVectorDatabase:
         )
 
         # Mock chromadb.PersistentClient to always raise Rust panic
-        rust_panic_error = Exception("thread panicked at 'index out of bounds'")
+        # Create mock that inherits from BaseException like pyo3_runtime.PanicException
+        class MockPanicException(BaseException):
+            """Mock for pyo3_runtime.PanicException which inherits from BaseException."""
+            pass
+
+        rust_panic_error = MockPanicException("thread panicked at 'index out of bounds'")
 
         with patch("chromadb.PersistentClient") as mock_client:
             # Always raise Rust panic (both initial and retry)
