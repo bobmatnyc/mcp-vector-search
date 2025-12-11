@@ -33,6 +33,12 @@ class ChunkMetrics:
     parameter_count: int = 0
     lines_of_code: int = 0
 
+    # Halstead metrics (Phase 4)
+    halstead_volume: float | None = None
+    halstead_difficulty: float | None = None
+    halstead_effort: float | None = None
+    halstead_bugs: float | None = None
+
     # Code smells detected
     smells: list[str] = field(default_factory=list)
 
@@ -87,7 +93,7 @@ class ChunkMetrics:
         """
         import json
 
-        return {
+        metadata = {
             "cognitive_complexity": self.cognitive_complexity,
             "cyclomatic_complexity": self.cyclomatic_complexity,
             "max_nesting_depth": self.max_nesting_depth,
@@ -97,6 +103,18 @@ class ChunkMetrics:
             "code_smells": json.dumps(self.smells),  # Convert list to JSON string
             "smell_count": len(self.smells),
         }
+
+        # Add Halstead metrics if available
+        if self.halstead_volume is not None:
+            metadata["halstead_volume"] = self.halstead_volume
+        if self.halstead_difficulty is not None:
+            metadata["halstead_difficulty"] = self.halstead_difficulty
+        if self.halstead_effort is not None:
+            metadata["halstead_effort"] = self.halstead_effort
+        if self.halstead_bugs is not None:
+            metadata["halstead_bugs"] = self.halstead_bugs
+
+        return metadata
 
 
 @dataclass

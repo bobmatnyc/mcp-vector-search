@@ -45,6 +45,7 @@ from .coupling import (
     build_import_graph,
     build_import_graph_from_dict,
 )
+from .halstead import HalsteadCollector, HalsteadMetrics
 
 __all__ = [
     "CollectorContext",
@@ -68,4 +69,6 @@ __all__ = [
     "LCOM4Calculator",
     "MethodAttributeAccess",
     "UnionFind",
+    "HalsteadCollector",
+    "HalsteadMetrics",
 ]
