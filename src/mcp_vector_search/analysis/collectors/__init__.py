@@ -20,6 +20,13 @@ Example:
 """
 
 from .base import CollectorContext, MetricCollector
+from .cohesion import (
+    ClassCohesion,
+    FileCohesion,
+    LCOM4Calculator,
+    MethodAttributeAccess,
+    UnionFind,
+)
 from .complexity import (
     CognitiveComplexityCollector,
     CyclomaticComplexityCollector,
@@ -36,4 +43,9 @@ __all__ = [
     "NestingDepthCollector",
     "ParameterCountCollector",
     "MethodCountCollector",
+    "ClassCohesion",
+    "FileCohesion",
+    "LCOM4Calculator",
+    "MethodAttributeAccess",
+    "UnionFind",
 ]
