@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2025-12-11
+
+### Added
+- **Visualization Export (Phase 4)** - Complete HTML report generation and metrics export
+  - **JSON Export Schema** (#28) - 13 Pydantic models for structured analysis data serialization
+  - **JSON Exporter** (#29) - Export analysis results to JSON with full metrics and code smell data
+  - **HTML Standalone Report Generator** (#30) - Self-contained HTML reports with embedded visualization
+  - **Halstead Metrics Collector** (#31) - Software science metrics (volume, difficulty, effort, bugs)
+  - **Technical Debt Estimation** (#32) - SQALE-based debt calculation with time-to-fix estimates
+  - **CLI Metrics Display** (#33) - `status --metrics` command for comprehensive project metrics
+
+### Features
+- Self-contained HTML reports with no external dependencies
+- Embedded D3.js force-directed graph visualization
+- Interactive code navigation with syntax highlighting
+- Export to JSON for custom tooling integration
+- Halstead complexity metrics with scientifically-derived bug estimation
+- Technical debt quantification in person-hours
+- Comprehensive metrics dashboard in CLI
+
+### Technical Details
+- Complete JSON schema with backward compatibility
+- Standalone HTML with inline CSS, JavaScript, and data
+- Pydantic validation for all exported data
+- Full test coverage for all Phase 4 components
+- SQALE methodology for technical debt calculation
+
 ## [0.19.0] - 2025-12-11
 
 ### Added
