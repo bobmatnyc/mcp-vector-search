@@ -163,6 +163,14 @@ def search_main(
         max=100,
         rich_help_panel="🎯 Quality Filters",
     ),
+    quality_weight: float = typer.Option(
+        0.3,
+        "--quality-weight",
+        help="Weight for quality ranking (0.0=pure relevance, 1.0=pure quality, default=0.3)",
+        min=0.0,
+        max=1.0,
+        rich_help_panel="🎯 Quality Filters",
+    ),
 ) -> None:
     """🔍 Search your codebase semantically.
 
@@ -206,6 +214,11 @@ def search_main(
 
     [green]Minimum quality score:[/green]
         $ mcp-vector-search search "handler" --min-quality 80
+
+    [green]Quality-aware ranking:[/green]
+        $ mcp-vector-search search "auth" --quality-weight 0.5  # Balance relevance and quality
+        $ mcp-vector-search search "api" --quality-weight 0.0   # Pure semantic search
+        $ mcp-vector-search search "util" --quality-weight 1.0  # Pure quality ranking
 
     [bold cyan]Export Results:[/bold cyan]
 
@@ -287,6 +300,7 @@ def search_main(
                     no_smells=no_smells,
                     grade=grade,
                     min_quality=min_quality,
+                    quality_weight=quality_weight,
                 )
             )
 
@@ -359,8 +373,9 @@ async def run_search(
     no_smells: bool = False,
     grade: str | None = None,
     min_quality: int | None = None,
+    quality_weight: float = 0.3,
 ) -> None:
-    """Run semantic search with optional quality filters."""
+    """Run semantic search with optional quality filters and quality-aware ranking."""
     # Load project configuration
     project_manager = ProjectManager(project_root)
 
@@ -505,6 +520,49 @@ async def run_search(
                     f"Quality filters reduced results from {initial_count} to {len(results)}"
                 )
 
+            # Apply quality-aware ranking if quality_weight > 0 and results have quality metrics
+            if quality_weight > 0.0 and results:
+                # Calculate quality scores for results that don't have them
+                for result in results:
+                    if result.quality_score is None:
+                        # Calculate quality score using the formula
+                        calculated_score = result.calculate_quality_score()
+                        if calculated_score is not None:
+                            result.quality_score = calculated_score
+
+                # Re-rank results based on combined score
+                # Store original similarity score for display
+                for result in results:
+                    # Store original relevance score
+                    if not hasattr(result, "_original_similarity"):
+                        result._original_similarity = result.similarity_score
+
+                    # Calculate combined score
+                    if result.quality_score is not None:
+                        # Normalize quality score to 0-1 range (it's 0-100)
+                        normalized_quality = result.quality_score / 100.0
+
+                        # Combined score: (1-W) × relevance + W × quality
+                        combined_score = (
+                            (1.0 - quality_weight) * result.similarity_score
+                            + quality_weight * normalized_quality
+                        )
+
+                        # Update similarity_score with combined score for sorting
+                        result.similarity_score = combined_score
+                    # If no quality score, keep original similarity_score
+
+                # Re-sort by combined score
+                results.sort(key=lambda r: r.similarity_score, reverse=True)
+
+                # Update ranks
+                for i, result in enumerate(results):
+                    result.rank = i + 1
+
+                logger.debug(
+                    f"Quality-aware ranking applied with weight {quality_weight:.2f}"
+                )
+
             # Handle export if requested
             if export_format:
                 from ..export import SearchResultExporter, get_export_path
@@ -558,6 +616,7 @@ async def run_search(
                     results=results,
                     query=query,
                     show_content=show_content,
+                    quality_weight=quality_weight,
                 )
 
                 # Add contextual tips based on results

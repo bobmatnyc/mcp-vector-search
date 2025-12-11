@@ -191,6 +191,44 @@ class SearchResult(BaseModel):
         """Get a human-readable location string."""
         return f"{self.file_path}:{self.start_line}-{self.end_line}"
 
+    def calculate_quality_score(self) -> int:
+        """Calculate quality score based on complexity grade and code smells.
+
+        Formula:
+        - Base: complexity_grade (A=100, B=80, C=60, D=40, F=20)
+        - Penalty: -10 per code smell
+        - Bonus: +20 if no smells (already factored into base if no smells)
+
+        Returns:
+            Quality score (0-100), or None if no quality metrics available
+        """
+        # If no quality metrics, return None (will be stored in quality_score field)
+        if self.complexity_grade is None:
+            return None
+
+        # Map complexity grade to base score
+        grade_scores = {
+            "A": 100,
+            "B": 80,
+            "C": 60,
+            "D": 40,
+            "F": 20,
+        }
+
+        base_score = grade_scores.get(self.complexity_grade, 0)
+
+        # Apply smell penalty
+        smell_count = self.smell_count or 0
+        penalty = smell_count * 10
+
+        # Calculate final score (with bonus for no smells already in base)
+        # Bonus: +20 if no smells (effectively makes A without smells = 100+20 = 120, capped at 100)
+        bonus = 20 if smell_count == 0 else 0
+        quality_score = base_score - penalty + bonus
+
+        # Clamp to 0-100 range
+        return max(0, min(100, quality_score))
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         result = {

@@ -153,8 +153,17 @@ def print_search_results(
     query: str,
     show_content: bool = True,
     max_content_lines: int = 10,
+    quality_weight: float = 0.0,
 ) -> None:
-    """Print search results in a formatted display."""
+    """Print search results in a formatted display with quality-aware ranking.
+
+    Args:
+        results: List of search results
+        query: Original search query
+        show_content: Whether to show code content
+        max_content_lines: Maximum lines of code to show
+        quality_weight: Weight for quality ranking (0.0-1.0), used to show score breakdown
+    """
     if not results:
         print_warning(f"No results found for query: '{query}'")
         return
@@ -162,7 +171,14 @@ def print_search_results(
     console.print(
         f"\n[bold blue]Search Results for:[/bold blue] [green]'{query}'[/green]"
     )
-    console.print(f"[dim]Found {len(results)} results[/dim]\n")
+
+    # Show quality ranking info if enabled
+    if quality_weight > 0.0:
+        console.print(
+            f"[dim]Found {len(results)} results (quality-aware ranking: {quality_weight:.0%} quality, {(1 - quality_weight):.0%} relevance)[/dim]\n"
+        )
+    else:
+        console.print(f"[dim]Found {len(results)} results[/dim]\n")
 
     for i, result in enumerate(results, 1):
         # Create result header
@@ -172,38 +188,85 @@ def print_search_results(
         if result.class_name:
             header += f" in [yellow]{result.class_name}[/yellow]"
 
-        # Add location and similarity
+        # Add location
         location = f"[dim]{result.location}[/dim]"
-        similarity = f"[green]{result.similarity_score:.2%}[/green]"
 
         console.print(f"{header}")
 
         # Build metadata line with quality metrics
-        metadata_parts = [location, f"Similarity: {similarity}"]
+        metadata_parts = [location]
 
-        # Add quality metrics if available
-        if result.complexity_grade:
-            grade_color = _get_grade_color(result.complexity_grade)
+        # Show score breakdown if quality ranking is enabled
+        if quality_weight > 0.0 and hasattr(result, "_original_similarity"):
+            # Quality-aware ranking: show relevance, quality, and combined
+            relevance_score = result._original_similarity
+            combined_score = result.similarity_score
+            quality_score = result.quality_score or 0
+
+            metadata_parts.append(f"Relevance: [cyan]{relevance_score:.2%}[/cyan]")
             metadata_parts.append(
+                f"Quality: [{_get_quality_color(quality_score)}]{quality_score}[/{_get_quality_color(quality_score)}]"
+            )
+            metadata_parts.append(f"Combined: [green]{combined_score:.2%}[/green]")
+        else:
+            # Pure semantic search: show only similarity score
+            similarity = f"[green]{result.similarity_score:.2%}[/green]"
+            metadata_parts.append(f"Similarity: {similarity}")
+
+        console.print(f"  {' | '.join(metadata_parts)}")
+
+        # Add quality indicator line if quality metrics are available and not shown in scores
+        if result.complexity_grade and quality_weight == 0.0:
+            # Show quality metrics when not using quality ranking
+            quality_indicators = []
+
+            grade_color = _get_grade_color(result.complexity_grade)
+            quality_indicators.append(
                 f"Grade: [{grade_color}]{result.complexity_grade}[/{grade_color}]"
             )
 
-        if result.cognitive_complexity is not None:
-            complexity_color = _get_complexity_color(result.cognitive_complexity)
-            metadata_parts.append(
-                f"Complexity: [{complexity_color}]{result.cognitive_complexity}[/{complexity_color}]"
-            )
+            if result.cognitive_complexity is not None:
+                complexity_color = _get_complexity_color(result.cognitive_complexity)
+                quality_indicators.append(
+                    f"Complexity: [{complexity_color}]{result.cognitive_complexity}[/{complexity_color}]"
+                )
 
-        if result.smell_count is not None and result.smell_count > 0:
-            metadata_parts.append(f"Smells: [yellow]{result.smell_count}[/yellow]")
+            # Show quality indicator with check/cross
+            smell_count = result.smell_count or 0
+            if smell_count == 0:
+                console.print(
+                    f"  [green]✓[/green] {' | '.join(quality_indicators)} | No smells"
+                )
+            else:
+                # List smells if available
+                smells_text = f"{smell_count} smells"
+                if result.code_smells:
+                    smell_names = ", ".join(result.code_smells[:3])  # Show first 3
+                    if len(result.code_smells) > 3:
+                        smell_names += f", +{len(result.code_smells) - 3} more"
+                    smells_text = f"{smell_count} smells: [dim]{smell_names}[/dim]"
 
-        if result.quality_score is not None:
-            quality_color = _get_quality_color(result.quality_score)
-            metadata_parts.append(
-                f"Quality: [{quality_color}]{result.quality_score}[/{quality_color}]"
-            )
-
-        console.print(f"  {' | '.join(metadata_parts)}")
+                console.print(
+                    f"  [red]✗[/red] {' | '.join(quality_indicators)} | {smells_text}"
+                )
+        elif result.complexity_grade and quality_weight > 0.0:
+            # When using quality ranking, show simpler quality indicator
+            smell_count = result.smell_count or 0
+            if smell_count == 0:
+                console.print(
+                    f"  [green]✓[/green] Grade {result.complexity_grade}, No smells"
+                )
+            else:
+                smells_text = (
+                    ", ".join(result.code_smells[:3])
+                    if result.code_smells
+                    else f"{smell_count} smells"
+                )
+                if result.code_smells and len(result.code_smells) > 3:
+                    smells_text += f", +{len(result.code_smells) - 3} more"
+                console.print(
+                    f"  [red]✗[/red] Grade {result.complexity_grade}, {smells_text}"
+                )
 
         # Show code content if requested
         if show_content and result.content:
