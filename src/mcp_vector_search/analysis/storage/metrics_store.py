@@ -155,8 +155,11 @@ class ProjectSnapshot:
 
 
 @dataclass
-class TrendData:
-    """Trend analysis data over time period.
+class BasicTrendData:
+    """Basic trend data from MetricsStore (used internally).
+
+    This is the basic structure returned by MetricsStore.get_trends().
+    For enhanced trend analysis with alerts and directions, use TrendTracker.
 
     Attributes:
         project_path: Project being analyzed
@@ -609,7 +612,7 @@ class MetricsStore:
             logger.error(f"Failed to get project history: {e}")
             raise MetricsStoreError(f"Database query failed: {e}") from e
 
-    def get_trends(self, project_path: str, days: int = 30) -> TrendData:
+    def get_trends(self, project_path: str, days: int = 30) -> BasicTrendData:
         """Analyze complexity trends over time period.
 
         Args:
@@ -617,9 +620,13 @@ class MetricsStore:
             days: Number of days to analyze (from now backwards)
 
         Returns:
-            TrendData with analyzed trends
+            BasicTrendData with analyzed trends
 
         Performance: O(k) where k=snapshots in period, typically <100ms
+
+        Note:
+            This returns basic trend data. For enhanced analysis with
+            alerts and trend directions, use TrendTracker.get_trends().
 
         Example:
             >>> trends = store.get_trends("/path/to/project", days=30)
@@ -671,7 +678,7 @@ class MetricsStore:
                 f"{len(snapshots)} snapshots, change rate {change_rate:.4f}/day"
             )
 
-            return TrendData(
+            return BasicTrendData(
                 project_path=project_path,
                 period_days=days,
                 snapshots=snapshots,
@@ -717,7 +724,7 @@ class MetricsStore:
 
         try:
             # Get commit hash
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B607 B603
                 ["git", "rev-parse", "HEAD"],
                 cwd=project_root,
                 capture_output=True,
@@ -728,7 +735,7 @@ class MetricsStore:
             git_info.commit = result.stdout.strip()
 
             # Get branch name
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B607 B603
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
                 cwd=project_root,
                 capture_output=True,
@@ -740,7 +747,7 @@ class MetricsStore:
             git_info.branch = branch if branch != "HEAD" else None
 
             # Get remote name (if exists)
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B607 B603
                 ["git", "remote"],
                 cwd=project_root,
                 capture_output=True,
