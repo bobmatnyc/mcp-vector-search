@@ -39,6 +39,7 @@ Example:
     >>> schema = generate_json_schema()
 """
 
+from .exporter import JSONExporter
 from .schemas import (
     AnalysisExport,
     ClassMetrics,
@@ -57,6 +58,8 @@ from .schemas import (
 )
 
 __all__ = [
+    # Exporter
+    "JSONExporter",
     # Main export schema
     "AnalysisExport",
     # Metadata and summary
