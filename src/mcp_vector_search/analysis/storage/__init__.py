@@ -63,13 +63,26 @@ from .metrics_store import (
     TrendData,
 )
 from .schema import SCHEMA_VERSION
+from .trend_tracker import (
+    FileRegression,
+    TrendDirection,
+    TrendTracker,
+)
+from .trend_tracker import (
+    TrendData as EnhancedTrendData,
+)
 
 __all__ = [
     # Main storage class
     "MetricsStore",
+    # Trend tracking
+    "TrendTracker",
+    "TrendDirection",
+    "FileRegression",
     # Data classes
     "ProjectSnapshot",
     "TrendData",
+    "EnhancedTrendData",
     "GitInfo",
     # Exceptions
     "MetricsStoreError",
