@@ -15,7 +15,7 @@ from .exceptions import SearchError
 LLMProvider = Literal["openai", "openrouter"]
 
 # Type alias for intent
-IntentType = Literal["find", "answer"]
+IntentType = Literal["find", "answer", "analyze"]
 
 
 class LLMClient:
@@ -480,7 +480,7 @@ Select the top {top_n} most relevant results:"""
             query: User's natural language query
 
         Returns:
-            Intent type: "find" or "answer"
+            Intent type: "find", "answer", or "analyze"
 
         Raises:
             SearchError: If API call fails
@@ -493,7 +493,12 @@ Select the top {top_n} most relevant results:"""
 2. "answer" - User wants an explanation/answer about the codebase
    Examples: "what does this do", "how does X work", "explain the architecture", "why is X used"
 
-Return ONLY the word "find" or "answer" with no other text."""
+3. "analyze" - User wants analysis of code quality, metrics, complexity, or smells
+   Examples: "what's complex", "code smells", "cognitive complexity", "quality issues",
+   "dependencies", "coupling", "circular dependencies", "getting worse", "improving",
+   "analyze the complexity", "find the worst code", "most complex functions"
+
+Return ONLY the word "find", "answer", or "analyze" with no other text."""
 
         user_prompt = f"""Query: {query}
 
@@ -512,7 +517,7 @@ Intent:"""
             )
             intent = content.strip().lower()
 
-            if intent not in ("find", "answer"):
+            if intent not in ("find", "answer", "analyze"):
                 # Default to find if unclear
                 logger.warning(
                     f"Unclear intent '{intent}' for query '{query}', defaulting to 'find'"

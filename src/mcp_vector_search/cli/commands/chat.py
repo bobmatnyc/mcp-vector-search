@@ -401,6 +401,19 @@ async def run_chat_with_intent(
                 files=files,
                 think=think,
             )
+        elif intent == "analyze":
+            # Analysis mode - analyze code quality and metrics
+            console.print(
+                "\n[cyan]📊 Intent: Analyze[/cyan] - Analyzing code quality\n"
+            )
+            await run_chat_analyze(
+                project_root=project_root,
+                query=query,
+                model=model,
+                provider=provider,
+                timeout=timeout,
+                think=think,
+            )
         else:
             # Answer mode - force think mode and enter interactive session
             console.print(
@@ -560,6 +573,186 @@ Guidelines:
         except Exception as e:
             logger.error(f"Error processing query: {e}")
             print_error(f"Error: {e}")
+
+
+async def run_chat_analyze(
+    project_root: Path,
+    query: str,
+    model: str | None = None,
+    provider: str | None = None,
+    timeout: float = 30.0,
+    think: bool = False,
+) -> None:
+    """Run analysis mode with streaming interpretation.
+
+    This function:
+    1. Parses the user's analysis question
+    2. Determines which metrics/tools to invoke
+    3. Calls appropriate analysis tools
+    4. Passes results to LLM with specialized analysis prompt
+    5. Returns interpreted insights with streaming output
+
+    Args:
+        project_root: Project root directory
+        query: User's analysis question
+        model: Model to use (optional)
+        provider: LLM provider
+        timeout: API timeout
+        think: Use advanced model for complex analysis
+    """
+    import json
+
+    from ...analysis import ProjectMetrics
+    from ...analysis.interpretation import AnalysisInterpreter, EnhancedJSONExporter
+    from ...core.config_utils import get_openai_api_key, get_openrouter_api_key
+    from ...parsers.registry import ParserRegistry
+
+    config_dir = project_root / ".mcp-vector-search"
+    openai_key = get_openai_api_key(config_dir)
+    openrouter_key = get_openrouter_api_key(config_dir)
+
+    # Load project configuration
+    project_manager = ProjectManager(project_root)
+    if not project_manager.is_initialized():
+        raise ProjectNotFoundError(
+            f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
+        )
+
+    config = project_manager.load_config()
+
+    # Initialize LLM client (use advanced model for analysis)
+    try:
+        llm_client = LLMClient(
+            openai_api_key=openai_key,
+            openrouter_api_key=openrouter_key,
+            model=model,
+            provider=provider,
+            timeout=timeout,
+            think=True,  # Always use advanced model for analysis
+        )
+        provider_display = llm_client.provider.capitalize()
+        model_info = f"{llm_client.model} [bold magenta](analysis mode)[/bold magenta]"
+        print_success(f"Connected to {provider_display}: {model_info}")
+    except ValueError as e:
+        print_error(str(e))
+        raise typer.Exit(1)
+
+    # Determine query type and run appropriate analysis
+    console.print(f"\n[cyan]🔍 Analyzing:[/cyan] [white]{query}[/white]\n")
+
+    # Initialize parser registry and collect metrics
+    console.print("[cyan]📊 Collecting metrics...[/cyan]")
+    parser_registry = ParserRegistry()
+    project_metrics = ProjectMetrics(root_path=project_root)
+
+    # Parse all files
+    for file_ext in config.file_extensions:
+        parser = parser_registry.get_parser(file_ext)
+        if parser:
+            # Find all files with this extension
+            for file_path in project_root.rglob(f"*{file_ext}"):
+                # Skip ignored directories
+                should_skip = False
+                for ignore_pattern in config.ignore_patterns:
+                    if ignore_pattern in str(file_path):
+                        should_skip = True
+                        break
+
+                if should_skip:
+                    continue
+
+                try:
+                    chunks = parser.parse_file(file_path)
+                    project_metrics.add_file(file_path, chunks)
+                except Exception as e:
+                    logger.warning(f"Failed to parse {file_path}: {e}")
+
+    # Generate enhanced export with LLM context
+    console.print("[cyan]🧮 Computing analysis context...[/cyan]")
+    exporter = EnhancedJSONExporter(project_root=project_root)
+    enhanced_export = exporter.export_with_context(
+        project_metrics,
+        include_smells=True,
+    )
+
+    # Create analysis prompt based on query type
+    analysis_context = json.dumps(enhanced_export.model_dump(), indent=2)
+
+    # Analysis system prompt with grading rubric and code smell interpretation
+    analysis_system_prompt = """You are a code quality expert analyzing a codebase. You have access to comprehensive metrics and code smell analysis.
+
+**Metric Definitions:**
+- **Cognitive Complexity**: Measures how difficult code is to understand (control flow, nesting, operators)
+  - Grade A: 0-5 (simple), B: 6-10 (moderate), C: 11-15 (complex), D: 16-20 (very complex), F: 21+ (extremely complex)
+- **Cyclomatic Complexity**: Counts independent paths through code (branches, loops)
+  - Low: 1-5, Moderate: 6-10, High: 11-20, Very High: 21+
+- **Instability**: Ratio of outgoing to total dependencies (I = Ce / (Ca + Ce))
+  - 0.0 = Stable (hard to change), 1.0 = Unstable (easy to change)
+- **LCOM4**: Lack of Cohesion - number of connected components in class
+  - 1 = Highly cohesive (single responsibility), 2+ = Low cohesion (multiple responsibilities)
+
+**Code Smell Severity:**
+- **Error**: Critical issues blocking maintainability (God Classes, Extreme Complexity)
+- **Warning**: Moderate issues needing attention (Long Methods, Deep Nesting)
+- **Info**: Minor issues, cosmetic improvements (Long Parameter Lists)
+
+**Threshold Context:**
+- **Well Below**: <50% of threshold (healthy)
+- **Below**: 50-100% of threshold (acceptable)
+- **At Threshold**: 100-110% (monitor closely)
+- **Above**: 110-150% (needs attention)
+- **Well Above**: >150% (urgent action required)
+
+**Output Format:**
+Provide structured insights with:
+1. **Executive Summary**: Overall quality grade and key findings
+2. **Priority Issues**: Most critical problems to address (if any)
+3. **Specific Metrics**: Answer the user's specific question with data
+4. **Recommendations**: Actionable next steps prioritized by impact
+
+Use markdown formatting. Be concise but thorough. Reference specific files, functions, or classes when relevant."""
+
+    # Build messages for analysis
+    messages = [
+        {"role": "system", "content": analysis_system_prompt},
+        {
+            "role": "user",
+            "content": f"""Analysis Data:
+{analysis_context}
+
+User Question: {query}
+
+Please analyze the codebase and answer the user's question based on the metrics and code smell data provided.""",
+        },
+    ]
+
+    # Stream the response
+    console.print("\n[bold cyan]🤖 Analysis:[/bold cyan]\n")
+
+    try:
+        # Use Rich Live for rendering streamed markdown
+        accumulated_response = ""
+        with Live(
+            "", console=console, auto_refresh=True, vertical_overflow="visible"
+        ) as live:
+            async for chunk in llm_client.stream_chat_completion(messages):
+                accumulated_response += chunk
+                # Update live display with accumulated markdown
+                live.update(Markdown(accumulated_response))
+
+        console.print()  # Blank line after completion
+
+    except Exception as e:
+        logger.error(f"Analysis streaming failed: {e}")
+        print_error(f"Failed to stream analysis: {e}")
+
+        # Fallback: Use interpreter for summary
+        console.print("\n[yellow]⚠ Falling back to summary interpretation[/yellow]\n")
+        interpreter = AnalysisInterpreter()
+        summary = interpreter.interpret(
+            enhanced_export, focus="summary", verbosity="normal"
+        )
+        console.print(Markdown(summary))
 
 
 async def _process_answer_query(
