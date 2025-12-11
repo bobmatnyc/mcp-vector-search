@@ -136,6 +136,33 @@ def search_main(
         help="Custom export file path",
         rich_help_panel="💾 Export Options",
     ),
+    max_complexity: int | None = typer.Option(
+        None,
+        "--max-complexity",
+        help="Filter results with cognitive complexity greater than N",
+        min=1,
+        rich_help_panel="🎯 Quality Filters",
+    ),
+    no_smells: bool = typer.Option(
+        False,
+        "--no-smells",
+        help="Exclude results with code smells",
+        rich_help_panel="🎯 Quality Filters",
+    ),
+    grade: str | None = typer.Option(
+        None,
+        "--grade",
+        help="Filter by complexity grade (e.g., 'A,B,C' or 'A-C')",
+        rich_help_panel="🎯 Quality Filters",
+    ),
+    min_quality: int | None = typer.Option(
+        None,
+        "--min-quality",
+        help="Filter by minimum quality score (0-100)",
+        min=0,
+        max=100,
+        rich_help_panel="🎯 Quality Filters",
+    ),
 ) -> None:
     """🔍 Search your codebase semantically.
 
@@ -165,6 +192,20 @@ def search_main(
 
     [green]Context-based search:[/green]
         $ mcp-vector-search search "implement rate limiting" --context --focus security
+
+    [bold cyan]Quality Filters:[/bold cyan]
+
+    [green]Filter by complexity:[/green]
+        $ mcp-vector-search search "authentication" --max-complexity 15
+
+    [green]Exclude code smells:[/green]
+        $ mcp-vector-search search "login" --no-smells
+
+    [green]Filter by grade:[/green]
+        $ mcp-vector-search search "api" --grade A,B
+
+    [green]Minimum quality score:[/green]
+        $ mcp-vector-search search "handler" --min-quality 80
 
     [bold cyan]Export Results:[/bold cyan]
 
@@ -242,6 +283,10 @@ def search_main(
                     json_output=json_output,
                     export_format=export_format,
                     export_path=export_path,
+                    max_complexity=max_complexity,
+                    no_smells=no_smells,
+                    grade=grade,
+                    min_quality=min_quality,
                 )
             )
 
@@ -249,6 +294,52 @@ def search_main(
         logger.error(f"Search failed: {e}")
         print_error(f"Search failed: {e}")
         raise typer.Exit(1)
+
+
+def _parse_grade_filter(grade_str: str) -> set[str]:
+    """Parse grade filter string into set of allowed grades.
+
+    Supports formats:
+    - Comma-separated: "A,B,C"
+    - Range: "A-C" (expands to A, B, C)
+    - Mixed: "A,C-D" (expands to A, C, D)
+
+    Args:
+        grade_str: Grade filter string
+
+    Returns:
+        Set of allowed grade letters
+    """
+    allowed_grades = set()
+    grade_order = ["A", "B", "C", "D", "F"]
+
+    # Split by comma
+    parts = [part.strip().upper() for part in grade_str.split(",")]
+
+    for part in parts:
+        if "-" in part:
+            # Range format (e.g., "A-C")
+            start, end = part.split("-", 1)
+            start = start.strip()
+            end = end.strip()
+
+            if start in grade_order and end in grade_order:
+                start_idx = grade_order.index(start)
+                end_idx = grade_order.index(end)
+
+                # Handle reverse ranges (C-A becomes A-C)
+                if start_idx > end_idx:
+                    start_idx, end_idx = end_idx, start_idx
+
+                # Add all grades in range
+                for grade in grade_order[start_idx : end_idx + 1]:
+                    allowed_grades.add(grade)
+        else:
+            # Single grade
+            if part in grade_order:
+                allowed_grades.add(part)
+
+    return allowed_grades
 
 
 async def run_search(
@@ -264,8 +355,12 @@ async def run_search(
     json_output: bool = False,
     export_format: str | None = None,
     export_path: Path | None = None,
+    max_complexity: int | None = None,
+    no_smells: bool = False,
+    grade: str | None = None,
+    min_quality: int | None = None,
 ) -> None:
-    """Run semantic search."""
+    """Run semantic search with optional quality filters."""
     # Load project configuration
     project_manager = ProjectManager(project_root)
 
@@ -369,6 +464,45 @@ async def run_search(
                 results = filtered_results
                 logger.debug(
                     f"File pattern '{files}' filtered results to {len(results)} matches"
+                )
+
+            # Apply quality filters if specified
+            if any([max_complexity, no_smells, grade, min_quality]) and results:
+                filtered_results = []
+                for result in results:
+                    # Parse quality metrics from result metadata
+                    cognitive_complexity = getattr(result, "cognitive_complexity", None)
+                    complexity_grade = getattr(result, "complexity_grade", None)
+                    smell_count = getattr(result, "smell_count", None)
+                    quality_score = getattr(result, "quality_score", None)
+
+                    # Filter by max complexity
+                    if max_complexity is not None and cognitive_complexity is not None:
+                        if cognitive_complexity > max_complexity:
+                            continue
+
+                    # Filter by code smells
+                    if no_smells and smell_count is not None:
+                        if smell_count > 0:
+                            continue
+
+                    # Filter by grade
+                    if grade and complexity_grade:
+                        allowed_grades = _parse_grade_filter(grade)
+                        if complexity_grade not in allowed_grades:
+                            continue
+
+                    # Filter by minimum quality score
+                    if min_quality is not None and quality_score is not None:
+                        if quality_score < min_quality:
+                            continue
+
+                    filtered_results.append(result)
+
+                initial_count = len(results)
+                results = filtered_results
+                logger.debug(
+                    f"Quality filters reduced results from {initial_count} to {len(results)}"
                 )
 
             # Handle export if requested

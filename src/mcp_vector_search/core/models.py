@@ -151,6 +151,33 @@ class SearchResult(BaseModel):
         default=False, description="True if file no longer exists (stale index)"
     )
 
+    # Quality metrics (from structural analysis)
+    cognitive_complexity: int | None = Field(
+        default=None, description="Cognitive complexity score"
+    )
+    cyclomatic_complexity: int | None = Field(
+        default=None, description="Cyclomatic complexity score"
+    )
+    max_nesting_depth: int | None = Field(
+        default=None, description="Maximum nesting depth"
+    )
+    parameter_count: int | None = Field(
+        default=None, description="Number of function parameters"
+    )
+    lines_of_code: int | None = Field(
+        default=None, description="Lines of code in chunk"
+    )
+    complexity_grade: str | None = Field(
+        default=None, description="Complexity grade (A-F)"
+    )
+    code_smells: list[str] = Field(default=[], description="Detected code smells")
+    smell_count: int | None = Field(
+        default=None, description="Number of code smells detected"
+    )
+    quality_score: int | None = Field(
+        default=None, description="Overall quality score (0-100)"
+    )
+
     class Config:
         arbitrary_types_allowed = True
 
@@ -166,7 +193,7 @@ class SearchResult(BaseModel):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
-        return {
+        result = {
             "content": self.content,
             "file_path": str(self.file_path),
             "start_line": self.start_line,
@@ -183,6 +210,28 @@ class SearchResult(BaseModel):
             "location": self.location,
             "line_count": self.line_count,
         }
+
+        # Add quality metrics if available
+        if self.cognitive_complexity is not None:
+            result["cognitive_complexity"] = self.cognitive_complexity
+        if self.cyclomatic_complexity is not None:
+            result["cyclomatic_complexity"] = self.cyclomatic_complexity
+        if self.max_nesting_depth is not None:
+            result["max_nesting_depth"] = self.max_nesting_depth
+        if self.parameter_count is not None:
+            result["parameter_count"] = self.parameter_count
+        if self.lines_of_code is not None:
+            result["lines_of_code"] = self.lines_of_code
+        if self.complexity_grade is not None:
+            result["complexity_grade"] = self.complexity_grade
+        if self.code_smells:
+            result["code_smells"] = self.code_smells
+        if self.smell_count is not None:
+            result["smell_count"] = self.smell_count
+        if self.quality_score is not None:
+            result["quality_score"] = self.quality_score
+
+        return result
 
 
 class IndexStats(BaseModel):

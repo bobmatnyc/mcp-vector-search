@@ -24,6 +24,46 @@ from ..core.models import ProjectInfo, SearchResult
 console = Console()
 
 
+def _get_grade_color(grade: str) -> str:
+    """Get color for complexity grade."""
+    grade_colors = {
+        "A": "green",
+        "B": "cyan",
+        "C": "yellow",
+        "D": "orange",
+        "F": "red",
+    }
+    return grade_colors.get(grade, "white")
+
+
+def _get_complexity_color(complexity: int) -> str:
+    """Get color based on cognitive complexity value."""
+    if complexity <= 5:
+        return "green"
+    elif complexity <= 10:
+        return "cyan"
+    elif complexity <= 20:
+        return "yellow"
+    elif complexity <= 30:
+        return "orange"
+    else:
+        return "red"
+
+
+def _get_quality_color(quality: int) -> str:
+    """Get color based on quality score (0-100)."""
+    if quality >= 80:
+        return "green"
+    elif quality >= 60:
+        return "cyan"
+    elif quality >= 40:
+        return "yellow"
+    elif quality >= 20:
+        return "orange"
+    else:
+        return "red"
+
+
 def setup_logging(level: str = "WARNING") -> None:
     """Setup structured logging with rich formatting.
 
@@ -137,7 +177,33 @@ def print_search_results(
         similarity = f"[green]{result.similarity_score:.2%}[/green]"
 
         console.print(f"{header}")
-        console.print(f"  {location} | Similarity: {similarity}")
+
+        # Build metadata line with quality metrics
+        metadata_parts = [location, f"Similarity: {similarity}"]
+
+        # Add quality metrics if available
+        if result.complexity_grade:
+            grade_color = _get_grade_color(result.complexity_grade)
+            metadata_parts.append(
+                f"Grade: [{grade_color}]{result.complexity_grade}[/{grade_color}]"
+            )
+
+        if result.cognitive_complexity is not None:
+            complexity_color = _get_complexity_color(result.cognitive_complexity)
+            metadata_parts.append(
+                f"Complexity: [{complexity_color}]{result.cognitive_complexity}[/{complexity_color}]"
+            )
+
+        if result.smell_count is not None and result.smell_count > 0:
+            metadata_parts.append(f"Smells: [yellow]{result.smell_count}[/yellow]")
+
+        if result.quality_score is not None:
+            quality_color = _get_quality_color(result.quality_score)
+            metadata_parts.append(
+                f"Quality: [{quality_color}]{result.quality_score}[/{quality_color}]"
+            )
+
+        console.print(f"  {' | '.join(metadata_parts)}")
 
         # Show code content if requested
         if show_content and result.content:

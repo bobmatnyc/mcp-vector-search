@@ -192,7 +192,7 @@ class ChromaVectorDatabase(VectorDatabase):
             except BaseException as init_error:
                 # Re-raise system exceptions we should never catch
                 if isinstance(
-                    init_error, (KeyboardInterrupt, SystemExit, GeneratorExit)
+                    init_error, KeyboardInterrupt | SystemExit | GeneratorExit
                 ):
                     raise
 
@@ -244,7 +244,7 @@ class ChromaVectorDatabase(VectorDatabase):
                     except BaseException as retry_error:
                         # Re-raise system exceptions
                         if isinstance(
-                            retry_error, (KeyboardInterrupt, SystemExit, GeneratorExit)
+                            retry_error, KeyboardInterrupt | SystemExit | GeneratorExit
                         ):
                             raise
 
@@ -477,6 +477,33 @@ class ChromaVectorDatabase(VectorDatabase):
 
                     if similarity >= similarity_threshold:
                         # Document contains the original content (no metadata appended)
+                        # Parse code smells from JSON if present
+                        code_smells = []
+                        if "code_smells" in metadata:
+                            try:
+                                code_smells = json.loads(metadata["code_smells"])
+                            except (json.JSONDecodeError, TypeError):
+                                code_smells = []
+
+                        # Calculate quality score from metrics (0-100 scale)
+                        quality_score = None
+                        if (
+                            "cognitive_complexity" in metadata
+                            and "smell_count" in metadata
+                        ):
+                            # Simple quality score: penalize complexity and smells
+                            complexity = metadata["cognitive_complexity"]
+                            smells = metadata["smell_count"]
+
+                            # Start with 100, penalize for complexity and smells
+                            score = 100
+                            # Complexity penalty: -2 points per complexity unit
+                            score -= min(50, complexity * 2)
+                            # Smell penalty: -10 points per smell
+                            score -= min(30, smells * 10)
+
+                            quality_score = max(0, score)
+
                         result = SearchResult(
                             content=doc,
                             file_path=Path(metadata["file_path"]),
@@ -488,6 +515,16 @@ class ChromaVectorDatabase(VectorDatabase):
                             chunk_type=metadata.get("chunk_type", "code"),
                             function_name=metadata.get("function_name") or None,
                             class_name=metadata.get("class_name") or None,
+                            # Quality metrics from structural analysis
+                            cognitive_complexity=metadata.get("cognitive_complexity"),
+                            cyclomatic_complexity=metadata.get("cyclomatic_complexity"),
+                            max_nesting_depth=metadata.get("max_nesting_depth"),
+                            parameter_count=metadata.get("parameter_count"),
+                            lines_of_code=metadata.get("lines_of_code"),
+                            complexity_grade=metadata.get("complexity_grade"),
+                            code_smells=code_smells,
+                            smell_count=metadata.get("smell_count"),
+                            quality_score=quality_score,
                         )
                         search_results.append(result)
 
