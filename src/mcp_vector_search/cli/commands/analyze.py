@@ -73,6 +73,20 @@ def main(
         help="Output results in JSON format",
         rich_help_panel="📊 Display Options",
     ),
+    format: str = typer.Option(
+        "console",
+        "--format",
+        "-f",
+        help="Output format: console, json, sarif",
+        rich_help_panel="📊 Display Options",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file path (required for sarif format)",
+        rich_help_panel="📊 Display Options",
+    ),
 ) -> None:
     """📈 Analyze code complexity and quality.
 
@@ -101,6 +115,9 @@ def main(
     [green]Export to JSON:[/green]
         $ mcp-vector-search analyze --json > analysis.json
 
+    [green]Export to SARIF format:[/green]
+        $ mcp-vector-search analyze --format sarif --output report.sarif
+
     [dim]💡 Tip: Use --quick for faster analysis on large projects.[/dim]
     """
     if ctx.invoked_subcommand is not None:
@@ -108,6 +125,25 @@ def main(
         return
 
     try:
+        # Validate format and output options
+        valid_formats = ["console", "json", "sarif"]
+        format_lower = format.lower()
+
+        if format_lower not in valid_formats:
+            print_error(
+                f"Invalid format: {format}. Must be one of: {', '.join(valid_formats)}"
+            )
+            raise typer.Exit(1)
+
+        # SARIF format requires output file
+        if format_lower == "sarif" and output is None:
+            print_error("--output is required when using --format sarif")
+            raise typer.Exit(1)
+
+        # JSON flag overrides format for backward compatibility
+        if json_output:
+            format_lower = "json"
+
         # Use provided project_root or current working directory
         if project_root is None:
             project_root = Path.cwd()
@@ -119,8 +155,10 @@ def main(
                 language_filter=language,
                 path_filter=path,
                 top_n=top,
-                json_output=json_output,
+                json_output=(format_lower == "json"),
                 show_smells=show_smells,
+                output_format=format_lower,
+                output_file=output,
             )
         )
 
@@ -138,6 +176,8 @@ async def run_analysis(
     top_n: int = 10,
     json_output: bool = False,
     show_smells: bool = True,
+    output_format: str = "console",
+    output_file: Path | None = None,
 ) -> None:
     """Run code complexity analysis.
 
@@ -147,8 +187,10 @@ async def run_analysis(
         language_filter: Filter files by language
         path_filter: Analyze specific file or directory
         top_n: Number of top hotspots to show
-        json_output: Output results as JSON
+        json_output: Output results as JSON (deprecated, use output_format)
         show_smells: Show detected code smells in output
+        output_format: Output format (console, json, sarif)
+        output_file: Output file path (for sarif format)
     """
     try:
         # Check if project is initialized (optional - we can analyze any directory)
@@ -237,8 +279,23 @@ async def run_analysis(
                 file_smells = smell_detector.detect_all(file_metrics, file_path)
                 all_smells.extend(file_smells)
 
-        # Output results
-        if json_output:
+        # Output results based on format
+        if output_format == "sarif":
+            # SARIF format - write to file
+            from ...analysis.reporters.sarif import SARIFReporter
+
+            if not all_smells:
+                print_error(
+                    "No code smells detected - SARIF report requires smells to report"
+                )
+                return
+
+            reporter = SARIFReporter()
+            reporter.write_sarif(all_smells, output_file, base_path=project_root)
+            console.print(f"[green]✓[/green] SARIF report written to: {output_file}")
+
+        elif json_output or output_format == "json":
+            # JSON format
             output = project_metrics.to_summary()
             # Add smell data to JSON output if available
             if show_smells and all_smells:
@@ -263,6 +320,7 @@ async def run_analysis(
                 }
             print_json(output)
         else:
+            # Console format (default)
             # Import console reporter
             from ...analysis.reporters.console import ConsoleReporter
 
