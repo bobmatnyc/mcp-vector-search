@@ -13,6 +13,7 @@ from ...analysis import (
     ProjectMetrics,
 )
 from ...core.exceptions import ProjectNotFoundError
+from ...core.git import GitError, GitManager, GitNotAvailableError, GitNotRepoError
 from ...core.project import ProjectManager
 from ...parsers.registry import ParserRegistry
 from ..output import console, print_error, print_info, print_json
@@ -99,6 +100,18 @@ def main(
         help="Minimum severity to trigger failure: info, warning, error, none",
         rich_help_panel="🚦 Quality Gates",
     ),
+    changed_only: bool = typer.Option(
+        False,
+        "--changed-only/--no-changed-only",
+        help="Analyze only uncommitted changes (staged + unstaged + untracked)",
+        rich_help_panel="🔍 Filters",
+    ),
+    baseline: str | None = typer.Option(
+        None,
+        "--baseline",
+        help="Compare against baseline branch (e.g., main, master, develop)",
+        rich_help_panel="🔍 Filters",
+    ),
 ) -> None:
     """📈 Analyze code complexity and quality.
 
@@ -118,6 +131,12 @@ def main(
 
     [green]Analyze specific directory:[/green]
         $ mcp-vector-search analyze --path src/core
+
+    [green]Analyze only uncommitted changes:[/green]
+        $ mcp-vector-search analyze --changed-only
+
+    [green]Compare against baseline branch:[/green]
+        $ mcp-vector-search analyze --baseline main
 
     [bold cyan]Output Options:[/bold cyan]
 
@@ -184,6 +203,8 @@ def main(
                 output_file=output,
                 fail_on_smell=fail_on_smell,
                 severity_threshold=severity_threshold,
+                changed_only=changed_only,
+                baseline=baseline,
             )
         )
 
@@ -233,6 +254,8 @@ async def run_analysis(
     output_file: Path | None = None,
     fail_on_smell: bool = False,
     severity_threshold: str = "error",
+    changed_only: bool = False,
+    baseline: str | None = None,
 ) -> None:
     """Run code complexity analysis.
 
@@ -248,6 +271,8 @@ async def run_analysis(
         output_file: Output file path (for sarif format)
         fail_on_smell: Exit with code 1 if smells are detected
         severity_threshold: Minimum severity to trigger failure
+        changed_only: Analyze only uncommitted changes
+        baseline: Compare against baseline branch
     """
     try:
         # Check if project is initialized (optional - we can analyze any directory)
@@ -286,9 +311,74 @@ async def run_analysis(
             ]
             mode_label = "Full Mode (5 collectors)"
 
+        # Initialize git manager if needed for changed/baseline filtering
+        git_manager = None
+        git_changed_files = None
+
+        if changed_only or baseline:
+            try:
+                git_manager = GitManager(project_root)
+
+                # Get changed files based on mode
+                if changed_only:
+                    git_changed_files = git_manager.get_changed_files(
+                        include_untracked=True
+                    )
+                    if not git_changed_files:
+                        if json_output:
+                            print_json(
+                                {"error": "No changed files found. Nothing to analyze."}
+                            )
+                        else:
+                            print_info("No changed files found. Nothing to analyze.")
+                        return
+                elif baseline:
+                    git_changed_files = git_manager.get_diff_files(baseline)
+                    if not git_changed_files:
+                        if json_output:
+                            print_json(
+                                {"error": f"No files changed vs baseline '{baseline}'."}
+                            )
+                        else:
+                            print_info(f"No files changed vs baseline '{baseline}'.")
+                        return
+
+            except GitNotAvailableError as e:
+                if json_output:
+                    print_json({"warning": str(e), "fallback": "full analysis"})
+                else:
+                    console.print(f"[yellow]⚠️  {e}[/yellow]")
+                    print_info("Proceeding with full codebase analysis...")
+                git_manager = None
+                git_changed_files = None
+
+            except GitNotRepoError as e:
+                if json_output:
+                    print_json({"warning": str(e), "fallback": "full analysis"})
+                else:
+                    console.print(f"[yellow]⚠️  {e}[/yellow]")
+                    print_info("Proceeding with full codebase analysis...")
+                git_manager = None
+                git_changed_files = None
+
+            except GitError as e:
+                if json_output:
+                    print_json(
+                        {"warning": f"Git error: {e}", "fallback": "full analysis"}
+                    )
+                else:
+                    console.print(f"[yellow]⚠️  Git error: {e}[/yellow]")
+                    print_info("Proceeding with full codebase analysis...")
+                git_manager = None
+                git_changed_files = None
+
         # Find files to analyze
         files_to_analyze = _find_analyzable_files(
-            project_root, language_filter, path_filter, parser_registry
+            project_root,
+            language_filter,
+            path_filter,
+            parser_registry,
+            git_changed_files,
         )
 
         if not files_to_analyze:
@@ -298,11 +388,31 @@ async def run_analysis(
                 print_error("No files found to analyze")
             return
 
+        # Display analysis info
         if not json_output:
             console.print(
                 f"\n[bold blue]Starting Code Analysis[/bold blue] - {mode_label}"
             )
-            console.print(f"Files to analyze: {len(files_to_analyze)}\n")
+
+            # Show file count information with git filtering context
+            if git_changed_files is not None:
+                # Get total files for context
+                total_files = len(
+                    _find_analyzable_files(
+                        project_root,
+                        language_filter,
+                        path_filter,
+                        parser_registry,
+                        None,
+                    )
+                )
+                filter_type = "changed" if changed_only else f"vs {baseline}"
+                console.print(
+                    f"Analyzing {len(files_to_analyze)} {filter_type} files "
+                    f"({total_files} total in project)\n"
+                )
+            else:
+                console.print(f"Files to analyze: {len(files_to_analyze)}\n")
 
         # Analyze files
         project_metrics = ProjectMetrics(project_root=str(project_root))
@@ -425,6 +535,7 @@ def _find_analyzable_files(
     language_filter: str | None,
     path_filter: Path | None,
     parser_registry: ParserRegistry,
+    git_changed_files: list[Path] | None = None,
 ) -> list[Path]:
     """Find files that can be analyzed.
 
@@ -433,12 +544,63 @@ def _find_analyzable_files(
         language_filter: Optional language filter
         path_filter: Optional path filter
         parser_registry: Parser registry for checking supported files
+        git_changed_files: Optional list of git changed files to filter by
 
     Returns:
         List of file paths to analyze
     """
     import fnmatch
 
+    # If git_changed_files is provided, use it as the primary filter
+    if git_changed_files is not None:
+        # Filter based on supported extensions and language
+        files: list[Path] = []
+        supported_extensions = parser_registry.get_supported_extensions()
+
+        for file_path in git_changed_files:
+            # Check if file extension is supported
+            if file_path.suffix.lower() not in supported_extensions:
+                logger.debug(f"Skipping unsupported file type: {file_path}")
+                continue
+
+            # Apply language filter
+            if language_filter:
+                try:
+                    parser = parser_registry.get_parser_for_file(file_path)
+                    if parser.language.lower() != language_filter.lower():
+                        logger.debug(
+                            f"Skipping file (language mismatch): {file_path} "
+                            f"({parser.language} != {language_filter})"
+                        )
+                        continue
+                except Exception as e:
+                    logger.debug(f"Skipping file (parser error): {file_path}: {e}")
+                    continue
+
+            # Apply path filter if specified
+            if path_filter:
+                path_filter_resolved = path_filter.resolve()
+                file_path_resolved = file_path.resolve()
+
+                # Check if file is within path_filter scope
+                try:
+                    # If path_filter is a file, only include that specific file
+                    if path_filter_resolved.is_file():
+                        if file_path_resolved != path_filter_resolved:
+                            continue
+                    # If path_filter is a directory, check if file is within it
+                    elif path_filter_resolved.is_dir():
+                        file_path_resolved.relative_to(path_filter_resolved)
+                except ValueError:
+                    # File is not within path_filter scope
+                    logger.debug(f"Skipping file (outside path filter): {file_path}")
+                    continue
+
+            files.append(file_path)
+
+        return sorted(files)
+
+    # No git filtering - fall back to standard directory traversal
     # Determine base path to search
     base_path = path_filter if path_filter and path_filter.exists() else project_root
 
@@ -450,7 +612,7 @@ def _find_analyzable_files(
         return []
 
     # Find all supported files
-    files: list[Path] = []
+    files = []
     supported_extensions = parser_registry.get_supported_extensions()
 
     # Common ignore patterns
