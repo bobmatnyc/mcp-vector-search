@@ -48,11 +48,13 @@ from .collectors.complexity import (
     NestingDepthCollector,
     ParameterCountCollector,
 )
+from .collectors.coupling import EfferentCouplingCollector
 from .collectors.smells import CodeSmell, SmellDetector, SmellSeverity
-from .metrics import ChunkMetrics, FileMetrics, ProjectMetrics
+from .metrics import ChunkMetrics, CouplingMetrics, FileMetrics, ProjectMetrics
 
 __all__ = [
     "ChunkMetrics",
+    "CouplingMetrics",
     "FileMetrics",
     "ProjectMetrics",
     "CollectorContext",
@@ -62,6 +64,7 @@ __all__ = [
     "NestingDepthCollector",
     "ParameterCountCollector",
     "MethodCountCollector",
+    "EfferentCouplingCollector",
     "SmellDetector",
     "CodeSmell",
     "SmellSeverity",

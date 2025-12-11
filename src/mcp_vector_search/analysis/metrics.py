@@ -100,6 +100,25 @@ class ChunkMetrics:
 
 
 @dataclass
+class CouplingMetrics:
+    """Coupling metrics for a file (Phase 3).
+
+    Tracks import dependencies and efferent coupling (outgoing dependencies).
+
+    Attributes:
+        efferent_coupling: Count of unique external dependencies
+        imports: List of all imported modules
+        internal_imports: Imports from same project
+        external_imports: Third-party and standard library imports
+    """
+
+    efferent_coupling: int = 0
+    imports: list[str] = field(default_factory=list)
+    internal_imports: list[str] = field(default_factory=list)
+    external_imports: list[str] = field(default_factory=list)
+
+
+@dataclass
 class FileMetrics:
     """Aggregated metrics for an entire file.
 
@@ -135,6 +154,14 @@ class FileMetrics:
     total_complexity: int = 0
     avg_complexity: float = 0.0
     max_complexity: int = 0
+
+    # Coupling metrics (Phase 3)
+    efferent_coupling: int = 0  # Outgoing dependencies
+    imports: list[str] = field(default_factory=list)  # All imported modules
+    internal_imports: list[str] = field(default_factory=list)  # Same-project imports
+    external_imports: list[str] = field(
+        default_factory=list
+    )  # Third-party/stdlib imports
 
     # Chunk metrics for each function/class
     chunks: list[ChunkMetrics] = field(default_factory=list)

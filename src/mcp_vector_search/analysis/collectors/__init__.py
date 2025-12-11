@@ -27,6 +27,7 @@ from .complexity import (
     NestingDepthCollector,
     ParameterCountCollector,
 )
+from .coupling import EfferentCouplingCollector
 
 __all__ = [
     "CollectorContext",
@@ -36,4 +37,5 @@ __all__ = [
     "NestingDepthCollector",
     "ParameterCountCollector",
     "MethodCountCollector",
+    "EfferentCouplingCollector",
 ]
