@@ -64,11 +64,41 @@ class SmellThresholds:
 
 
 @dataclass
+class CouplingThresholds:
+    """Thresholds for coupling and instability metrics."""
+
+    # Efferent coupling (Ce) thresholds
+    efferent_low: int = 3  # Low coupling (0-3 dependencies)
+    efferent_moderate: int = 7  # Moderate coupling (4-7)
+    efferent_high: int = 12  # High coupling (8-12)
+    # Very high: 13+
+
+    # Afferent coupling (Ca) thresholds
+    afferent_low: int = 2  # Low coupling (0-2 dependents)
+    afferent_moderate: int = 5  # Moderate coupling (3-5)
+    afferent_high: int = 10  # High coupling (6-10)
+    # Very high: 11+
+
+    # Instability (I) thresholds for grades
+    instability_a: float = 0.2  # A grade: very stable (0.0-0.2)
+    instability_b: float = 0.4  # B grade: stable (0.2-0.4)
+    instability_c: float = 0.6  # C grade: balanced (0.4-0.6)
+    instability_d: float = 0.8  # D grade: unstable (0.6-0.8)
+    # F grade: very unstable (0.8-1.0)
+
+    # Category thresholds
+    stable_max: float = 0.3  # Stable category (0.0-0.3)
+    balanced_max: float = 0.7  # Balanced category (0.3-0.7)
+    # Unstable category: 0.7-1.0
+
+
+@dataclass
 class ThresholdConfig:
     """Complete threshold configuration."""
 
     complexity: ComplexityThresholds = field(default_factory=ComplexityThresholds)
     smells: SmellThresholds = field(default_factory=SmellThresholds)
+    coupling: CouplingThresholds = field(default_factory=CouplingThresholds)
 
     # Quality gate settings
     fail_on_f_grade: bool = True
@@ -105,6 +135,7 @@ class ThresholdConfig:
         """
         complexity_data = data.get("complexity", {})
         smells_data = data.get("smells", {})
+        coupling_data = data.get("coupling", {})
 
         return cls(
             complexity=(
@@ -114,6 +145,11 @@ class ThresholdConfig:
             ),
             smells=(
                 SmellThresholds(**smells_data) if smells_data else SmellThresholds()
+            ),
+            coupling=(
+                CouplingThresholds(**coupling_data)
+                if coupling_data
+                else CouplingThresholds()
             ),
             fail_on_f_grade=data.get("fail_on_f_grade", True),
             fail_on_smell_count=data.get("fail_on_smell_count", 10),
@@ -151,6 +187,20 @@ class ThresholdConfig:
                 "god_class_lines": self.smells.god_class_lines,
                 "feature_envy_external_calls": self.smells.feature_envy_external_calls,
             },
+            "coupling": {
+                "efferent_low": self.coupling.efferent_low,
+                "efferent_moderate": self.coupling.efferent_moderate,
+                "efferent_high": self.coupling.efferent_high,
+                "afferent_low": self.coupling.afferent_low,
+                "afferent_moderate": self.coupling.afferent_moderate,
+                "afferent_high": self.coupling.afferent_high,
+                "instability_a": self.coupling.instability_a,
+                "instability_b": self.coupling.instability_b,
+                "instability_c": self.coupling.instability_c,
+                "instability_d": self.coupling.instability_d,
+                "stable_max": self.coupling.stable_max,
+                "balanced_max": self.coupling.balanced_max,
+            },
             "fail_on_f_grade": self.fail_on_f_grade,
             "fail_on_smell_count": self.fail_on_smell_count,
             "warn_on_d_grade": self.warn_on_d_grade,
@@ -185,3 +235,39 @@ class ThresholdConfig:
             return "D"
         else:
             return "F"
+
+    def get_instability_grade(self, instability: float) -> str:
+        """Get instability grade based on instability value.
+
+        Args:
+            instability: Instability value (0.0-1.0)
+
+        Returns:
+            Grade from A to F
+        """
+        if instability <= self.coupling.instability_a:
+            return "A"
+        elif instability <= self.coupling.instability_b:
+            return "B"
+        elif instability <= self.coupling.instability_c:
+            return "C"
+        elif instability <= self.coupling.instability_d:
+            return "D"
+        else:
+            return "F"
+
+    def get_stability_category(self, instability: float) -> str:
+        """Get stability category based on instability value.
+
+        Args:
+            instability: Instability value (0.0-1.0)
+
+        Returns:
+            Category: "Stable", "Balanced", or "Unstable"
+        """
+        if instability <= self.coupling.stable_max:
+            return "Stable"
+        elif instability <= self.coupling.balanced_max:
+            return "Balanced"
+        else:
+            return "Unstable"

@@ -675,3 +675,154 @@ def _get_tree_sitter_language(language: str) -> Any:  # noqa: ARG001
 
     except ImportError:
         return None
+
+
+class InstabilityCalculator:
+    """Calculator for instability metrics across the project.
+
+    Instability (I) = Ce / (Ce + Ca) measures how much a file depends on others
+    vs. how much others depend on it.
+
+    Interpretation:
+    - I = 0.0-0.3: Stable (maximally stable at 0.0)
+    - I = 0.3-0.7: Balanced
+    - I = 0.7-1.0: Unstable (maximally unstable at 1.0)
+
+    Stable files should contain abstractions and core logic.
+    Unstable files should contain concrete implementations and glue code.
+    """
+
+    def __init__(
+        self,
+        efferent_collector: EfferentCouplingCollector,
+        afferent_collector: AfferentCouplingCollector,
+    ) -> None:
+        """Initialize instability calculator.
+
+        Args:
+            efferent_collector: Collector for outgoing dependencies
+            afferent_collector: Collector for incoming dependencies
+        """
+        self._efferent_collector = efferent_collector
+        self._afferent_collector = afferent_collector
+
+    def calculate_instability(self, file_path: str) -> float:
+        """Calculate instability for a single file.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            Instability value from 0.0 (stable) to 1.0 (unstable)
+        """
+        ce = len(self._efferent_collector.get_imported_modules())
+        ca = self._afferent_collector.get_afferent_coupling(file_path)
+
+        total = ce + ca
+        if total == 0:
+            return 0.0
+
+        return ce / total
+
+    def calculate_project_instability(
+        self, file_metrics: dict[str, Any]
+    ) -> dict[str, float]:
+        """Calculate instability for all files in the project.
+
+        Args:
+            file_metrics: Dictionary mapping file_path → file metrics
+
+        Returns:
+            Dictionary mapping file_path → instability value
+        """
+        instability_map: dict[str, float] = {}
+
+        for file_path in file_metrics:
+            # Get coupling metrics from file_metrics
+            if "coupling" in file_metrics[file_path]:
+                coupling = file_metrics[file_path]["coupling"]
+                ce = coupling.get("efferent_coupling", 0)
+                ca = coupling.get("afferent_coupling", 0)
+
+                total = ce + ca
+                if total == 0:
+                    instability = 0.0
+                else:
+                    instability = ce / total
+
+                instability_map[file_path] = instability
+
+        return instability_map
+
+    def get_stability_grade(self, instability: float) -> str:
+        """Get letter grade for instability value.
+
+        Args:
+            instability: Instability value (0.0-1.0)
+
+        Returns:
+            Letter grade from A to F
+
+        Grade thresholds:
+        - A: 0.0-0.2 (very stable)
+        - B: 0.2-0.4 (stable)
+        - C: 0.4-0.6 (balanced)
+        - D: 0.6-0.8 (unstable)
+        - F: 0.8-1.0 (very unstable)
+        """
+        if instability <= 0.2:
+            return "A"
+        elif instability <= 0.4:
+            return "B"
+        elif instability <= 0.6:
+            return "C"
+        elif instability <= 0.8:
+            return "D"
+        else:
+            return "F"
+
+    def get_stability_category(self, instability: float) -> str:
+        """Get stability category for instability value.
+
+        Args:
+            instability: Instability value (0.0-1.0)
+
+        Returns:
+            Category: "Stable", "Balanced", or "Unstable"
+        """
+        if instability <= 0.3:
+            return "Stable"
+        elif instability <= 0.7:
+            return "Balanced"
+        else:
+            return "Unstable"
+
+    def get_most_stable_files(
+        self, instability_map: dict[str, float], limit: int = 10
+    ) -> list[tuple[str, float]]:
+        """Get most stable files (lowest instability).
+
+        Args:
+            instability_map: Dictionary mapping file_path → instability
+            limit: Maximum number of files to return
+
+        Returns:
+            List of (file_path, instability) tuples, sorted by stability
+        """
+        sorted_files = sorted(instability_map.items(), key=lambda x: x[1])
+        return sorted_files[:limit]
+
+    def get_most_unstable_files(
+        self, instability_map: dict[str, float], limit: int = 10
+    ) -> list[tuple[str, float]]:
+        """Get most unstable files (highest instability).
+
+        Args:
+            instability_map: Dictionary mapping file_path → instability
+            limit: Maximum number of files to return
+
+        Returns:
+            List of (file_path, instability) tuples, sorted by instability (descending)
+        """
+        sorted_files = sorted(instability_map.items(), key=lambda x: x[1], reverse=True)
+        return sorted_files[:limit]
