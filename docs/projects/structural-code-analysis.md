@@ -1,6 +1,6 @@
 # Project: Structural Code Analysis
 
-> **Status**: Active | **Phase**: 1 of 5 | **Target**: v0.17.0 - v0.21.0
+> **Status**: Active | **Phase**: 2 of 5 | **Target**: v0.17.0 - v0.21.0
 
 ## Quick Links
 
@@ -29,8 +29,8 @@ Add structural code analysis capabilities to mcp-vector-search, enabling quality
 
 | Phase | Milestone | Start | Due | Issues | Status |
 |-------|-----------|-------|-----|--------|--------|
-| 1 | v0.17.0 - Core Metrics | Dec 10 | Dec 23, 2024 | #1-11 | 🎯 Ready |
-| 2 | v0.18.0 - Quality Gates | Dec 24 | Dec 30, 2024 | #12-18 | 📋 Backlog |
+| 1 | v0.17.0 - Core Metrics | Dec 10 | Dec 23, 2024 | #1-11 | ✅ Done |
+| 2 | v0.18.0 - Quality Gates | Dec 24 | Dec 30, 2024 | #12-18 | ✅ Done |
 | 3 | v0.19.0 - Cross-File Analysis | Dec 31 | Jan 6, 2025 | #19-26 | 📋 Backlog |
 | 4 | v0.20.0 - Visualization Export | Jan 7 | Jan 13, 2025 | #27-33 | 📋 Backlog |
 | 5 | v0.21.0 - Search Integration | Jan 20 | Feb 3, 2025 | #34-37 | 📋 Backlog |

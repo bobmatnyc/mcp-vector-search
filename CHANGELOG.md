@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2025-12-11
+
+### Added
+- **Code Smell Detection** (`mcp-vector-search analyze`)
+  - Long Method detection (lines > 50 or cognitive complexity > 15)
+  - Deep Nesting detection (max nesting depth > 4)
+  - Long Parameter List detection (parameters > 5)
+  - God Class detection (methods > 20 and lines > 500)
+  - Complex Method detection (cyclomatic complexity > 10)
+  - Configurable thresholds via ThresholdConfig
+  - `--fail-on-smell` flag for CI/CD quality gates
+
+- **SARIF Output Format**
+  - Full SARIF 2.1.0 support for CI/CD integration
+  - `--sarif` flag to output analysis results in SARIF format
+  - Compatible with GitHub Code Scanning, Azure DevOps, and other tools
+  - Includes rule definitions, locations, and severity levels
+
+- **Exit Code Support for CI/CD**
+  - Exit code 1 when quality gate fails (smells detected with --fail-on-smell)
+  - Exit code 0 on success
+  - Proper propagation through CLI wrapper chain
+
+- **Diff-Aware Analysis** (`--changed-only`, `--baseline`)
+  - Git integration for analyzing only changed files
+  - `--changed-only` to analyze uncommitted changes
+  - `--baseline <branch>` to compare against a specific branch
+  - Fallback strategy: main → master → develop → HEAD~1
+  - Reduces analysis time in large codebases
+
+- **Baseline Comparison**
+  - Save metric snapshots: `--save-baseline <name>`
+  - Compare against baselines: `--compare-baseline <name>`
+  - List saved baselines: `--list-baselines`
+  - Delete baselines: `--delete-baseline <name>`
+  - Regression/improvement tracking with configurable threshold (default 5%)
+  - Rich console output showing changes per file
+
+### Technical Details
+- 43 new unit tests for baseline functionality
+- 40 new unit tests for git integration
+- Exit code propagation fix in didyoumean.py CLI wrapper
+- GitManager class for robust git operations
+- BaselineManager and BaselineComparator classes
+
 ## [0.17.0] - 2024-12-11
 
 ### Added
