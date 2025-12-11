@@ -51,6 +51,7 @@ from .collectors.complexity import (
 from .collectors.coupling import (
     AfferentCouplingCollector,
     EfferentCouplingCollector,
+    InstabilityCalculator,
     build_import_graph,
 )
 from .collectors.smells import CodeSmell, SmellDetector, SmellSeverity
@@ -70,6 +71,7 @@ __all__ = [
     "MethodCountCollector",
     "EfferentCouplingCollector",
     "AfferentCouplingCollector",
+    "InstabilityCalculator",
     "build_import_graph",
     "SmellDetector",
     "CodeSmell",

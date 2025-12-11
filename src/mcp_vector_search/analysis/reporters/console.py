@@ -231,6 +231,130 @@ class ConsoleReporter:
 
         console.print()
 
+    def print_instability(self, metrics: ProjectMetrics, top: int = 10) -> None:
+        """Print instability metrics.
+
+        Args:
+            metrics: Project metrics
+            top: Number of top files to display
+        """
+        console.print("[bold]🔗 Instability Metrics[/bold]")
+
+        # Collect instability data from files with coupling metrics
+        files_with_coupling = [
+            (f.file_path, f.coupling)
+            for f in metrics.files.values()
+            if f.coupling.efferent_coupling + f.coupling.afferent_coupling > 0
+        ]
+
+        if not files_with_coupling:
+            console.print("  No coupling data available")
+            console.print()
+            return
+
+        # Compute instability distribution
+        stable_count = sum(1 for _, c in files_with_coupling if c.instability <= 0.3)
+        balanced_count = sum(
+            1 for _, c in files_with_coupling if 0.3 < c.instability <= 0.7
+        )
+        unstable_count = sum(1 for _, c in files_with_coupling if c.instability > 0.7)
+        total_files = len(files_with_coupling)
+
+        console.print(f"  Total Files: {total_files}")
+        console.print(
+            f"  [green]Stable (I ≤ 0.3):[/green] {stable_count} "
+            f"({stable_count / total_files * 100:.1f}%)"
+        )
+        console.print(
+            f"  [yellow]Balanced (0.3 < I ≤ 0.7):[/yellow] {balanced_count} "
+            f"({balanced_count / total_files * 100:.1f}%)"
+        )
+        console.print(
+            f"  [red]Unstable (I > 0.7):[/red] {unstable_count} "
+            f"({unstable_count / total_files * 100:.1f}%)"
+        )
+        console.print()
+
+        # Show most stable files
+        most_stable = sorted(files_with_coupling, key=lambda x: x[1].instability)[:top]
+        if most_stable:
+            console.print(
+                f"[bold green]✓ Most Stable Files (Top {len(most_stable)})[/bold green]"
+            )
+
+            table = Table(show_header=True, header_style="bold cyan", box=None)
+            table.add_column("Rank", justify="right", width=6)
+            table.add_column("File", style="cyan", width=45)
+            table.add_column("Instability", justify="right", width=12)
+            table.add_column("Category", justify="center", width=12)
+            table.add_column("Ce/Ca", justify="right", width=10)
+
+            for rank, (file_path, coupling) in enumerate(most_stable, 1):
+                # Truncate file path if too long
+                display_path = file_path
+                if len(display_path) > 43:
+                    display_path = "..." + display_path[-40:]
+
+                # Determine category color
+                if coupling.instability <= 0.3:
+                    category = "[green]Stable[/green]"
+                elif coupling.instability <= 0.7:
+                    category = "[yellow]Balanced[/yellow]"
+                else:
+                    category = "[red]Unstable[/red]"
+
+                table.add_row(
+                    f"{rank}",
+                    display_path,
+                    f"{coupling.instability:.3f}",
+                    category,
+                    f"{coupling.efferent_coupling}/{coupling.afferent_coupling}",
+                )
+
+            console.print(table)
+            console.print()
+
+        # Show most unstable files
+        most_unstable = sorted(
+            files_with_coupling, key=lambda x: x[1].instability, reverse=True
+        )[:top]
+        if most_unstable:
+            console.print(
+                f"[bold red]⚠️  Most Unstable Files (Top {len(most_unstable)})[/bold red]"
+            )
+
+            table = Table(show_header=True, header_style="bold cyan", box=None)
+            table.add_column("Rank", justify="right", width=6)
+            table.add_column("File", style="cyan", width=45)
+            table.add_column("Instability", justify="right", width=12)
+            table.add_column("Category", justify="center", width=12)
+            table.add_column("Ce/Ca", justify="right", width=10)
+
+            for rank, (file_path, coupling) in enumerate(most_unstable, 1):
+                # Truncate file path if too long
+                display_path = file_path
+                if len(display_path) > 43:
+                    display_path = "..." + display_path[-40:]
+
+                # Determine category color
+                if coupling.instability <= 0.3:
+                    category = "[green]Stable[/green]"
+                elif coupling.instability <= 0.7:
+                    category = "[yellow]Balanced[/yellow]"
+                else:
+                    category = "[red]Unstable[/red]"
+
+                table.add_row(
+                    f"{rank}",
+                    display_path,
+                    f"{coupling.instability:.3f}",
+                    category,
+                    f"{coupling.efferent_coupling}/{coupling.afferent_coupling}",
+                )
+
+            console.print(table)
+            console.print()
+
     def print_recommendations(self, metrics: ProjectMetrics) -> None:
         """Print actionable recommendations.
 
@@ -270,6 +394,18 @@ class ConsoleReporter:
                     f"[yellow]•[/yellow] {d_f_percentage:.1f}% of functions have D/F grades - aim to reduce this below 10%"
                 )
 
+        # Check for highly unstable files (instability > 0.8)
+        highly_unstable = [
+            f
+            for f in metrics.files.values()
+            if f.coupling.instability > 0.8
+            and (f.coupling.efferent_coupling + f.coupling.afferent_coupling) > 0
+        ]
+        if highly_unstable:
+            recommendations.append(
+                f"[yellow]•[/yellow] {len(highly_unstable)} files have instability > 0.8 - consider reducing dependencies"
+            )
+
         # Check overall health
         avg_health = metrics._compute_avg_health_score()
         if avg_health < 0.7:
@@ -301,6 +437,12 @@ class ConsoleReporter:
         )
         console.print(
             "[dim]  • Focus refactoring efforts on Grade D and F functions first[/dim]"
+        )
+        console.print(
+            "[dim]  • Stable files (I ≤ 0.3) should contain abstractions and core logic[/dim]"
+        )
+        console.print(
+            "[dim]  • Unstable files (I > 0.7) should contain concrete implementations[/dim]"
         )
         console.print()
 

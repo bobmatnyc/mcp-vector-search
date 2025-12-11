@@ -30,6 +30,7 @@ from .complexity import (
 from .coupling import (
     AfferentCouplingCollector,
     EfferentCouplingCollector,
+    InstabilityCalculator,
     build_import_graph,
 )
 
@@ -43,5 +44,6 @@ __all__ = [
     "MethodCountCollector",
     "EfferentCouplingCollector",
     "AfferentCouplingCollector",
+    "InstabilityCalculator",
     "build_import_graph",
 ]
