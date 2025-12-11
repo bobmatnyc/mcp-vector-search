@@ -380,6 +380,32 @@ class MCPVectorSearchServer:
                 description="Returns circular dependency cycles",
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
+            Tool(
+                name="interpret_analysis",
+                description="Interpret analysis results with natural language explanations and recommendations",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "analysis_json": {
+                            "type": "string",
+                            "description": "JSON string from analyze command with --include-context",
+                        },
+                        "focus": {
+                            "type": "string",
+                            "description": "Focus area: 'summary', 'recommendations', or 'priorities'",
+                            "enum": ["summary", "recommendations", "priorities"],
+                            "default": "summary",
+                        },
+                        "verbosity": {
+                            "type": "string",
+                            "description": "Verbosity level: 'brief', 'normal', or 'detailed'",
+                            "enum": ["brief", "normal", "detailed"],
+                            "default": "normal",
+                        },
+                    },
+                    "required": ["analysis_json"],
+                },
+            ),
         ]
 
         return tools
@@ -390,7 +416,8 @@ class MCPVectorSearchServer:
 
     async def call_tool(self, request: CallToolRequest) -> CallToolResult:
         """Handle tool calls."""
-        if not self._initialized:
+        # Skip initialization for interpret_analysis (doesn't need project config)
+        if request.params.name != "interpret_analysis" and not self._initialized:
             await self.initialize()
 
         try:
@@ -414,6 +441,8 @@ class MCPVectorSearchServer:
                 return await self._get_complexity_hotspots(request.params.arguments)
             elif request.params.name == "check_circular_dependencies":
                 return await self._check_circular_dependencies(request.params.arguments)
+            elif request.params.name == "interpret_analysis":
+                return await self._interpret_analysis(request.params.arguments)
             else:
                 return CallToolResult(
                     content=[
@@ -1324,6 +1353,63 @@ class MCPVectorSearchServer:
                     TextContent(
                         type="text",
                         text=f"Circular dependency check failed: {str(e)}",
+                    )
+                ],
+                isError=True,
+            )
+
+    async def _interpret_analysis(self, args: dict[str, Any]) -> CallToolResult:
+        """Handle interpret_analysis tool call."""
+        analysis_json_str = args.get("analysis_json", "")
+        focus = args.get("focus", "summary")
+        verbosity = args.get("verbosity", "normal")
+
+        if not analysis_json_str:
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text="analysis_json parameter is required")
+                ],
+                isError=True,
+            )
+
+        try:
+            import json
+
+            from ..analysis.interpretation import AnalysisInterpreter, LLMContextExport
+
+            # Parse JSON input
+            analysis_data = json.loads(analysis_json_str)
+
+            # Convert to LLMContextExport
+            export = LLMContextExport(**analysis_data)
+
+            # Create interpreter and generate interpretation
+            interpreter = AnalysisInterpreter()
+            interpretation = interpreter.interpret(
+                export, focus=focus, verbosity=verbosity
+            )
+
+            return CallToolResult(
+                content=[TextContent(type="text", text=interpretation)]
+            )
+
+        except json.JSONDecodeError as e:
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Invalid JSON input: {str(e)}",
+                    )
+                ],
+                isError=True,
+            )
+        except Exception as e:
+            logger.error(f"Analysis interpretation failed: {e}")
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Interpretation failed: {str(e)}",
                     )
                 ],
                 isError=True,

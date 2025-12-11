@@ -80,6 +80,12 @@ def main(
         help="Output results in JSON format",
         rich_help_panel="📊 Display Options",
     ),
+    include_context: bool = typer.Option(
+        False,
+        "--include-context",
+        help="Include LLM-consumable context in JSON output (enhanced interpretation)",
+        rich_help_panel="📊 Display Options",
+    ),
     format: str = typer.Option(
         "console",
         "--format",
@@ -293,6 +299,7 @@ def main(
                 compare_baseline=compare_baseline,
                 force_baseline=force_baseline,
                 baseline_manager=baseline_manager,
+                include_context=include_context,
             )
         )
 
@@ -348,6 +355,7 @@ async def run_analysis(
     compare_baseline: str | None = None,
     force_baseline: bool = False,
     baseline_manager: BaselineManager | None = None,
+    include_context: bool = False,
 ) -> None:
     """Run code complexity analysis.
 
@@ -558,30 +566,48 @@ async def run_analysis(
             console.print(f"[green]✓[/green] SARIF report written to: {output_file}")
 
         elif json_output or output_format == "json":
-            # JSON format
-            output = project_metrics.to_summary()
-            # Add smell data to JSON output if available
-            if show_smells and all_smells:
-                from ...analysis.collectors.smells import SmellDetector
+            # JSON format - with optional LLM context
+            if include_context:
+                # Enhanced JSON export with LLM-consumable context
+                from ...analysis.interpretation import EnhancedJSONExporter
+                from ...config.thresholds import ThresholdConfig
 
-                detector = SmellDetector()
-                smell_summary = detector.get_smell_summary(all_smells)
-                output["smells"] = {
-                    "summary": smell_summary,
-                    "details": [
-                        {
-                            "name": smell.name,
-                            "severity": smell.severity.value,
-                            "location": smell.location,
-                            "description": smell.description,
-                            "metric_value": smell.metric_value,
-                            "threshold": smell.threshold,
-                            "suggestion": smell.suggestion,
-                        }
-                        for smell in all_smells
-                    ],
-                }
-            print_json(output)
+                threshold_config = ThresholdConfig()
+                exporter = EnhancedJSONExporter(
+                    project_root=project_root, threshold_config=threshold_config
+                )
+                enhanced_export = exporter.export_with_context(
+                    project_metrics, include_smells=show_smells
+                )
+                # Output as JSON
+                import json
+
+                print_json(json.loads(enhanced_export.model_dump_json()))
+            else:
+                # Standard JSON format
+                output = project_metrics.to_summary()
+                # Add smell data to JSON output if available
+                if show_smells and all_smells:
+                    from ...analysis.collectors.smells import SmellDetector
+
+                    detector = SmellDetector()
+                    smell_summary = detector.get_smell_summary(all_smells)
+                    output["smells"] = {
+                        "summary": smell_summary,
+                        "details": [
+                            {
+                                "name": smell.name,
+                                "severity": smell.severity.value,
+                                "location": smell.location,
+                                "description": smell.description,
+                                "metric_value": smell.metric_value,
+                                "threshold": smell.threshold,
+                                "suggestion": smell.suggestion,
+                            }
+                            for smell in all_smells
+                        ],
+                    }
+                print_json(output)
         else:
             # Console format (default)
             # Import console reporter
