@@ -41,6 +41,13 @@ Example:
 """
 
 from .collectors.base import CollectorContext, MetricCollector
+from .collectors.cohesion import (
+    ClassCohesion,
+    FileCohesion,
+    LCOM4Calculator,
+    MethodAttributeAccess,
+    UnionFind,
+)
 from .collectors.complexity import (
     CognitiveComplexityCollector,
     CyclomaticComplexityCollector,
@@ -76,4 +83,9 @@ __all__ = [
     "SmellDetector",
     "CodeSmell",
     "SmellSeverity",
+    "ClassCohesion",
+    "FileCohesion",
+    "LCOM4Calculator",
+    "MethodAttributeAccess",
+    "UnionFind",
 ]
