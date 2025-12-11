@@ -55,8 +55,9 @@ class SmellThresholds:
     # High complexity
     high_complexity: int = 15
 
-    # God class (too many methods)
+    # God class (too many methods and lines)
     god_class_methods: int = 20
+    god_class_lines: int = 500
 
     # Feature envy (placeholder for future)
     feature_envy_external_calls: int = 5
@@ -147,6 +148,7 @@ class ThresholdConfig:
                 "deep_nesting_depth": self.smells.deep_nesting_depth,
                 "high_complexity": self.smells.high_complexity,
                 "god_class_methods": self.smells.god_class_methods,
+                "god_class_lines": self.smells.god_class_lines,
                 "feature_envy_external_calls": self.smells.feature_envy_external_calls,
             },
             "fail_on_f_grade": self.fail_on_f_grade,

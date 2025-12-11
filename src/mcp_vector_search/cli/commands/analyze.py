@@ -41,6 +41,12 @@ def main(
         help="Quick mode (cognitive + cyclomatic complexity only)",
         rich_help_panel="⚡ Performance Options",
     ),
+    show_smells: bool = typer.Option(
+        True,
+        "--smells/--no-smells",
+        help="Show detected code smells in output",
+        rich_help_panel="📊 Display Options",
+    ),
     language: str | None = typer.Option(
         None,
         "--language",
@@ -114,6 +120,7 @@ def main(
                 path_filter=path,
                 top_n=top,
                 json_output=json_output,
+                show_smells=show_smells,
             )
         )
 
@@ -130,6 +137,7 @@ async def run_analysis(
     path_filter: Path | None = None,
     top_n: int = 10,
     json_output: bool = False,
+    show_smells: bool = True,
 ) -> None:
     """Run code complexity analysis.
 
@@ -140,6 +148,7 @@ async def run_analysis(
         path_filter: Analyze specific file or directory
         top_n: Number of top hotspots to show
         json_output: Output results as JSON
+        show_smells: Show detected code smells in output
     """
     try:
         # Check if project is initialized (optional - we can analyze any directory)
@@ -213,9 +222,45 @@ async def run_analysis(
         # Compute aggregates
         project_metrics.compute_aggregates()
 
+        # Detect code smells if requested
+        all_smells = []
+        if show_smells:
+            from ...analysis.collectors.smells import SmellDetector
+            from ...config.thresholds import ThresholdConfig
+
+            # Load threshold config (optional - defaults will be used)
+            threshold_config = ThresholdConfig()
+            smell_detector = SmellDetector(thresholds=threshold_config)
+
+            # Detect smells across all analyzed files
+            for file_path, file_metrics in project_metrics.files.items():
+                file_smells = smell_detector.detect_all(file_metrics, file_path)
+                all_smells.extend(file_smells)
+
         # Output results
         if json_output:
             output = project_metrics.to_summary()
+            # Add smell data to JSON output if available
+            if show_smells and all_smells:
+                from ...analysis.collectors.smells import SmellDetector
+
+                detector = SmellDetector()
+                smell_summary = detector.get_smell_summary(all_smells)
+                output["smells"] = {
+                    "summary": smell_summary,
+                    "details": [
+                        {
+                            "name": smell.name,
+                            "severity": smell.severity.value,
+                            "location": smell.location,
+                            "description": smell.description,
+                            "metric_value": smell.metric_value,
+                            "threshold": smell.threshold,
+                            "suggestion": smell.suggestion,
+                        }
+                        for smell in all_smells
+                    ],
+                }
             print_json(output)
         else:
             # Import console reporter
@@ -225,6 +270,11 @@ async def run_analysis(
             reporter.print_summary(project_metrics)
             reporter.print_distribution(project_metrics)
             reporter.print_hotspots(project_metrics, top=top_n)
+
+            # Print code smells if requested
+            if show_smells and all_smells:
+                reporter.print_smells(all_smells, top=top_n)
+
             reporter.print_recommendations(project_metrics)
 
     except ProjectNotFoundError as e:

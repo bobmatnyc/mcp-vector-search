@@ -148,6 +148,89 @@ class ConsoleReporter:
         console.print(table)
         console.print()
 
+    def print_smells(self, smells: list, top: int = 10) -> None:
+        """Print detected code smells.
+
+        Args:
+            smells: List of CodeSmell objects
+            top: Maximum number of smells to display
+        """
+        from ..collectors.smells import SmellSeverity
+
+        if not smells:
+            console.print("[bold]🔍 Code Smells[/bold]")
+            console.print("  No code smells detected!")
+            console.print()
+            return
+
+        console.print(
+            f"[bold]🔍 Code Smells Detected[/bold] - Found {len(smells)} issues"
+        )
+
+        # Group smells by severity
+        error_smells = [s for s in smells if s.severity == SmellSeverity.ERROR]
+        warning_smells = [s for s in smells if s.severity == SmellSeverity.WARNING]
+        info_smells = [s for s in smells if s.severity == SmellSeverity.INFO]
+
+        # Summary
+        console.print(
+            f"  [red]Errors: {len(error_smells)}[/red]  "
+            f"[yellow]Warnings: {len(warning_smells)}[/yellow]  "
+            f"[blue]Info: {len(info_smells)}[/blue]"
+        )
+        console.print()
+
+        # Show top smells (prioritize errors first)
+        smells_to_display = error_smells + warning_smells + info_smells
+        smells_to_display = smells_to_display[:top]
+
+        # Create table
+        table = Table(show_header=True, header_style="bold cyan", box=None)
+        table.add_column("Severity", width=10)
+        table.add_column("Smell Type", width=20)
+        table.add_column("Location", width=40)
+        table.add_column("Details", width=30)
+
+        for smell in smells_to_display:
+            # Color code by severity
+            if smell.severity == SmellSeverity.ERROR:
+                severity_str = "[red]ERROR[/red]"
+            elif smell.severity == SmellSeverity.WARNING:
+                severity_str = "[yellow]WARNING[/yellow]"
+            else:
+                severity_str = "[blue]INFO[/blue]"
+
+            # Truncate location if too long
+            location = smell.location
+            if len(location) > 38:
+                location = "..." + location[-35:]
+
+            # Format details (metric value vs threshold)
+            details = f"{smell.metric_value} > {smell.threshold}"
+
+            table.add_row(severity_str, smell.name, location, details)
+
+        console.print(table)
+        console.print()
+
+        # Show suggestions for top smells
+        if smells_to_display:
+            console.print("[bold]💡 Top Suggestions[/bold]")
+            shown_suggestions = set()
+            suggestion_count = 0
+
+            for smell in smells_to_display:
+                if smell.suggestion and smell.suggestion not in shown_suggestions:
+                    console.print(f"  • [dim]{smell.suggestion}[/dim]")
+                    shown_suggestions.add(smell.suggestion)
+                    suggestion_count += 1
+
+                    # Limit to 5 unique suggestions
+                    if suggestion_count >= 5:
+                        break
+
+        console.print()
+
     def print_recommendations(self, metrics: ProjectMetrics) -> None:
         """Print actionable recommendations.
 
