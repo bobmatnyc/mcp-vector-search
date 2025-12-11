@@ -148,6 +148,28 @@ def main(
         help="Force overwrite when saving baseline that already exists",
         rich_help_panel="📊 Baseline Management",
     ),
+    show_trends: bool = typer.Option(
+        False,
+        "--trends",
+        help="Show trend analysis over time (requires historical data)",
+        rich_help_panel="📊 Trend Analysis",
+    ),
+    trend_days: int = typer.Option(
+        30,
+        "--trend-days",
+        help="Number of days to analyze trends (default: 30)",
+        min=1,
+        max=365,
+        rich_help_panel="📊 Trend Analysis",
+    ),
+    trend_threshold: float = typer.Option(
+        5.0,
+        "--trend-threshold",
+        help="Percentage change threshold for significant trends (default: 5.0)",
+        min=0.1,
+        max=100.0,
+        rich_help_panel="📊 Trend Analysis",
+    ),
 ) -> None:
     """📈 Analyze code complexity and quality.
 
@@ -196,7 +218,16 @@ def main(
     [green]CI/CD workflow with SARIF:[/green]
         $ mcp-vector-search analyze --fail-on-smell --format sarif --output report.sarif
 
+    [bold cyan]Trend Analysis:[/bold cyan]
+
+    [green]Show 30-day trend analysis:[/green]
+        $ mcp-vector-search analyze --trends
+
+    [green]Analyze 90-day trends with custom threshold:[/green]
+        $ mcp-vector-search analyze --trends --trend-days 90 --trend-threshold 10.0
+
     [dim]💡 Tip: Use --quick for faster analysis on large projects.[/dim]
+    [dim]💡 Tip: Run analysis regularly to build trend history over time.[/dim]
     """
     if ctx.invoked_subcommand is not None:
         # A subcommand was invoked - let it handle the request
@@ -293,6 +324,9 @@ def main(
                 compare_baseline=compare_baseline,
                 force_baseline=force_baseline,
                 baseline_manager=baseline_manager,
+                show_trends=show_trends,
+                trend_days=trend_days,
+                trend_threshold=trend_threshold,
             )
         )
 
@@ -348,6 +382,9 @@ async def run_analysis(
     compare_baseline: str | None = None,
     force_baseline: bool = False,
     baseline_manager: BaselineManager | None = None,
+    show_trends: bool = False,
+    trend_days: int = 30,
+    trend_threshold: float = 5.0,
 ) -> None:
     """Run code complexity analysis.
 
@@ -369,6 +406,9 @@ async def run_analysis(
         compare_baseline: Compare against named baseline
         force_baseline: Force overwrite existing baseline
         baseline_manager: BaselineManager instance
+        show_trends: Show trend analysis over time
+        trend_days: Number of days for trend analysis
+        trend_threshold: Percentage threshold for significant trends
     """
     try:
         # Check if project is initialized (optional - we can analyze any directory)
@@ -597,6 +637,41 @@ async def run_analysis(
                 reporter.print_smells(all_smells, top=top_n)
 
             reporter.print_recommendations(project_metrics)
+
+        # Save snapshot to metrics store (for trend tracking)
+        if not (changed_only or baseline or path_filter):
+            # Only save full project snapshots (not filtered analyses)
+            try:
+                from ...analysis.storage import MetricsStore
+
+                metrics_store = MetricsStore()
+                snapshot_id = metrics_store.save_complete_snapshot(project_metrics)
+                logger.debug(f"Saved metrics snapshot {snapshot_id} for trend tracking")
+            except Exception as e:
+                logger.warning(f"Failed to save metrics snapshot: {e}")
+                # Don't fail analysis if snapshot save fails
+
+        # Show trend analysis if requested
+        if show_trends and not json_output and output_format == "console":
+            try:
+                from ...analysis.reporters.console import ConsoleReporter
+                from ...analysis.storage import MetricsStore, TrendTracker
+
+                metrics_store = MetricsStore()
+                tracker = TrendTracker(
+                    metrics_store, threshold_percentage=trend_threshold
+                )
+                trends = tracker.get_trends(str(project_root), days=trend_days)
+
+                reporter = ConsoleReporter()
+                reporter.print_trends(trends)
+
+            except Exception as e:
+                logger.error(f"Trend analysis failed: {e}")
+                console.print(f"\n[yellow]⚠️  Trend analysis failed: {e}[/yellow]")
+                console.print(
+                    "[dim]💡 Tip: Run analysis multiple times to build trend history[/dim]\n"
+                )
 
         # Handle baseline operations after analysis
         if baseline_manager:

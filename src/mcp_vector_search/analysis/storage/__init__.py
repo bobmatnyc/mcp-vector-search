@@ -8,8 +8,9 @@ This module provides SQLite-based storage for code metrics, enabling:
 
 Public API:
     - MetricsStore: Main storage interface
+    - TrendTracker: Trend analysis and regression detection
     - ProjectSnapshot: Project-wide metrics at a point in time
-    - TrendData: Trend analysis results
+    - TrendData: Trend analysis results with alerts
     - GitInfo: Git metadata for traceability
 
 Exceptions:
@@ -18,7 +19,7 @@ Exceptions:
     - DuplicateEntryError: Attempted duplicate entry
 
 Example Usage:
-    >>> from mcp_vector_search.analysis.storage import MetricsStore
+    >>> from mcp_vector_search.analysis.storage import MetricsStore, TrendTracker
     >>> from mcp_vector_search.analysis.metrics import ProjectMetrics
     >>>
     >>> # Initialize store (uses default ~/.mcp-vector-search/metrics.db)
@@ -34,12 +35,13 @@ Example Usage:
     >>> for snapshot in history:
     ...     print(f"{snapshot.timestamp}: {snapshot.avg_complexity:.2f}")
     >>>
-    >>> # Analyze trends
-    >>> trends = store.get_trends("/path/to/project", days=30)
+    >>> # Analyze trends with TrendTracker
+    >>> tracker = TrendTracker(store, threshold_percentage=5.0)
+    >>> trends = tracker.get_trends("/path/to/project", days=30)
     >>> if trends.improving:
-    ...     print(f"Complexity improving at {abs(trends.change_rate):.4f}/day")
-    >>> else:
-    ...     print(f"Complexity degrading at {trends.change_rate:.4f}/day")
+    ...     print("Complexity is improving!")
+    >>> if trends.has_regressions:
+    ...     print(f"Found {len(trends.critical_regressions)} regressions")
     >>>
     >>> store.close()
 
@@ -51,6 +53,7 @@ Context Manager Usage:
 See Also:
     - schema.py: Database schema definitions
     - metrics_store.py: MetricsStore implementation
+    - trend_tracker.py: TrendTracker implementation
 """
 
 from .metrics_store import (
@@ -60,17 +63,21 @@ from .metrics_store import (
     MetricsStore,
     MetricsStoreError,
     ProjectSnapshot,
-    TrendData,
 )
 from .schema import SCHEMA_VERSION
+from .trend_tracker import FileRegression, TrendData, TrendDirection, TrendTracker
 
 __all__ = [
     # Main storage class
     "MetricsStore",
+    # Trend tracking
+    "TrendTracker",
+    "TrendDirection",
     # Data classes
     "ProjectSnapshot",
     "TrendData",
     "GitInfo",
+    "FileRegression",
     # Exceptions
     "MetricsStoreError",
     "DatabaseLockedError",
