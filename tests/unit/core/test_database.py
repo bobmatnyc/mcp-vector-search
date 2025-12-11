@@ -446,3 +446,165 @@ class TestPooledChromaVectorDatabase:
             assert isinstance(e, DocumentAdditionError | Exception)
 
         await db.close()
+
+    @pytest.mark.asyncio
+    async def test_sqlite_corruption_detection(self, temp_dir, mock_embedding_function):
+        """Test SQLite corruption detection and recovery (Layer 1).
+
+        This test verifies that:
+        1. SQLite corruption is detected during pre-initialization checks
+        2. Automatic recovery is attempted
+        3. Either recovery succeeds OR a clear error message is shown
+        """
+        import sqlite3
+
+        from mcp_vector_search.core.exceptions import DatabaseInitializationError
+
+        db_path = temp_dir / "test_db"
+        db_path.mkdir(parents=True, exist_ok=True)
+
+        # Create a valid database first
+        db = ChromaVectorDatabase(
+            persist_directory=db_path,
+            embedding_function=mock_embedding_function,
+        )
+        await db.initialize()
+        await db.close()
+
+        # Corrupt the SQLite database
+        sqlite_path = db_path / "chroma.sqlite3"
+        assert sqlite_path.exists()
+
+        # Completely corrupt the file to simulate worst-case scenario
+        with open(sqlite_path, "wb") as f:
+            f.write(b"CORRUPTED DATABASE FILE")
+
+        # Verify corruption is detectable
+        try:
+            conn = sqlite3.connect(str(sqlite_path))
+            cursor = conn.execute("PRAGMA quick_check")
+            result = cursor.fetchone()[0]
+            conn.close()
+            assert result != "ok"  # Should detect corruption
+        except sqlite3.Error:
+            pass  # Expected - database is corrupted
+
+        # Create new database instance
+        db2 = ChromaVectorDatabase(
+            persist_directory=db_path,
+            embedding_function=mock_embedding_function,
+        )
+
+        # Initialize should either:
+        # 1. Successfully recover and create a fresh database, OR
+        # 2. Raise DatabaseInitializationError with helpful message after attempting recovery
+        try:
+            await db2.initialize()
+
+            # If we get here, recovery succeeded
+            is_healthy = await db2.health_check()
+            assert is_healthy is True
+
+            # Fresh database after recovery
+            stats = await db2.get_stats()
+            assert stats.total_chunks == 0
+
+            await db2.close()
+
+        except DatabaseInitializationError as e:
+            # Recovery failed after attempt - verify error message is helpful
+            error_msg = str(e)
+            assert "mcp-vector-search reset" in error_msg
+            # This is acceptable - corruption was detected and recovery was attempted
+
+    @pytest.mark.asyncio
+    async def test_rust_panic_recovery(self, temp_dir, mock_embedding_function):
+        """Test Rust panic pattern detection and recovery (Layer 2)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        db_path = temp_dir / "test_db"
+        db_path.mkdir(parents=True, exist_ok=True)
+
+        # Create valid database first
+        db = ChromaVectorDatabase(
+            persist_directory=db_path,
+            embedding_function=mock_embedding_function,
+        )
+        await db.initialize()
+        await db.close()
+
+        # Create new instance to test panic handling
+        db2 = ChromaVectorDatabase(
+            persist_directory=db_path,
+            embedding_function=mock_embedding_function,
+        )
+
+        # Mock chromadb.PersistentClient to raise Rust panic on first call
+        rust_panic_error = Exception(
+            "range start index 5 out of range for slice of length 3"
+        )
+
+        with patch("chromadb.PersistentClient") as mock_client:
+            # First call raises Rust panic, second call succeeds
+            mock_client.side_effect = [
+                rust_panic_error,
+                MagicMock(),  # Success on retry
+            ]
+
+            # Mock _recover_from_corruption to avoid actual cleanup
+            db2._recover_from_corruption = AsyncMock()
+
+            # Mock get_or_create_collection
+            mock_collection = MagicMock()
+            mock_client.return_value.get_or_create_collection = MagicMock(
+                return_value=mock_collection
+            )
+
+            # Initialize should detect Rust panic and recover
+            await db2.initialize()
+
+            # Verify recovery was called
+            db2._recover_from_corruption.assert_called_once()
+
+            # Verify client was called twice (initial + retry)
+            assert mock_client.call_count == 2
+
+        await db2.close()
+
+    @pytest.mark.asyncio
+    async def test_rust_panic_recovery_failure(self, temp_dir, mock_embedding_function):
+        """Test Rust panic recovery failure after retry (Layer 2)."""
+        from unittest.mock import AsyncMock, patch
+
+        from mcp_vector_search.core.exceptions import DatabaseError
+
+        db_path = temp_dir / "test_db"
+        db_path.mkdir(parents=True, exist_ok=True)
+
+        db = ChromaVectorDatabase(
+            persist_directory=db_path,
+            embedding_function=mock_embedding_function,
+        )
+
+        # Mock chromadb.PersistentClient to always raise Rust panic
+        rust_panic_error = Exception("thread panicked at 'index out of bounds'")
+
+        with patch("chromadb.PersistentClient") as mock_client:
+            # Always raise Rust panic (both initial and retry)
+            mock_client.side_effect = rust_panic_error
+
+            # Mock _recover_from_corruption
+            db._recover_from_corruption = AsyncMock()
+
+            # Initialize should raise DatabaseError after recovery fails
+            with pytest.raises(DatabaseError) as exc_info:
+                await db.initialize()
+
+            # Verify error message suggests manual reset
+            assert "mcp-vector-search reset" in str(exc_info.value)
+
+            # Verify recovery was called once
+            db._recover_from_corruption.assert_called_once()
+
+            # Verify client was called twice (initial + retry)
+            assert mock_client.call_count == 2

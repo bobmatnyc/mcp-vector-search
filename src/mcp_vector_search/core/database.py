@@ -151,6 +151,7 @@ class ChromaVectorDatabase(VectorDatabase):
         self.collection_name = collection_name
         self._client = None
         self._collection = None
+        self._recovery_attempted = False  # Guard against infinite recursion
 
     async def initialize(self) -> None:
         """Initialize ChromaDB client and collection with corruption recovery."""
@@ -160,49 +161,132 @@ class ChromaVectorDatabase(VectorDatabase):
             # Ensure directory exists
             self.persist_directory.mkdir(parents=True, exist_ok=True)
 
-            # Check for corruption before initializing
+            # LAYER 1: Check for corruption before initializing (SQLite + HNSW checks)
             await self._detect_and_recover_corruption()
 
-            # Create client with new API
-            self._client = chromadb.PersistentClient(
-                path=str(self.persist_directory),
-                settings=chromadb.Settings(
-                    anonymized_telemetry=False,
-                    allow_reset=True,
-                ),
-            )
+            # LAYER 2: Wrap ChromaDB initialization with Rust panic detection
+            try:
+                # Create client with new API
+                self._client = chromadb.PersistentClient(
+                    path=str(self.persist_directory),
+                    settings=chromadb.Settings(
+                        anonymized_telemetry=False,
+                        allow_reset=True,
+                    ),
+                )
 
-            # Create or get collection
-            self._collection = self._client.get_or_create_collection(
-                name=self.collection_name,
-                embedding_function=self.embedding_function,
-                metadata={
-                    "description": "Semantic code search collection",
-                },
-            )
+                # Create or get collection
+                self._collection = self._client.get_or_create_collection(
+                    name=self.collection_name,
+                    embedding_function=self.embedding_function,
+                    metadata={
+                        "description": "Semantic code search collection",
+                    },
+                )
 
-            logger.debug(f"ChromaDB initialized at {self.persist_directory}")
+                # Reset recovery flag on successful initialization
+                self._recovery_attempted = False
 
-        except Exception as e:
-            # Check if this is a corruption error
-            error_msg = str(e).lower()
-            if any(
-                indicator in error_msg
-                for indicator in [
-                    "pickle",
-                    "unpickling",
-                    "eof",
-                    "ran out of input",
-                    "hnsw",
-                    "index",
-                    "deserialize",
-                    "corrupt",
+                logger.debug(f"ChromaDB initialized at {self.persist_directory}")
+
+            except Exception as init_error:
+                # LAYER 2: Detect Rust panic patterns during initialization
+                error_msg = str(init_error).lower()
+
+                # Rust panic patterns (common ChromaDB Rust panics)
+                rust_panic_patterns = [
+                    "range start index",
+                    "out of range",
+                    "panic",
+                    "thread panicked",
+                    "slice of length",
+                    "index out of bounds",
                 ]
-            ):
+
+                if any(pattern in error_msg for pattern in rust_panic_patterns):
+                    logger.warning(
+                        f"Rust panic detected during ChromaDB initialization: {init_error}"
+                    )
+                    logger.info(
+                        "Attempting automatic recovery from database corruption..."
+                    )
+                    await self._recover_from_corruption()
+
+                    # Retry initialization ONCE after recovery
+                    try:
+                        logger.info(
+                            "Retrying ChromaDB initialization after recovery..."
+                        )
+                        self._client = chromadb.PersistentClient(
+                            path=str(self.persist_directory),
+                            settings=chromadb.Settings(
+                                anonymized_telemetry=False,
+                                allow_reset=True,
+                            ),
+                        )
+
+                        self._collection = self._client.get_or_create_collection(
+                            name=self.collection_name,
+                            embedding_function=self.embedding_function,
+                            metadata={
+                                "description": "Semantic code search collection",
+                            },
+                        )
+
+                        logger.info("ChromaDB successfully initialized after recovery")
+
+                    except Exception as retry_error:
+                        logger.error(
+                            f"Failed to recover from database corruption: {retry_error}"
+                        )
+                        # Mark recovery as attempted to prevent infinite loops
+                        self._recovery_attempted = True
+                        raise DatabaseError(
+                            f"Failed to recover from database corruption. "
+                            f"Please run 'mcp-vector-search reset' manually to clear the database. "
+                            f"Error: {retry_error}"
+                        ) from retry_error
+                else:
+                    # Not a Rust panic, re-raise original exception
+                    raise
+
+        except (DatabaseError, DatabaseInitializationError):
+            # Re-raise our own errors without re-processing
+            raise
+        except Exception as e:
+            # Check if this is a corruption error (legacy detection for backward compatibility)
+            error_msg = str(e).lower()
+            corruption_indicators = [
+                "pickle",
+                "unpickling",
+                "eof",
+                "ran out of input",
+                "hnsw",
+                "index",
+                "deserialize",
+                "corrupt",
+                "file is not a database",  # SQLite corruption
+                "database error",  # ChromaDB database errors
+            ]
+
+            if any(indicator in error_msg for indicator in corruption_indicators):
+                # Prevent infinite recursion - only attempt recovery once
+                if self._recovery_attempted:
+                    logger.error(
+                        f"Recovery already attempted but corruption persists: {e}"
+                    )
+                    raise DatabaseInitializationError(
+                        f"Failed to recover from database corruption. "
+                        f"Please run 'mcp-vector-search reset' manually. Error: {e}"
+                    ) from e
+
                 logger.warning(f"Detected index corruption: {e}")
+                self._recovery_attempted = True
+
                 # Try to recover
                 await self._recover_from_corruption()
-                # Retry initialization
+
+                # Retry initialization ONE TIME
                 await self.initialize()
             else:
                 logger.error(f"Failed to initialize ChromaDB: {e}")
@@ -654,15 +738,40 @@ class ChromaVectorDatabase(VectorDatabase):
         """Detect and recover from index corruption proactively.
 
         This method checks for:
-        1. HNSW pickle file corruption (the main issue)
-        2. Metadata/data inconsistencies
-        3. File size anomalies
+        1. SQLite database corruption (LAYER 1: Pre-initialization check)
+        2. HNSW pickle file corruption
+        3. Metadata/data inconsistencies
+        4. File size anomalies
         """
-        # Check for common corruption indicators in ChromaDB files
+        # LAYER 1: Check SQLite database integrity FIRST (before ChromaDB initialization)
         chroma_db_path = self.persist_directory / "chroma.sqlite3"
 
         # If database doesn't exist yet, nothing to check
         if not chroma_db_path.exists():
+            return
+
+        # SQLite integrity check - catches corruption BEFORE Rust panic
+        try:
+            import sqlite3
+
+            logger.debug("Running SQLite integrity check...")
+            conn = sqlite3.connect(str(chroma_db_path))
+            cursor = conn.execute("PRAGMA quick_check")
+            result = cursor.fetchone()[0]
+            conn.close()
+
+            if result != "ok":
+                logger.warning(f"SQLite database corruption detected: {result}")
+                logger.info("Initiating automatic recovery from database corruption...")
+                await self._recover_from_corruption()
+                return
+
+            logger.debug("SQLite integrity check passed")
+
+        except sqlite3.Error as e:
+            logger.warning(f"SQLite database error during integrity check: {e}")
+            logger.info("Initiating automatic recovery from database corruption...")
+            await self._recover_from_corruption()
             return
 
         # Check for HNSW index files that might be corrupted
