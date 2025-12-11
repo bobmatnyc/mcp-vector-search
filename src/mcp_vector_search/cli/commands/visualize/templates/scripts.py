@@ -462,7 +462,10 @@ function calculateNodeSizes(node) {
     });
 
     node._lineCount = totalLines || 1;  // Minimum 1 for empty dirs/files
-    allLineCounts.push(node._lineCount);
+
+    // DON'T add files/directories to allLineCounts - they skew percentiles
+    // Only chunks should affect percentile calculation since only chunks use percentile sizing
+    // (Files and directories use separate minRadius/maxRadius, not chunkMinRadius/chunkMaxRadius)
 
     if (node._lineCount > 0) {
         globalMinLines = Math.min(globalMinLines, node._lineCount);
@@ -486,7 +489,8 @@ function calculatePercentiles() {
     percentile20 = sorted[p20Index] || 1;
     percentile80 = sorted[p80Index] || sorted[sorted.length - 1] || 1;
 
-    console.log(`Line count percentiles: 20th=${percentile20}, 80th=${percentile80}, min=${globalMinLines}, max=${globalMaxLines}`);
+    console.log(`Line count percentiles (chunks only): 20th=${percentile20}, 80th=${percentile80}, range=${percentile80 - percentile20}`);
+    console.log(`Total chunks: ${allLineCounts.length}, min=${globalMinLines}, max=${globalMaxLines}`);
 }
 
 // Count external calls for a node
