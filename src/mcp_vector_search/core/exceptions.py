@@ -53,6 +53,17 @@ class IndexCorruptionError(DatabaseError):
     pass
 
 
+class RustPanicError(DatabaseError):
+    """ChromaDB Rust bindings panic detected.
+
+    This error occurs when ChromaDB's Rust bindings encounter
+    HNSW index metadata inconsistencies, typically manifesting as:
+    'range start index X out of range for slice of length Y'
+    """
+
+    pass
+
+
 class ParsingError(MCPVectorSearchError):
     """Code parsing errors."""
 

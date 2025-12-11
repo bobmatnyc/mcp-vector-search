@@ -1,5 +1,6 @@
 """Semantic search engine for MCP Vector Search."""
 
+import asyncio
 import re
 import time
 from collections import OrderedDict
@@ -13,7 +14,7 @@ from ..config.constants import DEFAULT_CACHE_SIZE
 from .auto_indexer import AutoIndexer, SearchTriggeredIndexer
 from .boilerplate import BoilerplateFilter
 from .database import VectorDatabase
-from .exceptions import SearchError
+from .exceptions import RustPanicError, SearchError
 from .models import SearchResult
 
 
@@ -111,6 +112,149 @@ class SemanticSearchEngine:
         # Boilerplate filter for smart result ranking
         self._boilerplate_filter = BoilerplateFilter()
 
+    @staticmethod
+    def _is_rust_panic_error(error: Exception) -> bool:
+        """Detect ChromaDB Rust panic errors.
+
+        Args:
+            error: Exception to check
+
+        Returns:
+            True if this is a Rust panic error
+        """
+        error_msg = str(error).lower()
+
+        # Check for the specific Rust panic pattern
+        # "range start index X out of range for slice of length Y"
+        if "range start index" in error_msg and "out of range" in error_msg:
+            return True
+
+        # Check for other Rust panic indicators
+        rust_panic_patterns = [
+            "rust panic",
+            "pyo3_runtime.panicexception",
+            "thread 'tokio-runtime-worker' panicked",
+            "rust/sqlite/src/db.rs",  # Specific to the known ChromaDB issue
+        ]
+
+        return any(pattern in error_msg for pattern in rust_panic_patterns)
+
+    @staticmethod
+    def _is_corruption_error(error: Exception) -> bool:
+        """Detect index corruption errors.
+
+        Args:
+            error: Exception to check
+
+        Returns:
+            True if this is a corruption error
+        """
+        error_msg = str(error).lower()
+
+        corruption_indicators = [
+            "pickle",
+            "unpickling",
+            "eof",
+            "ran out of input",
+            "hnsw",
+            "deserialize",
+            "corrupt",
+        ]
+
+        return any(indicator in error_msg for indicator in corruption_indicators)
+
+    async def _search_with_retry(
+        self,
+        query: str,
+        limit: int,
+        filters: dict[str, Any] | None,
+        threshold: float,
+        max_retries: int = 3,
+    ) -> list[SearchResult]:
+        """Execute search with retry logic and exponential backoff.
+
+        Args:
+            query: Processed search query
+            limit: Maximum number of results
+            filters: Optional filters
+            threshold: Similarity threshold
+            max_retries: Maximum retry attempts (default: 3)
+
+        Returns:
+            List of search results
+
+        Raises:
+            RustPanicError: If Rust panic persists after retries
+            SearchError: If search fails for other reasons
+        """
+        last_error = None
+        backoff_delays = [0, 0.1, 0.5]  # Immediate, 100ms, 500ms
+
+        for attempt in range(max_retries):
+            try:
+                # Add delay for retries (exponential backoff)
+                if attempt > 0 and backoff_delays[attempt] > 0:
+                    await asyncio.sleep(backoff_delays[attempt])
+                    logger.debug(
+                        f"Retrying search after {backoff_delays[attempt]}s delay (attempt {attempt + 1}/{max_retries})"
+                    )
+
+                # Perform the actual search
+                results = await self.database.search(
+                    query=query,
+                    limit=limit,
+                    filters=filters,
+                    similarity_threshold=threshold,
+                )
+
+                # Success! If we had retries, log that we recovered
+                if attempt > 0:
+                    logger.info(
+                        f"Search succeeded after {attempt + 1} attempts (recovered from transient error)"
+                    )
+
+                return results
+
+            except Exception as e:
+                last_error = e
+
+                # Check if this is a Rust panic
+                if self._is_rust_panic_error(e):
+                    logger.warning(
+                        f"ChromaDB Rust panic detected (attempt {attempt + 1}/{max_retries}): {e}"
+                    )
+
+                    # If this is the last retry, escalate to corruption recovery
+                    if attempt == max_retries - 1:
+                        logger.error(
+                            "Rust panic persisted after all retries - index may be corrupted"
+                        )
+                        raise RustPanicError(
+                            "ChromaDB Rust panic detected. The HNSW index may be corrupted. "
+                            "Please run 'mcp-vector-search reset' followed by 'mcp-vector-search index' to rebuild."
+                        ) from e
+
+                    # Otherwise, continue to next retry
+                    continue
+
+                # Check for general corruption
+                elif self._is_corruption_error(e):
+                    logger.error(f"Index corruption detected: {e}")
+                    raise SearchError(
+                        "Index corruption detected. Please run 'mcp-vector-search reset' "
+                        "followed by 'mcp-vector-search index' to rebuild."
+                    ) from e
+
+                # Some other error - don't retry, just fail
+                else:
+                    logger.error(f"Search failed: {e}")
+                    raise SearchError(f"Search failed: {e}") from e
+
+        # Should never reach here, but just in case
+        raise SearchError(
+            f"Search failed after {max_retries} retries: {last_error}"
+        ) from last_error
+
     async def search(
         self,
         query: str,
@@ -167,12 +311,12 @@ class SemanticSearchEngine:
             # Preprocess query
             processed_query = self._preprocess_query(query)
 
-            # Perform vector search
-            results = await self.database.search(
+            # Perform vector search with retry logic
+            results = await self._search_with_retry(
                 query=processed_query,
                 limit=limit,
                 filters=filters,
-                similarity_threshold=threshold,
+                threshold=threshold,
             )
 
             # Post-process results
@@ -189,32 +333,13 @@ class SemanticSearchEngine:
             )
             return ranked_results
 
+        except (RustPanicError, SearchError):
+            # These errors are already properly formatted with user guidance
+            raise
         except Exception as e:
-            error_msg = str(e).lower()
-            # Check for corruption indicators
-            if any(
-                indicator in error_msg
-                for indicator in [
-                    "pickle",
-                    "unpickling",
-                    "eof",
-                    "ran out of input",
-                    "hnsw",
-                    "index",
-                    "deserialize",
-                    "corrupt",
-                ]
-            ):
-                logger.error(f"Index corruption detected during search: {e}")
-                logger.info(
-                    "The index appears to be corrupted. Please run 'mcp-vector-search reset' to clear the index and then 'mcp-vector-search index' to rebuild it."
-                )
-                raise SearchError(
-                    "Index corruption detected. Please run 'mcp-vector-search reset' followed by 'mcp-vector-search index' to rebuild."
-                ) from e
-            else:
-                logger.error(f"Search failed for query '{query}': {e}")
-                raise SearchError(f"Search failed: {e}") from e
+            # Unexpected error - wrap it in SearchError
+            logger.error(f"Unexpected search error for query '{query}': {e}")
+            raise SearchError(f"Search failed: {e}") from e
 
     async def search_similar(
         self,

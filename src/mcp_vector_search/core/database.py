@@ -651,7 +651,13 @@ class ChromaVectorDatabase(VectorDatabase):
         return where
 
     async def _detect_and_recover_corruption(self) -> None:
-        """Detect and recover from index corruption proactively."""
+        """Detect and recover from index corruption proactively.
+
+        This method checks for:
+        1. HNSW pickle file corruption (the main issue)
+        2. Metadata/data inconsistencies
+        3. File size anomalies
+        """
         # Check for common corruption indicators in ChromaDB files
         chroma_db_path = self.persist_directory / "chroma.sqlite3"
 
@@ -660,31 +666,91 @@ class ChromaVectorDatabase(VectorDatabase):
             return
 
         # Check for HNSW index files that might be corrupted
-        self.persist_directory / "chroma-collections.parquet"
         index_path = self.persist_directory / "index"
 
         if index_path.exists():
-            # Look for pickle files in the index
+            # Look for pickle files in the index (HNSW metadata)
             pickle_files = list(index_path.glob("**/*.pkl"))
             pickle_files.extend(list(index_path.glob("**/*.pickle")))
+            pickle_files.extend(list(index_path.glob("**/*.bin")))  # Binary HNSW files
+
+            logger.debug(
+                f"Checking {len(pickle_files)} HNSW index files for corruption..."
+            )
 
             for pickle_file in pickle_files:
                 try:
-                    # Try to read the pickle file to detect corruption
-                    import pickle  # nosec B403 # Trusted internal index files only
+                    # Check file size - suspiciously small files might be corrupted
+                    file_size = pickle_file.stat().st_size
+                    if file_size == 0:
+                        logger.warning(
+                            f"Empty HNSW index file detected: {pickle_file} (0 bytes)"
+                        )
+                        await self._recover_from_corruption()
+                        return
 
-                    with open(pickle_file, "rb") as f:
-                        pickle.load(f)  # nosec B301 # Trusted internal index files only
-                except (EOFError, pickle.UnpicklingError, Exception) as e:
-                    logger.warning(
-                        f"Corrupted index file detected: {pickle_file} - {e}"
-                    )
+                    # Only validate pickle files (not binary .bin files)
+                    if pickle_file.suffix in (".pkl", ".pickle"):
+                        # Try to read the pickle file to detect corruption
+                        import pickle  # nosec B403 # Trusted internal index files only
+
+                        with open(pickle_file, "rb") as f:
+                            data = pickle.load(f)  # nosec B301 # Trusted internal index files only
+
+                            # Additional validation: check if data structure is valid
+                            if data is None:
+                                logger.warning(
+                                    f"HNSW index file contains None data: {pickle_file}"
+                                )
+                                await self._recover_from_corruption()
+                                return
+
+                            # Check for metadata consistency (if it's a dict)
+                            if isinstance(data, dict):
+                                # Look for known metadata keys that should exist
+                                if "space" in data and "dim" in data:
+                                    # Validate dimensions are reasonable
+                                    if data.get("dim", 0) <= 0:
+                                        logger.warning(
+                                            f"Invalid dimensions in HNSW index: {pickle_file} (dim={data.get('dim')})"
+                                        )
+                                        await self._recover_from_corruption()
+                                        return
+
+                except (EOFError, pickle.UnpicklingError) as e:
+                    logger.warning(f"Pickle corruption detected in {pickle_file}: {e}")
                     await self._recover_from_corruption()
                     return
+                except Exception as e:
+                    # Check if this is a Rust panic pattern
+                    error_msg = str(e).lower()
+                    if "range start index" in error_msg and "out of range" in error_msg:
+                        logger.warning(
+                            f"Rust panic pattern detected in {pickle_file}: {e}"
+                        )
+                        await self._recover_from_corruption()
+                        return
+                    else:
+                        logger.warning(
+                            f"Error reading HNSW index file {pickle_file}: {e}"
+                        )
+                        # Continue checking other files before deciding to recover
+                        continue
+
+            logger.debug("HNSW index files validation passed")
 
     async def _recover_from_corruption(self) -> None:
-        """Recover from index corruption by rebuilding the index."""
-        logger.info("Attempting to recover from index corruption...")
+        """Recover from index corruption by rebuilding the index.
+
+        This method:
+        1. Creates a timestamped backup of the corrupted index
+        2. Clears the corrupted index directory
+        3. Recreates the directory structure
+        4. Logs detailed recovery steps and instructions
+        """
+        logger.warning("=" * 80)
+        logger.warning("INDEX CORRUPTION DETECTED - Initiating recovery...")
+        logger.warning("=" * 80)
 
         # Create backup directory
         backup_dir = (
@@ -692,7 +758,7 @@ class ChromaVectorDatabase(VectorDatabase):
         )
         backup_dir.mkdir(exist_ok=True)
 
-        # Backup current state (in case we need it)
+        # Backup current state (in case we need it for debugging)
         import time
 
         timestamp = int(time.time())
@@ -701,24 +767,41 @@ class ChromaVectorDatabase(VectorDatabase):
         if self.persist_directory.exists():
             try:
                 shutil.copytree(self.persist_directory, backup_path)
-                logger.info(f"Created backup at {backup_path}")
+                logger.info(f"✓ Created backup at {backup_path}")
             except Exception as e:
-                logger.warning(f"Could not create backup: {e}")
+                logger.warning(f"⚠ Could not create backup: {e}")
 
         # Clear the corrupted index
         if self.persist_directory.exists():
             try:
+                # Log what we're about to delete
+                total_size = sum(
+                    f.stat().st_size
+                    for f in self.persist_directory.rglob("*")
+                    if f.is_file()
+                )
+                logger.info(
+                    f"Clearing corrupted index ({total_size / 1024 / 1024:.2f} MB)..."
+                )
+
                 shutil.rmtree(self.persist_directory)
-                logger.info(f"Cleared corrupted index at {self.persist_directory}")
+                logger.info(f"✓ Cleared corrupted index at {self.persist_directory}")
             except Exception as e:
-                logger.error(f"Failed to clear corrupted index: {e}")
+                logger.error(f"✗ Failed to clear corrupted index: {e}")
                 raise IndexCorruptionError(
-                    f"Could not clear corrupted index: {e}"
+                    f"Could not clear corrupted index: {e}. "
+                    f"Please manually delete {self.persist_directory} and try again."
                 ) from e
 
         # Recreate the directory
         self.persist_directory.mkdir(parents=True, exist_ok=True)
-        logger.info("Index directory recreated. Please re-index your codebase.")
+        logger.info("✓ Index directory recreated")
+
+        logger.warning("=" * 80)
+        logger.warning("RECOVERY COMPLETE - Next steps:")
+        logger.warning("  1. Run 'mcp-vector-search index' to rebuild the index")
+        logger.warning(f"  2. Backup saved to: {backup_path}")
+        logger.warning("=" * 80)
 
     async def health_check(self) -> bool:
         """Check database health and integrity.
