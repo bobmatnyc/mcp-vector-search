@@ -8,8 +8,11 @@ from typing import Any
 
 import typer
 from loguru import logger
+from rich.panel import Panel
+from rich.table import Table
 
 from ... import __version__
+from ...analysis.storage.metrics_store import MetricsStore, MetricsStoreError
 from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
@@ -60,6 +63,13 @@ def main(
         help="Check Claude Code MCP integration status",
         rich_help_panel="🔍 Diagnostics",
     ),
+    metrics: bool = typer.Option(
+        False,
+        "--metrics",
+        "-m",
+        help="Show project metrics summary from latest analysis",
+        rich_help_panel="📊 Display Options",
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -78,6 +88,9 @@ def main(
     [green]Quick status check:[/green]
         $ mcp-vector-search status
 
+    [green]Show code metrics summary:[/green]
+        $ mcp-vector-search status --metrics
+
     [green]Detailed status with all information:[/green]
         $ mcp-vector-search status --verbose
 
@@ -89,13 +102,13 @@ def main(
     [green]Full health check:[/green]
         $ mcp-vector-search status --health-check
 
-    [green]Export status to JSON:[/green]
-        $ mcp-vector-search status --json > status.json
+    [green]Export metrics to JSON:[/green]
+        $ mcp-vector-search status --metrics --json > metrics.json
 
     [green]Combined diagnostics:[/green]
         $ mcp-vector-search status --verbose --health-check --mcp
 
-    [dim]💡 Tip: Use --health-check to diagnose issues with dependencies or database.[/dim]
+    [dim]💡 Tip: Use --metrics to see code quality analysis from 'mcp-vector-search analyze'[/dim]
     """
     try:
         # Use provided project_root or current working directory
@@ -111,6 +124,7 @@ def main(
                         verbose=verbose,
                         health_check=health_check,
                         mcp=mcp,
+                        metrics=metrics,
                         json_output=json_output,
                     ),
                     timeout=30.0,  # 30 second timeout
@@ -136,12 +150,20 @@ async def show_status(
     verbose: bool = False,
     health_check: bool = False,
     mcp: bool = False,
+    metrics: bool = False,
     json_output: bool = False,
 ) -> None:
     """Show comprehensive project status."""
     status_data = {}
 
     try:
+        # If metrics flag is set, show metrics summary and return
+        if metrics:
+            await show_metrics_summary(
+                project_root=project_root,
+                json_output=json_output,
+            )
+            return
         # Check if project is initialized - use the specified project root
         project_manager = ProjectManager(project_root)
 
@@ -516,6 +538,283 @@ async def check_mcp_integration(
         mcp_status["issues"].append(f"MCP integration check failed: {e}")
 
     return mcp_status
+
+
+async def show_metrics_summary(
+    project_root: Path,
+    json_output: bool = False,
+) -> None:
+    """Show code metrics summary from latest analysis.
+
+    Args:
+        project_root: Project root directory
+        json_output: Output as JSON instead of formatted console
+
+    Raises:
+        typer.Exit: If no metrics found or error occurs
+    """
+    try:
+        # Get metrics storage location
+        storage_dir = project_root / ".mcp-vector-search"
+        db_path = storage_dir / "metrics.db"
+
+        # Check if metrics database exists
+        if not db_path.exists():
+            if json_output:
+                print_json(
+                    {
+                        "status": "error",
+                        "error": "No metrics found",
+                        "message": "Run 'mcp-vector-search analyze' first",
+                    }
+                )
+            else:
+                console.print(
+                    "[yellow]No metrics found. Run 'mcp-vector-search analyze' first.[/yellow]"
+                )
+            raise typer.Exit(1)
+
+        # Load metrics store
+        store = MetricsStore(db_path)
+
+        # Get latest snapshot for this project
+        snapshots = store.get_project_history(str(project_root), limit=1)
+
+        if not snapshots:
+            if json_output:
+                print_json(
+                    {
+                        "status": "error",
+                        "error": "No metrics found for this project",
+                        "message": "Run 'mcp-vector-search analyze' first",
+                    }
+                )
+            else:
+                console.print(
+                    "[yellow]No metrics found for this project. "
+                    "Run 'mcp-vector-search analyze' first.[/yellow]"
+                )
+            raise typer.Exit(1)
+
+        latest = snapshots[0]
+
+        # Output JSON or formatted
+        if json_output:
+            _output_metrics_json(latest)
+        else:
+            _print_metrics_summary(latest)
+
+    except MetricsStoreError as e:
+        logger.error(f"Failed to load metrics: {e}")
+        if json_output:
+            print_json({"status": "error", "error": str(e)})
+        else:
+            print_error(f"Failed to load metrics: {e}")
+        raise typer.Exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error loading metrics: {e}")
+        if json_output:
+            print_json({"status": "error", "error": str(e)})
+        else:
+            print_error(f"Unexpected error: {e}")
+        raise typer.Exit(1)
+
+
+def _output_metrics_json(snapshot) -> None:
+    """Output metrics snapshot as JSON.
+
+    Args:
+        snapshot: ProjectSnapshot from metrics store
+    """
+    output = {
+        "status": "success",
+        "snapshot_id": snapshot.snapshot_id,
+        "project_path": snapshot.project_path,
+        "timestamp": snapshot.timestamp.isoformat(),
+        "metrics": {
+            "files": {
+                "total": snapshot.total_files,
+                "needing_attention": sum(
+                    1
+                    for grade, count in snapshot.grade_distribution.items()
+                    if grade in ["D", "F"]
+                    for _ in range(count)
+                ),
+            },
+            "lines": {
+                "total": snapshot.total_lines,
+            },
+            "functions": {
+                "total": snapshot.total_functions,
+            },
+            "classes": {
+                "total": snapshot.total_classes,
+            },
+            "complexity": {
+                "average": round(snapshot.avg_complexity, 2),
+                "maximum": snapshot.max_complexity,
+                "total": snapshot.total_complexity,
+                "grade_distribution": snapshot.grade_distribution,
+            },
+            "code_smells": {
+                "total": snapshot.total_smells,
+            },
+            "health": {
+                "average_score": round(snapshot.avg_health_score, 2),
+            },
+        },
+        "metadata": {
+            "git_commit": snapshot.git_commit,
+            "git_branch": snapshot.git_branch,
+            "tool_version": snapshot.tool_version,
+        },
+    }
+
+    print_json(output)
+
+
+def _print_metrics_summary(snapshot) -> None:
+    """Print formatted metrics summary using Rich.
+
+    Args:
+        snapshot: ProjectSnapshot from metrics store
+    """
+    # Header panel with overall stats
+    console.print(
+        Panel.fit(
+            f"[bold]Project Metrics Summary[/bold]\n"
+            f"Files: {snapshot.total_files} | "
+            f"Functions: {snapshot.total_functions} | "
+            f"Classes: {snapshot.total_classes} | "
+            f"Lines: {snapshot.total_lines:,}\n"
+            f"Analyzed: {snapshot.timestamp.strftime('%Y-%m-%d %H:%M:%S')}",
+            title="📊 mcp-vector-search",
+            border_style="blue",
+        )
+    )
+    console.print()
+
+    # Complexity metrics table
+    complexity_table = Table(title="Complexity Metrics", show_header=True)
+    complexity_table.add_column("Metric", style="cyan", no_wrap=True)
+    complexity_table.add_column("Average", justify="right")
+    complexity_table.add_column("Maximum", justify="right")
+    complexity_table.add_column("Total", justify="right")
+    complexity_table.add_column("Status", justify="center")
+
+    complexity_table.add_row(
+        "Cognitive Complexity",
+        f"{snapshot.avg_complexity:.1f}",
+        f"{snapshot.max_complexity}",
+        f"{snapshot.total_complexity}",
+        _status_indicator(snapshot.avg_complexity, 10, 20),
+    )
+
+    console.print(complexity_table)
+    console.print()
+
+    # Grade distribution table
+    grade_table = Table(title="Complexity Grade Distribution", show_header=True)
+    grade_table.add_column("Grade", style="cyan", no_wrap=True)
+    grade_table.add_column("Count", justify="right")
+    grade_table.add_column("Percentage", justify="right")
+    grade_table.add_column("Description")
+
+    total_chunks = sum(snapshot.grade_distribution.values())
+    grade_descriptions = {
+        "A": "Excellent (0-5)",
+        "B": "Good (6-10)",
+        "C": "Acceptable (11-20)",
+        "D": "Needs Improvement (21-30)",
+        "F": "Refactor Recommended (31+)",
+    }
+
+    for grade in ["A", "B", "C", "D", "F"]:
+        count = snapshot.grade_distribution.get(grade, 0)
+        percentage = (count / total_chunks * 100) if total_chunks > 0 else 0
+
+        # Color code the grade
+        grade_color = {
+            "A": "green",
+            "B": "blue",
+            "C": "yellow",
+            "D": "orange1",
+            "F": "red",
+        }.get(grade, "white")
+
+        grade_table.add_row(
+            f"[{grade_color}]{grade}[/{grade_color}]",
+            str(count),
+            f"{percentage:.1f}%",
+            grade_descriptions[grade],
+        )
+
+    console.print(grade_table)
+    console.print()
+
+    # Code smells summary
+    if snapshot.total_smells > 0:
+        console.print(
+            f"[yellow]Code Smells:[/yellow] {snapshot.total_smells} issues detected"
+        )
+        console.print()
+
+    # Health score
+    health_color = (
+        "green"
+        if snapshot.avg_health_score >= 0.8
+        else "yellow"
+        if snapshot.avg_health_score >= 0.6
+        else "red"
+    )
+    console.print(
+        f"[bold]Health Score:[/bold] [{health_color}]{snapshot.avg_health_score:.2f}[/{health_color}] / 1.00"
+    )
+    console.print()
+
+    # Git metadata (if available)
+    if snapshot.git_commit or snapshot.git_branch:
+        metadata_parts = []
+        if snapshot.git_branch:
+            metadata_parts.append(f"Branch: {snapshot.git_branch}")
+        if snapshot.git_commit:
+            metadata_parts.append(f"Commit: {snapshot.git_commit[:8]}")
+        if snapshot.tool_version:
+            metadata_parts.append(f"Version: {snapshot.tool_version}")
+
+        console.print(f"[dim]{' | '.join(metadata_parts)}[/dim]")
+        console.print()
+
+    # Files needing attention
+    files_needing_attention = snapshot.grade_distribution.get(
+        "D", 0
+    ) + snapshot.grade_distribution.get("F", 0)
+    if files_needing_attention > 0:
+        console.print(
+            f"[yellow]⚠️  {files_needing_attention} code chunks need attention (grades D or F)[/yellow]"
+        )
+        console.print()
+
+
+def _status_indicator(
+    value: float, warning_threshold: float, error_threshold: float
+) -> str:
+    """Return colored status indicator based on thresholds.
+
+    Args:
+        value: Value to check
+        warning_threshold: Warning threshold (yellow)
+        error_threshold: Error threshold (red)
+
+    Returns:
+        Colored status indicator (green, yellow, or red dot)
+    """
+    if value < warning_threshold:
+        return "[green]●[/green]"
+    elif value < error_threshold:
+        return "[yellow]●[/yellow]"
+    else:
+        return "[red]●[/red]"
 
 
 def check_dependencies() -> bool:
