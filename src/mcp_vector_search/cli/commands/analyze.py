@@ -12,6 +12,12 @@ from ...analysis import (
     FileMetrics,
     ProjectMetrics,
 )
+from ...analysis.baseline import (
+    BaselineComparator,
+    BaselineExistsError,
+    BaselineManager,
+    BaselineNotFoundError,
+)
 from ...core.exceptions import ProjectNotFoundError
 from ...core.git import GitError, GitManager, GitNotAvailableError, GitNotRepoError
 from ...core.project import ProjectManager
@@ -112,6 +118,36 @@ def main(
         help="Compare against baseline branch (e.g., main, master, develop)",
         rich_help_panel="🔍 Filters",
     ),
+    save_baseline: str | None = typer.Option(
+        None,
+        "--save-baseline",
+        help="Save current analysis as named baseline",
+        rich_help_panel="📊 Baseline Management",
+    ),
+    compare_baseline: str | None = typer.Option(
+        None,
+        "--compare-baseline",
+        help="Compare current analysis against named baseline",
+        rich_help_panel="📊 Baseline Management",
+    ),
+    list_baselines: bool = typer.Option(
+        False,
+        "--list-baselines",
+        help="List all available baselines (standalone action)",
+        rich_help_panel="📊 Baseline Management",
+    ),
+    delete_baseline: str | None = typer.Option(
+        None,
+        "--delete-baseline",
+        help="Delete a named baseline",
+        rich_help_panel="📊 Baseline Management",
+    ),
+    force_baseline: bool = typer.Option(
+        False,
+        "--force",
+        help="Force overwrite when saving baseline that already exists",
+        rich_help_panel="📊 Baseline Management",
+    ),
 ) -> None:
     """📈 Analyze code complexity and quality.
 
@@ -166,6 +202,54 @@ def main(
         # A subcommand was invoked - let it handle the request
         return
 
+    # Handle standalone baseline operations first
+    baseline_manager = BaselineManager()
+
+    # List baselines (standalone action)
+    if list_baselines:
+        baselines = baseline_manager.list_baselines()
+        if not baselines:
+            console.print("[yellow]No baselines found[/yellow]")
+            console.print(
+                f"\nBaselines are stored in: {baseline_manager.storage_dir}\n"
+            )
+            console.print(
+                "Create a baseline with: [cyan]mcp-vector-search analyze --save-baseline <name>[/cyan]"
+            )
+        else:
+            console.print(f"\n[bold]Available Baselines[/bold] ({len(baselines)})")
+            console.print("━" * 80)
+            for baseline in baselines:
+                console.print(f"\n[cyan]• {baseline.baseline_name}[/cyan]")
+                console.print(f"  Created: {baseline.created_at}")
+                console.print(f"  Project: {baseline.project_path}")
+                console.print(
+                    f"  Files: {baseline.file_count} | Functions: {baseline.function_count}"
+                )
+                console.print(f"  Tool Version: {baseline.tool_version}")
+                if baseline.git_info.commit:
+                    console.print(
+                        f"  Git: {baseline.git_info.branch or 'detached'} @ {baseline.git_info.commit[:8]}"
+                    )
+            console.print()
+        raise typer.Exit(0)
+
+    # Delete baseline (standalone action)
+    if delete_baseline:
+        try:
+            baseline_manager.delete_baseline(delete_baseline)
+            console.print(
+                f"[green]✓[/green] Deleted baseline: [cyan]{delete_baseline}[/cyan]"
+            )
+            raise typer.Exit(0)
+        except BaselineNotFoundError as e:
+            print_error(str(e))
+            console.print("\nAvailable baselines:")
+            baselines = baseline_manager.list_baselines()
+            for baseline in baselines[:5]:
+                console.print(f"  • {baseline.baseline_name}")
+            raise typer.Exit(1)
+
     try:
         # Validate format and output options
         valid_formats = ["console", "json", "sarif"]
@@ -205,6 +289,10 @@ def main(
                 severity_threshold=severity_threshold,
                 changed_only=changed_only,
                 baseline=baseline,
+                save_baseline=save_baseline,
+                compare_baseline=compare_baseline,
+                force_baseline=force_baseline,
+                baseline_manager=baseline_manager,
             )
         )
 
@@ -256,6 +344,10 @@ async def run_analysis(
     severity_threshold: str = "error",
     changed_only: bool = False,
     baseline: str | None = None,
+    save_baseline: str | None = None,
+    compare_baseline: str | None = None,
+    force_baseline: bool = False,
+    baseline_manager: BaselineManager | None = None,
 ) -> None:
     """Run code complexity analysis.
 
@@ -273,6 +365,10 @@ async def run_analysis(
         severity_threshold: Minimum severity to trigger failure
         changed_only: Analyze only uncommitted changes
         baseline: Compare against baseline branch
+        save_baseline: Save analysis as named baseline
+        compare_baseline: Compare against named baseline
+        force_baseline: Force overwrite existing baseline
+        baseline_manager: BaselineManager instance
     """
     try:
         # Check if project is initialized (optional - we can analyze any directory)
@@ -501,6 +597,60 @@ async def run_analysis(
                 reporter.print_smells(all_smells, top=top_n)
 
             reporter.print_recommendations(project_metrics)
+
+        # Handle baseline operations after analysis
+        if baseline_manager:
+            # Save baseline if requested
+            if save_baseline:
+                try:
+                    baseline_path = baseline_manager.save_baseline(
+                        baseline_name=save_baseline,
+                        metrics=project_metrics,
+                        overwrite=force_baseline,
+                    )
+                    if not json_output:
+                        console.print(
+                            f"\n[green]✓[/green] Saved baseline: [cyan]{save_baseline}[/cyan]"
+                        )
+                        console.print(f"  Location: {baseline_path}")
+                except BaselineExistsError as e:
+                    if json_output:
+                        print_json({"error": str(e)})
+                    else:
+                        print_error(str(e))
+                        console.print(
+                            "\nUse [cyan]--force[/cyan] to overwrite the existing baseline"
+                        )
+                    raise typer.Exit(1)
+
+            # Compare against baseline if requested
+            if compare_baseline:
+                try:
+                    baseline_metrics = baseline_manager.load_baseline(compare_baseline)
+                    comparator = BaselineComparator()
+                    comparison_result = comparator.compare(
+                        current=project_metrics,
+                        baseline=baseline_metrics,
+                        baseline_name=compare_baseline,
+                    )
+
+                    # Print comparison results (console only)
+                    if not json_output and output_format == "console":
+                        from ...analysis.reporters.console import ConsoleReporter
+
+                        reporter = ConsoleReporter()
+                        reporter.print_baseline_comparison(comparison_result)
+
+                except BaselineNotFoundError as e:
+                    if json_output:
+                        print_json({"error": str(e)})
+                    else:
+                        print_error(str(e))
+                        console.print("\nAvailable baselines:")
+                        baselines = baseline_manager.list_baselines()
+                        for baseline_meta in baselines[:5]:
+                            console.print(f"  • {baseline_meta.baseline_name}")
+                    raise typer.Exit(1)
 
         # Quality gate: check if we should fail on smells
         if fail_on_smell and all_smells:

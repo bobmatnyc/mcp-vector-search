@@ -303,3 +303,202 @@ class ConsoleReporter:
             "[dim]  • Focus refactoring efforts on Grade D and F functions first[/dim]"
         )
         console.print()
+
+    def print_baseline_comparison(self, comparison_result) -> None:
+        """Print baseline comparison results.
+
+        Args:
+            comparison_result: ComparisonResult from BaselineComparator
+        """
+        console.print(
+            f"\n[bold blue]📊 Baseline Comparison[/bold blue] - vs {comparison_result.baseline_name}"
+        )
+        console.print("━" * 80)
+        console.print()
+
+        # Summary statistics
+        console.print("[bold]Summary[/bold]")
+        summary = comparison_result.summary
+        console.print(
+            f"  Total Files Compared: {comparison_result.total_files_compared}"
+        )
+        console.print(
+            f"  Files - Current: {summary.get('total_files_current', 0)} | "
+            f"Baseline: {summary.get('total_files_baseline', 0)}"
+        )
+        console.print(
+            f"  Functions - Current: {summary.get('total_functions_current', 0)} | "
+            f"Baseline: {summary.get('total_functions_baseline', 0)}"
+        )
+        console.print()
+
+        # Change summary
+        console.print("[bold]Changes[/bold]")
+        console.print(
+            f"  [red]Regressions:[/red] {len(comparison_result.regressions)} files"
+        )
+        console.print(
+            f"  [green]Improvements:[/green] {len(comparison_result.improvements)} files"
+        )
+        console.print(
+            f"  [dim]Unchanged:[/dim] {len(comparison_result.unchanged)} files"
+        )
+        console.print(
+            f"  [blue]New Files:[/blue] {len(comparison_result.new_files)} files"
+        )
+        console.print(
+            f"  [yellow]Deleted Files:[/yellow] {len(comparison_result.deleted_files)} files"
+        )
+        console.print()
+
+        # Complexity metrics comparison
+        avg_cc_current = summary.get("avg_complexity_current", 0.0)
+        avg_cc_baseline = summary.get("avg_complexity_baseline", 0.0)
+        avg_cc_delta = avg_cc_current - avg_cc_baseline
+        avg_cc_pct = (
+            (avg_cc_delta / avg_cc_baseline * 100) if avg_cc_baseline > 0 else 0.0
+        )
+
+        max_cc_current = summary.get("max_complexity_current", 0)
+        max_cc_baseline = summary.get("max_complexity_baseline", 0)
+        max_cc_delta = max_cc_current - max_cc_baseline
+
+        console.print("[bold]Complexity Metrics[/bold]")
+
+        # Average complexity with color coding
+        delta_color = (
+            "red" if avg_cc_delta > 0 else "green" if avg_cc_delta < 0 else "dim"
+        )
+        delta_sign = "+" if avg_cc_delta > 0 else ""
+        console.print(
+            f"  Avg Complexity: {avg_cc_current:.2f} "
+            f"(baseline: {avg_cc_baseline:.2f}, "
+            f"[{delta_color}]{delta_sign}{avg_cc_delta:.2f} / {delta_sign}{avg_cc_pct:.1f}%[/{delta_color}])"
+        )
+
+        # Max complexity with color coding
+        max_delta_color = (
+            "red" if max_cc_delta > 0 else "green" if max_cc_delta < 0 else "dim"
+        )
+        max_delta_sign = "+" if max_cc_delta > 0 else ""
+        console.print(
+            f"  Max Complexity: {max_cc_current} "
+            f"(baseline: {max_cc_baseline}, "
+            f"[{max_delta_color}]{max_delta_sign}{max_cc_delta}[/{max_delta_color}])"
+        )
+        console.print()
+
+        # Show regressions
+        if comparison_result.regressions:
+            console.print(
+                f"[bold red]⚠️  Regressions ({len(comparison_result.regressions)} files)[/bold red]"
+            )
+
+            # Show top 10 regressions
+            top_regressions = comparison_result.regressions[:10]
+
+            table = Table(show_header=True, header_style="bold cyan", box=None)
+            table.add_column("File", style="cyan", width=45)
+            table.add_column("Metric", width=20)
+            table.add_column("Change", justify="right", width=15)
+
+            for file_comp in top_regressions:
+                # Truncate file path
+                file_path = file_comp.file_path
+                if len(file_path) > 43:
+                    file_path = "..." + file_path[-40:]
+
+                # Show worst regression metric for this file
+                regression_changes = [
+                    c for c in file_comp.metric_changes if c.is_regression
+                ]
+                if regression_changes:
+                    worst_change = max(
+                        regression_changes, key=lambda c: abs(c.percentage_delta)
+                    )
+                    table.add_row(
+                        file_path,
+                        worst_change.metric_name.replace("_", " ").title(),
+                        f"+{worst_change.percentage_delta:.1f}%",
+                    )
+
+            console.print(table)
+
+            if len(comparison_result.regressions) > 10:
+                console.print(
+                    f"  [dim]... and {len(comparison_result.regressions) - 10} more[/dim]"
+                )
+            console.print()
+
+        # Show improvements
+        if comparison_result.improvements:
+            console.print(
+                f"[bold green]✓ Improvements ({len(comparison_result.improvements)} files)[/bold green]"
+            )
+
+            # Show top 10 improvements
+            top_improvements = comparison_result.improvements[:10]
+
+            table = Table(show_header=True, header_style="bold cyan", box=None)
+            table.add_column("File", style="cyan", width=45)
+            table.add_column("Metric", width=20)
+            table.add_column("Change", justify="right", width=15)
+
+            for file_comp in top_improvements:
+                # Truncate file path
+                file_path = file_comp.file_path
+                if len(file_path) > 43:
+                    file_path = "..." + file_path[-40:]
+
+                # Show best improvement metric for this file
+                improvement_changes = [
+                    c for c in file_comp.metric_changes if c.is_improvement
+                ]
+                if improvement_changes:
+                    best_change = max(
+                        improvement_changes, key=lambda c: abs(c.percentage_delta)
+                    )
+                    table.add_row(
+                        file_path,
+                        best_change.metric_name.replace("_", " ").title(),
+                        f"{best_change.percentage_delta:.1f}%",
+                    )
+
+            console.print(table)
+
+            if len(comparison_result.improvements) > 10:
+                console.print(
+                    f"  [dim]... and {len(comparison_result.improvements) - 10} more[/dim]"
+                )
+            console.print()
+
+        # Show new/deleted files summary
+        if comparison_result.new_files:
+            console.print(
+                f"[bold blue]📄 New Files ({len(comparison_result.new_files)})[/bold blue]"
+            )
+            for file_comp in comparison_result.new_files[:5]:
+                file_path = file_comp.file_path
+                if len(file_path) > 70:
+                    file_path = "..." + file_path[-67:]
+                console.print(f"  • {file_path}")
+            if len(comparison_result.new_files) > 5:
+                console.print(
+                    f"  [dim]... and {len(comparison_result.new_files) - 5} more[/dim]"
+                )
+            console.print()
+
+        if comparison_result.deleted_files:
+            console.print(
+                f"[bold yellow]🗑  Deleted Files ({len(comparison_result.deleted_files)})[/bold yellow]"
+            )
+            for file_comp in comparison_result.deleted_files[:5]:
+                file_path = file_comp.file_path
+                if len(file_path) > 70:
+                    file_path = "..." + file_path[-67:]
+                console.print(f"  • {file_path}")
+            if len(comparison_result.deleted_files) > 5:
+                console.print(
+                    f"  [dim]... and {len(comparison_result.deleted_files) - 5} more[/dim]"
+                )
+            console.print()
