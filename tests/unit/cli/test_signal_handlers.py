@@ -43,7 +43,7 @@ def test_segfault_handler_message():
     # Check error message content
     error_output = stderr_capture.getvalue()
     assert "Segmentation Fault Detected" in error_output
-    assert "mcp-vector-search index clean" in error_output
+    assert "mcp-vector-search reset index --force" in error_output
     assert "mcp-vector-search index" in error_output
     assert "corrupted index data" in error_output
 
