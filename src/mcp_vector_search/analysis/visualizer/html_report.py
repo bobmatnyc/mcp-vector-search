@@ -422,9 +422,8 @@ footer {
 
 /* D3 Graph Styles */
 .graph-dashboard-container {
-    display: grid;
-    grid-template-columns: 70% 30%;
-    gap: 1rem;
+    position: relative;
+    width: 100%;
     margin-bottom: 1rem;
 }
 
@@ -432,7 +431,7 @@ footer {
     position: relative;
     overflow: hidden;
     background: #fafafa;
-    height: 600px;
+    height: 700px;
     border: 1px solid #e5e7eb;
     border-radius: 8px;
 }
@@ -440,6 +439,39 @@ footer {
 #d3-graph {
     width: 100%;
     height: 100%;
+}
+
+/* Stats Toggle Button */
+.stats-toggle-button {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 1000;
+    padding: 0.5rem 1rem;
+    background: white;
+    border: 2px solid var(--gray-200);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 600;
+    transition: all 0.2s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.stats-toggle-button:hover {
+    background: var(--gray-100);
+    border-color: var(--primary);
+}
+
+.stats-toggle-button:focus {
+    outline: 3px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.stats-toggle-button.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
 }
 
 /* Filter Controls Panel */
@@ -570,9 +602,24 @@ footer {
 
 /* Dashboard Panels */
 .dashboard-panels {
+    position: fixed;
+    top: 0;
+    right: -400px;
+    width: 400px;
+    height: 100vh;
+    background: white;
+    box-shadow: -2px 0 8px rgba(0,0,0,0.1);
+    z-index: 999;
+    transition: right 0.3s ease-in-out;
+    overflow-y: auto;
+    padding: 1rem;
     display: flex;
     flex-direction: column;
     gap: 1rem;
+}
+
+.dashboard-panels.visible {
+    right: 0;
 }
 
 .dashboard-panel {
@@ -580,7 +627,6 @@ footer {
     border: 1px solid #e5e7eb;
     border-radius: 8px;
     padding: 1rem;
-    max-height: 600px;
     overflow-y: auto;
 }
 
@@ -842,27 +888,42 @@ footer {
     margin-left: 4px;
 }
 
-/* Legend */
+/* Legend - Overlay in Upper Left */
+.d3-legend-container {
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    z-index: 900;
+    max-width: 300px;
+}
+
 .d3-legend {
-    display: flex;
-    gap: 24px;
-    padding: 16px;
-    background: white;
-    border-top: 1px solid #e5e7eb;
-    flex-wrap: wrap;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    backdrop-filter: blur(4px);
 }
 
 .legend-section {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.legend-section:last-child {
+    margin-bottom: 0;
 }
 
 .legend-title {
     font-weight: 600;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--gray-700);
     margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .legend-item {
@@ -874,25 +935,27 @@ footer {
 }
 
 .legend-circle {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
+    flex-shrink: 0;
 }
 
 .legend-line {
-    width: 24px;
+    width: 20px;
     height: 2px;
+    flex-shrink: 0;
 }
 
 /* Collapsible Legend */
 .legend-toggle {
-    background: var(--gray-100);
-    border: none;
-    padding: 0.5rem 1rem;
+    background: white;
+    border: 1px solid #e5e7eb;
+    padding: 0.5rem 0.75rem;
     border-radius: 6px;
     cursor: pointer;
     font-weight: 600;
-    font-size: 0.875rem;
+    font-size: 0.75rem;
     color: var(--gray-700);
     margin-bottom: 0.5rem;
     width: 100%;
@@ -900,10 +963,12 @@ footer {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .legend-toggle:hover {
-    background: var(--gray-200);
+    background: var(--gray-50);
+    border-color: var(--primary);
 }
 
 .legend-content.collapsed {
@@ -920,16 +985,17 @@ footer {
 }
 
 @media (max-width: 768px) {
-    #d3-graph-container { height: 400px; }
-    .d3-legend { flex-direction: column; gap: 16px; }
-    .graph-dashboard-container {
-        grid-template-columns: 1fr;
+    #d3-graph-container { height: 500px; }
+    .d3-legend-container {
+        max-width: 250px;
     }
     .dashboard-panels {
-        order: 2;
+        width: 100%;
+        right: -100%;
     }
-    #d3-graph-container {
-        order: 1;
+    .stats-toggle-button {
+        font-size: 0.75rem;
+        padding: 0.4rem 0.8rem;
     }
 }
 </style>"""
@@ -1036,7 +1102,22 @@ footer {
     <div id="sr-announcements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     {filter_controls_html}
     <div class="graph-dashboard-container">
+        <!-- Stats Toggle Button in Upper Right -->
+        <button
+            id="stats-toggle"
+            class="stats-toggle-button"
+            onclick="toggleStatsPanel()"
+            aria-label="Toggle statistics panel"
+            aria-expanded="false"
+        >
+            📊 Show Stats
+        </button>
+
+        <!-- Main Graph Container -->
         <div id="d3-graph-container" role="img" aria-label="Interactive dependency graph visualization">
+            <!-- Legend Overlay in Upper Left -->
+            {legend_html}
+
             <svg id="d3-graph" aria-label="Dependency graph"></svg>
             <div id="graph-error" class="error-message" style="display: none;" role="alert">
                 <strong>Error:</strong> <span id="graph-error-message"></span>
@@ -1046,12 +1127,21 @@ footer {
                 <p style="margin-top: 1rem; color: var(--gray-600);">Loading visualization...</p>
             </div>
         </div>
-        <div class="dashboard-panels">
+
+        <!-- Stats Panel (Hidden by Default, Slides in from Right) -->
+        <div id="stats-panel-container" class="dashboard-panels" aria-hidden="true">
+            <button
+                class="stats-toggle-button"
+                onclick="toggleStatsPanel()"
+                aria-label="Close statistics panel"
+                style="position: relative; top: 0; right: 0; margin-bottom: 1rem;"
+            >
+                ✕ Hide Stats
+            </button>
             {summary_panel_html}
             {detail_panel_html}
         </div>
     </div>
-    {legend_html}
     <script id="d3-graph-data" type="application/json">{d3_json}</script>
 </section>"""
 
@@ -1275,73 +1365,75 @@ footer {
         complexity_dist = summary["complexity_distribution"]
         smell_dist = summary["smell_distribution"]
 
-        return f"""<button class="legend-toggle" onclick="toggleLegend()">
-    <span>Legend</span>
-    <span id="legend-toggle-icon">▼</span>
-</button>
-<div class="d3-legend legend-content" id="legend-content">
-    <div class="legend-section">
-        <div class="legend-title">Complexity (Fill)</div>
-        <div class="legend-item">
-            <div class="legend-circle" style="background: #f3f4f6; border: 1px solid #e5e7eb;"></div>
-            <span>0-5 (Low)<span class="count-badge">{complexity_dist["low"]}</span></span>
+        return f"""<div class="d3-legend-container">
+    <button class="legend-toggle" onclick="toggleLegend()">
+        <span>Legend</span>
+        <span id="legend-toggle-icon">▼</span>
+    </button>
+    <div class="d3-legend legend-content" id="legend-content">
+        <div class="legend-section">
+            <div class="legend-title">Complexity (Fill)</div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: #f3f4f6; border: 1px solid #e5e7eb;"></div>
+                <span>0-5 (Low)<span class="count-badge">{complexity_dist["low"]}</span></span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: #9ca3af;"></div>
+                <span>6-10 (Moderate)<span class="count-badge">{complexity_dist["moderate"]}</span></span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: #4b5563;"></div>
+                <span>11-20 (High)<span class="count-badge">{complexity_dist["high"]}</span></span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: #1f2937;"></div>
+                <span>21-30 (Very High)<span class="count-badge">{complexity_dist["very_high"]}</span></span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: #111827;"></div>
+                <span>31+ (Critical)<span class="count-badge">{complexity_dist["critical"]}</span></span>
+            </div>
         </div>
-        <div class="legend-item">
-            <div class="legend-circle" style="background: #9ca3af;"></div>
-            <span>6-10 (Moderate)<span class="count-badge">{complexity_dist["moderate"]}</span></span>
+        <div class="legend-section">
+            <div class="legend-title">Code Smells (Border)</div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: white; border: 1px solid #e5e7eb;"></div>
+                <span>None<span class="count-badge">{smell_dist["none"]}</span></span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: white; border: 2px solid #fca5a5;"></div>
+                <span>Info<span class="count-badge">{smell_dist["info"]}</span></span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: white; border: 3px solid #f87171;"></div>
+                <span>Warning<span class="count-badge">{smell_dist["warning"]}</span></span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: white; border: 4px solid #ef4444;"></div>
+                <span>Error<span class="count-badge">{smell_dist["error"]}</span></span>
+            </div>
         </div>
-        <div class="legend-item">
-            <div class="legend-circle" style="background: #4b5563;"></div>
-            <span>11-20 (High)<span class="count-badge">{complexity_dist["high"]}</span></span>
+        <div class="legend-section">
+            <div class="legend-title">Dependencies (Edges)</div>
+            <div class="legend-item">
+                <div class="legend-line" style="background: #64748b;"></div>
+                <span>Normal</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-line" style="background: #dc2626;"></div>
+                <span>Circular</span>
+            </div>
         </div>
-        <div class="legend-item">
-            <div class="legend-circle" style="background: #1f2937;"></div>
-            <span>21-30 (Very High)<span class="count-badge">{complexity_dist["very_high"]}</span></span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-circle" style="background: #111827;"></div>
-            <span>31+ (Critical)<span class="count-badge">{complexity_dist["critical"]}</span></span>
-        </div>
-    </div>
-    <div class="legend-section">
-        <div class="legend-title">Code Smells (Border)</div>
-        <div class="legend-item">
-            <div class="legend-circle" style="background: white; border: 1px solid #e5e7eb;"></div>
-            <span>None<span class="count-badge">{smell_dist["none"]}</span></span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-circle" style="background: white; border: 2px solid #fca5a5;"></div>
-            <span>Info<span class="count-badge">{smell_dist["info"]}</span></span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-circle" style="background: white; border: 3px solid #f87171;"></div>
-            <span>Warning<span class="count-badge">{smell_dist["warning"]}</span></span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-circle" style="background: white; border: 4px solid #ef4444;"></div>
-            <span>Error<span class="count-badge">{smell_dist["error"]}</span></span>
-        </div>
-    </div>
-    <div class="legend-section">
-        <div class="legend-title">Dependencies (Edges)</div>
-        <div class="legend-item">
-            <div class="legend-line" style="background: #64748b;"></div>
-            <span>Normal</span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-line" style="background: #dc2626;"></div>
-            <span>Circular</span>
-        </div>
-    </div>
-    <div class="legend-section">
-        <div class="legend-title">Size</div>
-        <div class="legend-item">
-            <div class="legend-circle" style="width: 8px; height: 8px; background: #9ca3af;"></div>
-            <span>Fewer lines</span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-circle" style="width: 16px; height: 16px; background: #9ca3af;"></div>
-            <span>More lines</span>
+        <div class="legend-section">
+            <div class="legend-title">Size</div>
+            <div class="legend-item">
+                <div class="legend-circle" style="width: 8px; height: 8px; background: #9ca3af;"></div>
+                <span>Fewer lines</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="width: 16px; height: 16px; background: #9ca3af;"></div>
+                <span>More lines</span>
+            </div>
         </div>
     </div>
 </div>"""
@@ -2721,10 +2813,31 @@ function toggleLegend() {{
     if (legendContent.classList.contains('collapsed')) {{
         legendContent.classList.remove('collapsed');
         toggleIcon.textContent = '▼';
+        announceToScreenReader('Legend expanded');
     }} else {{
         legendContent.classList.add('collapsed');
         toggleIcon.textContent = '▶';
+        announceToScreenReader('Legend collapsed');
     }}
+}}
+
+// Helper function to toggle stats panel
+function toggleStatsPanel() {{
+    const statsPanel = document.getElementById('stats-panel-container');
+    const toggleButton = document.getElementById('stats-toggle');
+
+    if (!statsPanel || !toggleButton) return;
+
+    const isVisible = statsPanel.classList.toggle('visible');
+    toggleButton.classList.toggle('active', isVisible);
+    toggleButton.setAttribute('aria-expanded', isVisible);
+    statsPanel.setAttribute('aria-hidden', !isVisible);
+
+    // Update button text
+    toggleButton.textContent = isVisible ? '✕ Hide Stats' : '📊 Show Stats';
+
+    // Announce to screen readers
+    announceToScreenReader(isVisible ? 'Statistics panel opened' : 'Statistics panel closed');
 }}
 
 // Initialize complexity chart

@@ -42,15 +42,15 @@ def generate_html_template() -> str:
 </head>
 <body>
     <div id="controls">
-        <h1>🔍 Code Tree</h1>
-
         <div class="search-container">
             <input type="text" id="search-input" placeholder="Search nodes..." oninput="handleSearchInput(event)" onkeydown="handleSearchKeydown(event)">
             <div id="search-results" class="search-results"></div>
         </div>
 
+        <h1>🔍 Code Tree</h1>
+
         <div class="control-group">
-            <label style="color: #c9d1d9; margin-bottom: 8px;">Layout Mode</label>
+            <label style="color: var(--text-primary); margin-bottom: 8px;">Layout Mode</label>
             <div class="toggle-switch-container">
                 <span class="toggle-label">Linear</span>
                 <label class="toggle-switch">
@@ -58,6 +58,15 @@ def generate_html_template() -> str:
                     <span class="toggle-slider"></span>
                 </label>
                 <span class="toggle-label">Circular</span>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label style="color: var(--text-primary); margin-bottom: 8px;">Show Files</label>
+            <div class="filter-buttons">
+                <button class="filter-btn active" data-filter="all" onclick="setFileFilter('all')">All</button>
+                <button class="filter-btn" data-filter="code" onclick="setFileFilter('code')">Code</button>
+                <button class="filter-btn" data-filter="docs" onclick="setFileFilter('docs')">Docs</button>
             </div>
         </div>
 
@@ -123,6 +132,38 @@ def generate_html_template() -> str:
                 </div>
                 <div class="legend-item" style="padding-left: 16px;">
                     <span>Scroll → zoom in/out</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Options Section -->
+        <h3>Options</h3>
+        <div class="legend" style="margin-top: 8px;">
+            <div class="legend-category" style="border-bottom: none;">
+                <!-- Theme Toggle -->
+                <div class="legend-item" style="margin-bottom: 12px; padding: 0;">
+                    <button class="theme-toggle-icon-btn" onclick="toggleTheme()" title="Toggle dark/light theme">
+                        <span class="theme-icon" id="theme-icon">🌙</span>
+                    </button>
+                    <span style="margin-left: 8px; color: var(--text-secondary); font-size: 12px;">Theme</span>
+                </div>
+
+                <!-- Analysis Reports -->
+                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; margin-bottom: 6px;" onclick="showComingSoon('Complexity Report')">
+                    <span style="margin-right: 8px;">📊</span>
+                    <span>Complexity Report</span>
+                </div>
+                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; margin-bottom: 6px;" onclick="showComingSoon('Code Smells')">
+                    <span style="margin-right: 8px;">🔍</span>
+                    <span>Code Smells</span>
+                </div>
+                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; margin-bottom: 6px;" onclick="showComingSoon('Dependencies')">
+                    <span style="margin-right: 8px;">🔗</span>
+                    <span>Dependencies</span>
+                </div>
+                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px;" onclick="showComingSoon('Trends')">
+                    <span style="margin-right: 8px;">📈</span>
+                    <span>Trends</span>
                 </div>
             </div>
         </div>

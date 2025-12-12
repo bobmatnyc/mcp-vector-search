@@ -50,6 +50,9 @@ let navigationIndex = -1;
 // Call lines visibility
 let showCallLines = true;
 
+// File filter: 'all', 'code', 'docs'
+let currentFileFilter = 'all';
+
 // Chunk types for code nodes (function, class, method, text, imports, module)
 const chunkTypes = ['function', 'class', 'method', 'text', 'imports', 'module'];
 
@@ -76,10 +79,124 @@ const margin = {top: 40, right: 120, bottom: 20, left: 120};
 // DATA LOADING
 // ============================================================================
 
+let graphStatusCheckInterval = null;
+
+async function checkGraphStatus() {
+    try {
+        const response = await fetch('/api/graph-status');
+        const status = await response.json();
+        return status;
+    } catch (error) {
+        console.error('Failed to check graph status:', error);
+        return { ready: false, size: 0 };
+    }
+}
+
+function showLoadingIndicator(message) {
+    const loadingDiv = document.getElementById('graph-loading-indicator') || createLoadingDiv();
+    loadingDiv.querySelector('.loading-message').textContent = message;
+    loadingDiv.style.display = 'flex';
+}
+
+function hideLoadingIndicator() {
+    const loadingDiv = document.getElementById('graph-loading-indicator');
+    if (loadingDiv) {
+        loadingDiv.style.display = 'none';
+    }
+}
+
+function createLoadingDiv() {
+    const div = document.createElement('div');
+    div.id = 'graph-loading-indicator';
+    div.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(255, 255, 255, 0.95);
+        padding: 30px 50px;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 15px;
+        z-index: 10000;
+    `;
+
+    const spinner = document.createElement('div');
+    spinner.style.cssText = `
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #3498db;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+    `;
+
+    const message = document.createElement('div');
+    message.className = 'loading-message';
+    message.style.cssText = 'color: #333; font-size: 16px; font-family: Arial, sans-serif;';
+    message.textContent = 'Loading graph data...';
+
+    div.appendChild(spinner);
+    div.appendChild(message);
+    document.body.appendChild(div);
+
+    // Add spinner animation
+    const style = document.createElement('style');
+    style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+    document.head.appendChild(style);
+
+    return div;
+}
+
 async function loadGraphData() {
+    try {
+        // Check if graph is ready
+        const status = await checkGraphStatus();
+
+        if (!status.ready) {
+            console.log('Graph data not ready yet, will poll every 5 seconds...');
+            showLoadingIndicator('Generating graph data... This may take a few minutes.');
+
+            // Start polling for graph readiness
+            graphStatusCheckInterval = setInterval(async () => {
+                const checkStatus = await checkGraphStatus();
+                if (checkStatus.ready) {
+                    clearInterval(graphStatusCheckInterval);
+                    console.log('Graph data is now ready, loading...');
+                    showLoadingIndicator('Graph data ready! Loading visualization...');
+                    await loadGraphDataActual();
+                    hideLoadingIndicator();
+                }
+            }, 5000); // Poll every 5 seconds
+
+            return;
+        }
+
+        // Graph is already ready, load it
+        await loadGraphDataActual();
+    } catch (error) {
+        console.error('Failed to load graph data:', error);
+        hideLoadingIndicator();
+        document.body.innerHTML =
+            '<div style="color: red; padding: 20px; font-family: Arial;">Error loading visualization data. Check console for details.</div>';
+    }
+}
+
+async function loadGraphDataActual() {
     try {
         const response = await fetch('/api/graph');
         const data = await response.json();
+
+        // Check if we got an error response
+        if (data.error) {
+            console.warn('Graph data not available yet:', data.error);
+            showLoadingIndicator('Waiting for graph data...');
+            return;
+        }
+
         allNodes = data.nodes || [];
         allLinks = data.links || [];
 
@@ -379,18 +496,10 @@ function buildTreeStructure() {
         }
     }
 
-    // Collapse all child nodes of the root (but keep root's direct children visible initially)
-    // This way, only the root level (first level) is visible, all deeper levels are collapsed
+    // Collapse ALL nodes except the root itself
+    // This ensures only the root node is visible initially, all children are collapsed
     if (treeData.children) {
-        treeData.children.forEach(child => {
-            // Collapse all descendants of each root child, but keep the root children themselves visible
-            if (child.children && child.children.length > 0) {
-                child.children.forEach(grandchild => collapseAll(grandchild));
-                // Move children to _children to collapse
-                child._children = child.children;
-                child.children = null;
-            }
-        });
+        treeData.children.forEach(child => collapseAll(child));
     }
 
     console.log('Tree structure built with all directories and files collapsed');
@@ -907,41 +1016,65 @@ function calculateAverageComplexity(node) {
 
 function getNodeRadius(d) {
     const nodeData = d.data;
-    const lineCount = nodeData._lineCount || 1;
 
-    // Determine min/max based on node type
-    let minR, maxR;
+    // Size configuration based on node type
+    const dirMinRadius = 8;   // Min for directories
+    const dirMaxRadius = 40;  // Max for directories
+    const fileMinRadius = 6;  // Min for files
+    const fileMaxRadius = 30; // Max for files
+    const chunkMinRadius = sizeConfig.chunkMinRadius;  // From config
+    const chunkMaxRadius = sizeConfig.chunkMaxRadius;  // From config
+
+    // Directory nodes: size by file_count (logarithmic scale)
+    if (nodeData.type === 'directory') {
+        const fileCount = nodeData.file_count || 0;
+        if (fileCount === 0) return dirMinRadius;
+
+        // Logarithmic scale: log2(fileCount + 1) for smooth scaling
+        // +1 to avoid log(0), gives range [1, log2(max_files+1)]
+        const logCount = Math.log2(fileCount + 1);
+        const maxLogCount = Math.log2(100 + 1);  // Assume max ~100 files per dir
+        const normalized = Math.min(logCount / maxLogCount, 1.0);
+
+        return dirMinRadius + (normalized * (dirMaxRadius - dirMinRadius));
+    }
+
+    // File nodes: size by chunk_count (pre-computed, immutable)
+    if (nodeData.type === 'file') {
+        // Use pre-computed chunk_count (NEVER d.children/d._children - they change on expand/collapse!)
+        const chunkCount = nodeData.chunk_count || 0;
+        if (chunkCount === 0) return fileMinRadius;
+
+        // Linear scale with logarithmic damping for large counts
+        const logCount = Math.log2(chunkCount + 1);
+        const maxLogCount = Math.log2(20 + 1);  // Assume max ~20 chunks per file
+        const normalized = Math.min(logCount / maxLogCount, 1.0);
+
+        return fileMinRadius + (normalized * (fileMaxRadius - fileMinRadius));
+    }
+
+    // Chunk nodes: size by lines of code (existing percentile logic)
     if (chunkTypes.includes(nodeData.type)) {
-        minR = sizeConfig.chunkMinRadius;
-        maxR = sizeConfig.chunkMaxRadius;
-    } else {
-        minR = sizeConfig.minRadius;
-        maxR = sizeConfig.maxRadius;
+        const lineCount = nodeData._lineCount || 1;
+
+        if (percentile80 <= percentile20) {
+            return (chunkMinRadius + chunkMaxRadius) / 2;
+        }
+
+        let normalized;
+        if (lineCount <= percentile20) {
+            normalized = 0;
+        } else if (lineCount >= percentile80) {
+            normalized = 1;
+        } else {
+            normalized = (lineCount - percentile20) / (percentile80 - percentile20);
+        }
+
+        return chunkMinRadius + (normalized * (chunkMaxRadius - chunkMinRadius));
     }
 
-    // Percentile-based relative sizing:
-    // - Below 20th percentile → minimum size
-    // - Above 80th percentile → maximum size
-    // - Between 20th-80th → linear interpolation
-
-    if (percentile80 <= percentile20) {
-        return (minR + maxR) / 2;  // Default if no range
-    }
-
-    let normalized;
-    if (lineCount <= percentile20) {
-        // Below 20th percentile - use minimum size
-        normalized = 0;
-    } else if (lineCount >= percentile80) {
-        // Above 80th percentile - use maximum size
-        normalized = 1;
-    } else {
-        // Linear interpolation between 20th and 80th percentile
-        normalized = (lineCount - percentile20) / (percentile80 - percentile20);
-    }
-
-    // Scale to radius range
-    return minR + (normalized * (maxR - minR));
+    // Default fallback for other node types
+    return sizeConfig.minRadius;
 }
 
 // ============================================================================
@@ -1048,7 +1181,16 @@ function renderLinearTree() {
         .attr('r', d => getNodeRadius(d))  // Dynamic size based on content
         .attr('fill', d => getNodeFillColor(d))  // Complexity-based coloring
         .attr('stroke', '#fff')
-        .attr('stroke-width', 2);
+        .attr('stroke-width', 2)
+        .attr('class', d => {
+            // Add complexity grade class if available
+            const grade = d.data.complexity_grade || '';
+            const hasSmells = (d.data.smell_count && d.data.smell_count > 0) || (d.data.smells && d.data.smells.length > 0);
+            const classes = [];
+            if (grade) classes.push(`grade-${grade}`);
+            if (hasSmells) classes.push('has-smells');
+            return classes.join(' ');
+        });
 
     // Add external call arrow indicators (only for chunk nodes)
     nodes.each(function(d) {
@@ -1188,7 +1330,16 @@ function renderCircularTree() {
         .attr('r', d => getNodeRadius(d))  // Dynamic size based on content
         .attr('fill', d => getNodeFillColor(d))  // Complexity-based coloring
         .attr('stroke', '#fff')
-        .attr('stroke-width', 2);
+        .attr('stroke-width', 2)
+        .attr('class', d => {
+            // Add complexity grade class if available
+            const grade = d.data.complexity_grade || '';
+            const hasSmells = (d.data.smell_count && d.data.smell_count > 0) || (d.data.smells && d.data.smells.length > 0);
+            const classes = [];
+            if (grade) classes.push(`grade-${grade}`);
+            if (hasSmells) classes.push('has-smells');
+            return classes.join(' ');
+        });
 
     // Add external call arrow indicators (only for chunk nodes)
     nodes.each(function(d) {
@@ -2034,6 +2185,119 @@ function toggleLayout() {
 }
 
 // ============================================================================
+// FILE TYPE FILTER
+// ============================================================================
+
+// Code file extensions
+const codeExtensions = new Set([
+    '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.c', '.cpp', '.h', '.hpp',
+    '.cs', '.go', '.rs', '.rb', '.php', '.swift', '.kt', '.scala', '.r',
+    '.sh', '.bash', '.zsh', '.ps1', '.bat', '.sql', '.html', '.css', '.scss',
+    '.sass', '.less', '.vue', '.svelte', '.astro', '.elm', '.clj', '.ex', '.exs',
+    '.hs', '.ml', '.lua', '.pl', '.pm', '.m', '.mm', '.f', '.f90', '.for',
+    '.asm', '.s', '.v', '.vhd', '.sv', '.nim', '.zig', '.d', '.dart', '.groovy',
+    '.coffee', '.litcoffee', '.purs', '.rkt', '.scm', '.lisp', '.cl'
+]);
+
+// Doc file extensions
+const docExtensions = new Set([
+    '.md', '.markdown', '.rst', '.txt', '.adoc', '.asciidoc', '.org', '.tex',
+    '.rtf', '.doc', '.docx', '.pdf', '.json', '.yaml', '.yml', '.toml', '.ini',
+    '.cfg', '.conf', '.xml', '.csv', '.tsv', '.log', '.man', '.info', '.pod',
+    '.rdoc', '.textile', '.wiki'
+]);
+
+function getFileType(filename) {
+    if (!filename) return 'unknown';
+    const ext = '.' + filename.split('.').pop().toLowerCase();
+    if (codeExtensions.has(ext)) return 'code';
+    if (docExtensions.has(ext)) return 'docs';
+    return 'unknown';
+}
+
+function setFileFilter(filter) {
+    currentFileFilter = filter;
+
+    // Update button states
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+    });
+
+    // Apply filter to the tree
+    applyFileFilter();
+
+    console.log(`File filter set to: ${filter}`);
+}
+
+function applyFileFilter() {
+    if (!treeData) return;
+
+    // Get all node elements
+    d3.selectAll('.node').each(function(d) {
+        const node = d3.select(this);
+        const data = d.data || d;
+
+        if (data.type === 'directory') {
+            // Directories always visible
+            node.style('display', null);
+            node.style('opacity', null);
+        } else if (data.type === 'file') {
+            const fileType = getFileType(data.name);
+            const shouldShow = currentFileFilter === 'all' ||
+                               fileType === currentFileFilter ||
+                               fileType === 'unknown';
+
+            node.style('display', shouldShow ? null : 'none');
+            node.style('opacity', shouldShow ? null : 0);
+        } else {
+            // Chunks - visibility based on parent file
+            node.style('display', null);
+            node.style('opacity', null);
+        }
+    });
+
+    // Update stats
+    updateFilteredStats();
+}
+
+function updateFilteredStats() {
+    const stats = document.getElementById('stats');
+    if (!stats || !treeData) return;
+
+    let totalFiles = 0;
+    let codeFiles = 0;
+    let docFiles = 0;
+    let visibleFiles = 0;
+
+    function countFiles(node) {
+        if (node.type === 'file') {
+            totalFiles++;
+            const fileType = getFileType(node.name);
+            if (fileType === 'code') codeFiles++;
+            else if (fileType === 'docs') docFiles++;
+
+            if (currentFileFilter === 'all' || fileType === currentFileFilter || fileType === 'unknown') {
+                visibleFiles++;
+            }
+        }
+        if (node.children) {
+            node.children.forEach(countFiles);
+        }
+        if (node._children) {
+            node._children.forEach(countFiles);
+        }
+    }
+
+    countFiles(treeData);
+
+    stats.innerHTML = `
+        <strong>Files:</strong> ${visibleFiles}/${totalFiles} shown<br>
+        <span style="color: var(--accent);">📝 Code:</span> ${codeFiles} |
+        <span style="color: var(--warning);">📄 Docs:</span> ${docFiles}
+    `;
+}
+
+// ============================================================================
 // VIEWER PANEL CONTROLS
 // ============================================================================
 
@@ -2475,6 +2739,58 @@ function closeSearchResults() {
 }
 
 // ============================================================================
+// THEME TOGGLE
+// ============================================================================
+
+function toggleTheme() {
+    const html = document.documentElement;
+    const currentTheme = html.getAttribute('data-theme') || 'dark';
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+
+    // Update theme
+    if (newTheme === 'light') {
+        html.setAttribute('data-theme', 'light');
+    } else {
+        html.removeAttribute('data-theme');
+    }
+
+    // Save preference
+    localStorage.setItem('theme', newTheme);
+
+    // Update icon only
+    const themeIcon = document.getElementById('theme-icon');
+
+    if (newTheme === 'light') {
+        themeIcon.textContent = '☀️';
+    } else {
+        themeIcon.textContent = '🌙';
+    }
+
+    console.log(`Theme toggled to: ${newTheme}`);
+}
+
+function loadThemePreference() {
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    const html = document.documentElement;
+
+    if (savedTheme === 'light') {
+        html.setAttribute('data-theme', 'light');
+        const themeIcon = document.getElementById('theme-icon');
+        if (themeIcon) themeIcon.textContent = '☀️';
+    }
+
+    console.log(`Loaded theme preference: ${savedTheme}`);
+}
+
+// ============================================================================
+// ANALYSIS REPORTS PLACEHOLDERS
+// ============================================================================
+
+function showComingSoon(reportName) {
+    alert(`${reportName} - Coming Soon!\\n\\nThis feature will display detailed ${reportName.toLowerCase()} in a future release.`);
+}
+
+// ============================================================================
 // INITIALIZATION
 // ============================================================================
 
@@ -2482,6 +2798,9 @@ function closeSearchResults() {
 document.addEventListener('DOMContentLoaded', () => {
     console.log('=== PAGE INITIALIZATION ===');
     console.log('DOMContentLoaded event fired');
+
+    // Load theme preference before anything else
+    loadThemePreference();
 
     // Initialize toggle label highlighting
     const labels = document.querySelectorAll('.toggle-label');

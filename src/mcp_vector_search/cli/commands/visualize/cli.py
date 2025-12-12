@@ -29,6 +29,11 @@ app = typer.Typer(
 console = Console()
 
 
+def get_default_graph_path() -> Path:
+    """Get the default path for graph data (in .mcp-vector-search directory)."""
+    return Path.cwd() / ".mcp-vector-search" / "chunk-graph.json"
+
+
 @app.callback(invoke_without_command=True)
 def visualize_callback(ctx: typer.Context) -> None:
     """Visualize code chunk relationships.
@@ -38,16 +43,16 @@ def visualize_callback(ctx: typer.Context) -> None:
     # If no subcommand was invoked, run serve with defaults
     if ctx.invoked_subcommand is None:
         # Call serve directly with default parameters
-        serve(port=8080, graph_file=Path("chunk-graph.json"), code_only=False)
+        serve(port=8080, graph_file=get_default_graph_path(), code_only=False)
 
 
 @app.command()
 def export(
     output: Path = typer.Option(
-        Path("chunk-graph.json"),
+        None,  # Default will be set in function
         "--output",
         "-o",
-        help="Output file for chunk relationship data",
+        help="Output file for chunk relationship data (default: .mcp-vector-search/chunk-graph.json)",
     ),
     file_path: str | None = typer.Option(
         None,
@@ -76,6 +81,11 @@ def export(
         # Export only code chunks (exclude documentation)
         mcp-vector-search visualize export --code-only
     """
+    # Use default path if not specified
+    if output is None:
+        output = get_default_graph_path()
+        # Ensure parent directory exists
+        output.parent.mkdir(parents=True, exist_ok=True)
     asyncio.run(_export_chunks(output, file_path, code_only))
 
 
@@ -188,10 +198,10 @@ def serve(
         8080, "--port", "-p", help="Port for visualization server"
     ),
     graph_file: Path = typer.Option(
-        Path("chunk-graph.json"),
+        None,  # Default will be set in function
         "--graph",
         "-g",
-        help="Graph JSON file to visualize",
+        help="Graph JSON file to visualize (default: .mcp-vector-search/chunk-graph.json)",
     ),
     code_only: bool = typer.Option(
         False,
@@ -232,6 +242,10 @@ def serve(
 
     viz_dir = project_manager.project_root / ".mcp-vector-search" / "visualization"
 
+    # Use default graph file path if not specified
+    if graph_file is None:
+        graph_file = get_default_graph_path()
+
     if not viz_dir.exists():
         console.print(
             f"[yellow]Visualization directory not found. Creating at {viz_dir}...[/yellow]"
@@ -252,25 +266,50 @@ def serve(
         dest = viz_dir / "chunk-graph.json"
         shutil.copy(graph_file, dest)
         console.print(f"[green]✓[/green] Copied graph data to {dest}")
+        # Start server immediately with existing graph
+        start_visualization_server(port, viz_dir, auto_open=True)
     else:
-        # Generate new file (with filter if requested)
-        if graph_file.exists() and code_only:
-            console.print(
-                "[yellow]Regenerating filtered graph data (--code-only)...[/yellow]"
-            )
-        elif not graph_file.exists():
-            console.print(
-                f"[yellow]Graph file {graph_file} not found. Generating it now...[/yellow]"
-            )
+        # Generate graph in background, start server immediately
+        import threading
 
-        asyncio.run(_export_chunks(graph_file, None, code_only))
-        console.print()
+        def generate_graph_background() -> None:
+            """Generate graph in background thread.
 
-        # Copy the newly generated graph to visualization directory
-        if graph_file.exists():
-            dest = viz_dir / "chunk-graph.json"
-            shutil.copy(graph_file, dest)
-            console.print(f"[green]✓[/green] Copied graph data to {dest}")
+            Runs async graph generation in separate thread to avoid blocking
+            server startup. Updates visualization directory when complete.
+            """
+            try:
+                if graph_file.exists() and code_only:
+                    console.print(
+                        "[yellow]Regenerating filtered graph data (--code-only)...[/yellow]"
+                    )
+                elif not graph_file.exists():
+                    console.print(
+                        "[yellow]Generating graph data in background...[/yellow]"
+                    )
 
-    # Start server using refactored module
-    start_visualization_server(port, viz_dir, auto_open=True)
+                # Run async export in this thread
+                asyncio.run(_export_chunks(graph_file, None, code_only))
+
+                # Copy the newly generated graph to visualization directory
+                if graph_file.exists():
+                    dest = viz_dir / "chunk-graph.json"
+                    shutil.copy(graph_file, dest)
+                    console.print(
+                        "\n[green]✓[/green] Graph data ready! Refresh browser to view."
+                    )
+                else:
+                    console.print(
+                        f"\n[yellow]⚠[/yellow] Graph generation completed but file not found at {graph_file}"
+                    )
+            except Exception as e:
+                console.print(f"\n[red]✗ Graph generation failed: {e}[/red]")
+                logger.error(f"Background graph generation failed: {e}")
+
+        # Start background generation
+        thread = threading.Thread(target=generate_graph_background, daemon=True)
+        thread.start()
+        console.print("[cyan]Graph generation started in background...[/cyan]")
+
+        # Start server immediately (graph will be populated when ready)
+        start_visualization_server(port, viz_dir, auto_open=True)

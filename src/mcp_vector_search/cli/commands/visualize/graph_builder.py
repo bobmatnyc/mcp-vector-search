@@ -14,9 +14,81 @@ from rich.console import Console
 from ....core.database import ChromaVectorDatabase
 from ....core.directory_index import DirectoryIndex
 from ....core.project import ProjectManager
+from ....core.relationships import RelationshipStore
 from .state_manager import VisualizationState
 
 console = Console()
+
+
+def extract_chunk_name(content: str, fallback: str = "chunk") -> str:
+    """Extract first meaningful word from chunk content for labeling.
+
+    Args:
+        content: The chunk's code content
+        fallback: Fallback name if no meaningful word found
+
+    Returns:
+        First meaningful identifier found in the content
+
+    Examples:
+        >>> extract_chunk_name("def calculate_total(...)")
+        'calculate_total'
+        >>> extract_chunk_name("class UserManager:")
+        'UserManager'
+        >>> extract_chunk_name("# Comment about users")
+        'users'
+        >>> extract_chunk_name("import pandas as pd")
+        'pandas'
+    """
+    import re
+
+    # Skip common keywords that aren't meaningful as chunk labels
+    skip_words = {
+        "def",
+        "class",
+        "function",
+        "const",
+        "let",
+        "var",
+        "import",
+        "from",
+        "return",
+        "if",
+        "else",
+        "elif",
+        "for",
+        "while",
+        "try",
+        "except",
+        "finally",
+        "with",
+        "as",
+        "async",
+        "await",
+        "yield",
+        "self",
+        "this",
+        "true",
+        "false",
+        "none",
+        "null",
+        "undefined",
+        "public",
+        "private",
+        "protected",
+        "static",
+        "export",
+        "default",
+    }
+
+    # Find all words (alphanumeric + underscore, at least 2 chars)
+    words = re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]+\b", content)
+
+    for word in words:
+        if word.lower() not in skip_words:
+            return word
+
+    return fallback
 
 
 def get_subproject_color(subproject_name: str, index: int) -> str:
@@ -226,6 +298,13 @@ async def build_graph_data(
     console.print(f"[green]✓[/green] Loaded {len(dir_index.directories)} directories")
     for dir_path_str, directory in dir_index.directories.items():
         dir_id = f"dir_{hash(dir_path_str) & 0xFFFFFFFF:08x}"
+
+        # Compute parent directory ID (convert Path to string for JSON serialization)
+        parent_dir_id = None
+        parent_path_str = str(directory.parent_path) if directory.parent_path else None
+        if parent_path_str:
+            parent_dir_id = f"dir_{hash(parent_path_str) & 0xFFFFFFFF:08x}"
+
         dir_nodes[dir_path_str] = {
             "id": dir_id,
             "name": directory.name,
@@ -236,6 +315,8 @@ async def build_graph_data(
             "complexity": 0,
             "depth": directory.depth,
             "dir_path": dir_path_str,
+            "parent_id": parent_dir_id,  # Link to parent directory
+            "parent_path": parent_path_str,  # String for JSON serialization
             "file_count": directory.file_count,
             "subdirectory_count": directory.subdirectory_count,
             "total_chunks": directory.total_chunks,
@@ -245,6 +326,7 @@ async def build_graph_data(
         }
 
     # Create file nodes from chunks
+    # First pass: create file node entries
     for chunk in chunks:
         file_path_str = str(chunk.file_path)
         file_path = Path(file_path_str)
@@ -277,9 +359,16 @@ async def build_graph_data(
                 "end_line": 0,
                 "complexity": 0,
                 "depth": len(file_path.parts) - 1,
-                "parent_dir_id": parent_dir_id,
-                "parent_dir_path": parent_dir_str,
+                "parent_id": parent_dir_id,  # Consistent with directory nodes
+                "parent_path": parent_dir_str,
+                "chunk_count": 0,  # Will be computed below
             }
+
+    # Second pass: count chunks per file (pre-compute for consistent sizing)
+    for chunk in chunks:
+        file_path_str = str(chunk.file_path)
+        if file_path_str in file_nodes:
+            file_nodes[file_path_str]["chunk_count"] += 1
 
     # Add directory nodes to graph
     for dir_node in dir_nodes.values():
@@ -289,192 +378,57 @@ async def build_graph_data(
     for file_node in file_nodes.values():
         nodes.append(file_node)
 
-    # Compute semantic relationships for code chunks
-    console.print("[cyan]Computing semantic relationships...[/cyan]")
-    code_chunks = [c for c in chunks if c.chunk_type in ["function", "method", "class"]]
-    semantic_links = []
-
-    # Pre-compute top 5 semantic relationships for each code chunk
-    for i, chunk in enumerate(code_chunks):
-        if i % 20 == 0:  # Progress indicator every 20 chunks
-            console.print(f"[dim]Processed {i}/{len(code_chunks)} chunks[/dim]")
-
-        try:
-            # Search for similar chunks using the chunk's content
-            similar_results = await database.search(
-                query=chunk.content[:500],  # Use first 500 chars for query
-                limit=6,  # Get 6 (exclude self = 5)
-                similarity_threshold=0.3,  # Lower threshold to catch more relationships
+    # Link directories to their parent directories
+    for dir_node in dir_nodes.values():
+        if dir_node.get("parent_id"):
+            links.append(
+                {
+                    "source": dir_node["parent_id"],
+                    "target": dir_node["id"],
+                    "type": "dir_containment",
+                }
             )
 
-            # Filter out self and create semantic links
-            for result in similar_results:
-                # Construct target chunk_id from file_path and line numbers
-                target_chunk = next(
-                    (
-                        c
-                        for c in chunks
-                        if str(c.file_path) == str(result.file_path)
-                        and c.start_line == result.start_line
-                        and c.end_line == result.end_line
-                    ),
-                    None,
-                )
+    # Load or compute relationships (lazy computation with caching)
+    console.print("[cyan]Loading relationships...[/cyan]")
+    relationship_store = RelationshipStore(project_manager.project_root)
 
-                if not target_chunk:
-                    continue
+    if relationship_store.exists():
+        # Load pre-computed relationships (instant!)
+        relationships = relationship_store.load()
+        semantic_links = relationships.get("semantic", [])
+        caller_map = relationships.get("callers", {})
 
-                target_chunk_id = target_chunk.chunk_id or target_chunk.id
-
-                # Skip self-references
-                if target_chunk_id == (chunk.chunk_id or chunk.id):
-                    continue
-
-                # Add semantic link with similarity score
-                if result.similarity_score >= 0.2:
-                    semantic_links.append(
-                        {
-                            "source": chunk.chunk_id or chunk.id,
-                            "target": target_chunk_id,
-                            "type": "semantic",
-                            "similarity": result.similarity_score,
-                        }
-                    )
-
-                    # Only keep top 5
-                    if (
-                        len(
-                            [
-                                link
-                                for link in semantic_links
-                                if link["source"] == (chunk.chunk_id or chunk.id)
-                            ]
-                        )
-                        >= 5
-                    ):
-                        break
-
-        except Exception as e:
-            logger.debug(
-                f"Failed to compute semantic relationships for {chunk.chunk_id}: {e}"
-            )
-            continue
-
-    console.print(
-        f"[green]✓[/green] Computed {len(semantic_links)} semantic relationships"
-    )
-
-    def extract_function_calls(code: str) -> set[str]:
-        """Extract actual function calls from Python code using AST.
-
-        Returns set of function names that are actually called (not just mentioned).
-        Avoids false positives from comments, docstrings, and string literals.
-
-        Args:
-            code: Python source code to analyze
-
-        Returns:
-            Set of function names that are actually called in the code
-        """
-        import ast
-
-        calls = set()
-        try:
-            tree = ast.parse(code)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Call):
-                    # Handle direct calls: foo()
-                    if isinstance(node.func, ast.Name):
-                        calls.add(node.func.id)
-                    # Handle method calls: obj.foo() - extract 'foo'
-                    elif isinstance(node.func, ast.Attribute):
-                        calls.add(node.func.attr)
-            return calls
-        except SyntaxError:
-            # If code can't be parsed (incomplete, etc.), fall back to empty set
-            # This is safer than false positives from naive substring matching
-            return set()
-
-    # Compute external caller relationships
-    console.print("[cyan]Computing external caller relationships...[/cyan]")
-    import time
-
-    start_time = time.time()
-    caller_map = {}  # Map chunk_id -> list of caller info
-
-    logger.info(f"Processing {len(code_chunks)} code chunks for external callers...")
-    for chunk_idx, chunk in enumerate(code_chunks):
-        if chunk_idx % 50 == 0:  # Progress every 50 chunks
-            elapsed = time.time() - start_time
-            logger.info(
-                f"Progress: {chunk_idx}/{len(code_chunks)} chunks ({elapsed:.1f}s elapsed)"
-            )
+        if semantic_links:
             console.print(
-                f"[dim]Progress: {chunk_idx}/{len(code_chunks)} chunks ({elapsed:.1f}s)[/dim]"
+                f"[green]✓[/green] Loaded {len(semantic_links)} cached semantic relationships"
             )
-        chunk_id = chunk.chunk_id or chunk.id
-        file_path = str(chunk.file_path)
-        function_name = chunk.function_name or chunk.class_name
-
-        if not function_name:
-            continue
-
-        # Search for other chunks that reference this function/class name
-        other_chunks_count = 0
-        for other_chunk in chunks:
-            other_chunks_count += 1
-            if chunk_idx % 50 == 0 and other_chunks_count % 500 == 0:  # Inner progress
-                logger.debug(
-                    f"  Chunk {chunk_idx}: Scanning {other_chunks_count}/{len(chunks)} chunks"
-                )
-            other_file_path = str(other_chunk.file_path)
-
-            # Only track EXTERNAL callers (different file)
-            if other_file_path == file_path:
-                continue
-
-            # Extract actual function calls using AST (avoids false positives)
-            actual_calls = extract_function_calls(other_chunk.content)
-
-            # Check if this function is actually called (not just mentioned in comments)
-            if function_name in actual_calls:
-                other_chunk_id = other_chunk.chunk_id or other_chunk.id
-                other_name = (
-                    other_chunk.function_name
-                    or other_chunk.class_name
-                    or f"L{other_chunk.start_line}"
-                )
-
-                # Skip __init__ functions as callers - they are noise in "called by" lists
-                # (every class calls __init__ when constructing objects)
-                if other_name == "__init__":
-                    continue
-
-                if chunk_id not in caller_map:
-                    caller_map[chunk_id] = []
-
-                # Store caller information
-                caller_map[chunk_id].append(
-                    {
-                        "file": other_file_path,
-                        "chunk_id": other_chunk_id,
-                        "name": other_name,
-                        "type": other_chunk.chunk_type,
-                    }
-                )
-
-                logger.debug(
-                    f"Found actual call: {other_name} ({other_file_path}) -> "
-                    f"{function_name} ({file_path})"
-                )
-
-    # Count total caller relationships
-    total_callers = sum(len(callers) for callers in caller_map.values())
-    elapsed_total = time.time() - start_time
-    logger.info(f"Completed external caller computation in {elapsed_total:.1f}s")
-    console.print(
-        f"[green]✓[/green] Found {total_callers} external caller relationships ({elapsed_total:.1f}s)"
-    )
+        if caller_map:
+            total_callers = sum(len(callers) for callers in caller_map.values())
+            console.print(
+                f"[green]✓[/green] Loaded {total_callers} cached caller relationships"
+            )
+    else:
+        # Lazy compute relationships and cache for future use
+        console.print(
+            "[yellow]Computing relationships (first time only, will be cached)...[/yellow]"
+        )
+        try:
+            rel_stats = await relationship_store.compute_and_store(chunks, database)
+            console.print(
+                f"[green]✓[/green] Computed and cached {rel_stats['semantic_links']} semantic links and "
+                f"{rel_stats['caller_relationships']} caller relationships "
+                f"in {rel_stats['computation_time']:.1f}s"
+            )
+            # Reload the freshly computed relationships
+            relationships = relationship_store.load()
+            semantic_links = relationships.get("semantic", [])
+            caller_map = relationships.get("callers", {})
+        except Exception as e:
+            logger.warning(f"Failed to compute relationships: {e}")
+            console.print(f"[yellow]⚠[/yellow] Relationship computation failed: {e}")
+            semantic_links = []
+            caller_map = {}
 
     # Detect circular dependencies in caller relationships
     console.print("[cyan]Detecting circular dependencies...[/cyan]")
@@ -505,9 +459,21 @@ async def build_graph_data(
     # Add chunk nodes
     for chunk in chunks:
         chunk_id = chunk.chunk_id or chunk.id
+
+        # Generate meaningful chunk name
+        chunk_name = chunk.function_name or chunk.class_name
+        if not chunk_name:
+            # Extract meaningful name from content
+            chunk_name = extract_chunk_name(
+                chunk.content, fallback=f"chunk_{chunk.start_line}"
+            )
+            logger.debug(
+                f"Generated chunk name '{chunk_name}' for {chunk.chunk_type} at {chunk.file_path}:{chunk.start_line}"
+            )
+
         node = {
             "id": chunk_id,
-            "name": chunk.function_name or chunk.class_name or f"L{chunk.start_line}",
+            "name": chunk_name,
             "type": chunk.chunk_type,
             "file_path": str(chunk.file_path),
             "start_line": chunk.start_line,
@@ -519,6 +485,28 @@ async def build_graph_data(
             "docstring": chunk.docstring,
             "language": chunk.language,
         }
+
+        # Add structural analysis metrics if available
+        if (
+            hasattr(chunk, "cognitive_complexity")
+            and chunk.cognitive_complexity is not None
+        ):
+            node["cognitive_complexity"] = chunk.cognitive_complexity
+        if (
+            hasattr(chunk, "cyclomatic_complexity")
+            and chunk.cyclomatic_complexity is not None
+        ):
+            node["cyclomatic_complexity"] = chunk.cyclomatic_complexity
+        if hasattr(chunk, "complexity_grade") and chunk.complexity_grade is not None:
+            node["complexity_grade"] = chunk.complexity_grade
+        if hasattr(chunk, "code_smells") and chunk.code_smells:
+            node["smells"] = chunk.code_smells
+        if hasattr(chunk, "smell_count") and chunk.smell_count is not None:
+            node["smell_count"] = chunk.smell_count
+        if hasattr(chunk, "quality_score") and chunk.quality_score is not None:
+            node["quality_score"] = chunk.quality_score
+        if hasattr(chunk, "lines_of_code") and chunk.lines_of_code is not None:
+            node["lines_of_code"] = chunk.lines_of_code
 
         # Add caller information if available
         if chunk_id in caller_map:
@@ -563,10 +551,10 @@ async def build_graph_data(
 
     # Link files to their parent directories
     for _file_path_str, file_node in file_nodes.items():
-        if file_node.get("parent_dir_id"):
+        if file_node.get("parent_id"):
             links.append(
                 {
-                    "source": file_node["parent_dir_id"],
+                    "source": file_node["parent_id"],
                     "target": file_node["id"],
                     "type": "dir_containment",
                 }

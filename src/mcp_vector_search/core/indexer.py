@@ -22,6 +22,7 @@ from .database import VectorDatabase
 from .directory_index import DirectoryIndex
 from .exceptions import ParsingError
 from .models import CodeChunk, IndexStats
+from .relationships import RelationshipStore
 
 # Extension to language mapping for metric collection
 EXTENSION_TO_LANGUAGE = {
@@ -132,6 +133,9 @@ class SemanticIndexer:
         )
         # Load existing directory index
         self.directory_index.load()
+
+        # Initialize relationship store for pre-computing visualization relationships
+        self.relationship_store = RelationshipStore(project_root)
 
     def _default_collectors(self) -> list[MetricCollector]:
         """Return default set of metric collectors.
@@ -275,12 +279,14 @@ class SemanticIndexer:
         self,
         force_reindex: bool = False,
         show_progress: bool = True,
+        skip_relationships: bool = False,
     ) -> int:
         """Index all files in the project.
 
         Args:
             force_reindex: Whether to reindex existing files
             show_progress: Whether to show progress information
+            skip_relationships: Skip computing relationships for visualization (faster, but visualize will be slower)
 
         Returns:
             Number of files indexed
@@ -382,6 +388,29 @@ class SemanticIndexer:
         logger.info(
             f"Indexing complete: {indexed_count} files indexed, {failed_count} failed"
         )
+
+        # Compute and store relationships for visualization (unless skipped)
+        if not skip_relationships and indexed_count > 0:
+            try:
+                logger.info("Computing relationships for instant visualization...")
+                # Get all chunks from database for relationship computation
+                all_chunks = await self.database.get_all_chunks()
+
+                if len(all_chunks) > 0:
+                    # Compute and store relationships
+                    rel_stats = await self.relationship_store.compute_and_store(
+                        all_chunks, self.database
+                    )
+                    logger.info(
+                        f"✓ Pre-computed {rel_stats['semantic_links']} semantic links and "
+                        f"{rel_stats['caller_relationships']} caller relationships "
+                        f"in {rel_stats['computation_time']:.1f}s"
+                    )
+                else:
+                    logger.warning("No chunks found for relationship computation")
+            except Exception as e:
+                logger.warning(f"Failed to compute relationships: {e}")
+                logger.debug("Visualization will compute relationships on demand")
 
         return indexed_count
 

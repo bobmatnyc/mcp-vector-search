@@ -80,6 +80,39 @@ def create_app(viz_dir: Path) -> FastAPI:
     """
     app = FastAPI(title="MCP Vector Search Visualization")
 
+    @app.get("/api/graph-status")
+    async def graph_status() -> Response:
+        """Get graph data generation status.
+
+        Returns:
+            JSON response with ready flag and file size
+        """
+        graph_file = viz_dir / "chunk-graph.json"
+
+        if not graph_file.exists():
+            return Response(
+                content='{"ready": false, "size": 0}',
+                media_type="application/json",
+                headers={"Cache-Control": "no-cache"},
+            )
+
+        try:
+            size = graph_file.stat().st_size
+            # Consider graph ready if file exists and has content (>100 bytes)
+            is_ready = size > 100
+            return Response(
+                content=f'{{"ready": {str(is_ready).lower()}, "size": {size}}}',
+                media_type="application/json",
+                headers={"Cache-Control": "no-cache"},
+            )
+        except Exception as e:
+            console.print(f"[red]Error checking graph status: {e}[/red]")
+            return Response(
+                content='{"ready": false, "size": 0}',
+                media_type="application/json",
+                headers={"Cache-Control": "no-cache"},
+            )
+
     @app.get("/api/graph")
     async def get_graph_data() -> Response:
         """Get graph data for D3 tree visualization.

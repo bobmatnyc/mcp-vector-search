@@ -12,16 +12,52 @@ def get_base_styles() -> str:
         CSS string for base styling
     """
     return """
+        /* CSS Variables for Theme Support */
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --text-tertiary: #6e7681;
+            --border-primary: #30363d;
+            --border-secondary: #21262d;
+            --accent: #58a6ff;
+            --accent-hover: #79c0ff;
+            --success: #238636;
+            --warning: #d29922;
+            --error: #da3633;
+            --shadow: rgba(0, 0, 0, 0.4);
+        }
+
+        [data-theme="light"] {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f6f8fa;
+            --bg-tertiary: #eaeef2;
+            --text-primary: #24292f;
+            --text-secondary: #57606a;
+            --text-tertiary: #6e7781;
+            --border-primary: #d0d7de;
+            --border-secondary: #d8dee4;
+            --accent: #0969da;
+            --accent-hover: #0550ae;
+            --success: #1a7f37;
+            --warning: #9a6700;
+            --error: #cf222e;
+            --shadow: rgba(31, 35, 40, 0.15);
+        }
+
         body {
             margin: 0;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #0d1117;
-            color: #c9d1d9;
+            background: var(--bg-primary);
+            color: var(--text-primary);
             overflow: hidden;
+            transition: background-color 0.3s ease, color 0.3s ease;
         }
 
-        h1 { margin: 0 0 16px 0; font-size: 18px; }
-        h3 { margin: 16px 0 8px 0; font-size: 14px; color: #8b949e; }
+        h1 { margin: 0 0 16px 0; font-size: 18px; color: var(--text-primary); }
+        h3 { margin: 16px 0 8px 0; font-size: 14px; color: var(--text-secondary); }
     """
 
 
@@ -36,15 +72,16 @@ def get_controls_styles() -> str:
             position: absolute;
             top: 20px;
             left: 20px;
-            background: rgba(13, 17, 23, 0.95);
-            border: 1px solid #30363d;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-primary);
             border-radius: 6px;
             padding: 16px;
             min-width: 250px;
             max-height: 80vh;
             overflow-y: auto;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 8px 24px var(--shadow);
             z-index: 500;
+            transition: background-color 0.3s ease, border-color 0.3s ease;
         }
 
         .control-group {
@@ -55,34 +92,34 @@ def get_controls_styles() -> str:
             display: block;
             margin-bottom: 4px;
             font-size: 12px;
-            color: #8b949e;
+            color: var(--text-secondary);
         }
 
         input[type="file"] {
             width: 100%;
             padding: 6px;
-            background: #161b22;
-            border: 1px solid #30363d;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
             border-radius: 6px;
-            color: #c9d1d9;
+            color: var(--text-primary);
             font-size: 12px;
         }
 
         .legend {
-            background: #161b22;
-            border: 1px solid #30363d;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
             border-radius: 6px;
             padding: 12px;
             font-size: 13px;
             max-width: 300px;
             margin-top: 16px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 8px 24px var(--shadow);
         }
 
         .legend-category {
             margin-bottom: 12px;
             padding-bottom: 8px;
-            border-bottom: 1px solid #21262d;
+            border-bottom: 1px solid var(--border-secondary);
         }
 
         .legend-category:last-child {
@@ -93,7 +130,7 @@ def get_controls_styles() -> str:
 
         .legend-title {
             font-weight: 600;
-            color: #c9d1d9;
+            color: var(--text-primary);
             margin-bottom: 8px;
             font-size: 12px;
             text-transform: uppercase;
@@ -121,9 +158,9 @@ def get_controls_styles() -> str:
         .stats {
             margin-top: 16px;
             padding-top: 16px;
-            border-top: 1px solid #30363d;
+            border-top: 1px solid var(--border-primary);
             font-size: 12px;
-            color: #8b949e;
+            color: var(--text-secondary);
         }
 
         .toggle-switch-container {
@@ -132,20 +169,20 @@ def get_controls_styles() -> str:
             justify-content: center;
             gap: 12px;
             padding: 10px;
-            background: #161b22;
-            border: 1px solid #30363d;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
             border-radius: 6px;
         }
 
         .toggle-label {
             font-size: 13px;
-            color: #8b949e;
+            color: var(--text-secondary);
             font-weight: 500;
             transition: color 0.2s ease;
         }
 
         .toggle-label.active {
-            color: #58a6ff;
+            color: var(--accent);
         }
 
         .toggle-switch {
@@ -174,10 +211,10 @@ def get_controls_styles() -> str:
             left: 0;
             right: 0;
             bottom: 0;
-            background-color: #30363d;
+            background-color: var(--border-primary);
             transition: 0.3s;
             border-radius: 24px;
-            border: 1px solid #30363d;
+            border: 1px solid var(--border-primary);
         }
 
         .toggle-slider:before {
@@ -187,27 +224,64 @@ def get_controls_styles() -> str:
             width: 16px;
             left: 3px;
             bottom: 3px;
-            background-color: #8b949e;
+            background-color: var(--text-secondary);
             transition: 0.3s;
             border-radius: 50%;
         }
 
         .toggle-switch input:checked + .toggle-slider {
-            background-color: #238636;
-            border-color: #2ea043;
+            background-color: var(--success);
+            border-color: var(--success);
         }
 
         .toggle-switch input:checked + .toggle-slider:before {
             transform: translateX(24px);
-            background-color: #ffffff;
+            background-color: var(--bg-primary);
         }
 
         .toggle-slider:hover {
-            background-color: #3a424d;
+            opacity: 0.8;
         }
 
         .toggle-switch input:checked + .toggle-slider:hover {
-            background-color: #2ea043;
+            opacity: 0.9;
+        }
+
+        /* Filter buttons */
+        .filter-buttons {
+            display: flex;
+            gap: 4px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
+            border-radius: 6px;
+            padding: 4px;
+        }
+
+        .filter-btn {
+            flex: 1;
+            padding: 8px 12px;
+            background: transparent;
+            border: none;
+            border-radius: 4px;
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .filter-btn:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .filter-btn.active {
+            background: var(--accent);
+            color: var(--bg-primary);
+        }
+
+        .filter-btn.active:hover {
+            background: var(--accent-hover);
         }
     """
 
@@ -394,25 +468,26 @@ def get_tooltip_styles() -> str:
         .tooltip {
             position: absolute;
             padding: 12px;
-            background: rgba(13, 17, 23, 0.95);
-            border: 1px solid #30363d;
+            background: var(--bg-primary);
+            opacity: 0.95;
+            border: 1px solid var(--border-primary);
             border-radius: 6px;
             pointer-events: none;
             display: none;
             font-size: 12px;
             max-width: 300px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 8px 24px var(--shadow);
         }
 
         .caller-link {
-            color: #58a6ff;
+            color: var(--accent);
             text-decoration: none;
             cursor: pointer;
             transition: color 0.2s;
         }
 
         .caller-link:hover {
-            color: #79c0ff;
+            color: var(--accent-hover);
             text-decoration: underline;
         }
     """
@@ -429,8 +504,8 @@ def get_breadcrumb_styles() -> str:
         .breadcrumb-nav {
             margin: 0 0 10px 0;
             padding: 8px 12px;
-            background: #161b22;
-            border: 1px solid #30363d;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
             border-radius: 4px;
             font-size: 12px;
             line-height: 1.6;
@@ -439,35 +514,35 @@ def get_breadcrumb_styles() -> str:
         }
 
         .breadcrumb-root {
-            color: #58a6ff;
+            color: var(--accent);
             cursor: pointer;
             font-weight: 500;
             transition: color 0.2s;
         }
 
         .breadcrumb-root:hover {
-            color: #79c0ff;
+            color: var(--accent-hover);
             text-decoration: underline;
         }
 
         .breadcrumb-link {
-            color: #58a6ff;
+            color: var(--accent);
             cursor: pointer;
             transition: color 0.2s;
         }
 
         .breadcrumb-link:hover {
-            color: #79c0ff;
+            color: var(--accent-hover);
             text-decoration: underline;
         }
 
         .breadcrumb-separator {
-            color: #6e7681;
+            color: var(--text-tertiary);
             margin: 0 6px;
         }
 
         .breadcrumb-current {
-            color: #c9d1d9;
+            color: var(--text-primary);
             font-weight: 600;
         }
     """
@@ -486,10 +561,11 @@ def get_content_pane_styles() -> str:
             right: 0;
             width: 450px;
             height: 100vh;
-            background: rgba(13, 17, 23, 0.98);
-            border-left: 1px solid #30363d;
+            background: var(--bg-primary);
+            opacity: 0.98;
+            border-left: 1px solid var(--border-primary);
             overflow-y: auto;
-            box-shadow: -4px 0 24px rgba(0, 0, 0, 0.5);
+            box-shadow: -4px 0 24px var(--shadow);
             transform: translateX(100%);
             transition: transform 0.3s ease-in-out;
             z-index: 1000;
@@ -507,9 +583,10 @@ def get_content_pane_styles() -> str:
         .viewer-header {
             position: sticky;
             top: 0;
-            background: rgba(13, 17, 23, 0.98);
+            background: var(--bg-primary);
+            opacity: 0.98;
             padding: 16px 20px;
-            border-bottom: 1px solid #30363d;
+            border-bottom: 1px solid var(--border-primary);
             z-index: 1;
         }
 
@@ -523,11 +600,11 @@ def get_content_pane_styles() -> str:
 
         .viewer-expand-btn {
             cursor: pointer;
-            color: #c9d1d9;
+            color: var(--text-primary);
             font-size: 16px;
             line-height: 1;
-            background: #21262d;
-            border: 1px solid #30363d;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-primary);
             padding: 6px 8px;
             transition: color 0.2s, background 0.2s, border-color 0.2s;
             border-radius: 4px;
@@ -537,15 +614,15 @@ def get_content_pane_styles() -> str:
         }
 
         .viewer-expand-btn:hover {
-            color: #58a6ff;
-            background: #30363d;
-            border-color: #58a6ff;
+            color: var(--accent);
+            background: var(--border-primary);
+            border-color: var(--accent);
         }
 
         .viewer-title {
             font-size: 16px;
             font-weight: bold;
-            color: #58a6ff;
+            color: var(--accent);
             margin: 0 0 8px 0;
             padding-right: 80px;
         }
@@ -555,9 +632,9 @@ def get_content_pane_styles() -> str:
         }
 
         .section-nav select {
-            background: #21262d;
-            color: #c9d1d9;
-            border: 1px solid #30363d;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-primary);
             border-radius: 6px;
             padding: 6px 10px;
             font-size: 12px;
@@ -567,22 +644,22 @@ def get_content_pane_styles() -> str:
         }
 
         .section-nav select:hover {
-            border-color: #58a6ff;
+            border-color: var(--accent);
         }
 
         .section-nav select:focus {
             outline: none;
-            border-color: #58a6ff;
+            border-color: var(--accent);
             box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
         }
 
         .viewer-close-btn {
             cursor: pointer;
-            color: #c9d1d9;
+            color: var(--text-primary);
             font-size: 18px;
             line-height: 1;
-            background: #21262d;
-            border: 1px solid #30363d;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-primary);
             padding: 6px 10px;
             transition: color 0.2s, background 0.2s, border-color 0.2s;
             border-radius: 4px;
@@ -592,9 +669,9 @@ def get_content_pane_styles() -> str:
         }
 
         .viewer-close-btn:hover {
-            color: #f85149;
-            background: #30363d;
-            border-color: #f85149;
+            color: var(--error);
+            background: var(--border-primary);
+            border-color: var(--error);
         }
 
         .viewer-content {
@@ -1145,6 +1222,68 @@ def get_spinner_styles() -> str:
     """
 
 
+def get_theme_toggle_styles() -> str:
+    """Get styles for the theme toggle button.
+
+    Returns:
+        CSS string for theme toggle styling
+    """
+    return """
+        .theme-toggle-icon-btn {
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-primary);
+            border-radius: 6px;
+            color: var(--text-primary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            flex-shrink: 0;
+        }
+
+        .theme-toggle-icon-btn:hover {
+            background: var(--accent);
+            border-color: var(--accent-hover);
+            transform: scale(1.05);
+        }
+
+        .theme-toggle-icon-btn .theme-icon {
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        /* Complexity grade colors for nodes */
+        .grade-A { fill: #238636 !important; stroke: #2ea043; }
+        .grade-B { fill: #1f6feb !important; stroke: #388bfd; }
+        .grade-C { fill: #d29922 !important; stroke: #e0ac3a; }
+        .grade-D { fill: #f0883e !important; stroke: #f59f5f; }
+        .grade-F { fill: #da3633 !important; stroke: #f85149; }
+
+        /* Code smell indicator - red border */
+        .has-smells circle {
+            stroke: var(--error) !important;
+            stroke-width: 3px !important;
+            stroke-dasharray: 5, 3;
+        }
+
+        /* Circular dependency indicator */
+        .in-cycle circle {
+            stroke: #ff4444 !important;
+            stroke-width: 3px !important;
+            animation: pulse-border 1.5s infinite;
+        }
+
+        @keyframes pulse-border {
+            0%, 100% { stroke-opacity: 0.8; }
+            50% { stroke-opacity: 1.0; }
+        }
+    """
+
+
 def get_search_styles() -> str:
     """Get styles for the search box and results dropdown.
 
@@ -1162,10 +1301,10 @@ def get_search_styles() -> str:
         #search-input {
             width: 100%;
             padding: 10px 12px;
-            background: #161b22;
-            border: 1px solid #30363d;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
             border-radius: 6px;
-            color: #c9d1d9;
+            color: var(--text-primary);
             font-size: 13px;
             outline: none;
             transition: border-color 0.2s, box-shadow 0.2s;
@@ -1176,12 +1315,12 @@ def get_search_styles() -> str:
         }
 
         #search-input:focus {
-            border-color: #58a6ff;
+            border-color: var(--accent);
             box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
         }
 
         #search-input::placeholder {
-            color: #8b949e;
+            color: var(--text-secondary);
         }
 
         /* Search results dropdown */
@@ -1192,13 +1331,13 @@ def get_search_styles() -> str:
             right: 0;
             max-height: 300px;
             overflow-y: auto;
-            background: #161b22;
-            border: 1px solid #30363d;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
             border-top: none;
             border-radius: 0 0 6px 6px;
             z-index: 1000;
             display: none;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 4px 12px var(--shadow);
         }
 
         .search-results.visible {
@@ -1211,7 +1350,7 @@ def get_search_styles() -> str:
             gap: 10px;
             padding: 10px 12px;
             cursor: pointer;
-            border-bottom: 1px solid #21262d;
+            border-bottom: 1px solid var(--border-secondary);
             transition: background 0.15s;
         }
 
@@ -1221,7 +1360,7 @@ def get_search_styles() -> str:
 
         .search-result-item:hover,
         .search-result-item.selected {
-            background: #21262d;
+            background: var(--bg-tertiary);
         }
 
         .search-result-icon {
@@ -1239,7 +1378,7 @@ def get_search_styles() -> str:
 
         .search-result-name {
             font-size: 13px;
-            color: #c9d1d9;
+            color: var(--text-primary);
             font-weight: 500;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -1248,14 +1387,14 @@ def get_search_styles() -> str:
 
         .search-result-name mark {
             background: rgba(88, 166, 255, 0.3);
-            color: #58a6ff;
+            color: var(--accent);
             border-radius: 2px;
             padding: 0 2px;
         }
 
         .search-result-path {
             font-size: 11px;
-            color: #8b949e;
+            color: var(--text-secondary);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -1264,8 +1403,8 @@ def get_search_styles() -> str:
 
         .search-result-type {
             font-size: 10px;
-            color: #8b949e;
-            background: #21262d;
+            color: var(--text-secondary);
+            background: var(--bg-tertiary);
             padding: 2px 6px;
             border-radius: 10px;
             text-transform: uppercase;
@@ -1275,16 +1414,16 @@ def get_search_styles() -> str:
         .search-no-results {
             padding: 20px;
             text-align: center;
-            color: #8b949e;
+            color: var(--text-secondary);
             font-size: 13px;
         }
 
         .search-hint {
             padding: 8px 12px;
             font-size: 11px;
-            color: #6e7681;
-            background: #0d1117;
-            border-top: 1px solid #21262d;
+            color: var(--text-tertiary);
+            background: var(--bg-primary);
+            border-top: 1px solid var(--border-secondary);
         }
     """
 
@@ -1308,6 +1447,7 @@ def get_all_styles() -> str:
             get_code_chunks_styles(),
             get_reset_button_styles(),
             get_spinner_styles(),
+            get_theme_toggle_styles(),
             get_search_styles(),
         ]
     )

@@ -74,6 +74,12 @@ def main(
         help="Enable debug output (shows hierarchy building details)",
         rich_help_panel="🔍 Debugging",
     ),
+    skip_relationships: bool = typer.Option(
+        True,
+        "--skip-relationships/--compute-relationships",
+        help="Skip relationship computation during indexing (default: skip). Relationships are computed lazily by the visualizer when needed.",
+        rich_help_panel="⚡ Performance",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -102,7 +108,10 @@ def main(
     [green]Optimize for large projects:[/green]
         $ mcp-vector-search index --batch-size 64
 
-    [dim]💡 Tip: Use incremental indexing (default) for faster updates on subsequent runs.[/dim]
+    [green]Pre-compute relationships (slower indexing, instant visualization):[/green]
+        $ mcp-vector-search index --compute-relationships
+
+    [dim]💡 Tip: Relationships are computed lazily by the visualizer for instant indexing.[/dim]
     """
     # If a subcommand was invoked, don't run the indexing logic
     if ctx.invoked_subcommand is not None:
@@ -122,6 +131,7 @@ def main(
                 batch_size=batch_size,
                 show_progress=True,
                 debug=debug,
+                skip_relationships=skip_relationships,
             )
         )
 
@@ -143,6 +153,7 @@ async def run_indexing(
     batch_size: int = 32,
     show_progress: bool = True,
     debug: bool = False,
+    skip_relationships: bool = False,
 ) -> None:
     """Run the indexing process."""
     # Load project configuration
@@ -197,7 +208,9 @@ async def run_indexing(
             if watch:
                 await _run_watch_mode(indexer, show_progress)
             else:
-                await _run_batch_indexing(indexer, force_reindex, show_progress)
+                await _run_batch_indexing(
+                    indexer, force_reindex, show_progress, skip_relationships
+                )
 
     except Exception as e:
         logger.error(f"Indexing error: {e}")
@@ -208,6 +221,7 @@ async def _run_batch_indexing(
     indexer: SemanticIndexer,
     force_reindex: bool,
     show_progress: bool,
+    skip_relationships: bool = False,
 ) -> None:
     """Run batch indexing of all files."""
     if show_progress:
@@ -357,6 +371,29 @@ async def _run_batch_indexing(
             except Exception as e:
                 logger.error(f"Failed to update directory index: {e}")
 
+            # Compute relationships for visualization (unless skipped)
+            if not skip_relationships and indexed_count > 0:
+                try:
+                    console.print(
+                        "\n[cyan]Computing relationships for instant visualization...[/cyan]"
+                    )
+                    all_chunks = await indexer.database.get_all_chunks()
+
+                    if len(all_chunks) > 0:
+                        rel_stats = await indexer.relationship_store.compute_and_store(
+                            all_chunks, indexer.database
+                        )
+                        console.print(
+                            f"[green]✓[/green] Pre-computed {rel_stats['semantic_links']} semantic links and "
+                            f"{rel_stats['caller_relationships']} caller relationships "
+                            f"in {rel_stats['computation_time']:.1f}s"
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to compute relationships: {e}")
+                    console.print(
+                        "[yellow]⚠ Relationships not computed (visualization will compute on demand)[/yellow]"
+                    )
+
             # Final progress summary
             console.print()
             if failed_count > 0:
@@ -375,6 +412,7 @@ async def _run_batch_indexing(
         indexed_count = await indexer.index_project(
             force_reindex=force_reindex,
             show_progress=show_progress,
+            skip_relationships=skip_relationships,
         )
 
     # Show statistics
