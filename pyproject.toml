@@ -210,4 +210,4 @@ exclude_lines = [
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv", "build", "dist"]
-skips = ["B404", "B603", "B110"]  # Skip subprocess warnings (B404, B603) and try/except/pass (B110) - CLI tool patterns
+skips = ["B404", "B603", "B110", "B608"]  # Skip subprocess warnings (B404, B603), try/except/pass (B110), SQL injection false positives in HTML templates (B608)

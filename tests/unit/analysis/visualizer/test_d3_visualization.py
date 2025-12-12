@@ -25,6 +25,7 @@ from mcp_vector_search.analysis.visualizer.d3_data import (
     D3Node,
     _calculate_worst_severity,
     _create_edges,
+    _create_module_groups,
     _create_node,
     _extract_circular_paths,
     get_complexity_class,
@@ -187,15 +188,22 @@ class TestD3Node:
             id="src/main.py",
             label="main.py",
             module="src",
+            module_path="src",
             loc=150,
             complexity=18.0,
             smell_count=2,
             smell_severity="error",
+            cyclomatic_complexity=20,
+            function_count=5,
+            class_count=2,
+            smells=[],
+            imports=[],
         )
 
         assert node.id == "src/main.py"
         assert node.label == "main.py"
         assert node.module == "src"
+        assert node.module_path == "src"
         assert node.loc == 150
         assert node.complexity == 18.0
         assert node.smell_count == 2
@@ -207,10 +215,16 @@ class TestD3Node:
             id="test.py",
             label="test.py",
             module="root",
+            module_path="root",
             loc=50,
             complexity=5.0,
             smell_count=0,
             smell_severity="none",
+            cyclomatic_complexity=3,
+            function_count=2,
+            class_count=0,
+            smells=[],
+            imports=[],
         )
 
         node_dict = node.to_dict()
@@ -219,6 +233,7 @@ class TestD3Node:
         assert node_dict["id"] == "test.py"
         assert node_dict["label"] == "test.py"
         assert node_dict["module"] == "root"
+        assert node_dict["module_path"] == "root"
         assert node_dict["loc"] == 50
         assert node_dict["complexity"] == 5.0
         assert node_dict["smell_count"] == 0
@@ -260,6 +275,7 @@ class TestCreateNode:
         assert node.id == "src/main.py"
         assert node.label == "main.py"
         assert node.module == "src"
+        assert node.module_path == "src"
         assert node.loc == 150
         assert node.complexity == 18
         assert node.smell_count == 2
@@ -637,6 +653,7 @@ class TestTransformForD3:
         # Verify structure
         assert "nodes" in result
         assert "links" in result
+        assert "modules" in result
         assert "summary" in result
 
         # Verify nodes
@@ -650,6 +667,7 @@ class TestTransformForD3:
         main_node = next(n for n in result["nodes"] if n["id"] == "src/main.py")
         assert main_node["label"] == "main.py"
         assert main_node["module"] == "src"
+        assert main_node["module_path"] == "src"
         assert main_node["loc"] == 150
         assert main_node["complexity"] == 18
         assert main_node["smell_severity"] == "error"
@@ -664,6 +682,15 @@ class TestTransformForD3:
             if link["source"] == "models/user.py" and link["target"] == "src/main.py"
         )
         assert circular_edge["circular"] is True
+
+        # Verify modules (should have 2 modules with 2+ nodes each)
+        assert isinstance(result["modules"], list)
+        # Each module should have name, node_ids, and color
+        for module in result["modules"]:
+            assert "name" in module
+            assert "node_ids" in module
+            assert "color" in module
+            assert len(module["node_ids"]) >= 2
 
         # Verify summary
         assert result["summary"]["total_files"] == 3
@@ -696,6 +723,7 @@ class TestTransformForD3:
 
         assert result["nodes"] == []
         assert result["links"] == []
+        assert result["modules"] == []
         assert result["summary"]["total_files"] == 0
 
 
@@ -755,3 +783,349 @@ class TestSmellClass:
     def test_smell_critical(self) -> None:
         """Test critical severity class."""
         assert get_smell_class("critical") == "smell-critical"
+
+
+class TestSummaryStats:
+    """Test _create_summary_stats function."""
+
+    def test_create_summary_stats_complete(self, sample_export: AnalysisExport) -> None:
+        """Test creating summary stats with complete data."""
+        from mcp_vector_search.analysis.visualizer.d3_data import (
+            _create_edges,
+            _create_node,
+            _create_summary_stats,
+            _extract_circular_paths,
+        )
+
+        # Create nodes and edges
+        nodes = [_create_node(file) for file in sample_export.files]
+        circular_paths = _extract_circular_paths(sample_export)
+        edges = _create_edges(sample_export, circular_paths)
+
+        # Create summary stats
+        summary = _create_summary_stats(sample_export, nodes, edges)
+
+        # Verify basic stats
+        assert summary["total_files"] == 3
+        assert summary["total_functions"] == 15
+        assert summary["total_classes"] == 5
+        assert summary["total_lines"] == 450
+
+        # Verify complexity stats
+        assert "avg_complexity" in summary
+        assert "complexity_grade" in summary
+        assert summary["complexity_grade"] in ["A", "B", "C", "D", "F"]
+
+        # Verify smell stats
+        assert summary["total_smells"] == 8
+        assert summary["error_count"] == 2
+        assert summary["warning_count"] == 5
+        assert summary["info_count"] == 1
+
+        # Verify LOC stats
+        assert "min_loc" in summary
+        assert "max_loc" in summary
+        assert "median_loc" in summary
+        assert summary["min_loc"] <= summary["median_loc"] <= summary["max_loc"]
+
+        # Verify circular dependencies
+        assert summary["circular_dependencies"] == 1
+
+        # Verify distributions
+        assert "complexity_distribution" in summary
+        assert "smell_distribution" in summary
+
+        complexity_dist = summary["complexity_distribution"]
+        assert all(
+            key in complexity_dist
+            for key in ["low", "moderate", "high", "very_high", "critical"]
+        )
+
+        smell_dist = summary["smell_distribution"]
+        assert all(key in smell_dist for key in ["none", "info", "warning", "error"])
+
+    def test_create_summary_stats_empty(self) -> None:
+        """Test creating summary stats with empty export."""
+        from mcp_vector_search.analysis.visualizer.d3_data import (
+            _create_summary_stats,
+        )
+
+        export = AnalysisExport(
+            metadata=ExportMetadata(
+                generated_at=datetime.now(),
+                tool_version="0.19.0",
+                project_root="/test",
+            ),
+            summary=MetricsSummary(
+                total_files=0,
+                total_functions=0,
+                total_classes=0,
+                total_lines=0,
+                avg_complexity=0.0,
+                avg_cognitive_complexity=0.0,
+                avg_nesting_depth=0.0,
+                total_smells=0,
+            ),
+            files=[],
+            dependencies=DependencyGraph(edges=[], circular_dependencies=[]),
+        )
+
+        summary = _create_summary_stats(export, [], [])
+
+        assert summary["total_files"] == 0
+        assert summary["total_smells"] == 0
+        assert summary["min_loc"] == 0
+        assert summary["max_loc"] == 0
+
+    def test_complexity_grade_calculation(self) -> None:
+        """Test complexity grade calculation."""
+        from mcp_vector_search.analysis.visualizer.d3_data import (
+            _get_complexity_grade,
+        )
+
+        assert _get_complexity_grade(3) == "A"
+        assert _get_complexity_grade(8) == "B"
+        assert _get_complexity_grade(15) == "C"
+        assert _get_complexity_grade(25) == "D"
+        assert _get_complexity_grade(35) == "F"
+
+
+class TestEnhancedD3Node:
+    """Test enhanced D3Node with additional fields."""
+
+    def test_node_with_full_details(self, sample_file_detail: FileDetail) -> None:
+        """Test creating node with all new fields."""
+        from mcp_vector_search.analysis.visualizer.d3_data import _create_node
+
+        node = _create_node(sample_file_detail)
+
+        # Verify original fields
+        assert node.id == "src/main.py"
+        assert node.label == "main.py"
+        assert node.module == "src"
+        assert node.loc == 150
+
+        # Verify new fields
+        assert node.cyclomatic_complexity == 25
+        assert node.function_count == 5
+        assert node.class_count == 2
+
+        # Verify smells data
+        assert isinstance(node.smells, list)
+        assert len(node.smells) == 2
+        assert all("type" in smell for smell in node.smells)
+        assert all("severity" in smell for smell in node.smells)
+        assert all("message" in smell for smell in node.smells)
+        assert all("line" in smell for smell in node.smells)
+
+        # Verify imports
+        assert isinstance(node.imports, list)
+        assert "utils.helpers" in node.imports
+        assert "models.user" in node.imports
+
+    def test_node_to_dict_includes_new_fields(self) -> None:
+        """Test that to_dict includes all new fields."""
+        node = D3Node(
+            id="test.py",
+            label="test.py",
+            module="root",
+            module_path="root",
+            loc=100,
+            complexity=10.0,
+            smell_count=1,
+            smell_severity="warning",
+            cyclomatic_complexity=8,
+            function_count=3,
+            class_count=1,
+            smells=[
+                {
+                    "type": "test_smell",
+                    "severity": "warning",
+                    "message": "Test",
+                    "line": 1,
+                }
+            ],
+            imports=["module1", "module2"],
+        )
+
+        node_dict = node.to_dict()
+
+        assert node_dict["cyclomatic_complexity"] == 8
+        assert node_dict["function_count"] == 3
+        assert node_dict["class_count"] == 1
+        assert len(node_dict["smells"]) == 1
+        assert len(node_dict["imports"]) == 2
+
+
+class TestModuleGrouping:
+    """Test _create_module_groups function."""
+
+    def test_create_module_groups_with_clusters(self) -> None:
+        """Test creating module groups from nodes."""
+        nodes = [
+            D3Node(
+                id="src/main.py",
+                label="main.py",
+                module="src",
+                module_path="src",
+                loc=100,
+                complexity=10,
+                smell_count=0,
+                smell_severity="none",
+                cyclomatic_complexity=8,
+                function_count=3,
+                class_count=1,
+                smells=[],
+                imports=[],
+            ),
+            D3Node(
+                id="src/utils.py",
+                label="utils.py",
+                module="src",
+                module_path="src",
+                loc=50,
+                complexity=5,
+                smell_count=0,
+                smell_severity="none",
+                cyclomatic_complexity=4,
+                function_count=2,
+                class_count=0,
+                smells=[],
+                imports=[],
+            ),
+            D3Node(
+                id="tests/test_main.py",
+                label="test_main.py",
+                module="tests",
+                module_path="tests",
+                loc=80,
+                complexity=8,
+                smell_count=0,
+                smell_severity="none",
+                cyclomatic_complexity=6,
+                function_count=4,
+                class_count=1,
+                smells=[],
+                imports=[],
+            ),
+            D3Node(
+                id="tests/test_utils.py",
+                label="test_utils.py",
+                module="tests",
+                module_path="tests",
+                loc=60,
+                complexity=6,
+                smell_count=0,
+                smell_severity="none",
+                cyclomatic_complexity=5,
+                function_count=3,
+                class_count=0,
+                smells=[],
+                imports=[],
+            ),
+        ]
+
+        modules = _create_module_groups(nodes)
+
+        # Should have 2 modules (src and tests), each with 2 nodes
+        assert len(modules) == 2
+
+        # Check module structure
+        for module in modules:
+            assert "name" in module
+            assert "node_ids" in module
+            assert "color" in module
+            assert len(module["node_ids"]) >= 2
+            assert module["color"].startswith("#")
+
+        # Verify module names
+        module_names = {m["name"] for m in modules}
+        assert "src" in module_names
+        assert "tests" in module_names
+
+        # Verify node assignments
+        src_module = next(m for m in modules if m["name"] == "src")
+        assert "src/main.py" in src_module["node_ids"]
+        assert "src/utils.py" in src_module["node_ids"]
+
+    def test_create_module_groups_filters_single_nodes(self) -> None:
+        """Test that modules with only 1 node are filtered out."""
+        nodes = [
+            D3Node(
+                id="src/main.py",
+                label="main.py",
+                module="src",
+                module_path="src",
+                loc=100,
+                complexity=10,
+                smell_count=0,
+                smell_severity="none",
+                cyclomatic_complexity=8,
+                function_count=3,
+                class_count=1,
+                smells=[],
+                imports=[],
+            ),
+            D3Node(
+                id="tests/test_main.py",
+                label="test_main.py",
+                module="tests",
+                module_path="tests",
+                loc=80,
+                complexity=8,
+                smell_count=0,
+                smell_severity="none",
+                cyclomatic_complexity=6,
+                function_count=4,
+                class_count=1,
+                smells=[],
+                imports=[],
+            ),
+        ]
+
+        modules = _create_module_groups(nodes)
+
+        # Should have no modules (each has only 1 node)
+        assert len(modules) == 0
+
+    def test_create_module_groups_empty_nodes(self) -> None:
+        """Test module grouping with no nodes."""
+        nodes: list[D3Node] = []
+
+        modules = _create_module_groups(nodes)
+
+        assert len(modules) == 0
+        assert isinstance(modules, list)
+
+    def test_create_module_groups_color_cycling(self) -> None:
+        """Test that module colors cycle through palette."""
+        # Create 10 modules (more than the 8 colors in palette)
+        nodes = []
+        for i in range(10):
+            for j in range(2):
+                nodes.append(
+                    D3Node(
+                        id=f"module{i}/file{j}.py",
+                        label=f"file{j}.py",
+                        module=f"module{i}",
+                        module_path=f"module{i}",
+                        loc=50,
+                        complexity=5,
+                        smell_count=0,
+                        smell_severity="none",
+                        cyclomatic_complexity=4,
+                        function_count=2,
+                        class_count=0,
+                        smells=[],
+                        imports=[],
+                    )
+                )
+
+        modules = _create_module_groups(nodes)
+
+        assert len(modules) == 10
+
+        # Verify all modules have valid colors
+        for module in modules:
+            assert module["color"].startswith("#")
+            assert len(module["color"]) == 7  # Hex color format

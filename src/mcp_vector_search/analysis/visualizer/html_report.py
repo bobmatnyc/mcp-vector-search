@@ -82,6 +82,16 @@ class HTMLReportGenerator:
     {self._generate_styles()}
 </head>
 <body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <div class="a11y-controls" role="toolbar" aria-label="Accessibility controls">
+        <button id="toggle-contrast" class="a11y-button" aria-pressed="false" title="Toggle high contrast mode">
+            High Contrast
+        </button>
+        <button id="toggle-reduced-motion" class="a11y-button" aria-pressed="false" title="Toggle reduced motion preference">
+            Reduce Motion
+        </button>
+    </div>
+    <div id="main-content">
     {self._generate_header(export)}
     {self._generate_summary_section(export)}
     {self._generate_d3_graph_section(export)}
@@ -92,6 +102,7 @@ class HTMLReportGenerator:
     {self._generate_dependencies_section(export)}
     {self._generate_trends_section(export)}
     {self._generate_footer(export)}
+    </div><!-- #main-content -->
     {self._generate_scripts(export)}
 </body>
 </html>"""
@@ -128,6 +139,38 @@ class HTMLReportGenerator:
     --gray-200: #e5e7eb;
     --gray-700: #374151;
     --gray-900: #111827;
+}
+
+/* High Contrast Mode */
+body.high-contrast {
+    --primary: #0056b3;
+    --gray-50: #ffffff;
+    --gray-100: #e0e0e0;
+    --gray-200: #c0c0c0;
+    --gray-700: #000000;
+    --gray-900: #000000;
+    background: #ffffff;
+    color: #000000;
+}
+
+body.high-contrast .card {
+    border: 2px solid #000000;
+}
+
+body.high-contrast .node circle {
+    stroke: #000000 !important;
+    stroke-width: 2px !important;
+}
+
+/* Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -232,13 +275,159 @@ footer {
     font-size: 0.875rem;
 }
 
+/* Accessibility Controls */
+.a11y-controls {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    display: flex;
+    gap: 0.5rem;
+    z-index: 10000;
+}
+
+.a11y-button {
+    padding: 0.5rem 1rem;
+    background: white;
+    border: 2px solid var(--gray-200);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 600;
+    transition: all 0.2s;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.a11y-button:hover {
+    background: var(--gray-100);
+    border-color: var(--primary);
+}
+
+.a11y-button:focus {
+    outline: 3px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.a11y-button.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+/* Skip Link */
+.skip-link {
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: var(--primary);
+    color: white;
+    padding: 0.5rem 1rem;
+    text-decoration: none;
+    border-radius: 0 0 4px 0;
+    z-index: 10001;
+}
+
+.skip-link:focus {
+    top: 0;
+}
+
+/* Export Controls */
+.export-controls {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--gray-200);
+}
+
+.export-button {
+    padding: 0.5rem 1rem;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.export-button:hover {
+    background: #1d4ed8;
+}
+
+.export-button:active {
+    transform: translateY(1px);
+}
+
+.export-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Focus trap indicator */
+.focus-trapped {
+    outline: 3px solid var(--primary);
+    outline-offset: 2px;
+}
+
+/* Screen reader only */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+
+/* Loading/Error States */
+.error-message {
+    background: #fef2f2;
+    border: 2px solid #fca5a5;
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1rem 0;
+    color: #991b1b;
+}
+
+.loading-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid var(--gray-200);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
 @media (max-width: 768px) {
     body { padding: 1rem; }
     .stats-grid { grid-template-columns: 1fr; }
     h1 { font-size: 1.5rem; }
+    .a11y-controls {
+        position: relative;
+        top: auto;
+        right: auto;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+    }
 }
 
 /* D3 Graph Styles */
+.graph-dashboard-container {
+    display: grid;
+    grid-template-columns: 70% 30%;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
 #d3-graph-container {
     position: relative;
     overflow: hidden;
@@ -251,6 +440,254 @@ footer {
 #d3-graph {
     width: 100%;
     height: 100%;
+}
+
+/* Filter Controls Panel */
+.filter-controls {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.filter-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.filter-label {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--gray-700);
+}
+
+.filter-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.filter-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+}
+
+.filter-checkbox-label input[type="checkbox"] {
+    cursor: pointer;
+}
+
+.filter-input {
+    padding: 0.5rem;
+    border: 1px solid var(--gray-200);
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-family: inherit;
+}
+
+.filter-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.filter-select {
+    padding: 0.5rem;
+    border: 1px solid var(--gray-200);
+    border-radius: 6px;
+    font-size: 0.875rem;
+    background: white;
+    cursor: pointer;
+}
+
+.filter-select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.filter-button {
+    padding: 0.5rem 1rem;
+    background: var(--gray-100);
+    border: 1px solid var(--gray-200);
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.filter-button:hover {
+    background: var(--gray-200);
+}
+
+.filter-button:active {
+    transform: translateY(1px);
+}
+
+.filter-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* Node filtering states */
+.node-filtered {
+    opacity: 0.1 !important;
+    transition: opacity 0.3s;
+}
+
+.link-filtered {
+    opacity: 0.05 !important;
+    stroke: var(--gray-200) !important;
+    transition: opacity 0.3s, stroke 0.3s;
+}
+
+/* Search highlight */
+.node-search-highlight {
+    filter: drop-shadow(0 0 6px #fbbf24) !important;
+}
+
+/* Keyboard focus */
+.node-focused {
+    filter: drop-shadow(0 0 8px var(--primary)) !important;
+}
+
+.node circle:focus {
+    outline: 2px solid var(--primary);
+    outline-offset: 4px;
+}
+
+/* Dashboard Panels */
+.dashboard-panels {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.dashboard-panel {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 1rem;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.dashboard-panel h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    color: var(--gray-900);
+}
+
+.panel-stat {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--gray-100);
+}
+
+.panel-stat:last-child {
+    border-bottom: none;
+}
+
+.panel-stat-label {
+    color: var(--gray-700);
+    font-size: 0.875rem;
+}
+
+.panel-stat-value {
+    font-weight: 600;
+    color: var(--gray-900);
+}
+
+.smell-badge-small {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.smell-badge-error {
+    background: #fecaca;
+    color: #991b1b;
+}
+
+.smell-badge-warning {
+    background: #fed7aa;
+    color: #9a3412;
+}
+
+.smell-badge-info {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.panel-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.panel-list-item {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--gray-100);
+    font-size: 0.875rem;
+}
+
+.panel-list-item:last-child {
+    border-bottom: none;
+}
+
+#node-detail-panel.hidden {
+    display: none;
+}
+
+.detail-header {
+    background: var(--gray-100);
+    padding: 0.75rem;
+    border-radius: 6px;
+    margin-bottom: 0.75rem;
+}
+
+.detail-header-title {
+    font-weight: 600;
+    color: var(--gray-900);
+    margin-bottom: 0.25rem;
+}
+
+.detail-header-path {
+    font-size: 0.75rem;
+    color: var(--gray-600);
+    font-family: 'Monaco', 'Courier New', monospace;
+}
+
+.detail-section {
+    margin-bottom: 1rem;
+}
+
+.detail-section-title {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--gray-700);
+    margin-bottom: 0.5rem;
+}
+
+.circular-warning {
+    color: #dc2626;
+    font-weight: 600;
 }
 
 /* Node styles - complexity shading (darker = more complex) */
@@ -269,11 +706,12 @@ footer {
 
 /* Edge styles */
 .link {
-    stroke: #64748b;
+    fill: none;
     stroke-opacity: 0.6;
 }
 
 .link-circular {
+    fill: none;
     stroke: #dc2626;
     stroke-opacity: 0.8;
     animation: pulse 2s infinite;
@@ -282,6 +720,43 @@ footer {
 @keyframes pulse {
     0%, 100% { stroke-opacity: 0.8; }
     50% { stroke-opacity: 0.3; }
+}
+
+/* Arrowhead marker */
+.arrowhead {
+    fill: #64748b;
+}
+
+.arrowhead-circular {
+    fill: #dc2626;
+}
+
+/* Module cluster hulls */
+.module-hull {
+    fill-opacity: 0.1;
+    stroke-width: 2px;
+    stroke-opacity: 0.4;
+}
+
+/* Node hover effects */
+.node-dimmed {
+    opacity: 0.2;
+    transition: opacity 0.3s;
+}
+
+.node-highlighted {
+    opacity: 1;
+    transition: opacity 0.3s;
+}
+
+.link-dimmed {
+    opacity: 0.1;
+    transition: opacity 0.3s;
+}
+
+.link-highlighted {
+    opacity: 1;
+    transition: opacity 0.3s;
 }
 
 /* Node labels */
@@ -296,16 +771,75 @@ footer {
 .d3-tooltip {
     position: absolute;
     background: white;
-    border: 1px solid #e5e7eb;
+    border: 2px solid #e5e7eb;
     border-radius: 8px;
     padding: 12px;
     font-size: 12px;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.15);
     pointer-events: none;
     z-index: 1000;
-    max-width: 300px;
+    max-width: 320px;
     opacity: 0;
     transition: opacity 0.2s;
+}
+
+.tooltip-header {
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--gray-900);
+    margin-bottom: 6px;
+}
+
+.tooltip-subtitle {
+    color: var(--gray-600);
+    font-size: 11px;
+    margin-bottom: 10px;
+}
+
+.tooltip-section {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #f3f4f6;
+}
+
+.tooltip-metric {
+    display: flex;
+    justify-content: space-between;
+    margin: 4px 0;
+    font-size: 11px;
+}
+
+.tooltip-metric-label {
+    color: var(--gray-600);
+}
+
+.tooltip-metric-value {
+    font-weight: 600;
+    color: var(--gray-900);
+}
+
+.tooltip-bar {
+    width: 100%;
+    height: 6px;
+    background: #f3f4f6;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 4px;
+}
+
+.tooltip-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s;
+}
+
+.tooltip-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    margin-left: 4px;
 }
 
 /* Legend */
@@ -350,9 +884,53 @@ footer {
     height: 2px;
 }
 
+/* Collapsible Legend */
+.legend-toggle {
+    background: var(--gray-100);
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--gray-700);
+    margin-bottom: 0.5rem;
+    width: 100%;
+    text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.legend-toggle:hover {
+    background: var(--gray-200);
+}
+
+.legend-content.collapsed {
+    display: none;
+}
+
+.count-badge {
+    background: var(--gray-700);
+    color: white;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    margin-left: 0.5rem;
+}
+
 @media (max-width: 768px) {
     #d3-graph-container { height: 400px; }
     .d3-legend { flex-direction: column; gap: 16px; }
+    .graph-dashboard-container {
+        grid-template-columns: 1fr;
+    }
+    .dashboard-panels {
+        order: 2;
+    }
+    #d3-graph-container {
+        order: 1;
+    }
 }
 </style>"""
 
@@ -432,85 +1010,341 @@ footer {
         # Transform data for D3
         d3_data = transform_for_d3(export)
         d3_json = json.dumps(d3_data)
+        summary = d3_data["summary"]
 
-        return f"""<section class="card">
+        # Generate filter controls HTML
+        filter_controls_html = self._generate_filter_controls(d3_data)
+
+        # Generate summary panel HTML
+        summary_panel_html = self._generate_summary_panel(summary)
+
+        # Generate detail panel HTML (initially hidden)
+        detail_panel_html = self._generate_detail_panel()
+
+        # Generate legend HTML with counts
+        legend_html = self._generate_legend_with_counts(summary)
+
+        return f"""<section class="card" id="graph-section">
     <h2>🔗 Interactive Dependency Graph</h2>
     <p style="color: var(--gray-700); margin-bottom: 1rem;">
         Explore file dependencies with interactive visualization. Node size reflects lines of code,
         fill color shows complexity (darker = more complex), and border color indicates code smells
-        (redder = more severe). Drag nodes to rearrange, zoom and pan to explore.
+        (redder = more severe). Click nodes for details, drag to rearrange, zoom and pan to explore.
+        Use filters below to focus on specific aspects.
     </p>
-    <div id="d3-graph-container">
-        <svg id="d3-graph"></svg>
-    </div>
-    <div class="d3-legend">
-        <div class="legend-section">
-            <div class="legend-title">Complexity (Fill)</div>
-            <div class="legend-item">
-                <div class="legend-circle" style="background: #f3f4f6; border: 1px solid #e5e7eb;"></div>
-                <span>0-5 (Low)</span>
+    <!-- Screen reader announcements -->
+    <div id="sr-announcements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+    {filter_controls_html}
+    <div class="graph-dashboard-container">
+        <div id="d3-graph-container" role="img" aria-label="Interactive dependency graph visualization">
+            <svg id="d3-graph" aria-label="Dependency graph"></svg>
+            <div id="graph-error" class="error-message" style="display: none;" role="alert">
+                <strong>Error:</strong> <span id="graph-error-message"></span>
             </div>
-            <div class="legend-item">
-                <div class="legend-circle" style="background: #9ca3af;"></div>
-                <span>6-10 (Moderate)</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-circle" style="background: #4b5563;"></div>
-                <span>11-20 (High)</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-circle" style="background: #1f2937;"></div>
-                <span>21-30 (Very High)</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-circle" style="background: #111827;"></div>
-                <span>31+ (Critical)</span>
+            <div id="graph-loading" style="display: none; text-align: center; padding: 2rem;">
+                <div class="loading-spinner"></div>
+                <p style="margin-top: 1rem; color: var(--gray-600);">Loading visualization...</p>
             </div>
         </div>
-        <div class="legend-section">
-            <div class="legend-title">Code Smells (Border)</div>
-            <div class="legend-item">
-                <div class="legend-circle" style="background: white; border: 1px solid #e5e7eb;"></div>
-                <span>None</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-circle" style="background: white; border: 2px solid #fca5a5;"></div>
-                <span>Info</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-circle" style="background: white; border: 3px solid #f87171;"></div>
-                <span>Warning</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-circle" style="background: white; border: 4px solid #ef4444;"></div>
-                <span>Error</span>
-            </div>
-        </div>
-        <div class="legend-section">
-            <div class="legend-title">Dependencies (Edges)</div>
-            <div class="legend-item">
-                <div class="legend-line" style="background: #64748b;"></div>
-                <span>Normal</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-line" style="background: #dc2626;"></div>
-                <span>Circular</span>
-            </div>
-        </div>
-        <div class="legend-section">
-            <div class="legend-title">Size</div>
-            <div class="legend-item">
-                <div class="legend-circle" style="width: 8px; height: 8px; background: #9ca3af;"></div>
-                <span>Fewer lines</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-circle" style="width: 16px; height: 16px; background: #9ca3af;"></div>
-                <span>More lines</span>
-            </div>
+        <div class="dashboard-panels">
+            {summary_panel_html}
+            {detail_panel_html}
         </div>
     </div>
+    {legend_html}
     <script id="d3-graph-data" type="application/json">{d3_json}</script>
 </section>"""
+
+    def _generate_filter_controls(self, d3_data: dict) -> str:
+        """Generate filter controls panel for the graph.
+
+        Args:
+            d3_data: D3 graph data with nodes and modules
+
+        Returns:
+            HTML for filter controls panel
+        """
+        # Get unique modules
+        modules = set()
+        for node in d3_data.get("nodes", []):
+            if node.get("module"):
+                modules.add(node["module"])
+        modules = sorted(modules)
+
+        module_options = "".join(
+            f'<option value="{module}">{module}</option>' for module in modules
+        )
+
+        return f"""<div class="filter-controls">
+    <div class="filter-row">
+        <div class="filter-group">
+            <label class="filter-label">Complexity Grade</label>
+            <div class="filter-checkboxes">
+                <label class="filter-checkbox-label">
+                    <input type="checkbox" id="filter-grade-a" value="A" checked>
+                    <span>A (0-5)</span>
+                </label>
+                <label class="filter-checkbox-label">
+                    <input type="checkbox" id="filter-grade-b" value="B" checked>
+                    <span>B (6-10)</span>
+                </label>
+                <label class="filter-checkbox-label">
+                    <input type="checkbox" id="filter-grade-c" value="C" checked>
+                    <span>C (11-20)</span>
+                </label>
+                <label class="filter-checkbox-label">
+                    <input type="checkbox" id="filter-grade-d" value="D" checked>
+                    <span>D (21-30)</span>
+                </label>
+                <label class="filter-checkbox-label">
+                    <input type="checkbox" id="filter-grade-f" value="F" checked>
+                    <span>F (31+)</span>
+                </label>
+            </div>
+        </div>
+        <div class="filter-group">
+            <label class="filter-label">Code Smells</label>
+            <div class="filter-checkboxes">
+                <label class="filter-checkbox-label">
+                    <input type="checkbox" id="filter-smell-none" value="none" checked>
+                    <span>None</span>
+                </label>
+                <label class="filter-checkbox-label">
+                    <input type="checkbox" id="filter-smell-info" value="info" checked>
+                    <span>Info</span>
+                </label>
+                <label class="filter-checkbox-label">
+                    <input type="checkbox" id="filter-smell-warning" value="warning" checked>
+                    <span>Warning</span>
+                </label>
+                <label class="filter-checkbox-label">
+                    <input type="checkbox" id="filter-smell-error" value="error" checked>
+                    <span>Error</span>
+                </label>
+            </div>
+        </div>
+    </div>
+    <div class="filter-row">
+        <div class="filter-group">
+            <label class="filter-label" for="filter-module">Module Filter</label>
+            <select id="filter-module" class="filter-select" multiple size="3">
+                <option value="" selected>All Modules</option>
+                {module_options}
+            </select>
+        </div>
+        <div class="filter-group">
+            <label class="filter-label" for="filter-search">Search Files</label>
+            <input
+                type="text"
+                id="filter-search"
+                class="filter-input"
+                placeholder="Search by file name..."
+                autocomplete="off"
+            >
+        </div>
+        <div class="filter-group" style="justify-content: flex-end;">
+            <label class="filter-label" style="visibility: hidden;">Actions</label>
+            <div class="filter-actions">
+                <button class="filter-button" onclick="resetFilters()">
+                    Reset Filters
+                </button>
+                <button class="filter-button" onclick="clearSelection()">
+                    Clear Selection
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="export-controls">
+        <button class="export-button" onclick="exportAsPNG()" aria-label="Export graph as PNG image">
+            📥 Export PNG
+        </button>
+        <button class="export-button" onclick="exportAsSVG()" aria-label="Export graph as SVG vector image">
+            📥 Export SVG
+        </button>
+        <button class="export-button" onclick="copyShareLink()" aria-label="Copy shareable link with current filters">
+            🔗 Copy Link
+        </button>
+    </div>
+</div>"""
+
+    def _generate_summary_panel(self, summary: dict) -> str:
+        """Generate the metrics summary panel.
+
+        Args:
+            summary: Summary statistics dictionary
+
+        Returns:
+            HTML for the summary panel
+        """
+        grade_class = f"grade-{summary['complexity_grade'].lower()}"
+        circular_class = (
+            "circular-warning" if summary["circular_dependencies"] > 0 else ""
+        )
+
+        return f"""<div class="dashboard-panel" id="summary-panel">
+    <h3>📊 Project Metrics</h3>
+    <div class="panel-stat">
+        <span class="panel-stat-label">Total Files</span>
+        <span class="panel-stat-value">{summary["total_files"]:,}</span>
+    </div>
+    <div class="panel-stat">
+        <span class="panel-stat-label">Total Functions</span>
+        <span class="panel-stat-value">{summary["total_functions"]:,}</span>
+    </div>
+    <div class="panel-stat">
+        <span class="panel-stat-label">Total Classes</span>
+        <span class="panel-stat-value">{summary["total_classes"]:,}</span>
+    </div>
+    <div class="panel-stat">
+        <span class="panel-stat-label">Total LOC</span>
+        <span class="panel-stat-value">{summary["total_lines"]:,}</span>
+    </div>
+    <div class="panel-stat">
+        <span class="panel-stat-label">Average Complexity</span>
+        <span class="panel-stat-value">
+            {summary["avg_complexity"]:.1f}
+            <span class="grade-badge {grade_class}">{summary["complexity_grade"]}</span>
+        </span>
+    </div>
+    <hr style="margin: 0.75rem 0; border: none; border-top: 1px solid var(--gray-200);">
+    <div class="detail-section-title">Code Smells</div>
+    <div class="panel-stat">
+        <span class="panel-stat-label">Total Smells</span>
+        <span class="panel-stat-value">{summary["total_smells"]:,}</span>
+    </div>
+    <div class="panel-stat">
+        <span class="panel-stat-label">Errors</span>
+        <span class="panel-stat-value">
+            <span class="smell-badge-small smell-badge-error">{summary["error_count"]}</span>
+        </span>
+    </div>
+    <div class="panel-stat">
+        <span class="panel-stat-label">Warnings</span>
+        <span class="panel-stat-value">
+            <span class="smell-badge-small smell-badge-warning">{summary["warning_count"]}</span>
+        </span>
+    </div>
+    <div class="panel-stat">
+        <span class="panel-stat-label">Info</span>
+        <span class="panel-stat-value">
+            <span class="smell-badge-small smell-badge-info">{summary["info_count"]}</span>
+        </span>
+    </div>
+    <hr style="margin: 0.75rem 0; border: none; border-top: 1px solid var(--gray-200);">
+    <div class="panel-stat">
+        <span class="panel-stat-label">LOC Range</span>
+        <span class="panel-stat-value">{summary["min_loc"]} - {summary["max_loc"]}</span>
+    </div>
+    <div class="panel-stat">
+        <span class="panel-stat-label">Median LOC</span>
+        <span class="panel-stat-value">{summary["median_loc"]}</span>
+    </div>
+    <div class="panel-stat">
+        <span class="panel-stat-label">Circular Dependencies</span>
+        <span class="panel-stat-value {circular_class}">{summary["circular_dependencies"]}</span>
+    </div>
+</div>"""
+
+    def _generate_detail_panel(self) -> str:
+        """Generate the node detail panel (initially hidden).
+
+        Returns:
+            HTML for the detail panel
+        """
+        return """<div class="dashboard-panel hidden" id="node-detail-panel" role="dialog" aria-labelledby="detail-panel-title">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+        <h3 id="detail-panel-title">📄 Node Details</h3>
+        <button class="detail-close-button filter-button" aria-label="Close detail panel" style="padding: 0.25rem 0.5rem;">✕</button>
+    </div>
+    <div id="node-detail-content">
+        <p style="color: var(--gray-600); font-size: 0.875rem; text-align: center; padding: 2rem 0;">
+            Click a node to view details
+        </p>
+    </div>
+</div>"""
+
+    def _generate_legend_with_counts(self, summary: dict) -> str:
+        """Generate collapsible legend with node counts.
+
+        Args:
+            summary: Summary statistics with distribution data
+
+        Returns:
+            HTML for the legend section
+        """
+        complexity_dist = summary["complexity_distribution"]
+        smell_dist = summary["smell_distribution"]
+
+        return f"""<button class="legend-toggle" onclick="toggleLegend()">
+    <span>Legend</span>
+    <span id="legend-toggle-icon">▼</span>
+</button>
+<div class="d3-legend legend-content" id="legend-content">
+    <div class="legend-section">
+        <div class="legend-title">Complexity (Fill)</div>
+        <div class="legend-item">
+            <div class="legend-circle" style="background: #f3f4f6; border: 1px solid #e5e7eb;"></div>
+            <span>0-5 (Low)<span class="count-badge">{complexity_dist["low"]}</span></span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-circle" style="background: #9ca3af;"></div>
+            <span>6-10 (Moderate)<span class="count-badge">{complexity_dist["moderate"]}</span></span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-circle" style="background: #4b5563;"></div>
+            <span>11-20 (High)<span class="count-badge">{complexity_dist["high"]}</span></span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-circle" style="background: #1f2937;"></div>
+            <span>21-30 (Very High)<span class="count-badge">{complexity_dist["very_high"]}</span></span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-circle" style="background: #111827;"></div>
+            <span>31+ (Critical)<span class="count-badge">{complexity_dist["critical"]}</span></span>
+        </div>
+    </div>
+    <div class="legend-section">
+        <div class="legend-title">Code Smells (Border)</div>
+        <div class="legend-item">
+            <div class="legend-circle" style="background: white; border: 1px solid #e5e7eb;"></div>
+            <span>None<span class="count-badge">{smell_dist["none"]}</span></span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-circle" style="background: white; border: 2px solid #fca5a5;"></div>
+            <span>Info<span class="count-badge">{smell_dist["info"]}</span></span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-circle" style="background: white; border: 3px solid #f87171;"></div>
+            <span>Warning<span class="count-badge">{smell_dist["warning"]}</span></span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-circle" style="background: white; border: 4px solid #ef4444;"></div>
+            <span>Error<span class="count-badge">{smell_dist["error"]}</span></span>
+        </div>
+    </div>
+    <div class="legend-section">
+        <div class="legend-title">Dependencies (Edges)</div>
+        <div class="legend-item">
+            <div class="legend-line" style="background: #64748b;"></div>
+            <span>Normal</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-line" style="background: #dc2626;"></div>
+            <span>Circular</span>
+        </div>
+    </div>
+    <div class="legend-section">
+        <div class="legend-title">Size</div>
+        <div class="legend-item">
+            <div class="legend-circle" style="width: 8px; height: 8px; background: #9ca3af;"></div>
+            <span>Fewer lines</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-circle" style="width: 16px; height: 16px; background: #9ca3af;"></div>
+            <span>More lines</span>
+        </div>
+    </div>
+</div>"""
 
     def _generate_complexity_chart(self, export: AnalysisExport) -> str:
         """Generate complexity distribution chart placeholder.
@@ -780,13 +1614,220 @@ footer {
             grades[grade] += 1
 
         return f"""<script>
-// Initialize D3 Graph
+// ===== ACCESSIBILITY CONTROLS =====
 (function() {{
-    const dataScript = document.getElementById('d3-graph-data');
-    if (!dataScript) return;
+    const contrastButton = document.getElementById('toggle-contrast');
+    const motionButton = document.getElementById('toggle-reduced-motion');
 
-    const graphData = JSON.parse(dataScript.textContent);
-    if (!graphData.nodes || graphData.nodes.length === 0) return;
+    // High contrast toggle
+    contrastButton?.addEventListener('click', () => {{
+        const isActive = document.body.classList.toggle('high-contrast');
+        contrastButton.classList.toggle('active', isActive);
+        contrastButton.setAttribute('aria-pressed', isActive);
+        announceToScreenReader(isActive ? 'High contrast mode enabled' : 'High contrast mode disabled');
+    }});
+
+    // Reduced motion toggle
+    motionButton?.addEventListener('click', () => {{
+        const isActive = document.body.classList.toggle('reduced-motion');
+        motionButton.classList.toggle('active', isActive);
+        motionButton.setAttribute('aria-pressed', isActive);
+        announceToScreenReader(isActive ? 'Reduced motion enabled' : 'Reduced motion disabled');
+    }});
+
+    // Respect user's prefers-reduced-motion
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {{
+        document.body.classList.add('reduced-motion');
+        motionButton?.classList.add('active');
+        motionButton?.setAttribute('aria-pressed', 'true');
+    }}
+}})();
+
+// Screen reader announcement helper
+function announceToScreenReader(message) {{
+    const announcer = document.getElementById('sr-announcements');
+    if (announcer) {{
+        announcer.textContent = message;
+        setTimeout(() => announcer.textContent = '', 100);
+    }}
+}}
+
+// ===== EXPORT FUNCTIONS =====
+function exportAsPNG() {{
+    try {{
+        const svg = document.getElementById('d3-graph');
+        if (!svg) throw new Error('Graph not found');
+
+        // Create canvas
+        const canvas = document.createElement('canvas');
+        const bbox = svg.getBBox();
+        canvas.width = bbox.width;
+        canvas.height = bbox.height;
+        const ctx = canvas.getContext('2d');
+
+        // Serialize SVG to data URL
+        const svgData = new XMLSerializer().serializeToString(svg);
+        const svgBlob = new Blob([svgData], {{ type: 'image/svg+xml;charset=utf-8' }});
+        const url = URL.createObjectURL(svgBlob);
+
+        // Load as image and draw to canvas
+        const img = new Image();
+        img.onload = () => {{
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+
+            // Download
+            canvas.toBlob(blob => {{
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'dependency-graph.png';
+                a.click();
+                URL.revokeObjectURL(url);
+                announceToScreenReader('Graph exported as PNG');
+            }});
+        }};
+        img.src = url;
+    }} catch (error) {{
+        console.error('PNG export failed:', error);
+        alert('Failed to export PNG: ' + error.message);
+    }}
+}}
+
+function exportAsSVG() {{
+    try {{
+        const svg = document.getElementById('d3-graph');
+        if (!svg) throw new Error('Graph not found');
+
+        const svgData = new XMLSerializer().serializeToString(svg);
+        const blob = new Blob([svgData], {{ type: 'image/svg+xml;charset=utf-8' }});
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'dependency-graph.svg';
+        a.click();
+        URL.revokeObjectURL(url);
+        announceToScreenReader('Graph exported as SVG');
+    }} catch (error) {{
+        console.error('SVG export failed:', error);
+        alert('Failed to export SVG: ' + error.message);
+    }}
+}}
+
+function copyShareLink() {{
+    try {{
+        // Encode current filter state in URL hash
+        const filterState = window.graphState?.filterState || {{}};
+        const hash = '#filters=' + btoa(JSON.stringify(filterState));
+        const url = window.location.href.split('#')[0] + hash;
+
+        navigator.clipboard.writeText(url).then(() => {{
+            announceToScreenReader('Link copied to clipboard');
+            alert('Shareable link copied to clipboard!');
+        }});
+    }} catch (error) {{
+        console.error('Copy link failed:', error);
+        alert('Failed to copy link: ' + error.message);
+    }}
+}}
+
+// Load filters from URL hash
+function loadFiltersFromURL() {{
+    const hash = window.location.hash;
+    if (hash.startsWith('#filters=')) {{
+        try {{
+            const encoded = hash.substring(9);
+            const filterState = JSON.parse(atob(encoded));
+            if (window.graphState) {{
+                // Update filter UI elements
+                if (filterState.grades) {{
+                    document.querySelectorAll('[id^="filter-grade-"]').forEach(cb => {{
+                        cb.checked = filterState.grades.includes(cb.value);
+                    }});
+                }}
+                if (filterState.smells) {{
+                    document.querySelectorAll('[id^="filter-smell-"]').forEach(cb => {{
+                        cb.checked = filterState.smells.includes(cb.value);
+                    }});
+                }}
+                if (filterState.modules) {{
+                    const moduleSelect = document.getElementById('filter-module');
+                    if (moduleSelect) {{
+                        Array.from(moduleSelect.options).forEach(opt => {{
+                            opt.selected = filterState.modules.includes(opt.value);
+                        }});
+                    }}
+                }}
+                if (filterState.search) {{
+                    const searchInput = document.getElementById('filter-search');
+                    if (searchInput) {{
+                        searchInput.value = filterState.search;
+                    }}
+                }}
+
+                // Trigger filter application
+                const event = new Event('change');
+                document.querySelector('[id^="filter-grade-"]')?.dispatchEvent(event);
+
+                announceToScreenReader('Filters loaded from shared link');
+            }}
+        }} catch (error) {{
+            console.error('Failed to load filters from URL:', error);
+        }}
+    }}
+}}
+
+// Initialize D3 Graph with error handling and performance optimizations
+(function() {{
+    const loadingEl = document.getElementById('graph-loading');
+    const errorEl = document.getElementById('graph-error');
+    const errorMsgEl = document.getElementById('graph-error-message');
+
+    function showError(message) {{
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (errorEl) errorEl.style.display = 'block';
+        if (errorMsgEl) errorMsgEl.textContent = message;
+        announceToScreenReader('Graph error: ' + message);
+    }}
+
+    function showLoading() {{
+        if (loadingEl) loadingEl.style.display = 'block';
+        if (errorEl) errorEl.style.display = 'none';
+    }}
+
+    function hideLoading() {{
+        if (loadingEl) loadingEl.style.display = 'none';
+    }}
+
+    // Check if D3 loaded
+    if (typeof d3 === 'undefined') {{
+        showError('D3.js library failed to load. Please check your internet connection.');
+        return;
+    }}
+
+    showLoading();
+
+    const dataScript = document.getElementById('d3-graph-data');
+    if (!dataScript) {{
+        showError('Graph data not found.');
+        return;
+    }}
+
+    let graphData;
+    try {{
+        graphData = JSON.parse(dataScript.textContent);
+    }} catch (error) {{
+        showError('Failed to parse graph data: ' + error.message);
+        return;
+    }}
+
+    if (!graphData.nodes || graphData.nodes.length === 0) {{
+        showError('No files in analysis. Add some code files to see the dependency graph.');
+        return;
+    }}
+
+    hideLoading();
 
     const svg = d3.select("#d3-graph");
     const container = document.getElementById("d3-graph-container");
@@ -794,6 +1835,28 @@ footer {
     const height = container.clientHeight;
 
     svg.attr("viewBox", [0, 0, width, height]);
+
+    // ===== PERFORMANCE OPTIMIZATIONS =====
+    const nodeCount = graphData.nodes.length;
+    const LARGE_GRAPH_THRESHOLD = 100;
+    const isLargeGraph = nodeCount > LARGE_GRAPH_THRESHOLD;
+
+    // Disable animations for large graphs
+    const animationDuration = isLargeGraph ? 0 :
+        (document.body.classList.contains('reduced-motion') ? 0 : 600);
+
+    // Throttle simulation updates for smooth 60fps during drag
+    let lastTickTime = 0;
+    const TICK_THROTTLE_MS = 16; // ~60fps
+
+    // Debounce filter changes
+    let filterDebounceTimer;
+    const FILTER_DEBOUNCE_MS = 150;
+
+    // LOD (Level of Detail) state
+    let currentZoom = 1.0;
+    const LOD_ZOOM_THRESHOLD_LOW = 0.5;
+    const LOD_ZOOM_THRESHOLD_HIGH = 1.5;
 
     // Helper functions for visual encoding
     const complexityColor = (complexity) => {{
@@ -815,6 +1878,12 @@ footer {
         return borders[severity] || borders['none'];
     }};
 
+    // Edge color scale based on coupling strength
+    const maxCoupling = d3.max(graphData.links, d => d.coupling) || 1;
+    const edgeColorScale = d3.scaleLinear()
+        .domain([1, maxCoupling])
+        .range(['#d1d5db', '#4b5563']);
+
     // Size scale for LOC (min 8px, max 40px)
     const maxLoc = d3.max(graphData.nodes, d => d.loc) || 100;
     const sizeScale = d3.scaleSqrt()
@@ -822,7 +1891,6 @@ footer {
         .range([8, 40]);
 
     // Edge thickness scale (min 1px, max 4px)
-    const maxCoupling = d3.max(graphData.links, d => d.coupling) || 1;
     const edgeScale = d3.scaleLinear()
         .domain([1, maxCoupling])
         .range([1, 4]);
@@ -834,40 +1902,132 @@ footer {
         .force("center", d3.forceCenter(width / 2, height / 2))
         .force("collision", d3.forceCollide().radius(d => sizeScale(d.loc) + 5));
 
-    // Zoom behavior
+    // Zoom behavior with LOD (Level of Detail)
     const zoom = d3.zoom()
         .scaleExtent([0.1, 4])
-        .on("zoom", (event) => g.attr("transform", event.transform));
+        .on("zoom", (event) => {{
+            g.attr("transform", event.transform);
+
+            // Update current zoom level
+            const newZoom = event.transform.k;
+            if (Math.abs(newZoom - currentZoom) > 0.1) {{
+                currentZoom = newZoom;
+                updateLOD(currentZoom);
+            }}
+        }});
 
     svg.call(zoom);
 
+    // LOD update function
+    function updateLOD(zoomLevel) {{
+        // Use requestAnimationFrame for smooth rendering
+        requestAnimationFrame(() => {{
+            if (zoomLevel < LOD_ZOOM_THRESHOLD_LOW) {{
+                // Zoom out: Hide labels, simplify nodes
+                node.selectAll("text").style("display", "none");
+                node.selectAll("circle")
+                    .style("stroke-width", d => Math.min(smellBorder(d.smell_severity).width, 2));
+                // Hide complexity details
+                node.selectAll(".complexity-label").style("display", "none");
+            }} else if (zoomLevel > LOD_ZOOM_THRESHOLD_HIGH) {{
+                // Zoom in: Show additional details
+                node.selectAll("text").style("display", "block");
+                node.selectAll("circle")
+                    .style("stroke-width", d => smellBorder(d.smell_severity).width);
+                // Show complexity number in node
+                node.each(function(d) {{
+                    const nodeGroup = d3.select(this);
+                    if (!nodeGroup.select(".complexity-label").node()) {{
+                        nodeGroup.append("text")
+                            .attr("class", "complexity-label")
+                            .attr("dy", 4)
+                            .attr("text-anchor", "middle")
+                            .style("font-size", "10px")
+                            .style("font-weight", "bold")
+                            .style("fill", d.complexity > 20 ? "white" : "#374151")
+                            .style("pointer-events", "none")
+                            .text(d.complexity);
+                    }}
+                }});
+            }} else {{
+                // Normal zoom: Show labels, full styling
+                node.selectAll("text").style("display", "block");
+                node.selectAll("circle")
+                    .style("stroke-width", d => smellBorder(d.smell_severity).width);
+                node.selectAll(".complexity-label").style("display", "none");
+            }}
+        }});
+    }}
+
     const g = svg.append("g");
 
-    // Draw edges
-    const link = g.append("g")
-        .selectAll("line")
-        .data(graphData.links)
-        .join("line")
-        .attr("class", d => d.circular ? "link link-circular" : "link")
-        .attr("stroke-width", d => edgeScale(d.coupling));
+    // Define arrowhead markers
+    svg.append("defs").selectAll("marker")
+        .data(["arrowhead", "arrowhead-circular"])
+        .join("marker")
+        .attr("id", d => d)
+        .attr("viewBox", "0 -5 10 10")
+        .attr("refX", 20)
+        .attr("refY", 0)
+        .attr("markerWidth", 6)
+        .attr("markerHeight", 6)
+        .attr("orient", "auto")
+        .append("path")
+        .attr("d", "M0,-5L10,0L0,5")
+        .attr("class", d => d);
 
-    // Draw nodes
-    const node = g.append("g")
-        .selectAll("g")
+    // Draw module cluster hulls (background layer)
+    const hullGroup = g.append("g").attr("class", "hulls");
+
+    // Draw edges with curves and arrowheads
+    const linkGroup = g.append("g");
+    const link = linkGroup.selectAll("path")
+        .data(graphData.links)
+        .join("path")
+        .attr("class", d => d.circular ? "link link-circular" : "link")
+        .attr("stroke", d => d.circular ? "#dc2626" : edgeColorScale(d.coupling))
+        .attr("stroke-width", d => edgeScale(d.coupling))
+        .attr("marker-end", d => d.circular ? "url(#arrowhead-circular)" : "url(#arrowhead)");
+
+    // Draw nodes with entrance animation
+    const nodeGroup = g.append("g");
+    const node = nodeGroup.selectAll("g")
         .data(graphData.nodes)
         .join("g")
+        .attr("opacity", 0)
         .call(d3.drag()
             .on("start", dragstarted)
             .on("drag", dragged)
             .on("end", dragended));
 
+    // Node entrance animation (conditional based on graph size and motion preference)
+    if (animationDuration > 0) {{
+        node.transition()
+            .duration(animationDuration)
+            .delay((d, i) => i * 30)
+            .attr("opacity", 1);
+    }} else {{
+        node.attr("opacity", 1);
+    }}
+
     // Node circles with complexity fill and smell border
     node.append("circle")
-        .attr("r", d => sizeScale(d.loc))
+        .attr("r", animationDuration > 0 ? 0 : d => sizeScale(d.loc))
         .attr("fill", d => complexityColor(d.complexity))
         .attr("stroke", d => smellBorder(d.smell_severity).color)
         .attr("stroke-width", d => smellBorder(d.smell_severity).width)
-        .style("filter", d => d.smell_severity === 'critical' ? 'drop-shadow(0 0 4px #dc2626)' : null);
+        .style("filter", d => d.smell_severity === 'critical' ? 'drop-shadow(0 0 4px #dc2626)' : null)
+        .attr("tabindex", 0)
+        .attr("role", "button")
+        .attr("aria-label", d => `${{d.label}}, complexity ${{d.complexity}}, ${{d.smell_count}} code smells`);
+
+    if (animationDuration > 0) {{
+        node.selectAll("circle")
+            .transition()
+            .duration(animationDuration)
+            .delay((d, i) => i * 30)
+            .attr("r", d => sizeScale(d.loc));
+    }}
 
     // Node labels
     node.append("text")
@@ -879,54 +2039,693 @@ footer {
     const tooltip = d3.select("body").append("div")
         .attr("class", "d3-tooltip");
 
-    node.on("mouseenter", (event, d) => {{
-        tooltip.transition().duration(200).style("opacity", 1);
+    // Enhanced tooltip rendering
+    const renderTooltip = (d, event) => {{
+        const getGrade = (complexity) => {{
+            if (complexity <= 5) return {{ grade: 'A', class: 'grade-a', color: '#22c55e' }};
+            if (complexity <= 10) return {{ grade: 'B', class: 'grade-b', color: '#3b82f6' }};
+            if (complexity <= 20) return {{ grade: 'C', class: 'grade-c', color: '#f59e0b' }};
+            if (complexity <= 30) return {{ grade: 'D', class: 'grade-d', color: '#f97316' }};
+            return {{ grade: 'F', class: 'grade-f', color: '#ef4444' }};
+        }};
+
+        const grade = getGrade(d.complexity);
+        const smellColor = smellBorder(d.smell_severity).color;
+
+        // Calculate complexity bar percentage (max 50 for visualization)
+        const complexityPct = Math.min((d.complexity / 50) * 100, 100);
+        const complexityBarColor = grade.color;
+
+        // Count imports/imported-by
+        const incomingCount = graphData.links.filter(l => l.target.id === d.id).length;
+        const outgoingCount = d.imports ? d.imports.length : 0;
+
         tooltip.html(`
-            <strong>${{d.label}}</strong><br/>
-            <span style="color:#6b7280">Module: ${{d.module}}</span><br/>
-            <hr style="margin:8px 0;border:none;border-top:1px solid #e5e7eb">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
-                <span>Complexity:</span><span><strong>${{d.complexity}}</strong></span>
-                <span>LOC:</span><span>${{d.loc}}</span>
-                <span>Smells:</span><span style="color:${{smellBorder(d.smell_severity).color}}">${{d.smell_count}} (${{d.smell_severity}})</span>
+            <div class="tooltip-header">${{d.label}}</div>
+            <div class="tooltip-subtitle">Module: ${{d.module}}</div>
+
+            <div class="tooltip-metric">
+                <span class="tooltip-metric-label">Complexity</span>
+                <span class="tooltip-metric-value">
+                    ${{d.complexity}}
+                    <span class="tooltip-badge ${{grade.class}}">${{grade.grade}}</span>
+                </span>
             </div>
-        `)
-        .style("left", (event.pageX + 10) + "px")
-        .style("top", (event.pageY - 10) + "px");
+            <div class="tooltip-bar">
+                <div class="tooltip-bar-fill" style="width: ${{complexityPct}}%; background: ${{complexityBarColor}};"></div>
+            </div>
+
+            <div class="tooltip-section">
+                <div class="tooltip-metric">
+                    <span class="tooltip-metric-label">Lines of Code</span>
+                    <span class="tooltip-metric-value">${{d.loc}}</span>
+                </div>
+                <div class="tooltip-metric">
+                    <span class="tooltip-metric-label">Code Smells</span>
+                    <span class="tooltip-metric-value" style="color: ${{smellColor}}">
+                        ${{d.smell_count}}
+                        <span class="tooltip-badge" style="background: ${{smellColor}}; color: white;">${{d.smell_severity}}</span>
+                    </span>
+                </div>
+            </div>
+
+            <div class="tooltip-section">
+                <div class="tooltip-metric">
+                    <span class="tooltip-metric-label">Imports</span>
+                    <span class="tooltip-metric-value">${{outgoingCount}}</span>
+                </div>
+                <div class="tooltip-metric">
+                    <span class="tooltip-metric-label">Imported by</span>
+                    <span class="tooltip-metric-value">${{incomingCount}}</span>
+                </div>
+            </div>
+        `);
+    }};
+
+    // Hover highlighting with connected nodes
+    node.on("mouseenter", (event, d) => {{
+        // Find connected nodes
+        const connectedNodes = new Set([d.id]);
+        graphData.links.forEach(link => {{
+            if (link.source.id === d.id) connectedNodes.add(link.target.id);
+            if (link.target.id === d.id) connectedNodes.add(link.source.id);
+        }});
+
+        // Dim unconnected nodes
+        node.classed("node-dimmed", n => !connectedNodes.has(n.id))
+            .classed("node-highlighted", n => connectedNodes.has(n.id));
+
+        // Dim unconnected edges
+        link.classed("link-dimmed", l => l.source.id !== d.id && l.target.id !== d.id)
+            .classed("link-highlighted", l => l.source.id === d.id || l.target.id === d.id);
+
+        // Show enhanced tooltip
+        renderTooltip(d, event);
+        tooltip.transition().duration(200).style("opacity", 1);
+    }})
+    .on("mousemove", (event) => {{
+        // Tooltip follows cursor
+        tooltip
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 10) + "px");
     }})
     .on("mouseleave", () => {{
+        // Remove dimming
+        node.classed("node-dimmed", false).classed("node-highlighted", false);
+        link.classed("link-dimmed", false).classed("link-highlighted", false);
+
         tooltip.transition().duration(500).style("opacity", 0);
+    }})
+    .on("click", (event, d) => {{
+        event.stopPropagation();
+        showNodeDetails(d, graphData);
     }});
 
-    // Simulation tick
+    // Function to update module cluster hulls
+    function updateHulls() {{
+        if (!graphData.modules || graphData.modules.length === 0) return;
+
+        const hullData = graphData.modules.map(module => {{
+            const moduleNodes = graphData.nodes.filter(n =>
+                module.node_ids.includes(n.id)
+            );
+            if (moduleNodes.length < 2) return null;
+
+            // Calculate convex hull points
+            const points = moduleNodes.map(n => [n.x, n.y]);
+            const hull = d3.polygonHull(points);
+
+            return hull ? {{ points: hull, color: module.color, name: module.name }} : null;
+        }}).filter(h => h !== null);
+
+        hullGroup.selectAll("path")
+            .data(hullData)
+            .join("path")
+            .attr("class", "module-hull")
+            .attr("d", d => {{
+                // Add padding around hull
+                const centroid = d3.polygonCentroid(d.points);
+                const paddedPoints = d.points.map(p => {{
+                    const dx = p[0] - centroid[0];
+                    const dy = p[1] - centroid[1];
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const padding = 30;
+                    return [
+                        p[0] + (dx / dist) * padding,
+                        p[1] + (dy / dist) * padding
+                    ];
+                }});
+                return "M" + paddedPoints.join("L") + "Z";
+            }})
+            .attr("fill", d => d.color)
+            .attr("stroke", d => d.color);
+    }}
+
+    // Simulation tick with throttling for performance
     simulation.on("tick", () => {{
-        link
-            .attr("x1", d => d.source.x)
-            .attr("y1", d => d.source.y)
-            .attr("x2", d => d.target.x)
-            .attr("y2", d => d.target.y);
+        const now = Date.now();
+        if (now - lastTickTime < TICK_THROTTLE_MS) {{
+            return; // Skip this tick to maintain 60fps
+        }}
+        lastTickTime = now;
 
-        node.attr("transform", d => `translate(${{d.x}},${{d.y}})`);
+        // Use requestAnimationFrame for smooth rendering
+        requestAnimationFrame(() => {{
+            // Update curved edges
+            link.attr("d", d => {{
+                const dx = d.target.x - d.source.x;
+                const dy = d.target.y - d.source.y;
+                const dr = Math.sqrt(dx * dx + dy * dy) * 2;
+                return `M${{d.source.x}},${{d.source.y}}A${{dr}},${{dr}} 0 0,1 ${{d.target.x}},${{d.target.y}}`;
+            }});
+
+            node.attr("transform", d => `translate(${{d.x}},${{d.y}})`);
+
+            // Update hulls periodically (not every tick for performance)
+            if (simulation.alpha() < 0.1) {{
+                updateHulls();
+            }}
+        }});
     }});
 
-    // Drag functions
+    // Drag functions with throttling
+    let dragThrottle;
     function dragstarted(event) {{
         if (!event.active) simulation.alphaTarget(0.3).restart();
         event.subject.fx = event.subject.x;
         event.subject.fy = event.subject.y;
+        announceToScreenReader(`Dragging ${{event.subject.label}}`);
     }}
 
     function dragged(event) {{
-        event.subject.fx = event.x;
-        event.subject.fy = event.y;
+        // Throttle drag updates for performance
+        if (dragThrottle) clearTimeout(dragThrottle);
+        dragThrottle = setTimeout(() => {{
+            event.subject.fx = event.x;
+            event.subject.fy = event.y;
+        }}, TICK_THROTTLE_MS);
     }}
 
     function dragended(event) {{
         if (!event.active) simulation.alphaTarget(0);
         event.subject.fx = null;
         event.subject.fy = null;
+        announceToScreenReader(`Released ${{event.subject.label}}`);
     }}
+    // ===== FILTER FUNCTIONALITY =====
+
+    // Get complexity grade from complexity value
+    const getComplexityGrade = (complexity) => {{
+        if (complexity <= 5) return 'A';
+        if (complexity <= 10) return 'B';
+        if (complexity <= 20) return 'C';
+        if (complexity <= 30) return 'D';
+        return 'F';
+    }};
+
+    // Filter state
+    const filterState = {{
+        grades: new Set(['A', 'B', 'C', 'D', 'F']),
+        smells: new Set(['none', 'info', 'warning', 'error']),
+        modules: new Set(['']), // Empty string means "All Modules"
+        search: ''
+    }};
+
+    // Apply filters to nodes and edges (with debounce)
+    const applyFilters = () => {{
+        // Debounce for performance
+        if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+        filterDebounceTimer = setTimeout(() => {{
+            const visibleNodeIds = new Set();
+
+            node.each((d, i, nodes) => {{
+            const nodeGrade = getComplexityGrade(d.complexity);
+            const nodeSmell = d.smell_severity || 'none';
+            const nodeModule = d.module || '';
+
+            // Check if node passes all filters
+            const passesGrade = filterState.grades.has(nodeGrade);
+            const passesSmell = filterState.smells.has(nodeSmell);
+            const passesModule = filterState.modules.has('') || filterState.modules.has(nodeModule);
+            const passesSearch = !filterState.search ||
+                d.id.toLowerCase().includes(filterState.search.toLowerCase()) ||
+                d.label.toLowerCase().includes(filterState.search.toLowerCase());
+
+            const isVisible = passesGrade && passesSmell && passesModule && passesSearch;
+
+            // Apply filtering class
+            d3.select(nodes[i])
+                .classed("node-filtered", !isVisible)
+                .classed("node-search-highlight", passesSearch && filterState.search.length > 0);
+
+            if (isVisible) {{
+                visibleNodeIds.add(d.id);
+            }}
+        }});
+
+            // Filter edges (only show if both source and target are visible)
+            link.classed("link-filtered", l =>
+                !visibleNodeIds.has(l.source.id) || !visibleNodeIds.has(l.target.id)
+            );
+
+            // Update hulls to only include visible nodes
+            updateHulls();
+
+            // Screen reader announcement
+            const visibleCount = visibleNodeIds.size;
+            const totalCount = graphData.nodes.length;
+            announceToScreenReader(`Showing ${{visibleCount}} of ${{totalCount}} files`);
+        }}, FILTER_DEBOUNCE_MS);
+    }};
+
+    // Update hulls to exclude filtered nodes
+    const originalUpdateHulls = updateHulls;
+    updateHulls = function() {{
+        if (!graphData.modules || graphData.modules.length === 0) return;
+
+        const hullData = graphData.modules.map(module => {{
+            const moduleNodes = graphData.nodes.filter(n =>
+                module.node_ids.includes(n.id) &&
+                !d3.select(`[data-node-id="${{n.id}}"]`).classed("node-filtered")
+            );
+            if (moduleNodes.length < 2) return null;
+
+            const points = moduleNodes.map(n => [n.x, n.y]);
+            const hull = d3.polygonHull(points);
+
+            return hull ? {{ points: hull, color: module.color, name: module.name }} : null;
+        }}).filter(h => h !== null);
+
+        hullGroup.selectAll("path")
+            .data(hullData)
+            .join("path")
+            .attr("class", "module-hull")
+            .attr("d", d => {{
+                const centroid = d3.polygonCentroid(d.points);
+                const paddedPoints = d.points.map(p => {{
+                    const dx = p[0] - centroid[0];
+                    const dy = p[1] - centroid[1];
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const padding = 30;
+                    return [
+                        p[0] + (dx / dist) * padding,
+                        p[1] + (dy / dist) * padding
+                    ];
+                }});
+                return "M" + paddedPoints.join("L") + "Z";
+            }})
+            .attr("fill", d => d.color)
+            .attr("stroke", d => d.color);
+    }};
+
+    // Add data-node-id attribute to nodes for filtering
+    node.attr("data-node-id", d => d.id);
+
+    // Setup filter event listeners
+    document.querySelectorAll('[id^="filter-grade-"]').forEach(checkbox => {{
+        checkbox.addEventListener('change', (e) => {{
+            const grade = e.target.value;
+            if (e.target.checked) {{
+                filterState.grades.add(grade);
+            }} else {{
+                filterState.grades.delete(grade);
+            }}
+            applyFilters();
+        }});
+    }});
+
+    document.querySelectorAll('[id^="filter-smell-"]').forEach(checkbox => {{
+        checkbox.addEventListener('change', (e) => {{
+            const smell = e.target.value;
+            if (e.target.checked) {{
+                filterState.smells.add(smell);
+            }} else {{
+                filterState.smells.delete(smell);
+            }}
+            applyFilters();
+        }});
+    }});
+
+    const moduleSelect = document.getElementById('filter-module');
+    if (moduleSelect) {{
+        moduleSelect.addEventListener('change', (e) => {{
+            filterState.modules = new Set(
+                Array.from(e.target.selectedOptions).map(opt => opt.value)
+            );
+            applyFilters();
+        }});
+    }}
+
+    const searchInput = document.getElementById('filter-search');
+    if (searchInput) {{
+        searchInput.addEventListener('input', (e) => {{
+            filterState.search = e.target.value;
+            applyFilters();
+        }});
+    }}
+
+    // Store references for keyboard navigation and filter state
+    window.graphState = {{
+        node,
+        graphData,
+        currentFocusIndex: -1,
+        visibleNodes: [],
+        filterState: filterState
+    }};
+
+    // Load filters from URL if present
+    loadFiltersFromURL();
+
+    // Announce graph loaded
+    announceToScreenReader(`Dependency graph loaded with ${{nodeCount}} files`);
+
+    // ===== KEYBOARD NAVIGATION =====
+
+    // Get visible (non-filtered) nodes
+    const getVisibleNodes = () => {{
+        const visible = [];
+        node.each((d, i, nodes) => {{
+            if (!d3.select(nodes[i]).classed("node-filtered")) {{
+                visible.push({{ data: d, element: nodes[i], index: i }});
+            }}
+        }});
+        return visible;
+    }};
+
+    // Focus on a specific node
+    const focusNode = (nodeIndex) => {{
+        const visibleNodes = getVisibleNodes();
+        if (visibleNodes.length === 0) return;
+
+        // Clamp index
+        nodeIndex = Math.max(0, Math.min(nodeIndex, visibleNodes.length - 1));
+        window.graphState.currentFocusIndex = nodeIndex;
+
+        // Remove previous focus
+        node.classed("node-focused", false);
+
+        // Add focus to current node
+        const focusedNode = visibleNodes[nodeIndex];
+        d3.select(focusedNode.element).classed("node-focused", true);
+
+        // Scroll node into view (center of SVG)
+        const transform = d3.zoomTransform(svg.node());
+        const newTransform = d3.zoomIdentity
+            .translate(width / 2, height / 2)
+            .scale(transform.k)
+            .translate(-focusedNode.data.x, -focusedNode.data.y);
+
+        svg.transition()
+            .duration(500)
+            .call(zoom.transform, newTransform);
+
+        return focusedNode;
+    }};
+
+    // Navigate to connected nodes
+    const navigateToConnected = (direction) => {{
+        const visibleNodes = getVisibleNodes();
+        if (window.graphState.currentFocusIndex < 0 || visibleNodes.length === 0) return;
+
+        const currentNode = visibleNodes[window.graphState.currentFocusIndex];
+        const connectedIds = new Set();
+
+        graphData.links.forEach(link => {{
+            if (link.source.id === currentNode.data.id) {{
+                connectedIds.add(link.target.id);
+            }}
+            if (link.target.id === currentNode.data.id) {{
+                connectedIds.add(link.source.id);
+            }}
+        }});
+
+        // Find next connected visible node
+        const connectedVisible = visibleNodes.filter(n => connectedIds.has(n.data.id));
+        if (connectedVisible.length > 0) {{
+            const nextIndex = visibleNodes.indexOf(connectedVisible[0]);
+            focusNode(nextIndex);
+        }}
+    }};
+
+    // Global keyboard handler
+    document.addEventListener('keydown', (e) => {{
+        // Only handle if not in an input field
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') {{
+            return;
+        }}
+
+        const visibleNodes = getVisibleNodes();
+
+        switch(e.key) {{
+            case 'Tab':
+                e.preventDefault();
+                // Tab through visible nodes
+                const nextIndex = (window.graphState.currentFocusIndex + 1) % visibleNodes.length;
+                focusNode(nextIndex);
+                break;
+
+            case 'Enter':
+            case ' ':
+                e.preventDefault();
+                // Select focused node (show detail panel)
+                if (window.graphState.currentFocusIndex >= 0 && visibleNodes.length > 0) {{
+                    const focusedNode = visibleNodes[window.graphState.currentFocusIndex];
+                    showNodeDetails(focusedNode.data, graphData);
+                }}
+                break;
+
+            case 'Escape':
+                e.preventDefault();
+                // Clear selection and focus
+                node.classed("node-focused", false);
+                window.graphState.currentFocusIndex = -1;
+                const detailPanel = document.getElementById('node-detail-panel');
+                if (detailPanel) {{
+                    detailPanel.classList.add('hidden');
+                }}
+                break;
+
+            case 'ArrowRight':
+            case 'ArrowDown':
+                e.preventDefault();
+                // Next node or connected node
+                if (e.shiftKey) {{
+                    navigateToConnected('next');
+                }} else {{
+                    focusNode(window.graphState.currentFocusIndex + 1);
+                }}
+                break;
+
+            case 'ArrowLeft':
+            case 'ArrowUp':
+                e.preventDefault();
+                // Previous node
+                focusNode(window.graphState.currentFocusIndex - 1);
+                break;
+        }}
+    }});
 }})();
+
+// Helper function to reset all filters
+function resetFilters() {{
+    // Reset checkboxes
+    document.querySelectorAll('[id^="filter-grade-"]').forEach(cb => cb.checked = true);
+    document.querySelectorAll('[id^="filter-smell-"]').forEach(cb => cb.checked = true);
+
+    // Reset module select
+    const moduleSelect = document.getElementById('filter-module');
+    if (moduleSelect) {{
+        Array.from(moduleSelect.options).forEach(opt => {{
+            opt.selected = opt.value === '';
+        }});
+    }}
+
+    // Reset search
+    const searchInput = document.getElementById('filter-search');
+    if (searchInput) {{
+        searchInput.value = '';
+    }}
+
+    // Trigger change events to apply filters
+    if (window.graphState && window.graphState.node) {{
+        const event = new Event('change');
+        document.querySelector('[id^="filter-grade-"]')?.dispatchEvent(event);
+    }}
+}}
+
+// Helper function to clear node selection
+function clearSelection() {{
+    const detailPanel = document.getElementById('node-detail-panel');
+    if (detailPanel) {{
+        detailPanel.classList.add('hidden');
+    }}
+
+    if (window.graphState && window.graphState.node) {{
+        window.graphState.node.classed("node-focused", false);
+        window.graphState.currentFocusIndex = -1;
+    }}
+}}
+
+// Helper function to show node details in detail panel with focus trap
+function showNodeDetails(nodeData, graphData) {{
+    const detailPanel = document.getElementById('node-detail-panel');
+    const detailContent = document.getElementById('node-detail-content');
+
+    // Store last focused element for restoration
+    if (!window.lastFocusedElement) {{
+        window.lastFocusedElement = document.activeElement;
+    }}
+
+    // Get complexity grade
+    const getGrade = (complexity) => {{
+        if (complexity <= 5) return {{ grade: 'A', class: 'grade-a' }};
+        if (complexity <= 10) return {{ grade: 'B', class: 'grade-b' }};
+        if (complexity <= 20) return {{ grade: 'C', class: 'grade-c' }};
+        if (complexity <= 30) return {{ grade: 'D', class: 'grade-d' }};
+        return {{ grade: 'F', class: 'grade-f' }};
+    }};
+
+    const complexityGrade = getGrade(nodeData.complexity);
+    const cyclomaticGrade = getGrade(nodeData.cyclomatic_complexity);
+
+    // Find incoming edges (imported-by)
+    const incomingEdges = graphData.links.filter(link => link.target.id === nodeData.id);
+    const importedBy = incomingEdges.map(link => link.source.id || link.source);
+
+    // Outgoing edges are in nodeData.imports
+    const imports = nodeData.imports || [];
+
+    // Render smells
+    let smellsHtml = '<p style="color: var(--gray-600); font-size: 0.875rem;">No smells detected</p>';
+    if (nodeData.smells && nodeData.smells.length > 0) {{
+        const smellItems = nodeData.smells.map(smell => {{
+            const badgeClass = smell.severity === 'error' ? 'smell-badge-error' :
+                              smell.severity === 'warning' ? 'smell-badge-warning' :
+                              'smell-badge-info';
+            return `
+                <div class="panel-list-item">
+                    <span class="smell-badge-small ${{badgeClass}}">${{smell.severity}}</span>
+                    <strong>${{smell.type}}</strong> (line ${{smell.line}})<br/>
+                    <span style="font-size: 0.75rem; color: var(--gray-600);">${{smell.message}}</span>
+                </div>
+            `;
+        }}).join('');
+        smellsHtml = `<ul class="panel-list">${{smellItems}}</ul>`;
+    }}
+
+    // Render imports
+    let importsHtml = '<p style="color: var(--gray-600); font-size: 0.875rem;">No imports</p>';
+    if (imports.length > 0) {{
+        const importItems = imports.map(imp =>
+            `<li class="panel-list-item" style="font-family: 'Monaco', 'Courier New', monospace; font-size: 0.75rem;">${{imp}}</li>`
+        ).join('');
+        importsHtml = `<ul class="panel-list">${{importItems}}</ul>`;
+    }}
+
+    // Render imported-by
+    let importedByHtml = '<p style="color: var(--gray-600); font-size: 0.875rem;">Not imported by any files</p>';
+    if (importedBy.length > 0) {{
+        const importedByItems = importedBy.map(file =>
+            `<li class="panel-list-item" style="font-family: 'Monaco', 'Courier New', monospace; font-size: 0.75rem;">${{file}}</li>`
+        ).join('');
+        importedByHtml = `<ul class="panel-list">${{importedByItems}}</ul>`;
+    }}
+
+    // Build detail HTML
+    detailContent.innerHTML = `
+        <div class="detail-header">
+            <div class="detail-header-title">${{nodeData.label}}</div>
+            <div class="detail-header-path">${{nodeData.id}}</div>
+        </div>
+
+        <div class="detail-section">
+            <div class="detail-section-title">Metrics</div>
+            <div class="panel-stat">
+                <span class="panel-stat-label">Cognitive Complexity</span>
+                <span class="panel-stat-value">
+                    ${{nodeData.complexity}}
+                    <span class="grade-badge ${{complexityGrade.class}}">${{complexityGrade.grade}}</span>
+                </span>
+            </div>
+            <div class="panel-stat">
+                <span class="panel-stat-label">Cyclomatic Complexity</span>
+                <span class="panel-stat-value">
+                    ${{nodeData.cyclomatic_complexity}}
+                    <span class="grade-badge ${{cyclomaticGrade.class}}">${{cyclomaticGrade.grade}}</span>
+                </span>
+            </div>
+            <div class="panel-stat">
+                <span class="panel-stat-label">Lines of Code</span>
+                <span class="panel-stat-value">${{nodeData.loc}}</span>
+            </div>
+            <div class="panel-stat">
+                <span class="panel-stat-label">Functions</span>
+                <span class="panel-stat-value">${{nodeData.function_count}}</span>
+            </div>
+            <div class="panel-stat">
+                <span class="panel-stat-label">Classes</span>
+                <span class="panel-stat-value">${{nodeData.class_count}}</span>
+            </div>
+        </div>
+
+        <div class="detail-section">
+            <div class="detail-section-title">Code Smells (${{nodeData.smell_count}})</div>
+            ${{smellsHtml}}
+        </div>
+
+        <div class="detail-section">
+            <div class="detail-section-title">Imports (${{imports.length}})</div>
+            ${{importsHtml}}
+        </div>
+
+        <div class="detail-section">
+            <div class="detail-section-title">Imported By (${{importedBy.length}})</div>
+            ${{importedByHtml}}
+        </div>
+    `;
+
+    // Show the panel
+    detailPanel.classList.remove('hidden');
+    detailPanel.classList.add('focus-trapped');
+
+    // Focus first focusable element in panel
+    setTimeout(() => {{
+        const firstFocusable = detailPanel.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        if (firstFocusable) {{
+            firstFocusable.focus();
+        }}
+    }}, 100);
+
+    // Screen reader announcement
+    announceToScreenReader(`Showing details for ${{nodeData.label}}`);
+
+    // Add close button handler for focus restoration
+    const closeButton = detailPanel.querySelector('.detail-close-button');
+    if (closeButton) {{
+        closeButton.addEventListener('click', () => {{
+            detailPanel.classList.add('hidden');
+            detailPanel.classList.remove('focus-trapped');
+            if (window.lastFocusedElement) {{
+                window.lastFocusedElement.focus();
+                window.lastFocusedElement = null;
+            }}
+        }}, {{ once: true }});
+    }}
+}}
+
+// Helper function to toggle legend
+function toggleLegend() {{
+    const legendContent = document.getElementById('legend-content');
+    const toggleIcon = document.getElementById('legend-toggle-icon');
+
+    if (legendContent.classList.contains('collapsed')) {{
+        legendContent.classList.remove('collapsed');
+        toggleIcon.textContent = '▼';
+    }} else {{
+        legendContent.classList.add('collapsed');
+        toggleIcon.textContent = '▶';
+    }}
+}}
 
 // Initialize complexity chart
 const ctx = document.getElementById('complexityChart');

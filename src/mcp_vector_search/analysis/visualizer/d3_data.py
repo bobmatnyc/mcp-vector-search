@@ -46,19 +46,31 @@ class D3Node:
         id: Unique file path (relative to project root)
         label: Display name (file name only)
         module: Directory/module name for grouping
+        module_path: Full module path for cluster grouping (e.g., 'src/analysis')
         loc: Lines of code (determines node size)
         complexity: Cognitive complexity (determines fill color)
         smell_count: Number of code smells detected
         smell_severity: Worst smell severity level
+        cyclomatic_complexity: Cyclomatic complexity score
+        function_count: Number of functions in file
+        class_count: Number of classes in file
+        smells: List of smell details for detail panel
+        imports: List of imports (outgoing edges)
     """
 
     id: str
     label: str
     module: str
+    module_path: str
     loc: int
     complexity: float
     smell_count: int
     smell_severity: str
+    cyclomatic_complexity: int
+    function_count: int
+    class_count: int
+    smells: list[dict[str, Any]]
+    imports: list[str]
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -66,10 +78,16 @@ class D3Node:
             "id": self.id,
             "label": self.label,
             "module": self.module,
+            "module_path": self.module_path,
             "loc": self.loc,
             "complexity": self.complexity,
             "smell_count": self.smell_count,
             "smell_severity": self.smell_severity,
+            "cyclomatic_complexity": self.cyclomatic_complexity,
+            "function_count": self.function_count,
+            "class_count": self.class_count,
+            "smells": self.smells,
+            "imports": self.imports,
         }
 
 
@@ -132,12 +150,13 @@ def transform_for_d3(export: AnalysisExport) -> dict[str, Any]:
         Dictionary containing:
         - nodes: List of node objects with visualization properties
         - links: List of edge objects with source, target, coupling
+        - modules: List of module cluster definitions for hulls
         - summary: Project summary statistics for context
 
     Example:
         >>> d3_data = transform_for_d3(export)
         >>> d3_data.keys()
-        dict_keys(['nodes', 'links', 'summary'])
+        dict_keys(['nodes', 'links', 'modules', 'summary'])
         >>> len(d3_data['nodes'])
         42
         >>> d3_data['nodes'][0]
@@ -152,21 +171,140 @@ def transform_for_d3(export: AnalysisExport) -> dict[str, Any]:
     # Create edges from dependency graph
     links = _create_edges(export, circular_paths)
 
-    # Include project summary for context
-    summary = {
-        "total_files": export.summary.total_files,
-        "total_functions": export.summary.total_functions,
-        "total_lines": export.summary.total_lines,
-        "avg_complexity": export.summary.avg_complexity,
-        "total_smells": export.summary.total_smells,
-        "circular_dependencies": export.summary.circular_dependencies,
-    }
+    # Group nodes by module for cluster hulls
+    modules = _create_module_groups(nodes)
+
+    # Calculate detailed statistics for dashboard panels
+    summary = _create_summary_stats(export, nodes, links)
 
     return {
         "nodes": [n.to_dict() for n in nodes],
         "links": [e.to_dict() for e in links],
+        "modules": modules,
         "summary": summary,
     }
+
+
+def _create_summary_stats(
+    export: AnalysisExport, nodes: list[D3Node], links: list[D3Edge]
+) -> dict[str, Any]:
+    """Create detailed summary statistics for dashboard panels.
+
+    Calculates comprehensive statistics including:
+    - Basic counts (files, functions, classes)
+    - Complexity metrics with grade distribution
+    - Smell breakdown by severity
+    - LOC distribution statistics
+    - Circular dependency information
+    - Complexity level distribution for legend
+
+    Args:
+        export: Complete analysis export
+        nodes: List of D3Node objects
+        links: List of D3Edge objects
+
+    Returns:
+        Dictionary containing detailed summary statistics
+    """
+    # Basic counts from export summary
+    basic_stats = {
+        "total_files": export.summary.total_files,
+        "total_functions": export.summary.total_functions,
+        "total_classes": export.summary.total_classes,
+        "total_lines": export.summary.total_lines,
+        "circular_dependencies": export.summary.circular_dependencies,
+    }
+
+    # Complexity statistics with grade
+    avg_complexity = export.summary.avg_cognitive_complexity
+    complexity_grade = _get_complexity_grade(avg_complexity)
+
+    complexity_stats = {
+        "avg_complexity": avg_complexity,
+        "avg_cyclomatic_complexity": export.summary.avg_complexity,
+        "complexity_grade": complexity_grade,
+    }
+
+    # Smell breakdown by severity
+    smells_by_severity = export.summary.smells_by_severity or {}
+    smell_stats = {
+        "total_smells": export.summary.total_smells,
+        "error_count": smells_by_severity.get("error", 0),
+        "warning_count": smells_by_severity.get("warning", 0),
+        "info_count": smells_by_severity.get("info", 0),
+    }
+
+    # LOC distribution statistics
+    if export.files:
+        locs = [f.lines_of_code for f in export.files]
+        loc_stats = {
+            "min_loc": min(locs),
+            "max_loc": max(locs),
+            "median_loc": sorted(locs)[len(locs) // 2],
+            "total_loc": sum(locs),
+        }
+    else:
+        loc_stats = {"min_loc": 0, "max_loc": 0, "median_loc": 0, "total_loc": 0}
+
+    # Complexity level distribution for legend (count nodes per level)
+    complexity_distribution = {
+        "low": 0,  # 0-5
+        "moderate": 0,  # 6-10
+        "high": 0,  # 11-20
+        "very_high": 0,  # 21-30
+        "critical": 0,  # 31+
+    }
+
+    for node in nodes:
+        level = get_complexity_class(node.complexity)
+        # Map to underscore version for consistency
+        level_key = level.replace("-", "_")
+        if level_key in complexity_distribution:
+            complexity_distribution[level_key] += 1
+
+    # Smell severity distribution for legend (count nodes per severity)
+    smell_distribution = {
+        "none": 0,
+        "info": 0,
+        "warning": 0,
+        "error": 0,
+        "critical": 0,
+    }
+
+    for node in nodes:
+        severity = node.smell_severity
+        if severity in smell_distribution:
+            smell_distribution[severity] += 1
+
+    return {
+        **basic_stats,
+        **complexity_stats,
+        **smell_stats,
+        **loc_stats,
+        "complexity_distribution": complexity_distribution,
+        "smell_distribution": smell_distribution,
+    }
+
+
+def _get_complexity_grade(avg_complexity: float) -> str:
+    """Get letter grade from average complexity score.
+
+    Args:
+        avg_complexity: Average cognitive complexity score
+
+    Returns:
+        Letter grade (A, B, C, D, or F)
+    """
+    if avg_complexity <= 5:
+        return "A"
+    elif avg_complexity <= 10:
+        return "B"
+    elif avg_complexity <= 20:
+        return "C"
+    elif avg_complexity <= 30:
+        return "D"
+    else:
+        return "F"
 
 
 def _create_node(file: FileDetail) -> D3Node:
@@ -181,18 +319,36 @@ def _create_node(file: FileDetail) -> D3Node:
     file_path = Path(file.path)
     label = file_path.name
     module = file_path.parent.name if file_path.parent.name else "root"
+    module_path = str(file_path.parent) if file_path.parent.name else "root"
 
     # Calculate worst smell severity
     smell_severity = _calculate_worst_severity(file)
+
+    # Convert smells to dictionaries for JSON serialization
+    smells_data = [
+        {
+            "type": smell.smell_type,
+            "severity": smell.severity,
+            "message": smell.message,
+            "line": smell.line,
+        }
+        for smell in file.smells
+    ]
 
     return D3Node(
         id=file.path,
         label=label,
         module=module,
+        module_path=module_path,
         loc=file.lines_of_code,
         complexity=file.cognitive_complexity,
         smell_count=len(file.smells),
         smell_severity=smell_severity,
+        cyclomatic_complexity=file.cyclomatic_complexity,
+        function_count=file.function_count,
+        class_count=file.class_count,
+        smells=smells_data,
+        imports=file.imports or [],
     )
 
 
@@ -327,3 +483,52 @@ def get_smell_class(severity: str) -> str:
         CSS class name (e.g., "smell-none", "smell-error")
     """
     return f"smell-{severity}"
+
+
+def _create_module_groups(nodes: list[D3Node]) -> list[dict[str, Any]]:
+    """Group nodes by module path for cluster visualization.
+
+    Creates module cluster definitions that can be used to draw
+    convex hull polygons around related nodes.
+
+    Args:
+        nodes: List of D3Node objects
+
+    Returns:
+        List of module group dictionaries containing:
+        - name: Module path identifier
+        - node_ids: List of node IDs belonging to this module
+        - color: Hex color for the module cluster
+    """
+    # Group nodes by module_path
+    module_map: dict[str, list[str]] = {}
+    for node in nodes:
+        if node.module_path not in module_map:
+            module_map[node.module_path] = []
+        module_map[node.module_path].append(node.id)
+
+    # Assign colors to modules (cycle through a palette)
+    colors = [
+        "#3b82f6",  # Blue
+        "#10b981",  # Green
+        "#f59e0b",  # Orange
+        "#8b5cf6",  # Purple
+        "#ec4899",  # Pink
+        "#14b8a6",  # Teal
+        "#f97316",  # Orange-red
+        "#06b6d4",  # Cyan
+    ]
+
+    modules = []
+    for idx, (module_path, node_ids) in enumerate(sorted(module_map.items())):
+        # Only create module groups with 2+ nodes for meaningful hulls
+        if len(node_ids) >= 2:
+            modules.append(
+                {
+                    "name": module_path,
+                    "node_ids": node_ids,
+                    "color": colors[idx % len(colors)],
+                }
+            )
+
+    return modules
