@@ -135,6 +135,8 @@ class RelationshipStore:
         """Compute relationships and save to disk.
 
         This is called during indexing to pre-compute expensive relationships.
+        NOTE: Caller relationships are now lazy-loaded via /api/callers/{chunk_id}
+        to avoid the expensive O(n²) computation at startup.
 
         Args:
             chunks: List of all code chunks
@@ -151,7 +153,8 @@ class RelationshipStore:
             c for c in chunks if c.chunk_type in ["function", "method", "class"]
         ]
 
-        # Compute semantic relationships
+        # Compute semantic relationships only
+        # Caller relationships are lazy-loaded on-demand via API
         logger.info(
             f"Computing semantic relationships for {len(code_chunks)} chunks..."
         )
@@ -159,21 +162,17 @@ class RelationshipStore:
             code_chunks, database
         )
 
-        # Compute caller relationships
-        logger.info(f"Computing caller relationships for {len(code_chunks)} chunks...")
-        caller_map = self._compute_caller_relationships(chunks)
-
         elapsed = time.time() - start_time
 
-        # Build relationship data
+        # Build relationship data (no caller_map - it's lazy loaded)
         relationships = {
-            "version": "1.0",
+            "version": "1.1",  # Version bump for lazy callers
             "computed_at": datetime.now(UTC).isoformat(),
             "chunk_count": len(chunks),
             "code_chunk_count": len(code_chunks),
             "computation_time_seconds": elapsed,
             "semantic": semantic_links,
-            "callers": caller_map,
+            "callers": {},  # Empty - loaded on-demand via /api/callers/{chunk_id}
         }
 
         # Save to disk
@@ -182,16 +181,13 @@ class RelationshipStore:
             json.dump(relationships, f, indent=2)
 
         logger.info(
-            f"✓ Computed {len(semantic_links)} semantic links and "
-            f"{sum(len(callers) for callers in caller_map.values())} caller relationships "
-            f"in {elapsed:.1f}s"
+            f"✓ Computed {len(semantic_links)} semantic links in {elapsed:.1f}s "
+            "(callers lazy-loaded on-demand)"
         )
 
         return {
             "semantic_links": len(semantic_links),
-            "caller_relationships": sum(
-                len(callers) for callers in caller_map.values()
-            ),
+            "caller_relationships": 0,  # Now lazy-loaded
             "computation_time": elapsed,
         }
 

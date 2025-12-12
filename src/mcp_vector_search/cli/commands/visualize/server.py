@@ -151,6 +151,122 @@ def create_app(viz_dir: Path) -> FastAPI:
                 media_type="application/json",
             )
 
+    @app.get("/api/callers/{chunk_id}")
+    async def get_chunk_callers(chunk_id: str) -> Response:
+        """Get callers for a specific code chunk (lazy loaded on-demand).
+
+        This computes callers for a single chunk instantly instead of
+        pre-computing all relationships (which takes 20+ minutes).
+
+        Args:
+            chunk_id: The chunk ID to find callers for
+
+        Returns:
+            JSON response with callers array
+        """
+        graph_file = viz_dir / "chunk-graph.json"
+
+        if not graph_file.exists():
+            return Response(
+                content='{"error": "Graph data not found", "callers": []}',
+                status_code=404,
+                media_type="application/json",
+            )
+
+        try:
+            import ast
+            import json
+
+            with open(graph_file) as f:
+                data = json.load(f)
+
+            # Find the target chunk
+            target_node = None
+            for node in data.get("nodes", []):
+                if node.get("id") == chunk_id:
+                    target_node = node
+                    break
+
+            if not target_node:
+                return Response(
+                    content='{"error": "Chunk not found", "callers": []}',
+                    status_code=404,
+                    media_type="application/json",
+                )
+
+            # Get the function/class name from the target
+            function_name = target_node.get("function_name") or target_node.get(
+                "class_name"
+            )
+            if not function_name:
+                return Response(
+                    content=json.dumps({"callers": [], "function_name": None}),
+                    media_type="application/json",
+                )
+
+            target_file = target_node.get("file_path", "")
+
+            # Find callers by scanning other chunks
+            callers = []
+
+            def extract_calls(code: str) -> set[str]:
+                """Extract function calls from code using AST."""
+                calls = set()
+                try:
+                    tree = ast.parse(code)
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.Call):
+                            if isinstance(node.func, ast.Name):
+                                calls.add(node.func.id)
+                            elif isinstance(node.func, ast.Attribute):
+                                calls.add(node.func.attr)
+                except SyntaxError:
+                    pass
+                return calls
+
+            for node in data.get("nodes", []):
+                # Skip non-code chunks and same-file chunks
+                if node.get("type") != "chunk":
+                    continue
+                node_file = node.get("file_path", "")
+                if node_file == target_file:
+                    continue
+
+                # Check if this chunk calls our target function
+                content = node.get("content", "")
+                if function_name in extract_calls(content):
+                    caller_name = node.get("function_name") or node.get("class_name")
+                    if caller_name == "__init__":
+                        continue  # Skip noise
+
+                    callers.append(
+                        {
+                            "id": node.get("id"),
+                            "name": caller_name or f"chunk_{node.get('start_line', 0)}",
+                            "file": node_file,
+                            "type": node.get("chunk_type", "code"),
+                        }
+                    )
+
+            return Response(
+                content=json.dumps(
+                    {
+                        "callers": callers,
+                        "function_name": function_name,
+                        "count": len(callers),
+                    }
+                ),
+                media_type="application/json",
+                headers={"Cache-Control": "max-age=300"},  # Cache for 5 minutes
+            )
+        except Exception as e:
+            console.print(f"[red]Error computing callers: {e}[/red]")
+            return Response(
+                content='{"error": "Failed to compute callers", "callers": []}',
+                status_code=500,
+                media_type="application/json",
+            )
+
     @app.get("/api/chunks")
     async def get_file_chunks(file_id: str) -> Response:
         """Get code chunks for a specific file.

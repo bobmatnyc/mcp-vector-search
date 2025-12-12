@@ -430,31 +430,9 @@ async def build_graph_data(
             semantic_links = []
             caller_map = {}
 
-    # Detect circular dependencies in caller relationships
-    console.print("[cyan]Detecting circular dependencies...[/cyan]")
-    cycles = detect_cycles(chunks, caller_map)
-
-    # Mark cycle links
+    # Skip cycle detection - callers are now lazy-loaded via /api/callers/{chunk_id}
+    # Cycle detection would require O(n²) caller computation which we're avoiding
     cycle_links = []
-    if cycles:
-        console.print(f"[yellow]⚠ Found {len(cycles)} circular dependencies[/yellow]")
-
-        # For each cycle, create links marking the cycle
-        for cycle in cycles:
-            # Create links for the cycle path: A → B → C → A
-            for i in range(len(cycle)):
-                source = cycle[i]
-                target = cycle[(i + 1) % len(cycle)]  # Wrap around to form cycle
-                cycle_links.append(
-                    {
-                        "source": source,
-                        "target": target,
-                        "type": "caller",
-                        "is_cycle": True,
-                    }
-                )
-    else:
-        console.print("[green]✓[/green] No circular dependencies detected")
 
     # Add chunk nodes
     for chunk in chunks:
