@@ -29,8 +29,10 @@ Example:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+from .d3_data import transform_for_d3
 from .schemas import AnalysisExport
 
 
@@ -48,6 +50,7 @@ class HTMLReportGenerator:
     # CDN URLs for external libraries
     CHART_JS_CDN = "https://cdn.jsdelivr.net/npm/chart.js"
     HIGHLIGHT_JS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0"
+    D3_JS_CDN = "https://d3js.org/d3.v7.min.js"
 
     def __init__(self, title: str = "Code Analysis Report"):
         """Initialize HTML report generator.
@@ -73,6 +76,7 @@ class HTMLReportGenerator:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{self.title}</title>
     <script src="{self.CHART_JS_CDN}"></script>
+    <script src="{self.D3_JS_CDN}"></script>
     <link rel="stylesheet" href="{self.HIGHLIGHT_JS_CDN}/styles/github.min.css">
     <script src="{self.HIGHLIGHT_JS_CDN}/highlight.min.js"></script>
     {self._generate_styles()}
@@ -80,6 +84,7 @@ class HTMLReportGenerator:
 <body>
     {self._generate_header(export)}
     {self._generate_summary_section(export)}
+    {self._generate_d3_graph_section(export)}
     {self._generate_complexity_chart(export)}
     {self._generate_grade_distribution(export)}
     {self._generate_smells_section(export)}
@@ -232,6 +237,123 @@ footer {
     .stats-grid { grid-template-columns: 1fr; }
     h1 { font-size: 1.5rem; }
 }
+
+/* D3 Graph Styles */
+#d3-graph-container {
+    position: relative;
+    overflow: hidden;
+    background: #fafafa;
+    height: 600px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+
+#d3-graph {
+    width: 100%;
+    height: 100%;
+}
+
+/* Node styles - complexity shading (darker = more complex) */
+.node-complexity-low { fill: #f3f4f6; }
+.node-complexity-moderate { fill: #9ca3af; }
+.node-complexity-high { fill: #4b5563; }
+.node-complexity-very-high { fill: #1f2937; }
+.node-complexity-critical { fill: #111827; }
+
+/* Node borders - smell severity (redder = worse) */
+.smell-none { stroke: #e5e7eb; stroke-width: 1px; }
+.smell-info { stroke: #fca5a5; stroke-width: 2px; }
+.smell-warning { stroke: #f87171; stroke-width: 3px; }
+.smell-error { stroke: #ef4444; stroke-width: 4px; }
+.smell-critical { stroke: #dc2626; stroke-width: 5px; filter: drop-shadow(0 0 4px #dc2626); }
+
+/* Edge styles */
+.link {
+    stroke: #64748b;
+    stroke-opacity: 0.6;
+}
+
+.link-circular {
+    stroke: #dc2626;
+    stroke-opacity: 0.8;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { stroke-opacity: 0.8; }
+    50% { stroke-opacity: 0.3; }
+}
+
+/* Node labels */
+.node-label {
+    font-size: 10px;
+    fill: #374151;
+    text-anchor: middle;
+    pointer-events: none;
+}
+
+/* Tooltip */
+.d3-tooltip {
+    position: absolute;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    pointer-events: none;
+    z-index: 1000;
+    max-width: 300px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+/* Legend */
+.d3-legend {
+    display: flex;
+    gap: 24px;
+    padding: 16px;
+    background: white;
+    border-top: 1px solid #e5e7eb;
+    flex-wrap: wrap;
+}
+
+.legend-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.legend-title {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--gray-700);
+    margin-bottom: 4px;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--gray-700);
+}
+
+.legend-circle {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+}
+
+.legend-line {
+    width: 24px;
+    height: 2px;
+}
+
+@media (max-width: 768px) {
+    #d3-graph-container { height: 400px; }
+    .d3-legend { flex-direction: column; gap: 16px; }
+}
 </style>"""
 
     def _generate_header(self, export: AnalysisExport) -> str:
@@ -296,6 +418,98 @@ footer {
             <div class="stat-label">Code Smells</div>
         </div>
     </div>
+</section>"""
+
+    def _generate_d3_graph_section(self, export: AnalysisExport) -> str:
+        """Generate D3.js interactive dependency graph section.
+
+        Args:
+            export: Analysis export with files and dependencies
+
+        Returns:
+            HTML section with D3 graph container and legend
+        """
+        # Transform data for D3
+        d3_data = transform_for_d3(export)
+        d3_json = json.dumps(d3_data)
+
+        return f"""<section class="card">
+    <h2>🔗 Interactive Dependency Graph</h2>
+    <p style="color: var(--gray-700); margin-bottom: 1rem;">
+        Explore file dependencies with interactive visualization. Node size reflects lines of code,
+        fill color shows complexity (darker = more complex), and border color indicates code smells
+        (redder = more severe). Drag nodes to rearrange, zoom and pan to explore.
+    </p>
+    <div id="d3-graph-container">
+        <svg id="d3-graph"></svg>
+    </div>
+    <div class="d3-legend">
+        <div class="legend-section">
+            <div class="legend-title">Complexity (Fill)</div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: #f3f4f6; border: 1px solid #e5e7eb;"></div>
+                <span>0-5 (Low)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: #9ca3af;"></div>
+                <span>6-10 (Moderate)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: #4b5563;"></div>
+                <span>11-20 (High)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: #1f2937;"></div>
+                <span>21-30 (Very High)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: #111827;"></div>
+                <span>31+ (Critical)</span>
+            </div>
+        </div>
+        <div class="legend-section">
+            <div class="legend-title">Code Smells (Border)</div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: white; border: 1px solid #e5e7eb;"></div>
+                <span>None</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: white; border: 2px solid #fca5a5;"></div>
+                <span>Info</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: white; border: 3px solid #f87171;"></div>
+                <span>Warning</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="background: white; border: 4px solid #ef4444;"></div>
+                <span>Error</span>
+            </div>
+        </div>
+        <div class="legend-section">
+            <div class="legend-title">Dependencies (Edges)</div>
+            <div class="legend-item">
+                <div class="legend-line" style="background: #64748b;"></div>
+                <span>Normal</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-line" style="background: #dc2626;"></div>
+                <span>Circular</span>
+            </div>
+        </div>
+        <div class="legend-section">
+            <div class="legend-title">Size</div>
+            <div class="legend-item">
+                <div class="legend-circle" style="width: 8px; height: 8px; background: #9ca3af;"></div>
+                <span>Fewer lines</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-circle" style="width: 16px; height: 16px; background: #9ca3af;"></div>
+                <span>More lines</span>
+            </div>
+        </div>
+    </div>
+    <script id="d3-graph-data" type="application/json">{d3_json}</script>
 </section>"""
 
     def _generate_complexity_chart(self, export: AnalysisExport) -> str:
@@ -566,6 +780,154 @@ footer {
             grades[grade] += 1
 
         return f"""<script>
+// Initialize D3 Graph
+(function() {{
+    const dataScript = document.getElementById('d3-graph-data');
+    if (!dataScript) return;
+
+    const graphData = JSON.parse(dataScript.textContent);
+    if (!graphData.nodes || graphData.nodes.length === 0) return;
+
+    const svg = d3.select("#d3-graph");
+    const container = document.getElementById("d3-graph-container");
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    svg.attr("viewBox", [0, 0, width, height]);
+
+    // Helper functions for visual encoding
+    const complexityColor = (complexity) => {{
+        if (complexity <= 5) return '#f3f4f6';
+        if (complexity <= 10) return '#9ca3af';
+        if (complexity <= 20) return '#4b5563';
+        if (complexity <= 30) return '#1f2937';
+        return '#111827';
+    }};
+
+    const smellBorder = (severity) => {{
+        const borders = {{
+            'none': {{ color: '#e5e7eb', width: 1 }},
+            'info': {{ color: '#fca5a5', width: 2 }},
+            'warning': {{ color: '#f87171', width: 3 }},
+            'error': {{ color: '#ef4444', width: 4 }},
+            'critical': {{ color: '#dc2626', width: 5 }}
+        }};
+        return borders[severity] || borders['none'];
+    }};
+
+    // Size scale for LOC (min 8px, max 40px)
+    const maxLoc = d3.max(graphData.nodes, d => d.loc) || 100;
+    const sizeScale = d3.scaleSqrt()
+        .domain([0, maxLoc])
+        .range([8, 40]);
+
+    // Edge thickness scale (min 1px, max 4px)
+    const maxCoupling = d3.max(graphData.links, d => d.coupling) || 1;
+    const edgeScale = d3.scaleLinear()
+        .domain([1, maxCoupling])
+        .range([1, 4]);
+
+    // Force simulation
+    const simulation = d3.forceSimulation(graphData.nodes)
+        .force("link", d3.forceLink(graphData.links).id(d => d.id).distance(100))
+        .force("charge", d3.forceManyBody().strength(-200))
+        .force("center", d3.forceCenter(width / 2, height / 2))
+        .force("collision", d3.forceCollide().radius(d => sizeScale(d.loc) + 5));
+
+    // Zoom behavior
+    const zoom = d3.zoom()
+        .scaleExtent([0.1, 4])
+        .on("zoom", (event) => g.attr("transform", event.transform));
+
+    svg.call(zoom);
+
+    const g = svg.append("g");
+
+    // Draw edges
+    const link = g.append("g")
+        .selectAll("line")
+        .data(graphData.links)
+        .join("line")
+        .attr("class", d => d.circular ? "link link-circular" : "link")
+        .attr("stroke-width", d => edgeScale(d.coupling));
+
+    // Draw nodes
+    const node = g.append("g")
+        .selectAll("g")
+        .data(graphData.nodes)
+        .join("g")
+        .call(d3.drag()
+            .on("start", dragstarted)
+            .on("drag", dragged)
+            .on("end", dragended));
+
+    // Node circles with complexity fill and smell border
+    node.append("circle")
+        .attr("r", d => sizeScale(d.loc))
+        .attr("fill", d => complexityColor(d.complexity))
+        .attr("stroke", d => smellBorder(d.smell_severity).color)
+        .attr("stroke-width", d => smellBorder(d.smell_severity).width)
+        .style("filter", d => d.smell_severity === 'critical' ? 'drop-shadow(0 0 4px #dc2626)' : null);
+
+    // Node labels
+    node.append("text")
+        .text(d => d.label)
+        .attr("class", "node-label")
+        .attr("dy", d => sizeScale(d.loc) + 12);
+
+    // Tooltip
+    const tooltip = d3.select("body").append("div")
+        .attr("class", "d3-tooltip");
+
+    node.on("mouseenter", (event, d) => {{
+        tooltip.transition().duration(200).style("opacity", 1);
+        tooltip.html(`
+            <strong>${{d.label}}</strong><br/>
+            <span style="color:#6b7280">Module: ${{d.module}}</span><br/>
+            <hr style="margin:8px 0;border:none;border-top:1px solid #e5e7eb">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
+                <span>Complexity:</span><span><strong>${{d.complexity}}</strong></span>
+                <span>LOC:</span><span>${{d.loc}}</span>
+                <span>Smells:</span><span style="color:${{smellBorder(d.smell_severity).color}}">${{d.smell_count}} (${{d.smell_severity}})</span>
+            </div>
+        `)
+        .style("left", (event.pageX + 10) + "px")
+        .style("top", (event.pageY - 10) + "px");
+    }})
+    .on("mouseleave", () => {{
+        tooltip.transition().duration(500).style("opacity", 0);
+    }});
+
+    // Simulation tick
+    simulation.on("tick", () => {{
+        link
+            .attr("x1", d => d.source.x)
+            .attr("y1", d => d.source.y)
+            .attr("x2", d => d.target.x)
+            .attr("y2", d => d.target.y);
+
+        node.attr("transform", d => `translate(${{d.x}},${{d.y}})`);
+    }});
+
+    // Drag functions
+    function dragstarted(event) {{
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        event.subject.fx = event.subject.x;
+        event.subject.fy = event.subject.y;
+    }}
+
+    function dragged(event) {{
+        event.subject.fx = event.x;
+        event.subject.fy = event.y;
+    }}
+
+    function dragended(event) {{
+        if (!event.active) simulation.alphaTarget(0);
+        event.subject.fx = null;
+        event.subject.fy = null;
+    }}
+}})();
+
 // Initialize complexity chart
 const ctx = document.getElementById('complexityChart');
 if (ctx) {{

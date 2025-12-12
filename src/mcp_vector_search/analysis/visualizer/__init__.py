@@ -39,6 +39,7 @@ Example:
     >>> schema = generate_json_schema()
 """
 
+from .d3_data import D3Edge, D3Node, transform_for_d3
 from .exporter import JSONExporter
 from .html_report import HTMLReportGenerator
 from .schemas import (
@@ -62,6 +63,10 @@ __all__ = [
     # Exporters
     "JSONExporter",
     "HTMLReportGenerator",
+    # D3 visualization
+    "D3Node",
+    "D3Edge",
+    "transform_for_d3",
     # Main export schema
     "AnalysisExport",
     # Metadata and summary
