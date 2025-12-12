@@ -43,7 +43,7 @@ def visualize_callback(ctx: typer.Context) -> None:
     # If no subcommand was invoked, run serve with defaults
     if ctx.invoked_subcommand is None:
         # Call serve directly with default parameters
-        serve(port=8080, graph_file=get_default_graph_path(), code_only=False)
+        serve(port=8501, graph_file=get_default_graph_path(), code_only=False)
 
 
 @app.command()
@@ -195,7 +195,10 @@ async def _export_chunks(
 @app.command()
 def serve(
     port: int = typer.Option(
-        8080, "--port", "-p", help="Port for visualization server"
+        8501,
+        "--port",
+        "-p",
+        help="Port for visualization server (default: 8501-8599 range)",
     ),
     graph_file: Path = typer.Option(
         None,  # Default will be set in function
@@ -225,9 +228,9 @@ def serve(
         mcp-vector-search visualize serve --code-only
     """
     # Use specified port or find free one
-    if port == 8080:  # Default port, try to find free one
+    if port == 8501:  # Default port, try to find free one in range
         try:
-            port = find_free_port(8080, 8099)
+            port = find_free_port(8501, 8599)
         except OSError as e:
             console.print(f"[red]✗ {e}[/red]")
             raise typer.Exit(1)

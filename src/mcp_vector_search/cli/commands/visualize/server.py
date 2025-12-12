@@ -20,12 +20,12 @@ from rich.panel import Panel
 console = Console()
 
 
-def find_free_port(start_port: int = 8080, end_port: int = 8099) -> int:
+def find_free_port(start_port: int = 8501, end_port: int = 8599) -> int:
     """Find a free port in the given range.
 
     Args:
-        start_port: Starting port number to check
-        end_port: Ending port number to check
+        start_port: Starting port number to check (default: 8501)
+        end_port: Ending port number to check (default: 8599)
 
     Returns:
         First available port in the range
