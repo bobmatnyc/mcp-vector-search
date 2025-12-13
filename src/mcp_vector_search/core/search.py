@@ -217,7 +217,7 @@ class SemanticSearchEngine:
 
             except BaseException as e:
                 # Re-raise system exceptions we should never catch
-                if isinstance(e, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                if isinstance(e, KeyboardInterrupt | SystemExit | GeneratorExit):
                     raise
 
                 last_error = e

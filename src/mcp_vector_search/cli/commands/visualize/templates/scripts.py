@@ -3166,8 +3166,848 @@ function highlightNode(nodeId) {
         .classed('node-highlight', true);
 }
 
+// ============================================================================
+// CODE SMELLS DETECTION AND REPORTING
+// ============================================================================
+
+function detectCodeSmells(nodes) {
+    const smells = [];
+
+    function analyzeNode(node) {
+        // Only analyze code chunks
+        if (!chunkTypes.includes(node.type)) {
+            const children = node.children || node._children || [];
+            children.forEach(child => analyzeNode(child));
+            return;
+        }
+
+        const lineCount = (node.end_line && node.start_line)
+            ? node.end_line - node.start_line + 1
+            : 0;
+        const complexity = node.complexity || 0;
+
+        // 1. Long Method - Functions with > 50 lines
+        if (node.type === 'function' || node.type === 'method') {
+            if (lineCount > 100) {
+                smells.push({
+                    type: 'Long Method',
+                    severity: 'error',
+                    node: node,
+                    details: `${lineCount} lines (very long)`
+                });
+            } else if (lineCount > 50) {
+                smells.push({
+                    type: 'Long Method',
+                    severity: 'warning',
+                    node: node,
+                    details: `${lineCount} lines`
+                });
+            }
+        }
+
+        // 2. High Complexity - Functions with complexity > 15
+        if ((node.type === 'function' || node.type === 'method') && complexity > 0) {
+            if (complexity > 20) {
+                smells.push({
+                    type: 'High Complexity',
+                    severity: 'error',
+                    node: node,
+                    details: `Complexity: ${complexity.toFixed(1)} (very complex)`
+                });
+            } else if (complexity > 15) {
+                smells.push({
+                    type: 'High Complexity',
+                    severity: 'warning',
+                    node: node,
+                    details: `Complexity: ${complexity.toFixed(1)}`
+                });
+            }
+        }
+
+        // 3. Deep Nesting - Proxy using complexity > 20
+        if ((node.type === 'function' || node.type === 'method') && complexity > 20) {
+            smells.push({
+                type: 'Deep Nesting',
+                severity: complexity > 25 ? 'error' : 'warning',
+                node: node,
+                details: `Complexity: ${complexity.toFixed(1)} (likely deep nesting)`
+            });
+        }
+
+        // 4. God Class - Classes with > 20 methods or > 500 lines
+        if (node.type === 'class') {
+            const children = node.children || node._children || [];
+            const methodCount = children.filter(c => c.type === 'method').length;
+
+            if (methodCount > 30 || lineCount > 800) {
+                smells.push({
+                    type: 'God Class',
+                    severity: 'error',
+                    node: node,
+                    details: `${methodCount} methods, ${lineCount} lines (very large)`
+                });
+            } else if (methodCount > 20 || lineCount > 500) {
+                smells.push({
+                    type: 'God Class',
+                    severity: 'warning',
+                    node: node,
+                    details: `${methodCount} methods, ${lineCount} lines`
+                });
+            }
+        }
+
+        // Recursively process children
+        const children = node.children || node._children || [];
+        children.forEach(child => analyzeNode(child));
+    }
+
+    if (nodes) {
+        analyzeNode(nodes);
+    }
+
+    return smells;
+}
+
+function showCodeSmells() {
+    openViewerPanel();
+
+    const viewerTitle = document.getElementById('viewer-title');
+    const viewerContent = document.getElementById('viewer-content');
+
+    viewerTitle.textContent = '🔍 Code Smells';
+
+    // Detect all code smells
+    const allSmells = detectCodeSmells(treeData);
+
+    // Count by type and severity
+    const smellCounts = {
+        'Long Method': { total: 0, warning: 0, error: 0 },
+        'High Complexity': { total: 0, warning: 0, error: 0 },
+        'Deep Nesting': { total: 0, warning: 0, error: 0 },
+        'God Class': { total: 0, warning: 0, error: 0 }
+    };
+
+    let totalWarnings = 0;
+    let totalErrors = 0;
+
+    allSmells.forEach(smell => {
+        smellCounts[smell.type].total++;
+        smellCounts[smell.type][smell.severity]++;
+        if (smell.severity === 'warning') totalWarnings++;
+        if (smell.severity === 'error') totalErrors++;
+    });
+
+    // Build HTML
+    let html = '<div class="code-smells-report">';
+
+    // Summary Cards
+    html += '<div class="smell-summary-grid">';
+    html += `
+        <div class="smell-summary-card">
+            <div class="smell-card-header">
+                <span class="smell-card-icon">🔍</span>
+                <div class="smell-card-title">Total Smells</div>
+            </div>
+            <div class="smell-card-count">${allSmells.length}</div>
+        </div>
+        <div class="smell-summary-card warning">
+            <div class="smell-card-header">
+                <span class="smell-card-icon">⚠️</span>
+                <div class="smell-card-title">Warnings</div>
+            </div>
+            <div class="smell-card-count" style="color: var(--warning)">${totalWarnings}</div>
+        </div>
+        <div class="smell-summary-card error">
+            <div class="smell-card-header">
+                <span class="smell-card-icon">🚨</span>
+                <div class="smell-card-title">Errors</div>
+            </div>
+            <div class="smell-card-count" style="color: var(--error)">${totalErrors}</div>
+        </div>
+    `;
+    html += '</div>';
+
+    // Filters
+    html += '<div class="smell-filters">';
+    html += '<div class="filter-title">Filter by Type</div>';
+    html += '<div class="filter-checkboxes">';
+
+    Object.keys(smellCounts).forEach(type => {
+        const count = smellCounts[type].total;
+        html += `
+            <div class="filter-checkbox-item">
+                <input type="checkbox" id="filter-${type.replace(/\\s+/g, '-')}"
+                       checked onchange="filterCodeSmells()">
+                <label class="filter-checkbox-label" for="filter-${type.replace(/\\s+/g, '-')}">${type}</label>
+                <span class="filter-checkbox-count">${count}</span>
+            </div>
+        `;
+    });
+
+    html += '</div></div>';
+
+    // Smells Table
+    html += '<div id="smells-table-wrapper">';
+    html += '<h3 class="section-title">Detected Code Smells</h3>';
+
+    if (allSmells.length === 0) {
+        html += '<p style="color: var(--text-secondary); text-align: center; padding: 20px;">No code smells detected! Great job! 🎉</p>';
+    } else {
+        html += '<div class="smells-table-container">';
+        html += '<table class="smells-table">';
+        html += `
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Severity</th>
+                    <th>Name</th>
+                    <th>File</th>
+                    <th>Details</th>
+                </tr>
+            </thead>
+            <tbody id="smells-table-body">
+        `;
+
+        // Sort by severity (error first) then by type
+        const sortedSmells = [...allSmells].sort((a, b) => {
+            if (a.severity !== b.severity) {
+                return a.severity === 'error' ? -1 : 1;
+            }
+            return a.type.localeCompare(b.type);
+        });
+
+        sortedSmells.forEach(smell => {
+            const fileName = smell.node.file_path ? smell.node.file_path.split('/').pop() : 'Unknown';
+            const severityIcon = smell.severity === 'error' ? '🚨' : '⚠️';
+
+            html += `
+                <tr class="smell-row" data-smell-type="${smell.type.replace(/\\s+/g, '-')}"
+                    onclick='navigateToChunk(${JSON.stringify(smell.node.name)})'>
+                    <td><span class="smell-type-badge">${escapeHtml(smell.type)}</span></td>
+                    <td><span class="severity-badge ${smell.severity}">${severityIcon} ${smell.severity.toUpperCase()}</span></td>
+                    <td class="smell-name">${escapeHtml(smell.node.name)}</td>
+                    <td class="smell-file" title="${escapeHtml(smell.node.file_path || '')}">${escapeHtml(fileName)}</td>
+                    <td class="smell-details">${escapeHtml(smell.details)}</td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table></div>';
+    }
+
+    html += '</div>'; // smells-table-wrapper
+    html += '</div>'; // code-smells-report
+
+    viewerContent.innerHTML = html;
+}
+
+function filterCodeSmells() {
+    const rows = document.querySelectorAll('.smell-row');
+
+    rows.forEach(row => {
+        const smellType = row.getAttribute('data-smell-type');
+        const checkbox = document.getElementById(`filter-${smellType}`);
+
+        if (checkbox && checkbox.checked) {
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+}
+
+// ============================================================================
+// DEPENDENCIES ANALYSIS AND REPORTING
+// ============================================================================
+
+function showDependencies() {
+    openViewerPanel();
+
+    const viewerTitle = document.getElementById('viewer-title');
+    const viewerContent = document.getElementById('viewer-content');
+
+    viewerTitle.textContent = '🔗 Dependencies';
+
+    // Build file-level dependency graph from caller links
+    const fileDeps = buildFileDependencyGraph();
+
+    // Calculate statistics
+    const filesWithDeps = Array.from(fileDeps.keys()).length;
+    const totalConnections = Array.from(fileDeps.values()).reduce((sum, dep) =>
+        sum + dep.dependsOn.size + dep.usedBy.size, 0) / 2; // Divide by 2 to avoid double counting
+
+    // Find most connected file
+    let mostConnectedFile = null;
+    let maxConnections = 0;
+    fileDeps.forEach((dep, filePath) => {
+        const total = dep.dependsOn.size + dep.usedBy.size;
+        if (total > maxConnections) {
+            maxConnections = total;
+            mostConnectedFile = filePath;
+        }
+    });
+
+    // Detect circular dependencies
+    const cycles = findCircularDeps(fileDeps);
+
+    // Build HTML
+    let html = '<div class="dependencies-report">';
+
+    // Summary Stats
+    html += '<div class="dependency-summary">';
+    html += '<div class="summary-grid">';
+    html += `<div class="summary-card">
+        <div class="summary-label">Files with Dependencies</div>
+        <div class="summary-value">${filesWithDeps}</div>
+    </div>`;
+    html += `<div class="summary-card">
+        <div class="summary-label">Unique Dependencies</div>
+        <div class="summary-value">${Math.floor(totalConnections)}</div>
+    </div>`;
+    if (mostConnectedFile) {
+        const fileName = mostConnectedFile.split('/').pop();
+        html += `<div class="summary-card">
+            <div class="summary-label">Most Connected</div>
+            <div class="summary-value" style="font-size: 14px; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(mostConnectedFile)}">${escapeHtml(fileName)}</div>
+            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">${maxConnections} connections</div>
+        </div>`;
+    }
+    html += '</div>';
+    html += '</div>';
+
+    // Circular Dependencies Warning
+    if (cycles.length > 0) {
+        html += '<div class="circular-deps-warning">';
+        html += '<div class="warning-header">';
+        html += '<span class="warning-icon">⚠️</span>';
+        html += `<span class="warning-title">${cycles.length} Circular Dependenc${cycles.length > 1 ? 'ies' : 'y'} Detected</span>`;
+        html += '</div>';
+        html += '<div class="cycle-list">';
+        cycles.slice(0, 5).forEach(cycle => {
+            const cycleStr = cycle.map(f => f.split('/').pop()).join(' → ');
+            html += `<div class="cycle-item" title="${cycle.map(escapeHtml).join(' → ')}">${escapeHtml(cycleStr)}</div>`;
+        });
+        if (cycles.length > 5) {
+            html += `<div class="cycle-item" style="color: var(--text-secondary);">... and ${cycles.length - 5} more</div>`;
+        }
+        html += '</div>';
+        html += '</div>';
+    }
+
+    // Dependencies Table
+    html += '<div class="dependencies-table-section">';
+    html += '<h3 class="section-title">File Dependencies</h3>';
+
+    if (filesWithDeps === 0) {
+        html += '<p style="color: var(--text-secondary); text-align: center; padding: 20px;">No dependencies found.</p>';
+    } else {
+        // Sort files by total connections (most connected first)
+        const sortedFiles = Array.from(fileDeps.entries())
+            .map(([filePath, dep]) => ({
+                filePath,
+                dependsOn: dep.dependsOn,
+                usedBy: dep.usedBy,
+                total: dep.dependsOn.size + dep.usedBy.size,
+                inCycle: cycles.some(cycle => cycle.includes(filePath))
+            }))
+            .sort((a, b) => b.total - a.total);
+
+        html += '<div class="dependencies-table-container">';
+        html += '<table class="dependencies-table">';
+        html += `
+            <thead>
+                <tr>
+                    <th>File</th>
+                    <th>Depends On</th>
+                    <th>Used By</th>
+                    <th>Total</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+        `;
+
+        sortedFiles.forEach((file, index) => {
+            const fileName = file.filePath.split('/').pop();
+            const rowId = \\`dep-row-\\${index}\\`;
+            const cycleClass = file.inCycle ? 'in-cycle' : '';
+
+            html += \\`
+                <tr class="dependency-row \\${cycleClass}" id="\\${rowId}">
+                    <td class="dep-file" title="\\${escapeHtml(file.filePath)}">
+                        \\${file.inCycle ? '<span style="color: var(--error); margin-right: 4px;" title="Part of circular dependency">⚠️</span>' : ''}
+                        \\${escapeHtml(fileName)}
+                    </td>
+                    <td class="dep-count">\\${file.dependsOn.size}</td>
+                    <td class="dep-count">\\${file.usedBy.size}</td>
+                    <td class="dep-total">\\${file.total}</td>
+                    <td class="dep-expand">
+                        <button class="expand-btn" onclick="toggleDependencyDetails('\\${rowId}', ${index})">▼</button>
+                    </td>
+                </tr>
+                <tr class="dependency-details" id="\\${rowId}-details" style="display: none;">
+                    <td colspan="5">
+                        <div class="dependency-details-content">
+                            <div class="dependency-section">
+                                <div class="dependency-section-title">→ Depends On (\\${file.dependsOn.size})</div>
+                                <div class="dependency-list">
+            \\`;
+
+            if (file.dependsOn.size === 0) {
+                html += '<span class="dependency-item-empty">None</span>';
+            } else {
+                Array.from(file.dependsOn).slice(0, 20).forEach(depFile => {
+                    const depFileName = depFile.split('/').pop();
+                    html += \\`<span class="dependency-item" title="\\${escapeHtml(depFile)}">\\${escapeHtml(depFileName)}</span>\\`;
+                });
+                if (file.dependsOn.size > 20) {
+                    html += \\`<span class="dependency-item-more">... and \\${file.dependsOn.size - 20} more</span>\\`;
+                }
+            }
+
+            html += \\`
+                                </div>
+                            </div>
+                            <div class="dependency-section">
+                                <div class="dependency-section-title">← Used By (\\${file.usedBy.size})</div>
+                                <div class="dependency-list">
+            \\`;
+
+            if (file.usedBy.size === 0) {
+                html += '<span class="dependency-item-empty">None</span>';
+            } else {
+                Array.from(file.usedBy).slice(0, 20).forEach(depFile => {
+                    const depFileName = depFile.split('/').pop();
+                    html += \\`<span class="dependency-item" title="\\${escapeHtml(depFile)}">\\${escapeHtml(depFileName)}</span>\\`;
+                });
+                if (file.usedBy.size > 20) {
+                    html += \\`<span class="dependency-item-more">... and \\${file.usedBy.size - 20} more</span>\\`;
+                }
+            }
+
+            html += `
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table></div>';
+    }
+
+    html += '</div>'; // dependencies-table-section
+    html += '</div>'; // dependencies-report
+
+    viewerContent.innerHTML = html;
+}
+
+function buildFileDependencyGraph() {
+    // Map: file_path -> { dependsOn: Set<file_path>, usedBy: Set<file_path> }
+    const fileDeps = new Map();
+
+    allLinks.forEach(link => {
+        if (link.type === 'caller') {
+            const sourceNode = allNodes.find(n => n.id === link.source);
+            const targetNode = allNodes.find(n => n.id === link.target);
+
+            if (sourceNode && targetNode && sourceNode.file_path && targetNode.file_path) {
+                // Skip self-references (same file)
+                if (sourceNode.file_path === targetNode.file_path) {
+                    return;
+                }
+
+                // sourceNode calls targetNode → source depends on target
+                if (!fileDeps.has(sourceNode.file_path)) {
+                    fileDeps.set(sourceNode.file_path, { dependsOn: new Set(), usedBy: new Set() });
+                }
+                if (!fileDeps.has(targetNode.file_path)) {
+                    fileDeps.set(targetNode.file_path, { dependsOn: new Set(), usedBy: new Set() });
+                }
+
+                fileDeps.get(sourceNode.file_path).dependsOn.add(targetNode.file_path);
+                fileDeps.get(targetNode.file_path).usedBy.add(sourceNode.file_path);
+            }
+        }
+    });
+
+    return fileDeps;
+}
+
+function findCircularDeps(fileDeps) {
+    // Simple cycle detection using DFS
+    const cycles = [];
+    const visited = new Set();
+    const recStack = new Set();
+    const pathStack = [];
+
+    function dfs(filePath) {
+        visited.add(filePath);
+        recStack.add(filePath);
+        pathStack.push(filePath);
+
+        const deps = fileDeps.get(filePath);
+        if (deps && deps.dependsOn) {
+            for (const depFile of deps.dependsOn) {
+                if (!visited.has(depFile)) {
+                    dfs(depFile);
+                } else if (recStack.has(depFile)) {
+                    // Found a cycle
+                    const cycleStartIndex = pathStack.indexOf(depFile);
+                    if (cycleStartIndex !== -1) {
+                        const cycle = pathStack.slice(cycleStartIndex);
+                        cycle.push(depFile); // Complete the cycle
+                        // Check if this cycle is already recorded
+                        const cycleStr = cycle.sort().join('|');
+                        if (!cycles.some(c => c.sort().join('|') === cycleStr)) {
+                            cycles.push([...cycle]);
+                        }
+                    }
+                }
+            }
+        }
+
+        pathStack.pop();
+        recStack.delete(filePath);
+    }
+
+    for (const filePath of fileDeps.keys()) {
+        if (!visited.has(filePath)) {
+            dfs(filePath);
+        }
+    }
+
+    return cycles;
+}
+
+function toggleDependencyDetails(rowId, index) {
+    const detailsRow = document.getElementById(\\`\\${rowId}-details\\`);
+    const btn = document.querySelector(\\`#\\${rowId} .expand-btn\\`);
+
+    if (detailsRow.style.display === 'none') {
+        detailsRow.style.display = '';
+        btn.textContent = '▲';
+    } else {
+        detailsRow.style.display = 'none';
+        btn.textContent = '▼';
+    }
+}
+
+// ============================================================================
+// TRENDS / METRICS SNAPSHOT
+// ============================================================================
+
+function showTrends() {
+    openViewerPanel();
+
+    const viewerTitle = document.getElementById('viewer-title');
+    const viewerContent = document.getElementById('viewer-content');
+
+    viewerTitle.textContent = '📈 Codebase Metrics Snapshot';
+
+    // Calculate metrics from current codebase
+    const metrics = calculateCodebaseMetrics();
+
+    // Build HTML
+    let html = '<div class="trends-report">';
+
+    // Snapshot Banner
+    html += '<div class="snapshot-banner">';
+    html += '<div class="snapshot-header">';
+    html += '<div class="snapshot-icon">📊</div>';
+    html += '<div class="snapshot-info">';
+    html += '<div class="snapshot-title">Codebase Metrics Snapshot</div>';
+    html += `<div class="snapshot-timestamp">Generated: ${new Date().toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+    })}</div>`;
+    html += '</div></div>';
+    html += '<div class="snapshot-description">';
+    html += 'This snapshot serves as the baseline for future trend tracking. ';
+    html += 'With git history analysis, you could track how these metrics evolve over time.';
+    html += '</div>';
+    html += '</div>';
+
+    // Key Metrics Cards
+    html += '<div class="metrics-section">';
+    html += '<h3 class="section-title">Key Metrics</h3>';
+    html += '<div class="metrics-grid">';
+
+    html += `<div class="metric-card">
+        <div class="metric-icon">📝</div>
+        <div class="metric-value">${metrics.totalLines.toLocaleString()}</div>
+        <div class="metric-label">Lines of Code</div>
+    </div>`;
+
+    html += `<div class="metric-card">
+        <div class="metric-icon">⚡</div>
+        <div class="metric-value">${metrics.totalFunctions}</div>
+        <div class="metric-label">Functions/Methods</div>
+    </div>`;
+
+    html += `<div class="metric-card">
+        <div class="metric-icon">🎯</div>
+        <div class="metric-value">${metrics.totalClasses}</div>
+        <div class="metric-label">Classes</div>
+    </div>`;
+
+    html += `<div class="metric-card">
+        <div class="metric-icon">📄</div>
+        <div class="metric-value">${metrics.totalFiles}</div>
+        <div class="metric-label">Files</div>
+    </div>`;
+
+    html += '</div></div>';
+
+    // Code Health Score
+    html += '<div class="health-section">';
+    html += '<h3 class="section-title">Code Health Score</h3>';
+    html += '<div class="health-card">';
+
+    const healthInfo = getHealthScoreInfo(metrics.healthScore);
+    html += `<div class="health-score-display">
+        <div class="health-score-value">${metrics.healthScore}/100</div>
+        <div class="health-score-label">${healthInfo.emoji} ${healthInfo.label}</div>
+    </div>`;
+
+    html += '<div class="health-progress-container">';
+    html += `<div class="health-progress-bar" style="width: ${metrics.healthScore}%; background: ${healthInfo.color}"></div>`;
+    html += '</div>';
+
+    html += `<div class="health-description">${healthInfo.description}</div>`;
+    html += '</div></div>';
+
+    // Complexity Distribution
+    html += '<div class="distribution-section">';
+    html += '<h3 class="section-title">Complexity Distribution</h3>';
+    html += '<div class="distribution-chart">';
+
+    const complexityDist = metrics.complexityDistribution;
+    const maxPct = Math.max(...Object.values(complexityDist));
+
+    ['A', 'B', 'C', 'D', 'F'].forEach(grade => {
+        const pct = complexityDist[grade] || 0;
+        const barWidth = maxPct > 0 ? (pct / maxPct * 100) : 0;
+        const color = getGradeColor(grade);
+        const range = getComplexityRange(grade);
+
+        html += `<div class="distribution-bar-row">
+            <div class="distribution-bar-label">
+                <span class="distribution-grade" style="color: ${color}">${grade}</span>
+                <span class="distribution-range">${range}</span>
+            </div>
+            <div class="distribution-bar-container">
+                <div class="distribution-bar-fill" style="width: ${barWidth}%; background: ${color}"></div>
+            </div>
+            <div class="distribution-bar-value">${pct.toFixed(1)}%</div>
+        </div>`;
+    });
+
+    html += '</div></div>';
+
+    // Function Size Distribution
+    html += '<div class="size-distribution-section">';
+    html += '<h3 class="section-title">Function Size Distribution</h3>';
+    html += '<div class="distribution-chart">';
+
+    const sizeDist = metrics.sizeDistribution;
+    const maxSizePct = Math.max(...Object.values(sizeDist));
+
+    [
+        { key: 'small', label: 'Small (1-20 lines)', color: '#238636' },
+        { key: 'medium', label: 'Medium (21-50 lines)', color: '#1f6feb' },
+        { key: 'large', label: 'Large (51-100 lines)', color: '#d29922' },
+        { key: 'veryLarge', label: 'Very Large (100+ lines)', color: '#da3633' }
+    ].forEach(({ key, label, color }) => {
+        const pct = sizeDist[key] || 0;
+        const barWidth = maxSizePct > 0 ? (pct / maxSizePct * 100) : 0;
+
+        html += `<div class="distribution-bar-row">
+            <div class="distribution-bar-label">
+                <span class="size-label">${label}</span>
+            </div>
+            <div class="distribution-bar-container">
+                <div class="distribution-bar-fill" style="width: ${barWidth}%; background: ${color}"></div>
+            </div>
+            <div class="distribution-bar-value">${pct.toFixed(1)}%</div>
+        </div>`;
+    });
+
+    html += '</div></div>';
+
+    // Future Trends Section
+    html += '<div class="future-section">';
+    html += '<h3 class="section-title">📊 Historical Trends</h3>';
+    html += '<div class="future-placeholder">';
+    html += '<div class="future-icon">🚧</div>';
+    html += '<div class="future-title">Coming in a Future Version</div>';
+    html += '<div class="future-description">';
+    html += 'Git history analysis will enable tracking of:';
+    html += '<ul>';
+    html += '<li>Complexity trends over time</li>';
+    html += '<li>Code growth and churn rates</li>';
+    html += '<li>Hot spots of change</li>';
+    html += '<li>Technical debt accumulation</li>';
+    html += '</ul>';
+    html += '</div>';
+    html += '</div></div>';
+
+    html += '</div>'; // trends-report
+
+    viewerContent.innerHTML = html;
+}
+
+function calculateCodebaseMetrics() {
+    const metrics = {
+        totalLines: 0,
+        totalFunctions: 0,
+        totalClasses: 0,
+        totalFiles: 0,
+        complexityDistribution: { A: 0, B: 0, C: 0, D: 0, F: 0 },
+        sizeDistribution: { small: 0, medium: 0, large: 0, veryLarge: 0 },
+        healthScore: 0
+    };
+
+    const chunksWithComplexity = [];
+
+    function analyzeNode(node) {
+        // Count files
+        if (node.type === 'file') {
+            metrics.totalFiles++;
+        }
+
+        // Count classes
+        if (node.type === 'class') {
+            metrics.totalClasses++;
+        }
+
+        // Count functions and methods
+        if (node.type === 'function' || node.type === 'method') {
+            metrics.totalFunctions++;
+
+            // Calculate lines
+            const lineCount = (node.end_line && node.start_line)
+                ? node.end_line - node.start_line + 1
+                : 0;
+            metrics.totalLines += lineCount;
+
+            // Size distribution
+            if (lineCount <= 20) {
+                metrics.sizeDistribution.small++;
+            } else if (lineCount <= 50) {
+                metrics.sizeDistribution.medium++;
+            } else if (lineCount <= 100) {
+                metrics.sizeDistribution.large++;
+            } else {
+                metrics.sizeDistribution.veryLarge++;
+            }
+
+            // Complexity distribution
+            if (node.complexity !== undefined && node.complexity !== null) {
+                const grade = getComplexityGrade(node.complexity);
+                if (grade in metrics.complexityDistribution) {
+                    metrics.complexityDistribution[grade]++;
+                }
+                chunksWithComplexity.push(node);
+            }
+        }
+
+        // Recursively process children
+        const children = node.children || node._children || [];
+        children.forEach(child => analyzeNode(child));
+    }
+
+    if (treeData) {
+        analyzeNode(treeData);
+    }
+
+    // Convert complexity counts to percentages
+    const totalWithComplexity = chunksWithComplexity.length;
+    if (totalWithComplexity > 0) {
+        Object.keys(metrics.complexityDistribution).forEach(grade => {
+            metrics.complexityDistribution[grade] =
+                (metrics.complexityDistribution[grade] / totalWithComplexity) * 100;
+        });
+    }
+
+    // Convert size counts to percentages
+    const totalFuncs = metrics.totalFunctions;
+    if (totalFuncs > 0) {
+        Object.keys(metrics.sizeDistribution).forEach(size => {
+            metrics.sizeDistribution[size] =
+                (metrics.sizeDistribution[size] / totalFuncs) * 100;
+        });
+    }
+
+    // Calculate health score
+    metrics.healthScore = calculateHealthScore(chunksWithComplexity);
+
+    return metrics;
+}
+
+function calculateHealthScore(chunks) {
+    if (chunks.length === 0) return 100;
+
+    let score = 0;
+    chunks.forEach(chunk => {
+        const grade = getComplexityGrade(chunk.complexity);
+        const gradeScores = { A: 100, B: 80, C: 60, D: 40, F: 20 };
+        score += gradeScores[grade] || 50;
+    });
+
+    return Math.round(score / chunks.length);
+}
+
+function getHealthScoreInfo(score) {
+    if (score >= 80) {
+        return {
+            emoji: '🟢',
+            label: 'Excellent',
+            color: '#238636',
+            description: 'Your codebase has excellent complexity distribution with most code in the A-B range.'
+        };
+    } else if (score >= 60) {
+        return {
+            emoji: '🟡',
+            label: 'Good',
+            color: '#d29922',
+            description: 'Your codebase is in good shape, but could benefit from refactoring some complex functions.'
+        };
+    } else if (score >= 40) {
+        return {
+            emoji: '🟠',
+            label: 'Needs Attention',
+            color: '#f0883e',
+            description: 'Your codebase has significant complexity issues that should be addressed soon.'
+        };
+    } else {
+        return {
+            emoji: '🔴',
+            label: 'Critical',
+            color: '#da3633',
+            description: 'Your codebase has critical complexity issues requiring immediate refactoring.'
+        };
+    }
+}
+
+function getComplexityRange(grade) {
+    const ranges = {
+        'A': '1-5',
+        'B': '6-10',
+        'C': '11-15',
+        'D': '16-20',
+        'F': '21+'
+    };
+    return ranges[grade] || '';
+}
+
 function showComingSoon(reportName) {
-    alert(`${reportName} - Coming Soon!\\n\\nThis feature will display detailed ${reportName.toLowerCase()} in a future release.`);
+    alert(\\`\\${reportName} - Coming Soon!\\n\\nThis feature will display detailed \\${reportName.toLowerCase()} in a future release.\\`);
 }
 
 // ============================================================================

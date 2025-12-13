@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.1] - 2025-12-13
+
+### Added
+- **Static Code Analysis Pages** - Four new analysis reports in visualization tool
+  - **Complexity Report** - Summary stats, grade distribution chart, sortable hotspots table
+  - **Code Smells** - Detects Long Method, High Complexity, Deep Nesting, God Class with severity badges
+  - **Dependencies** - File dependency graph with circular dependency detection and warnings
+  - **Trends** - Metrics snapshot with Code Health Score, complexity and size distributions
+
+### Fixed
+- **Node sizing algorithm** - Now uses actual line count instead of content-based estimates
+  - 330-line functions correctly display larger than 7-line functions
+  - Collapsed file+chunk nodes use chunk's actual line count
+  - Logarithmic scaling for better visual distribution
+- **Complexity stroke colors** - High complexity nodes (≥10) now have red outlines, moderate (≥5) orange
+
+### Changed
+- Visualization node sizing uses absolute thresholds instead of percentile-based scaling
+- File nodes sized by total lines of code rather than chunk count
+
+## [0.21.0] - 2025-12-12
+
+### Added
+- **Visualization Tool** - Interactive D3.js tree visualization for codebase exploration
+  - Hierarchical view of directories, files, and code chunks
+  - Lazy-loaded caller relationships for performance
+  - Complexity-based coloring and sizing
+  - Click-to-view source code with syntax highlighting
+
 ## [0.20.0] - 2025-12-11
 
 ### Added

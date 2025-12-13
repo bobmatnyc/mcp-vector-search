@@ -153,15 +153,15 @@ def generate_html_template() -> str:
                     <span style="margin-right: 8px;">📊</span>
                     <span>Complexity Report</span>
                 </div>
-                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; margin-bottom: 6px;" onclick="showComingSoon('Code Smells')">
+                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; margin-bottom: 6px;" onclick="showCodeSmells()">
                     <span style="margin-right: 8px;">🔍</span>
                     <span>Code Smells</span>
                 </div>
-                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; margin-bottom: 6px;" onclick="showComingSoon('Dependencies')">
+                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; margin-bottom: 6px;" onclick="showDependencies()">
                     <span style="margin-right: 8px;">🔗</span>
                     <span>Dependencies</span>
                 </div>
-                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px;" onclick="showComingSoon('Trends')">
+                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px;" onclick="showTrends()">
                     <span style="margin-right: 8px;">📈</span>
                     <span>Trends</span>
                 </div>
