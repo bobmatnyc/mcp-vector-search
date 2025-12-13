@@ -3529,59 +3529,59 @@ function showDependencies() {
 
         sortedFiles.forEach((file, index) => {
             const fileName = file.filePath.split('/').pop();
-            const rowId = \\`dep-row-\\${index}\\`;
+            const rowId = `dep-row-${index}`;
             const cycleClass = file.inCycle ? 'in-cycle' : '';
 
-            html += \\`
-                <tr class="dependency-row \\${cycleClass}" id="\\${rowId}">
-                    <td class="dep-file" title="\\${escapeHtml(file.filePath)}">
-                        \\${file.inCycle ? '<span style="color: var(--error); margin-right: 4px;" title="Part of circular dependency">⚠️</span>' : ''}
-                        \\${escapeHtml(fileName)}
+            html += `
+                <tr class="dependency-row ${cycleClass}" id="${rowId}">
+                    <td class="dep-file" title="${escapeHtml(file.filePath)}">
+                        ${file.inCycle ? '<span style="color: var(--error); margin-right: 4px;" title="Part of circular dependency">⚠️</span>' : ''}
+                        ${escapeHtml(fileName)}
                     </td>
-                    <td class="dep-count">\\${file.dependsOn.size}</td>
-                    <td class="dep-count">\\${file.usedBy.size}</td>
-                    <td class="dep-total">\\${file.total}</td>
+                    <td class="dep-count">${file.dependsOn.size}</td>
+                    <td class="dep-count">${file.usedBy.size}</td>
+                    <td class="dep-total">${file.total}</td>
                     <td class="dep-expand">
-                        <button class="expand-btn" onclick="toggleDependencyDetails('\\${rowId}', ${index})">▼</button>
+                        <button class="expand-btn" onclick="toggleDependencyDetails('${rowId}', ${index})">▼</button>
                     </td>
                 </tr>
-                <tr class="dependency-details" id="\\${rowId}-details" style="display: none;">
+                <tr class="dependency-details" id="${rowId}-details" style="display: none;">
                     <td colspan="5">
                         <div class="dependency-details-content">
                             <div class="dependency-section">
-                                <div class="dependency-section-title">→ Depends On (\\${file.dependsOn.size})</div>
+                                <div class="dependency-section-title">→ Depends On (${file.dependsOn.size})</div>
                                 <div class="dependency-list">
-            \\`;
+            `;
 
             if (file.dependsOn.size === 0) {
                 html += '<span class="dependency-item-empty">None</span>';
             } else {
                 Array.from(file.dependsOn).slice(0, 20).forEach(depFile => {
                     const depFileName = depFile.split('/').pop();
-                    html += \\`<span class="dependency-item" title="\\${escapeHtml(depFile)}">\\${escapeHtml(depFileName)}</span>\\`;
+                    html += `<span class="dependency-item" title="${escapeHtml(depFile)}">${escapeHtml(depFileName)}</span>`;
                 });
                 if (file.dependsOn.size > 20) {
-                    html += \\`<span class="dependency-item-more">... and \\${file.dependsOn.size - 20} more</span>\\`;
+                    html += `<span class="dependency-item-more">... and ${file.dependsOn.size - 20} more</span>`;
                 }
             }
 
-            html += \\`
+            html += `
                                 </div>
                             </div>
                             <div class="dependency-section">
-                                <div class="dependency-section-title">← Used By (\\${file.usedBy.size})</div>
+                                <div class="dependency-section-title">← Used By (${file.usedBy.size})</div>
                                 <div class="dependency-list">
-            \\`;
+            `;
 
             if (file.usedBy.size === 0) {
                 html += '<span class="dependency-item-empty">None</span>';
             } else {
                 Array.from(file.usedBy).slice(0, 20).forEach(depFile => {
                     const depFileName = depFile.split('/').pop();
-                    html += \\`<span class="dependency-item" title="\\${escapeHtml(depFile)}">\\${escapeHtml(depFileName)}</span>\\`;
+                    html += `<span class="dependency-item" title="${escapeHtml(depFile)}">${escapeHtml(depFileName)}</span>`;
                 });
                 if (file.usedBy.size > 20) {
-                    html += \\`<span class="dependency-item-more">... and \\${file.usedBy.size - 20} more</span>\\`;
+                    html += `<span class="dependency-item-more">... and ${file.usedBy.size - 20} more</span>`;
                 }
             }
 
@@ -3682,8 +3682,8 @@ function findCircularDeps(fileDeps) {
 }
 
 function toggleDependencyDetails(rowId, index) {
-    const detailsRow = document.getElementById(\\`\\${rowId}-details\\`);
-    const btn = document.querySelector(\\`#\\${rowId} .expand-btn\\`);
+    const detailsRow = document.getElementById(`${rowId}-details`);
+    const btn = document.querySelector(`#${rowId} .expand-btn`);
 
     if (detailsRow.style.display === 'none') {
         detailsRow.style.display = '';
@@ -4007,7 +4007,7 @@ function getComplexityRange(grade) {
 }
 
 function showComingSoon(reportName) {
-    alert(\\`\\${reportName} - Coming Soon!\\n\\nThis feature will display detailed \\${reportName.toLowerCase()} in a future release.\\`);
+    alert(`${reportName} - Coming Soon!\n\nThis feature will display detailed ${reportName.toLowerCase()} in a future release.`);
 }
 
 // ============================================================================
