@@ -60,8 +60,8 @@ const chunkTypes = ['function', 'class', 'method', 'text', 'imports', 'module'];
 const sizeConfig = {
     minRadius: 12,      // Minimum node radius (50% larger for readability)
     maxRadius: 24,      // Maximum node radius
-    chunkMinRadius: 9,  // Minimum for chunks (50% larger for readability)
-    chunkMaxRadius: 16  // Maximum for chunks
+    chunkMinRadius: 5,  // Minimum for small chunks (more visible size contrast)
+    chunkMaxRadius: 28  // Maximum for large chunks (more visible size contrast)
 };
 
 // Dynamic dimensions that update when viewer opens/closes
@@ -447,11 +447,18 @@ function buildTreeStructure() {
                     console.log(`Promoting ${chunkChildren.length} children from ${onlyChild.type} to file ${node.name}`);
                     // Replace the single chunk with its children
                     node.children = chunkChildren;
-                    // Store info about the collapsed chunk
+                    // Store info about the collapsed chunk (include ALL relevant properties)
                     node.collapsed_chunk = {
                         type: onlyChild.type,
                         name: onlyChild.name,
-                        id: onlyChild.id
+                        id: onlyChild.id,
+                        content: onlyChild.content,
+                        docstring: onlyChild.docstring,
+                        start_line: onlyChild.start_line,
+                        end_line: onlyChild.end_line,
+                        file_path: onlyChild.file_path,
+                        language: onlyChild.language,
+                        complexity: onlyChild.complexity
                     };
                 } else {
                     // Collapse file+chunk into combined name (like directory chains)
@@ -547,11 +554,18 @@ let allLineCounts = [];  // Collect all line counts for percentile calculation
 function calculateNodeSizes(node) {
     if (!node) return 0;
 
-    // For chunks: use line count directly
+    // For chunks: use actual line count (primary metric)
+    // Falls back to content-based estimate only if line numbers unavailable
     if (chunkTypes.includes(node.type)) {
+        // Primary: use actual line span from start_line/end_line
+        // This ensures visual correlation with displayed line ranges
+        const contentLength = node.content ? node.content.length : 0;
         const lineCount = (node.start_line && node.end_line)
             ? node.end_line - node.start_line + 1
-            : 1;
+            : Math.max(1, Math.floor(contentLength / 40));  // Fallback: estimate ~40 chars per line
+
+        // Use actual line count for sizing (NOT content length)
+        // This prevents inversion where sparse 101-line files appear smaller than dense 3-line files
         node._lineCount = lineCount;
         allLineCounts.push(lineCount);
 
@@ -569,6 +583,16 @@ function calculateNodeSizes(node) {
     children.forEach(child => {
         totalLines += calculateNodeSizes(child);
     });
+
+    // Handle collapsed file+chunk: use the collapsed chunk's line count
+    if (node.type === 'file' && node.collapsed_chunk) {
+        const cc = node.collapsed_chunk;
+        if (cc.start_line && cc.end_line) {
+            totalLines = cc.end_line - cc.start_line + 1;
+        } else if (cc.content) {
+            totalLines = Math.max(1, Math.floor(cc.content.length / 40));
+        }
+    }
 
     node._lineCount = totalLines || 1;  // Minimum 1 for empty dirs/files
 
@@ -1014,6 +1038,50 @@ function calculateAverageComplexity(node) {
     return count > 0 ? totalComplexity / count : 0;
 }
 
+// Get stroke color based on complexity - red outline for high complexity
+function getNodeStrokeColor(d) {
+    const nodeData = d.data;
+
+    // Only chunks have direct complexity
+    if (chunkTypes.includes(nodeData.type)) {
+        const complexity = nodeData.complexity || 0;
+        // Complexity thresholds:
+        // 0-5: white (simple)
+        // 5-10: orange (moderate)
+        // 10+: red (complex)
+        if (complexity >= 10) {
+            return '#e74c3c';  // Red for high complexity
+        } else if (complexity >= 5) {
+            return '#f39c12';  // Orange for moderate
+        }
+        return '#fff';  // White for low complexity
+    }
+
+    // Files and directories: check average complexity of children
+    if (nodeData.type === 'file' || nodeData.type === 'directory') {
+        const avgComplexity = calculateAverageComplexity(nodeData);
+        if (avgComplexity >= 10) {
+            return '#e74c3c';  // Red
+        } else if (avgComplexity >= 5) {
+            return '#f39c12';  // Orange
+        }
+    }
+
+    return '#fff';  // Default white
+}
+
+// Get stroke width based on complexity - thicker for high complexity
+function getNodeStrokeWidth(d) {
+    const nodeData = d.data;
+    const complexity = chunkTypes.includes(nodeData.type)
+        ? (nodeData.complexity || 0)
+        : calculateAverageComplexity(nodeData);
+
+    if (complexity >= 10) return 3;  // Thick red outline
+    if (complexity >= 5) return 2.5;  // Medium orange outline
+    return 2;  // Default
+}
+
 function getNodeRadius(d) {
     const nodeData = d.data;
 
@@ -1039,35 +1107,69 @@ function getNodeRadius(d) {
         return dirMinRadius + (normalized * (dirMaxRadius - dirMinRadius));
     }
 
-    // File nodes: size by chunk_count (pre-computed, immutable)
+    // File nodes: size by total lines of code (sum of all chunks)
     if (nodeData.type === 'file') {
-        // Use pre-computed chunk_count (NEVER d.children/d._children - they change on expand/collapse!)
-        const chunkCount = nodeData.chunk_count || 0;
-        if (chunkCount === 0) return fileMinRadius;
+        const lineCount = nodeData._lineCount || 1;
 
-        // Linear scale with logarithmic damping for large counts
-        const logCount = Math.log2(chunkCount + 1);
-        const maxLogCount = Math.log2(20 + 1);  // Assume max ~20 chunks per file
-        const normalized = Math.min(logCount / maxLogCount, 1.0);
+        // Collapsed file+chunk: use chunk sizing (since it's really a chunk)
+        if (nodeData.collapsed_chunk) {
+            const minLines = 5;
+            const maxLines = 150;
+
+            let normalized;
+            if (lineCount <= minLines) {
+                normalized = 0;
+            } else if (lineCount >= maxLines) {
+                normalized = 1;
+            } else {
+                const logMin = Math.log(minLines);
+                const logMax = Math.log(maxLines);
+                const logCount = Math.log(lineCount);
+                normalized = (logCount - logMin) / (logMax - logMin);
+            }
+            return chunkMinRadius + (normalized * (chunkMaxRadius - chunkMinRadius));
+        }
+
+        // Regular files: linear scaling based on total lines
+        const minFileLines = 5;
+        const maxFileLines = 300;
+
+        let normalized;
+        if (lineCount <= minFileLines) {
+            normalized = 0;
+        } else if (lineCount >= maxFileLines) {
+            normalized = 1;
+        } else {
+            normalized = (lineCount - minFileLines) / (maxFileLines - minFileLines);
+        }
 
         return fileMinRadius + (normalized * (fileMaxRadius - fileMinRadius));
     }
 
-    // Chunk nodes: size by lines of code (existing percentile logic)
+    // Chunk nodes: size by lines of code (absolute thresholds, not percentiles)
+    // This ensures 330-line functions are ALWAYS big, regardless of codebase distribution
     if (chunkTypes.includes(nodeData.type)) {
         const lineCount = nodeData._lineCount || 1;
 
-        if (percentile80 <= percentile20) {
-            return (chunkMinRadius + chunkMaxRadius) / 2;
-        }
+        // Absolute thresholds for intuitive sizing:
+        // - 1-10 lines: small (imports, constants, simple functions)
+        // - 10-50 lines: medium (typical functions)
+        // - 50-150 lines: large (complex functions)
+        // - 150+ lines: maximum (very large functions/classes)
+        const minLines = 5;
+        const maxLines = 150;  // Anything over 150 lines gets max size
 
         let normalized;
-        if (lineCount <= percentile20) {
+        if (lineCount <= minLines) {
             normalized = 0;
-        } else if (lineCount >= percentile80) {
+        } else if (lineCount >= maxLines) {
             normalized = 1;
         } else {
-            normalized = (lineCount - percentile20) / (percentile80 - percentile20);
+            // Logarithmic scaling for better visual distribution
+            const logMin = Math.log(minLines);
+            const logMax = Math.log(maxLines);
+            const logCount = Math.log(lineCount);
+            normalized = (logCount - logMin) / (logMax - logMin);
         }
 
         return chunkMinRadius + (normalized * (chunkMaxRadius - chunkMinRadius));
@@ -1130,8 +1232,61 @@ function renderLinearTree() {
     // Create hierarchy from tree data
     // D3 hierarchy automatically respects children vs _children
     console.log('Creating D3 hierarchy...');
+
+    // DEBUG: Check if treeData children have content property BEFORE D3 processes them
+    console.log('=== PRE-D3 HIERARCHY DEBUG ===');
+    if (treeData.children && treeData.children.length > 0) {
+        const firstChild = treeData.children[0];
+        console.log('First root child:', firstChild.name, 'type:', firstChild.type);
+        console.log('First child keys:', Object.keys(firstChild));
+        console.log('First child has content:', 'content' in firstChild);
+
+        // Find a chunk node in the tree
+        function findFirstChunk(node) {
+            if (chunkTypes.includes(node.type)) {
+                return node;
+            }
+            if (node.children) {
+                for (const child of node.children) {
+                    const found = findFirstChunk(child);
+                    if (found) return found;
+                }
+            }
+            if (node._children) {
+                for (const child of node._children) {
+                    const found = findFirstChunk(child);
+                    if (found) return found;
+                }
+            }
+            return null;
+        }
+
+        const sampleChunk = findFirstChunk(treeData);
+        if (sampleChunk) {
+            console.log('Sample chunk node BEFORE D3:', sampleChunk.name, 'type:', sampleChunk.type);
+            console.log('Sample chunk keys:', Object.keys(sampleChunk));
+            console.log('Sample chunk has content:', 'content' in sampleChunk);
+            console.log('Sample chunk content length:', sampleChunk.content ? sampleChunk.content.length : 0);
+        }
+    }
+    console.log('=== END PRE-D3 HIERARCHY DEBUG ===');
+
     const root = d3.hierarchy(treeData, d => d.children);
     console.log(`Hierarchy created: ${root.descendants().length} nodes`);
+
+    // DEBUG: Check if content is preserved AFTER D3 processes them
+    console.log('=== POST-D3 HIERARCHY DEBUG ===');
+    const debugDescendants = root.descendants();
+    const chunkDescendants = debugDescendants.filter(d => chunkTypes.includes(d.data.type));
+    console.log(`Found ${chunkDescendants.length} chunk nodes in D3 hierarchy`);
+    if (chunkDescendants.length > 0) {
+        const firstChunkD3 = chunkDescendants[0];
+        console.log('First chunk in D3 hierarchy:', firstChunkD3.data.name, 'type:', firstChunkD3.data.type);
+        console.log('First chunk d.data keys:', Object.keys(firstChunkD3.data));
+        console.log('First chunk has content in d.data:', 'content' in firstChunkD3.data);
+        console.log('First chunk content length:', firstChunkD3.data.content ? firstChunkD3.data.content.length : 0);
+    }
+    console.log('=== END POST-D3 HIERARCHY DEBUG ===');
 
     // Apply tree layout
     console.log('Applying tree layout...');
@@ -1180,8 +1335,8 @@ function renderLinearTree() {
     nodes.append('circle')
         .attr('r', d => getNodeRadius(d))  // Dynamic size based on content
         .attr('fill', d => getNodeFillColor(d))  // Complexity-based coloring
-        .attr('stroke', '#fff')
-        .attr('stroke-width', 2)
+        .attr('stroke', d => getNodeStrokeColor(d))  // Red/orange for high complexity
+        .attr('stroke-width', d => getNodeStrokeWidth(d))
         .attr('class', d => {
             // Add complexity grade class if available
             const grade = d.data.complexity_grade || '';
@@ -1329,8 +1484,8 @@ function renderCircularTree() {
     nodes.append('circle')
         .attr('r', d => getNodeRadius(d))  // Dynamic size based on content
         .attr('fill', d => getNodeFillColor(d))  // Complexity-based coloring
-        .attr('stroke', '#fff')
-        .attr('stroke-width', 2)
+        .attr('stroke', d => getNodeStrokeColor(d))  // Red/orange for high complexity
+        .attr('stroke-width', d => getNodeStrokeWidth(d))
         .attr('class', d => {
             // Add complexity grade class if available
             const grade = d.data.complexity_grade || '';
@@ -1673,6 +1828,14 @@ function displayFileInfo(fileData, addToHistory = true) {
 
 function displayChunkContent(chunkData, addToHistory = true) {
     openViewerPanel();
+
+    // DEBUG: Log chunkData to see what we're receiving
+    console.log('=== DISPLAY CHUNK CONTENT DEBUG ===');
+    console.log('chunkData:', chunkData);
+    console.log('chunkData.content exists:', 'content' in chunkData);
+    console.log('chunkData.content value:', chunkData.content ? chunkData.content.substring(0, 100) + '...' : '<empty/missing>');
+    console.log('chunkData keys:', Object.keys(chunkData));
+    console.log('=== END DISPLAY CHUNK CONTENT DEBUG ===');
 
     // Add to navigation history
     if (addToHistory) {
@@ -2783,8 +2946,225 @@ function loadThemePreference() {
 }
 
 // ============================================================================
-// ANALYSIS REPORTS PLACEHOLDERS
+// ANALYSIS REPORTS
 // ============================================================================
+
+function getComplexityGrade(complexity) {
+    if (complexity === undefined || complexity === null) return 'N/A';
+    if (complexity <= 5) return 'A';
+    if (complexity <= 10) return 'B';
+    if (complexity <= 15) return 'C';
+    if (complexity <= 20) return 'D';
+    return 'F';
+}
+
+function getGradeColor(grade) {
+    const colors = {
+        'A': '#2ea043',
+        'B': '#1f6feb',
+        'C': '#d29922',
+        'D': '#f0883e',
+        'F': '#da3633',
+        'N/A': '#6e7681'
+    };
+    return colors[grade] || colors['N/A'];
+}
+
+function showComplexityReport() {
+    openViewerPanel();
+
+    const viewerTitle = document.getElementById('viewer-title');
+    const viewerContent = document.getElementById('viewer-content');
+
+    viewerTitle.textContent = '📊 Complexity Report';
+
+    // Collect all chunk nodes with complexity data
+    const chunksWithComplexity = [];
+
+    function collectChunks(node) {
+        if (chunkTypes.includes(node.type)) {
+            const complexity = node.complexity !== undefined ? node.complexity : null;
+            chunksWithComplexity.push({
+                name: node.name,
+                type: node.type,
+                file_path: node.file_path || 'Unknown',
+                start_line: node.start_line || 0,
+                end_line: node.end_line || 0,
+                complexity: complexity,
+                grade: getComplexityGrade(complexity),
+                node: node
+            });
+        }
+
+        // Recursively process children
+        const children = node.children || node._children || [];
+        children.forEach(child => collectChunks(child));
+    }
+
+    // Start from treeData root
+    if (treeData) {
+        collectChunks(treeData);
+    }
+
+    // Calculate statistics
+    const totalFunctions = chunksWithComplexity.length;
+    const validComplexity = chunksWithComplexity.filter(c => c.complexity !== null);
+    const avgComplexity = validComplexity.length > 0
+        ? (validComplexity.reduce((sum, c) => sum + c.complexity, 0) / validComplexity.length).toFixed(2)
+        : 'N/A';
+
+    // Count by grade
+    const gradeCounts = {
+        'A': 0, 'B': 0, 'C': 0, 'D': 0, 'F': 0, 'N/A': 0
+    };
+    chunksWithComplexity.forEach(c => {
+        gradeCounts[c.grade]++;
+    });
+
+    // Sort by complexity (highest first)
+    const sortedChunks = [...chunksWithComplexity].sort((a, b) => {
+        if (a.complexity === null) return 1;
+        if (b.complexity === null) return -1;
+        return b.complexity - a.complexity;
+    });
+
+    // Build HTML
+    let html = '<div class="complexity-report">';
+
+    // Summary Stats
+    html += '<div class="complexity-summary">';
+    html += '<div class="summary-grid">';
+    html += `<div class="summary-card">
+        <div class="summary-label">Total Functions</div>
+        <div class="summary-value">${totalFunctions}</div>
+    </div>`;
+    html += `<div class="summary-card">
+        <div class="summary-label">Average Complexity</div>
+        <div class="summary-value">${avgComplexity}</div>
+    </div>`;
+    html += `<div class="summary-card">
+        <div class="summary-label">With Complexity Data</div>
+        <div class="summary-value">${validComplexity.length}</div>
+    </div>`;
+    html += '</div>';
+
+    // Grade Distribution
+    html += '<div class="grade-distribution">';
+    html += '<div class="distribution-title">Grade Distribution</div>';
+    html += '<div class="distribution-bars">';
+
+    const maxCount = Math.max(...Object.values(gradeCounts));
+    ['A', 'B', 'C', 'D', 'F', 'N/A'].forEach(grade => {
+        const count = gradeCounts[grade];
+        const percentage = totalFunctions > 0 ? (count / totalFunctions * 100) : 0;
+        const barWidth = maxCount > 0 ? (count / maxCount * 100) : 0;
+        html += `
+            <div class="distribution-row">
+                <div class="distribution-grade" style="color: ${getGradeColor(grade)}">${grade}</div>
+                <div class="distribution-bar-container">
+                    <div class="distribution-bar" style="width: ${barWidth}%; background: ${getGradeColor(grade)}"></div>
+                </div>
+                <div class="distribution-count">${count} (${percentage.toFixed(1)}%)</div>
+            </div>
+        `;
+    });
+    html += '</div></div>';
+    html += '</div>';
+
+    // Complexity Hotspots Table
+    html += '<div class="complexity-hotspots">';
+    html += '<h3 class="section-title">Complexity Hotspots</h3>';
+
+    if (sortedChunks.length === 0) {
+        html += '<p style="color: var(--text-secondary); text-align: center; padding: 20px;">No functions found with complexity data.</p>';
+    } else {
+        html += '<div class="hotspots-table-container">';
+        html += '<table class="hotspots-table">';
+        html += `
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>File</th>
+                    <th>Lines</th>
+                    <th>Complexity</th>
+                    <th>Grade</th>
+                </tr>
+            </thead>
+            <tbody>
+        `;
+
+        sortedChunks.forEach(chunk => {
+            const lines = chunk.end_line > 0 ? chunk.end_line - chunk.start_line + 1 : 'N/A';
+            const complexityDisplay = chunk.complexity !== null ? chunk.complexity.toFixed(1) : 'N/A';
+            const gradeColor = getGradeColor(chunk.grade);
+
+            // Get relative file path
+            const fileName = chunk.file_path.split('/').pop() || chunk.file_path;
+            const lineRange = chunk.start_line > 0 ? `L${chunk.start_line}-${chunk.end_line}` : '';
+
+            html += `
+                <tr class="hotspot-row" onclick='navigateToChunk(${JSON.stringify(chunk.name)})'>
+                    <td class="hotspot-name">${escapeHtml(chunk.name)}</td>
+                    <td class="hotspot-file" title="${escapeHtml(chunk.file_path)}">${escapeHtml(fileName)}</td>
+                    <td class="hotspot-lines">${lines}</td>
+                    <td class="hotspot-complexity">${complexityDisplay}</td>
+                    <td class="hotspot-grade">
+                        <span class="grade-badge" style="background: ${gradeColor}">${chunk.grade}</span>
+                    </td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table></div>';
+    }
+
+    html += '</div>'; // complexity-hotspots
+    html += '</div>'; // complexity-report
+
+    viewerContent.innerHTML = html;
+}
+
+function navigateToChunk(chunkName) {
+    // Find the chunk node in the tree
+    function findChunk(node) {
+        if (chunkTypes.includes(node.type) && node.name === chunkName) {
+            return node;
+        }
+        const children = node.children || node._children || [];
+        for (const child of children) {
+            const found = findChunk(child);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    if (treeData) {
+        const chunk = findChunk(treeData);
+        if (chunk) {
+            // Display the chunk content
+            displayChunkContent(chunk);
+
+            // Highlight the node in the visualization
+            highlightNode(chunk.id);
+        }
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function highlightNode(nodeId) {
+    // Remove existing highlights
+    d3.selectAll('.node').classed('node-highlight', false);
+
+    // Add highlight to the target node
+    d3.selectAll('.node')
+        .filter(d => d.data.id === nodeId)
+        .classed('node-highlight', true);
+}
 
 function showComingSoon(reportName) {
     alert(`${reportName} - Coming Soon!\\n\\nThis feature will display detailed ${reportName.toLowerCase()} in a future release.`);

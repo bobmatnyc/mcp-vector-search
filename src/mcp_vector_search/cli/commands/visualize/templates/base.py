@@ -149,7 +149,7 @@ def generate_html_template() -> str:
                 </div>
 
                 <!-- Analysis Reports -->
-                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; margin-bottom: 6px;" onclick="showComingSoon('Complexity Report')">
+                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; margin-bottom: 6px;" onclick="showComplexityReport()">
                     <span style="margin-right: 8px;">📊</span>
                     <span>Complexity Report</span>
                 </div>

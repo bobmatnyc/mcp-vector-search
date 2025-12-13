@@ -1428,6 +1428,220 @@ def get_search_styles() -> str:
     """
 
 
+def get_complexity_report_styles() -> str:
+    """Get styles for the complexity report.
+
+    Returns:
+        CSS string for complexity report styling
+    """
+    return """
+        /* Complexity Report Styles */
+        .complexity-report {
+            padding: 0;
+        }
+
+        /* Summary Section */
+        .complexity-summary {
+            margin-bottom: 24px;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .summary-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
+            border-radius: 6px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .summary-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .summary-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        /* Grade Distribution */
+        .grade-distribution {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
+            border-radius: 6px;
+            padding: 16px;
+        }
+
+        .distribution-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .distribution-bars {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .distribution-row {
+            display: grid;
+            grid-template-columns: 40px 1fr 100px;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .distribution-grade {
+            font-size: 14px;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .distribution-bar-container {
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            height: 24px;
+            overflow: hidden;
+            border: 1px solid var(--border-primary);
+        }
+
+        .distribution-bar {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+            opacity: 0.8;
+        }
+
+        .distribution-count {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-align: right;
+        }
+
+        /* Hotspots Section */
+        .complexity-hotspots {
+            margin-top: 24px;
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .hotspots-table-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .hotspots-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .hotspots-table thead {
+            background: var(--bg-tertiary);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .hotspots-table th {
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .hotspots-table tbody tr {
+            border-bottom: 1px solid var(--border-secondary);
+        }
+
+        .hotspots-table tbody tr:last-child {
+            border-bottom: none;
+        }
+
+        .hotspot-row {
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .hotspot-row:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .hotspots-table td {
+            padding: 12px;
+            color: var(--text-primary);
+        }
+
+        .hotspot-name {
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-weight: 500;
+            color: var(--accent);
+        }
+
+        .hotspot-file {
+            color: var(--text-secondary);
+            font-size: 12px;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .hotspot-lines {
+            text-align: center;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 12px;
+        }
+
+        .hotspot-complexity {
+            text-align: center;
+            font-weight: bold;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+        }
+
+        .hotspot-grade {
+            text-align: center;
+        }
+
+        .grade-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-weight: bold;
+            font-size: 11px;
+            color: white;
+            min-width: 28px;
+            text-align: center;
+        }
+    """
+
+
 def get_all_styles() -> str:
     """Get all CSS styles combined.
 
@@ -1449,5 +1663,6 @@ def get_all_styles() -> str:
             get_spinner_styles(),
             get_theme_toggle_styles(),
             get_search_styles(),
+            get_complexity_report_styles(),
         ]
     )
