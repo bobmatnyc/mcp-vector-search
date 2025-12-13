@@ -411,15 +411,22 @@ async def build_graph_data(
                 f"Generated chunk name '{chunk_name}' for {chunk.chunk_type} at {chunk.file_path}:{chunk.start_line}"
             )
 
+        # Determine parent_id: use parent_chunk_id if exists, else use file node ID
+        file_path_str = str(chunk.file_path)
+        parent_id = chunk.parent_chunk_id
+        if not parent_id and file_path_str in file_nodes:
+            # Top-level chunk: set parent to file node for proper tree structure
+            parent_id = file_nodes[file_path_str]["id"]
+
         node = {
             "id": chunk_id,
             "name": chunk_name,
             "type": chunk.chunk_type,
-            "file_path": str(chunk.file_path),
+            "file_path": file_path_str,
             "start_line": chunk.start_line,
             "end_line": chunk.end_line,
             "complexity": chunk.complexity_score,
-            "parent_id": chunk.parent_chunk_id,
+            "parent_id": parent_id,  # Now properly set for all chunks
             "depth": chunk.chunk_depth,
             "content": chunk.content,  # Add content for code viewer
             "docstring": chunk.docstring,
