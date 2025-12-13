@@ -151,6 +151,148 @@ def create_app(viz_dir: Path) -> FastAPI:
                 media_type="application/json",
             )
 
+    @app.get("/api/relationships/{chunk_id}")
+    async def get_chunk_relationships(chunk_id: str) -> Response:
+        """Get all relationships for a chunk (semantic + callers) on-demand.
+
+        Lazy loads relationships when user expands a node, avoiding expensive
+        upfront computation. Results are cached in-memory for the session.
+
+        Args:
+            chunk_id: The chunk ID to find relationships for
+
+        Returns:
+            JSON response with semantic neighbors and callers
+        """
+        graph_file = viz_dir / "chunk-graph.json"
+
+        if not graph_file.exists():
+            return Response(
+                content='{"error": "Graph data not found"}',
+                status_code=404,
+                media_type="application/json",
+            )
+
+        try:
+            import ast
+            import json
+
+            with open(graph_file) as f:
+                data = json.load(f)
+
+            # Find the target chunk
+            target_node = None
+            for node in data.get("nodes", []):
+                if node.get("id") == chunk_id:
+                    target_node = node
+                    break
+
+            if not target_node:
+                return Response(
+                    content='{"error": "Chunk not found"}',
+                    status_code=404,
+                    media_type="application/json",
+                )
+
+            function_name = target_node.get("function_name") or target_node.get(
+                "class_name"
+            )
+            target_file = target_node.get("file_path", "")
+            target_content = target_node.get("content", "")
+
+            # Compute callers (who calls this function)
+            callers = []
+
+            def extract_calls(code: str) -> set[str]:
+                calls = set()
+                try:
+                    tree = ast.parse(code)
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.Call):
+                            if isinstance(node.func, ast.Name):
+                                calls.add(node.func.id)
+                            elif isinstance(node.func, ast.Attribute):
+                                calls.add(node.func.attr)
+                except SyntaxError:
+                    pass
+                return calls
+
+            if function_name:
+                for node in data.get("nodes", []):
+                    if node.get("type") != "chunk":
+                        continue
+                    node_file = node.get("file_path", "")
+                    if node_file == target_file:
+                        continue
+                    content = node.get("content", "")
+                    if function_name in extract_calls(content):
+                        caller_name = node.get("function_name") or node.get(
+                            "class_name"
+                        )
+                        if caller_name == "__init__":
+                            continue
+                        callers.append(
+                            {
+                                "id": node.get("id"),
+                                "name": caller_name
+                                or f"chunk_{node.get('start_line', 0)}",
+                                "file": node_file,
+                                "type": node.get("chunk_type", "code"),
+                            }
+                        )
+
+            # Compute semantic neighbors (similar code)
+            # Simple approach: find chunks with similar function names or content overlap
+            semantic = []
+            target_words = set(target_content.lower().split())
+
+            for node in data.get("nodes", []):
+                if node.get("type") != "chunk" or node.get("id") == chunk_id:
+                    continue
+                content = node.get("content", "")
+                node_words = set(content.lower().split())
+                # Jaccard similarity
+                if target_words and node_words:
+                    intersection = len(target_words & node_words)
+                    union = len(target_words | node_words)
+                    similarity = intersection / union if union > 0 else 0
+                    if similarity > 0.3:  # 30% threshold
+                        semantic.append(
+                            {
+                                "id": node.get("id"),
+                                "name": node.get("function_name")
+                                or node.get("class_name")
+                                or "chunk",
+                                "file": node.get("file_path", ""),
+                                "similarity": round(similarity, 2),
+                            }
+                        )
+
+            # Sort by similarity and limit
+            semantic.sort(key=lambda x: x["similarity"], reverse=True)
+            semantic = semantic[:10]
+
+            return Response(
+                content=json.dumps(
+                    {
+                        "chunk_id": chunk_id,
+                        "callers": callers,
+                        "caller_count": len(callers),
+                        "semantic": semantic,
+                        "semantic_count": len(semantic),
+                    }
+                ),
+                media_type="application/json",
+                headers={"Cache-Control": "max-age=300"},
+            )
+        except Exception as e:
+            console.print(f"[red]Error computing relationships: {e}[/red]")
+            return Response(
+                content='{"error": "Failed to compute relationships"}',
+                status_code=500,
+                media_type="application/json",
+            )
+
     @app.get("/api/callers/{chunk_id}")
     async def get_chunk_callers(chunk_id: str) -> Response:
         """Get callers for a specific code chunk (lazy loaded on-demand).

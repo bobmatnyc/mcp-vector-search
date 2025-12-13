@@ -309,3 +309,4 @@ tmp/
 
 # Added by Claude MPM /mpm-init
 .claude.json
+pipx_shared.pth

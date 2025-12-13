@@ -14,7 +14,6 @@ from rich.console import Console
 from ....core.database import ChromaVectorDatabase
 from ....core.directory_index import DirectoryIndex
 from ....core.project import ProjectManager
-from ....core.relationships import RelationshipStore
 from .state_manager import VisualizationState
 
 console = Console()
@@ -389,50 +388,13 @@ async def build_graph_data(
                 }
             )
 
-    # Load or compute relationships (lazy computation with caching)
-    console.print("[cyan]Loading relationships...[/cyan]")
-    relationship_store = RelationshipStore(project_manager.project_root)
-
-    if relationship_store.exists():
-        # Load pre-computed relationships (instant!)
-        relationships = relationship_store.load()
-        semantic_links = relationships.get("semantic", [])
-        caller_map = relationships.get("callers", {})
-
-        if semantic_links:
-            console.print(
-                f"[green]✓[/green] Loaded {len(semantic_links)} cached semantic relationships"
-            )
-        if caller_map:
-            total_callers = sum(len(callers) for callers in caller_map.values())
-            console.print(
-                f"[green]✓[/green] Loaded {total_callers} cached caller relationships"
-            )
-    else:
-        # Lazy compute relationships and cache for future use
-        console.print(
-            "[yellow]Computing relationships (first time only, will be cached)...[/yellow]"
-        )
-        try:
-            rel_stats = await relationship_store.compute_and_store(chunks, database)
-            console.print(
-                f"[green]✓[/green] Computed and cached {rel_stats['semantic_links']} semantic links and "
-                f"{rel_stats['caller_relationships']} caller relationships "
-                f"in {rel_stats['computation_time']:.1f}s"
-            )
-            # Reload the freshly computed relationships
-            relationships = relationship_store.load()
-            semantic_links = relationships.get("semantic", [])
-            caller_map = relationships.get("callers", {})
-        except Exception as e:
-            logger.warning(f"Failed to compute relationships: {e}")
-            console.print(f"[yellow]⚠[/yellow] Relationship computation failed: {e}")
-            semantic_links = []
-            caller_map = {}
-
-    # Skip cycle detection - callers are now lazy-loaded via /api/callers/{chunk_id}
-    # Cycle detection would require O(n²) caller computation which we're avoiding
-    cycle_links = []
+    # Skip ALL relationship computation at startup for instant loading
+    # Relationships are lazy-loaded on-demand via /api/relationships/{chunk_id}
+    # This avoids the expensive 5+ minute semantic computation
+    caller_map: dict = {}  # Empty - callers lazy-loaded via API
+    console.print(
+        "[green]✓[/green] Skipping relationship computation (lazy-loaded on node expand)"
+    )
 
     # Add chunk nodes
     for chunk in chunks:
@@ -571,11 +533,8 @@ async def build_graph_data(
                 }
             )
 
-    # Add semantic relationship links
-    links.extend(semantic_links)
-
-    # Add cycle links
-    links.extend(cycle_links)
+    # Semantic and caller relationships are lazy-loaded via /api/relationships/{chunk_id}
+    # No relationship links at startup for instant loading
 
     # Parse inter-project dependencies for monorepos
     if subprojects:
