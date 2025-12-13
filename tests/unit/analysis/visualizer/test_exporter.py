@@ -181,7 +181,7 @@ class TestMetadataCreation:
 
         assert isinstance(metadata, ExportMetadata)
         assert metadata.version == "1.0.0"
-        assert metadata.tool_version == "0.21.1"  # Current version
+        assert metadata.tool_version == "0.21.2"  # Current version
         assert metadata.project_root == str(exporter.project_root)
         assert metadata.git_commit is None
         assert metadata.git_branch is None

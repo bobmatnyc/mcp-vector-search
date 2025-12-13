@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.2] - 2025-12-13
+
+### Fixed
+- **JavaScript template literal escaping** - Removed unnecessary backslash escaping in visualizer JavaScript templates
+  - Cleaned up template literal syntax in dependency analysis display functions
+  - Fixed escaped dollar signs and backticks that were causing unnecessary verbosity
+
 ## [0.21.1] - 2025-12-13
 
 ### Added
