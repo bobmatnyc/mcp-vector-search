@@ -260,7 +260,22 @@ def serve(
     export_to_html(html_file)
 
     # Check if we need to regenerate the graph file
+    # Regenerate if: graph doesn't exist, code_only filter, or index is newer than graph
     needs_regeneration = not graph_file.exists() or code_only
+
+    # Check if index database is newer than graph (stale graph detection)
+    if graph_file.exists() and not needs_regeneration:
+        index_db = (
+            project_manager.project_root / ".mcp-vector-search" / "chroma.sqlite3"
+        )
+        if index_db.exists():
+            graph_mtime = graph_file.stat().st_mtime
+            index_mtime = index_db.stat().st_mtime
+            if index_mtime > graph_mtime:
+                console.print(
+                    "[yellow]Index has changed since graph was generated. Regenerating...[/yellow]"
+                )
+                needs_regeneration = True
 
     if graph_file.exists() and not needs_regeneration:
         # Use existing unfiltered file
