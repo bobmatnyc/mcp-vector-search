@@ -40,9 +40,10 @@ def visualize_callback(ctx: typer.Context) -> None:
 
     When called without a subcommand, automatically starts the visualization server.
     """
-    # If no subcommand was invoked, invoke serve through typer for consistent behavior
+    # If no subcommand was invoked, call serve directly with defaults
+    # (ctx.invoke doesn't work well with Typer Option defaults)
     if ctx.invoked_subcommand is None:
-        ctx.invoke(serve)
+        serve(port=8501, graph_file=None, code_only=False)
 
 
 @app.command()
@@ -254,11 +255,9 @@ def serve(
         )
         viz_dir.mkdir(parents=True, exist_ok=True)
 
-    # Always ensure index.html exists (regenerate if missing)
+    # Always regenerate index.html to ensure latest UI version
     html_file = viz_dir / "index.html"
-    if not html_file.exists():
-        console.print("[yellow]Creating visualization HTML file...[/yellow]")
-        export_to_html(html_file)
+    export_to_html(html_file)
 
     # Check if we need to regenerate the graph file
     needs_regeneration = not graph_file.exists() or code_only
