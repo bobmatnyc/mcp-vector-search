@@ -56,8 +56,19 @@ def get_base_styles() -> str:
             transition: background-color 0.3s ease, color 0.3s ease;
         }
 
-        h1 { margin: 0 0 16px 0; font-size: 18px; color: var(--text-primary); }
+        h1 { margin: 0 0 4px 0; font-size: 18px; color: var(--text-primary); }
         h3 { margin: 16px 0 8px 0; font-size: 14px; color: var(--text-secondary); }
+
+        .version-badge {
+            font-size: 10px;
+            color: var(--text-tertiary);
+            margin-bottom: 16px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            padding: 2px 6px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            display: inline-block;
+        }
     """
 
 

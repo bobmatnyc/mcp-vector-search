@@ -215,7 +215,7 @@ def serve(
     """Start local HTTP server for D3.js visualization.
 
     Examples:
-        # Start server on default port 8080
+        # Start server on default port (8501-8599 range)
         mcp-vector-search visualize serve
 
         # Custom port

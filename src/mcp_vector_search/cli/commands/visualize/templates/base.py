@@ -6,6 +6,7 @@ to generate the complete HTML page for the D3.js visualization.
 
 import time
 
+from .... import __build__, __version__
 from .scripts import get_all_scripts
 from .styles import get_all_styles
 
@@ -43,6 +44,7 @@ def generate_html_template() -> str:
 <body>
     <div id="controls">
         <h1>🔍 Code Tree</h1>
+        <div class="version-badge">v{__version__} (build {__build__})</div>
 
         <div class="control-group">
             <label style="color: var(--text-primary); margin-bottom: 8px;">Layout Mode</label>
