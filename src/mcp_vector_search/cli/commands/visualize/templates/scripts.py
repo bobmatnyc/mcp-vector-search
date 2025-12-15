@@ -2480,8 +2480,7 @@ function applyFileFilter() {
     // Filter allNodes based on current filter
     const filteredNodes = allNodes.filter(node => {
         if (node.type === 'directory') {
-            // Include directories if they have any matching children
-            // We'll handle this in tree building - always include for now
+            // Directory filtering handled separately below
             return true;
         } else if (node.type === 'file') {
             return shouldIncludeFile(node);
@@ -2491,11 +2490,66 @@ function applyFileFilter() {
         return true; // Include unknown types
     });
 
-    console.log(`Filtered nodes: ${filteredNodes.length} of ${allNodes.length}`);
+    console.log(`Filtered nodes (before directory filtering): ${filteredNodes.length} of ${allNodes.length}`);
+
+    // Build set of visible directory paths
+    // A directory is visible if it contains visible files or has visible subdirectories
+    let finalFilteredNodes = filteredNodes;
+
+    if (currentFileFilter !== 'all') {
+        const visibleDirectories = new Set();
+
+        // Helper to get all ancestor directory paths for a given path
+        function getAncestorPaths(path) {
+            const ancestors = [];
+            if (!path) return ancestors;
+
+            const parts = path.split('/').filter(p => p.length > 0);
+            let currentPath = '';
+
+            // Build up each level of the path
+            for (let i = 0; i < parts.length - 1; i++) { // -1 to exclude the file itself
+                currentPath += '/' + parts[i];
+                ancestors.push(currentPath);
+            }
+
+            return ancestors;
+        }
+
+        // Add all ancestor directories of visible files
+        filteredNodes.forEach(node => {
+            if (node.type === 'file') {
+                // For files, use file_path to get directory ancestors
+                const ancestors = getAncestorPaths(node.file_path || node.id);
+                ancestors.forEach(path => visibleDirectories.add(path));
+            } else if (chunkTypes.includes(node.type) && node.file_path) {
+                // For chunks, use file_path to get directory ancestors
+                const ancestors = getAncestorPaths(node.file_path);
+                ancestors.forEach(path => visibleDirectories.add(path));
+            }
+        });
+
+        console.log(`Visible directories after filter: ${visibleDirectories.size}`);
+
+        // Now filter directories based on visible set
+        finalFilteredNodes = filteredNodes.filter(node => {
+            if (node.type === 'directory') {
+                // Check if this directory path or ID is in visible set
+                const dirPath = node.file_path || node.id;
+                const isVisible = visibleDirectories.has(dirPath);
+                return isVisible;
+            }
+            return true; // Keep all non-directory nodes from previous filter
+        });
+
+        console.log(`Final filtered nodes: ${finalFilteredNodes.length} of ${allNodes.length}`);
+    } else {
+        console.log(`Final filtered nodes (all): ${finalFilteredNodes.length} of ${allNodes.length}`);
+    }
 
     // Temporarily replace allNodes with filtered nodes for tree building
     const originalNodes = allNodes;
-    allNodes = filteredNodes;
+    allNodes = finalFilteredNodes;
 
     // Rebuild the tree structure with filtered nodes
     buildTreeStructure();
