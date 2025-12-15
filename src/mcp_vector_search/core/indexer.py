@@ -13,6 +13,7 @@ from packaging import version
 from .. import __version__
 from ..analysis.collectors.base import MetricCollector
 from ..analysis.metrics import ChunkMetrics
+from ..analysis.trends import TrendTracker
 from ..config.defaults import ALLOWED_DOTFILES, DEFAULT_IGNORE_PATTERNS
 from ..config.settings import ProjectConfig
 from ..parsers.registry import get_parser_registry
@@ -136,6 +137,9 @@ class SemanticIndexer:
 
         # Initialize relationship store for pre-computing visualization relationships
         self.relationship_store = RelationshipStore(project_root)
+
+        # Initialize trend tracker for historical metrics
+        self.trend_tracker = TrendTracker(project_root)
 
     def _default_collectors(self) -> list[MetricCollector]:
         """Return default set of metric collectors.
@@ -411,6 +415,27 @@ class SemanticIndexer:
             except Exception as e:
                 logger.warning(f"Failed to compute relationships: {e}")
                 logger.debug("Visualization will compute relationships on demand")
+
+        # Save trend snapshot after successful indexing
+        if indexed_count > 0:
+            try:
+                logger.info("Saving metrics snapshot for trend tracking...")
+                # Get database stats
+                stats = await self.database.get_stats()
+                # Get all chunks for detailed metrics
+                all_chunks = await self.database.get_all_chunks()
+                # Compute metrics from stats and chunks
+                metrics = self.trend_tracker.compute_metrics_from_stats(
+                    stats.to_dict(), all_chunks
+                )
+                # Save snapshot (updates today's entry if exists)
+                self.trend_tracker.save_snapshot(metrics)
+                logger.info(
+                    f"✓ Saved trend snapshot: {metrics['total_files']} files, "
+                    f"{metrics['total_chunks']} chunks, health score {metrics['health_score']}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save trend snapshot: {e}")
 
         return indexed_count
 

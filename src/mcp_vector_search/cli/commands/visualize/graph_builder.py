@@ -11,6 +11,7 @@ from typing import Any
 from loguru import logger
 from rich.console import Console
 
+from ....analysis.trends import TrendTracker
 from ....core.database import ChromaVectorDatabase
 from ....core.directory_index import DirectoryIndex
 from ....core.project import ProjectManager
@@ -547,6 +548,10 @@ async def build_graph_data(
     # Get stats
     stats = await database.get_stats()
 
+    # Load trend data for time series visualization
+    trend_tracker = TrendTracker(project_manager.project_root)
+    trend_summary = trend_tracker.get_trend_summary(days=90)  # Last 90 days
+
     # Build final graph data
     graph_data = {
         "nodes": nodes,
@@ -558,6 +563,7 @@ async def build_graph_data(
             "is_monorepo": len(subprojects) > 0,
             "subprojects": list(subprojects.keys()) if subprojects else [],
         },
+        "trends": trend_summary,  # Include trend data for visualization
     }
 
     return graph_data

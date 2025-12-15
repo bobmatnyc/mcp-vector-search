@@ -200,6 +200,12 @@ async function loadGraphDataActual() {
         allNodes = data.nodes || [];
         allLinks = data.links || [];
 
+        // Store trend data globally for visualization
+        window.graphTrendData = data.trends || null;
+        if (window.graphTrendData) {
+            console.log(`Loaded trend data: ${window.graphTrendData.entries_count} entries`);
+        }
+
         console.log(`Loaded ${allNodes.length} nodes and ${allLinks.length} links`);
 
         // DEBUG: Log first few nodes to see actual structure
@@ -3840,26 +3846,275 @@ function showTrends() {
 
     html += '</div></div>';
 
-    // Future Trends Section
-    html += '<div class="future-section">';
+    // Historical Trends Section
+    html += '<div class="trends-section">';
     html += '<h3 class="section-title">📊 Historical Trends</h3>';
-    html += '<div class="future-placeholder">';
-    html += '<div class="future-icon">🚧</div>';
-    html += '<div class="future-title">Coming in a Future Version</div>';
-    html += '<div class="future-description">';
-    html += 'Git history analysis will enable tracking of:';
-    html += '<ul>';
-    html += '<li>Complexity trends over time</li>';
-    html += '<li>Code growth and churn rates</li>';
-    html += '<li>Hot spots of change</li>';
-    html += '<li>Technical debt accumulation</li>';
-    html += '</ul>';
-    html += '</div>';
-    html += '</div></div>';
+
+    // Check if trend data is available
+    if (window.graphTrendData && window.graphTrendData.entries && window.graphTrendData.entries.length > 0) {
+        const trendEntries = window.graphTrendData.entries;
+
+        // Render trend charts
+        html += '<div class="trends-container">';
+        html += '<div id="health-score-chart" class="trend-chart"></div>';
+        html += '<div id="complexity-chart" class="trend-chart"></div>';
+        html += '<div id="files-chunks-chart" class="trend-chart"></div>';
+        html += '</div>';
+
+        html += `<div class="trend-info">Showing ${trendEntries.length} data points from ${trendEntries[0].date} to ${trendEntries[trendEntries.length - 1].date}</div>`;
+    } else {
+        // No trend data yet - show placeholder
+        html += '<div class="future-placeholder">';
+        html += '<div class="future-icon">📊</div>';
+        html += '<div class="future-title">No Historical Data Yet</div>';
+        html += '<div class="future-description">';
+        html += 'Trend data will be collected automatically after each indexing operation. ';
+        html += 'Run <code>mcp-vector-search index</code> to generate the first snapshot.';
+        html += '</div>';
+        html += '</div>';
+    }
+
+    html += '</div>'; // trends-section
 
     html += '</div>'; // trends-report
 
     viewerContent.innerHTML = html;
+
+    // Render D3 charts if trend data is available
+    if (window.graphTrendData && window.graphTrendData.entries && window.graphTrendData.entries.length > 0) {
+        renderTrendCharts(window.graphTrendData.entries);
+    }
+}
+
+// Render trend line charts using D3
+function renderTrendCharts(entries) {
+    // Chart dimensions
+    const margin = {top: 20, right: 30, bottom: 40, left: 50};
+    const width = 600 - margin.left - margin.right;
+    const height = 250 - margin.top - margin.bottom;
+
+    // Parse dates
+    const parseDate = d3.timeParse('%Y-%m-%d');
+    entries.forEach(d => {
+        d.parsedDate = parseDate(d.date);
+    });
+
+    // 1. Health Score Chart
+    renderLineChart('#health-score-chart', entries, {
+        title: 'Health Score Over Time',
+        width, height, margin,
+        yAccessor: d => d.metrics.health_score || 0,
+        yLabel: 'Health Score',
+        color: '#238636',
+        yDomain: [0, 100]
+    });
+
+    // 2. Average Complexity Chart
+    renderLineChart('#complexity-chart', entries, {
+        title: 'Average Complexity Over Time',
+        width, height, margin,
+        yAccessor: d => d.metrics.avg_complexity || 0,
+        yLabel: 'Avg Complexity',
+        color: '#d29922',
+        yDomain: [0, d3.max(entries, d => d.metrics.avg_complexity || 0) * 1.1]
+    });
+
+    // 3. Files and Chunks Chart (dual line)
+    renderDualLineChart('#files-chunks-chart', entries, {
+        title: 'Files and Chunks Over Time',
+        width, height, margin,
+        y1Accessor: d => d.metrics.total_files || 0,
+        y2Accessor: d => d.metrics.total_chunks || 0,
+        y1Label: 'Files',
+        y2Label: 'Chunks',
+        color1: '#1f6feb',
+        color2: '#8957e5'
+    });
+}
+
+// Render single line chart
+function renderLineChart(selector, data, config) {
+    const svg = d3.select(selector)
+        .append('svg')
+        .attr('width', config.width + config.margin.left + config.margin.right)
+        .attr('height', config.height + config.margin.top + config.margin.bottom)
+        .append('g')
+        .attr('transform', `translate(${config.margin.left},${config.margin.top})`);
+
+    // Add title
+    svg.append('text')
+        .attr('x', config.width / 2)
+        .attr('y', -5)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '14px')
+        .style('font-weight', 'bold')
+        .text(config.title);
+
+    // Create scales
+    const xScale = d3.scaleTime()
+        .domain(d3.extent(data, d => d.parsedDate))
+        .range([0, config.width]);
+
+    const yScale = d3.scaleLinear()
+        .domain(config.yDomain || [0, d3.max(data, config.yAccessor)])
+        .range([config.height, 0]);
+
+    // Create line generator
+    const line = d3.line()
+        .x(d => xScale(d.parsedDate))
+        .y(d => yScale(config.yAccessor(d)))
+        .curve(d3.curveMonotoneX);
+
+    // Add X axis
+    svg.append('g')
+        .attr('transform', `translate(0,${config.height})`)
+        .call(d3.axisBottom(xScale).ticks(5).tickFormat(d3.timeFormat('%b %d')))
+        .selectAll('text')
+        .style('font-size', '11px');
+
+    // Add Y axis
+    svg.append('g')
+        .call(d3.axisLeft(yScale).ticks(5))
+        .selectAll('text')
+        .style('font-size', '11px');
+
+    // Add Y axis label
+    svg.append('text')
+        .attr('transform', 'rotate(-90)')
+        .attr('y', 0 - config.margin.left + 10)
+        .attr('x', 0 - (config.height / 2))
+        .attr('dy', '1em')
+        .style('text-anchor', 'middle')
+        .style('font-size', '12px')
+        .text(config.yLabel);
+
+    // Add line path
+    svg.append('path')
+        .datum(data)
+        .attr('fill', 'none')
+        .attr('stroke', config.color)
+        .attr('stroke-width', 2)
+        .attr('d', line);
+
+    // Add dots
+    svg.selectAll('.dot')
+        .data(data)
+        .enter().append('circle')
+        .attr('class', 'dot')
+        .attr('cx', d => xScale(d.parsedDate))
+        .attr('cy', d => yScale(config.yAccessor(d)))
+        .attr('r', 4)
+        .attr('fill', config.color)
+        .style('cursor', 'pointer')
+        .append('title')
+        .text(d => `${d.date}: ${config.yAccessor(d).toFixed(1)}`);
+}
+
+// Render dual line chart (two Y axes)
+function renderDualLineChart(selector, data, config) {
+    const svg = d3.select(selector)
+        .append('svg')
+        .attr('width', config.width + config.margin.left + config.margin.right)
+        .attr('height', config.height + config.margin.top + config.margin.bottom)
+        .append('g')
+        .attr('transform', `translate(${config.margin.left},${config.margin.top})`);
+
+    // Add title
+    svg.append('text')
+        .attr('x', config.width / 2)
+        .attr('y', -5)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '14px')
+        .style('font-weight', 'bold')
+        .text(config.title);
+
+    // Create scales
+    const xScale = d3.scaleTime()
+        .domain(d3.extent(data, d => d.parsedDate))
+        .range([0, config.width]);
+
+    const y1Scale = d3.scaleLinear()
+        .domain([0, d3.max(data, config.y1Accessor) * 1.1])
+        .range([config.height, 0]);
+
+    const y2Scale = d3.scaleLinear()
+        .domain([0, d3.max(data, config.y2Accessor) * 1.1])
+        .range([config.height, 0]);
+
+    // Create line generators
+    const line1 = d3.line()
+        .x(d => xScale(d.parsedDate))
+        .y(d => y1Scale(config.y1Accessor(d)))
+        .curve(d3.curveMonotoneX);
+
+    const line2 = d3.line()
+        .x(d => xScale(d.parsedDate))
+        .y(d => y2Scale(config.y2Accessor(d)))
+        .curve(d3.curveMonotoneX);
+
+    // Add X axis
+    svg.append('g')
+        .attr('transform', `translate(0,${config.height})`)
+        .call(d3.axisBottom(xScale).ticks(5).tickFormat(d3.timeFormat('%b %d')))
+        .selectAll('text')
+        .style('font-size', '11px');
+
+    // Add Y1 axis (left)
+    svg.append('g')
+        .call(d3.axisLeft(y1Scale).ticks(5))
+        .selectAll('text')
+        .style('font-size', '11px')
+        .style('fill', config.color1);
+
+    // Add Y2 axis (right)
+    svg.append('g')
+        .attr('transform', `translate(${config.width},0)`)
+        .call(d3.axisRight(y2Scale).ticks(5))
+        .selectAll('text')
+        .style('font-size', '11px')
+        .style('fill', config.color2);
+
+    // Add line 1
+    svg.append('path')
+        .datum(data)
+        .attr('fill', 'none')
+        .attr('stroke', config.color1)
+        .attr('stroke-width', 2)
+        .attr('d', line1);
+
+    // Add line 2
+    svg.append('path')
+        .datum(data)
+        .attr('fill', 'none')
+        .attr('stroke', config.color2)
+        .attr('stroke-width', 2)
+        .attr('stroke-dasharray', '5,5')
+        .attr('d', line2);
+
+    // Add legend
+    const legend = svg.append('g')
+        .attr('transform', `translate(${config.width - 120}, 10)`);
+
+    legend.append('line')
+        .attr('x1', 0).attr('x2', 20)
+        .attr('y1', 5).attr('y2', 5)
+        .attr('stroke', config.color1)
+        .attr('stroke-width', 2);
+    legend.append('text')
+        .attr('x', 25).attr('y', 9)
+        .style('font-size', '11px')
+        .text(config.y1Label);
+
+    legend.append('line')
+        .attr('x1', 0).attr('x2', 20)
+        .attr('y1', 20).attr('y2', 20)
+        .attr('stroke', config.color2)
+        .attr('stroke-width', 2)
+        .attr('stroke-dasharray', '5,5');
+    legend.append('text')
+        .attr('x', 25).attr('y', 24)
+        .style('font-size', '11px')
+        .text(config.y2Label);
 }
 
 function calculateCodebaseMetrics() {

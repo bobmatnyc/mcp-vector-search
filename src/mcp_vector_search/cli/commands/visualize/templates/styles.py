@@ -2350,7 +2350,40 @@ def get_trends_styles() -> str:
             font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
         }
 
-        /* Future Section */
+        /* Trends Chart Styles */
+        .trends-section {
+            margin-top: 32px;
+        }
+
+        .trends-container {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            margin-bottom: 16px;
+        }
+
+        .trend-chart {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
+            border-radius: 8px;
+            padding: 20px;
+            overflow-x: auto;
+        }
+
+        .trend-chart svg {
+            display: block;
+            margin: 0 auto;
+        }
+
+        .trend-info {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-align: center;
+            margin-top: 8px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+        }
+
+        /* Future Section (fallback when no trend data) */
         .future-section {
             margin-top: 32px;
         }
@@ -2381,6 +2414,14 @@ def get_trends_styles() -> str:
             line-height: 1.8;
             max-width: 600px;
             margin: 0 auto;
+        }
+
+        .future-description code {
+            background: var(--bg-tertiary);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 12px;
         }
 
         .future-description ul {
