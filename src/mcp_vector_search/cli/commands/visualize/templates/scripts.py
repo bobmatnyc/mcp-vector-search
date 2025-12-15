@@ -2476,16 +2476,17 @@ function applyFileFilter() {
 
         const savedState = stateMap.get(node.id);
 
-        // If this node was previously collapsed, collapse it now
-        if (savedState === false && node.children && !node._children) {
-            // Node is currently expanded but should be collapsed
-            node._children = node.children;
-            node.children = null;
+        // If this node was previously expanded, expand it now
+        if (savedState === true && node._children && !node.children) {
+            // Node is currently collapsed but should be expanded
+            node.children = node._children;
+            node._children = null;
         }
-        // If node was expanded, it already has children by default from buildTreeStructure
+        // If node was collapsed (savedState === false), it's already collapsed from buildTreeStructure
 
-        // Recursively restore state of children (only traverse children that are visible)
-        const childArray = node.children || [];
+        // Recursively restore state of ALL children (traverse both children and _children)
+        // After buildTreeStructure(), nodes are collapsed so we need to check _children too
+        const childArray = node.children || node._children || [];
         childArray.forEach(child => restoreExpandedState(child, stateMap));
     }
 
@@ -2600,8 +2601,24 @@ function applyFileFilter() {
 
     // Restore the expanded/collapsed state after rebuilding
     if (treeData && expandedStateMap.size > 0) {
+        console.log('Restoring expanded state...');
         restoreExpandedState(treeData, expandedStateMap);
-        console.log('Restored expanded state for tree nodes');
+
+        // Count how many nodes are actually expanded after restoration
+        let expandedCount = 0;
+        function countExpanded(node) {
+            if (node.children) {
+                expandedCount++;
+                node.children.forEach(child => countExpanded(child));
+            }
+            if (node._children) {
+                node._children.forEach(child => countExpanded(child));
+            }
+        }
+        if (treeData.children) treeData.children.forEach(child => countExpanded(child));
+        if (treeData._children) treeData._children.forEach(child => countExpanded(child));
+
+        console.log(`Restored expanded state: ${expandedCount} nodes expanded out of ${expandedStateMap.size} total`);
     }
 
     // Completely redraw the visualization
