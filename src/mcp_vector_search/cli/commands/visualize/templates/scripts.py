@@ -3906,16 +3906,19 @@ function showTrends() {
 // ============================================================================
 
 function generateRemediationReport() {
-    // Gather complexity data
+    // Gather complexity data (metrics are stored directly on nodes, not in a metrics object)
     const complexityData = [];
     allNodes.forEach(node => {
-        if (node.metrics && node.metrics.complexity !== undefined) {
-            const complexity = node.metrics.complexity;
+        if (node.complexity !== undefined && node.complexity !== null) {
+            const complexity = node.complexity;
             let grade = 'A';
             if (complexity > 40) grade = 'F';
             else if (complexity > 30) grade = 'D';
             else if (complexity > 20) grade = 'C';
             else if (complexity > 10) grade = 'B';
+
+            // Calculate lines from start_line and end_line
+            const lines = (node.end_line && node.start_line) ? (node.end_line - node.start_line + 1) : 0;
 
             if (grade !== 'A' && grade !== 'B') {  // Only include C, D, F
                 complexityData.push({
@@ -3924,7 +3927,7 @@ function generateRemediationReport() {
                     type: node.type || 'unknown',
                     complexity: complexity,
                     grade: grade,
-                    lines: node.metrics.lines || 0
+                    lines: lines
                 });
             }
         }
@@ -3933,49 +3936,49 @@ function generateRemediationReport() {
     // Gather code smell data
     const smells = [];
     allNodes.forEach(node => {
-        if (!node.metrics) return;
-
-        const m = node.metrics;
         const file = node.file_path || 'Unknown';
         const name = node.name || node.id;
+        const lines = (node.end_line && node.start_line) ? (node.end_line - node.start_line + 1) : 0;
+        const complexity = node.complexity || 0;
+        const depth = node.depth || 0;
 
         // Long Method
-        if (m.lines && m.lines > 50) {
+        if (lines > 50) {
             smells.push({
                 file, name,
                 smell: 'Long Method',
-                severity: m.lines > 100 ? 'error' : 'warning',
-                detail: `${m.lines} lines (recommended: <50)`
+                severity: lines > 100 ? 'error' : 'warning',
+                detail: `${lines} lines (recommended: <50)`
             });
         }
 
         // High Complexity
-        if (m.complexity && m.complexity > 15) {
+        if (complexity > 15) {
             smells.push({
                 file, name,
                 smell: 'High Complexity',
-                severity: m.complexity > 25 ? 'error' : 'warning',
-                detail: `Complexity: ${m.complexity} (recommended: <15)`
+                severity: complexity > 25 ? 'error' : 'warning',
+                detail: `Complexity: ${complexity} (recommended: <15)`
             });
         }
 
-        // Deep Nesting
-        if (m.max_depth && m.max_depth > 4) {
+        // Deep Nesting (using depth field)
+        if (depth > 4) {
             smells.push({
                 file, name,
                 smell: 'Deep Nesting',
-                severity: m.max_depth > 6 ? 'error' : 'warning',
-                detail: `Depth: ${m.max_depth} (recommended: <4)`
+                severity: depth > 6 ? 'error' : 'warning',
+                detail: `Depth: ${depth} (recommended: <4)`
             });
         }
 
         // God Class (for classes only)
-        if (node.type === 'class' && m.lines && m.lines > 300) {
+        if (node.type === 'class' && lines > 300) {
             smells.push({
                 file, name,
                 smell: 'God Class',
                 severity: 'error',
-                detail: `${m.lines} lines - consider breaking into smaller classes`
+                detail: `${lines} lines - consider breaking into smaller classes`
             });
         }
     });
