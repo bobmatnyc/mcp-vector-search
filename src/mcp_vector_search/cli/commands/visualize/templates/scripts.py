@@ -4008,7 +4008,7 @@ These functions/methods have complexity scores that make them difficult to maint
 
     complexityData.forEach(item => {
         const gradeEmoji = item.grade === 'F' ? '🔴' : item.grade === 'D' ? '🟠' : '🟡';
-        markdown += `| ${gradeEmoji} ${item.grade} | \\`${item.name}\\` | ${item.file} | ${item.complexity} | ${item.lines} |\n`;
+        markdown += `| ${gradeEmoji} ${item.grade} | \\`${item.name}\\` | ${item.file} | ${item.complexity} | ${item.lines} |\\n`;
     });
 
     markdown += `
@@ -4022,11 +4022,11 @@ These functions/methods have complexity scores that make them difficult to maint
 
     const errors = smells.filter(s => s.severity === 'error');
     if (errors.length === 0) {
-        markdown += '_No critical issues found._\n';
+        markdown += '_No critical issues found._\\n';
     } else {
-        markdown += '| Smell | Name | File | Detail |\n|-------|------|------|--------|\n';
+        markdown += '| Smell | Name | File | Detail |\\n|-------|------|------|--------|\\n';
         errors.forEach(s => {
-            markdown += `| 🔴 ${s.smell} | \\`${s.name}\\` | ${s.file} | ${s.detail} |\n`;
+            markdown += `| 🔴 ${s.smell} | \\`${s.name}\\` | ${s.file} | ${s.detail} |\\n`;
         });
     }
 
@@ -4037,11 +4037,11 @@ These functions/methods have complexity scores that make them difficult to maint
 
     const warnings = smells.filter(s => s.severity === 'warning');
     if (warnings.length === 0) {
-        markdown += '_No warnings found._\n';
+        markdown += '_No warnings found._\\n';
     } else {
-        markdown += '| Smell | Name | File | Detail |\n|-------|------|------|--------|\n';
+        markdown += '| Smell | Name | File | Detail |\\n|-------|------|------|--------|\\n';
         warnings.forEach(s => {
-            markdown += `| 🟡 ${s.smell} | \\`${s.name}\\` | ${s.file} | ${s.detail} |\n`;
+            markdown += `| 🟡 ${s.smell} | \\`${s.name}\\` | ${s.file} | ${s.detail} |\\n`;
         });
     }
 

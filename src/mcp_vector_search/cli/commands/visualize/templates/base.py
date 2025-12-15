@@ -42,11 +42,6 @@ def generate_html_template() -> str:
 </head>
 <body>
     <div id="controls">
-        <div class="search-container">
-            <input type="text" id="search-input" placeholder="Search nodes..." oninput="handleSearchInput(event)" onkeydown="handleSearchKeydown(event)">
-            <div id="search-results" class="search-results"></div>
-        </div>
-
         <h1>🔍 Code Tree</h1>
 
         <div class="control-group">
@@ -134,6 +129,13 @@ def generate_html_template() -> str:
                     <span>Scroll → zoom in/out</span>
                 </div>
             </div>
+        </div>
+
+        <!-- Search Section -->
+        <h3>🔎 Search</h3>
+        <div class="search-container">
+            <input type="text" id="search-input" placeholder="Search nodes..." oninput="handleSearchInput(event)" onkeydown="handleSearchKeydown(event)">
+            <div id="search-results" class="search-results"></div>
         </div>
 
         <!-- Options Section -->
