@@ -1,0 +1,57 @@
+#!/bin/bash
+# Development launcher for mcp-vector-search
+# Runs from source with virtual environment
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_DIR="$SCRIPT_DIR/.venv"
+PYTHON_MIN_VERSION="3.11"
+
+# Find Python 3.11+
+find_python() {
+    # Check common locations for Python 3.11+
+    for py in python3.11 python3.12 python3.13 python3; do
+        if command -v "$py" &> /dev/null; then
+            version=$("$py" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+            major=$(echo "$version" | cut -d. -f1)
+            minor=$(echo "$version" | cut -d. -f2)
+            if [ "$major" -ge 3 ] && [ "$minor" -ge 11 ]; then
+                echo "$py"
+                return 0
+            fi
+        fi
+    done
+
+    # Check homebrew location
+    if [ -f "/opt/homebrew/bin/python3.11" ]; then
+        echo "/opt/homebrew/bin/python3.11"
+        return 0
+    fi
+
+    return 1
+}
+
+# Create venv if it doesn't exist
+setup_venv() {
+    if [ ! -d "$VENV_DIR" ]; then
+        echo "Creating virtual environment..."
+        PYTHON=$(find_python)
+        if [ -z "$PYTHON" ]; then
+            echo "Error: Python 3.11+ required but not found"
+            echo "Install with: brew install python@3.11"
+            exit 1
+        fi
+        "$PYTHON" -m venv "$VENV_DIR"
+
+        echo "Installing package in development mode..."
+        "$VENV_DIR/bin/pip" install --upgrade pip
+        "$VENV_DIR/bin/pip" install -e "$SCRIPT_DIR"
+    fi
+}
+
+# Main
+setup_venv
+
+# Run mcp-vector-search with all arguments
+exec "$VENV_DIR/bin/mcp-vector-search" "$@"
