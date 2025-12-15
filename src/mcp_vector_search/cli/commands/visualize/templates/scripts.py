@@ -2550,15 +2550,165 @@ function applyFileFilter() {
         console.log(`Final filtered nodes (all): ${finalFilteredNodes.length} of ${allNodes.length}`);
     }
 
-    // Temporarily replace allNodes with filtered nodes for tree building
-    const originalNodes = allNodes;
-    allNodes = finalFilteredNodes;
+    // Build tree hierarchy from paths (not links) for filtered views
+    // This prevents orphaned children when parent nodes are filtered out
+    function buildTreeFromPaths(nodes) {
+        console.log('=== BUILDING TREE FROM PATHS ===');
+        const nodeMap = new Map();
+        const rootNodes = [];
 
-    // Rebuild the tree structure with filtered nodes
-    buildTreeStructure();
+        // First pass: create all nodes with empty children
+        nodes.forEach(node => {
+            nodeMap.set(node.id, {...node, children: []});
+        });
 
-    // Restore original allNodes
-    allNodes = originalNodes;
+        console.log(`Created ${nodeMap.size} nodes in map`);
+
+        // Second pass: establish parent-child from paths
+        nodes.forEach(node => {
+            const path = node.file_path || node.id;
+            if (!path) {
+                console.warn(`Node ${node.id} has no path, treating as root`);
+                rootNodes.push(nodeMap.get(node.id));
+                return;
+            }
+
+            // Get parent path
+            const parts = path.split('/').filter(p => p);
+            if (parts.length <= 1) {
+                // Root level node (no parent)
+                rootNodes.push(nodeMap.get(node.id));
+                return;
+            }
+
+            // Find parent by path
+            parts.pop(); // Remove current item (last part)
+            let parentPath = '/' + parts.join('/');
+
+            // Try to find parent in filtered nodes
+            let parent = nodeMap.get(parentPath);
+
+            // If direct parent not found, walk up to find nearest ancestor
+            while (!parent && parts.length > 0) {
+                parts.pop();
+                parentPath = parts.length > 0 ? '/' + parts.join('/') : null;
+                parent = parentPath ? nodeMap.get(parentPath) : null;
+            }
+
+            if (parent) {
+                parent.children.push(nodeMap.get(node.id));
+            } else {
+                // No ancestor found in filtered set - this is a root
+                rootNodes.push(nodeMap.get(node.id));
+            }
+        });
+
+        console.log(`Built tree with ${rootNodes.length} root nodes`);
+        console.log('Root node types:', rootNodes.map(n => `${n.type}:${n.name}`).slice(0, 5));
+        console.log('=== END BUILDING TREE FROM PATHS ===');
+
+        return rootNodes;
+    }
+
+    // For filtered views, use path-based tree building to avoid orphaned children
+    // For 'all' filter, use normal link-based buildTreeStructure
+    if (currentFileFilter !== 'all') {
+        console.log('Using path-based tree building for filtered view');
+        const rootNodes = buildTreeFromPaths(finalFilteredNodes);
+
+        // Create treeData from roots
+        if (rootNodes.length === 0) {
+            console.error('No root nodes found in filtered view!');
+            treeData = {name: 'Empty', id: 'root', type: 'directory', children: []};
+        } else if (rootNodes.length === 1) {
+            treeData = rootNodes[0];
+        } else {
+            treeData = {
+                name: 'Project Root',
+                id: 'virtual-root',
+                type: 'directory',
+                children: rootNodes
+            };
+        }
+
+        // Apply single-child chain collapsing to match buildTreeStructure behavior
+        console.log('=== COLLAPSING SINGLE-CHILD CHAINS (filtered) ===');
+        if (treeData.children) {
+            treeData.children.forEach(child => {
+                // Use the same collapseSingleChildChains function from buildTreeStructure
+                // We need to define a local version or extract it
+                function collapseChains(node) {
+                    if (!node || !node.children) return;
+
+                    // First, recursively process all children
+                    node.children.forEach(child => collapseChains(child));
+
+                    // Directory with single directory child - combine names
+                    if (node.type === 'directory' && node.children.length === 1) {
+                        const onlyChild = node.children[0];
+                        if (onlyChild.type === 'directory') {
+                            console.log(`Collapsing dir chain: ${node.name} + ${onlyChild.name}`);
+                            node.name = `${node.name}/${onlyChild.name}`;
+                            node.children = onlyChild.children || [];
+                            node._children = onlyChild._children || null;
+                            node.collapsed_ids = node.collapsed_ids || [node.id];
+                            node.collapsed_ids.push(onlyChild.id);
+                            collapseChains(node);
+                        }
+                    }
+
+                    // File with single chunk child - promote chunk's children to file
+                    if (node.type === 'file' && node.children && node.children.length === 1) {
+                        const onlyChild = node.children[0];
+                        if (chunkTypes.includes(onlyChild.type)) {
+                            const chunkChildren = onlyChild.children || onlyChild._children || [];
+                            if (chunkChildren.length > 0) {
+                                console.log(`Promoting ${chunkChildren.length} children from ${onlyChild.type} to file ${node.name}`);
+                                node.children = chunkChildren;
+                                node.collapsed_chunk = {
+                                    type: onlyChild.type,
+                                    name: onlyChild.name,
+                                    id: onlyChild.id,
+                                    content: onlyChild.content,
+                                    docstring: onlyChild.docstring,
+                                    start_line: onlyChild.start_line,
+                                    end_line: onlyChild.end_line,
+                                    file_path: onlyChild.file_path,
+                                    language: onlyChild.language,
+                                    complexity: onlyChild.complexity
+                                };
+                            }
+                        }
+                    }
+                }
+                collapseChains(child);
+            });
+        }
+        console.log('=== END COLLAPSING SINGLE-CHILD CHAINS (filtered) ===');
+
+        // Collapse all nodes to match buildTreeStructure behavior
+        function collapseAll(node) {
+            if (node.children && node.children.length > 0) {
+                node.children.forEach(child => collapseAll(child));
+                node._children = node.children;
+                node.children = null;
+            }
+        }
+        if (treeData.children) {
+            treeData.children.forEach(child => collapseAll(child));
+        }
+    } else {
+        console.log('Using link-based tree building for "all" filter');
+        // Temporarily replace allNodes with filtered nodes for tree building
+        const originalNodes = allNodes;
+        allNodes = finalFilteredNodes;
+
+        // Rebuild the tree structure with filtered nodes
+        buildTreeStructure();
+
+        // Restore original allNodes
+        allNodes = originalNodes;
+    }
 
     // After buildTreeStructure(), we have a collapsed tree (everything in _children).
     // Show only root expanded with first-level children visible, everything else collapsed.
