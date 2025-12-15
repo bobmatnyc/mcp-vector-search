@@ -2452,47 +2452,8 @@ function applyFileFilter() {
     console.log('=== APPLYING FILE FILTER ===');
     console.log('Current filter:', currentFileFilter);
 
-    // Helper function to save expanded/collapsed state of tree
-    function saveExpandedState(node, stateMap = new Map()) {
-        if (!node) return stateMap;
-
-        // Save this node's state: true if expanded (has children), false if collapsed (has _children)
-        if (node.children) {
-            stateMap.set(node.id, true); // Expanded
-        } else if (node._children) {
-            stateMap.set(node.id, false); // Collapsed
-        }
-
-        // Recursively save state of children (checking both children and _children)
-        const childArray = node.children || node._children || [];
-        childArray.forEach(child => saveExpandedState(child, stateMap));
-
-        return stateMap;
-    }
-
-    // Helper function to restore expanded/collapsed state after tree rebuild
-    function restoreExpandedState(node, stateMap) {
-        if (!node || !stateMap) return;
-
-        const savedState = stateMap.get(node.id);
-
-        // If this node was previously expanded, expand it now
-        if (savedState === true && node._children && !node.children) {
-            // Node is currently collapsed but should be expanded
-            node.children = node._children;
-            node._children = null;
-        }
-        // If node was collapsed (savedState === false), it's already collapsed from buildTreeStructure
-
-        // Recursively restore state of ALL children (traverse both children and _children)
-        // After buildTreeStructure(), nodes are collapsed so we need to check _children too
-        const childArray = node.children || node._children || [];
-        childArray.forEach(child => restoreExpandedState(child, stateMap));
-    }
-
-    // Save current expanded/collapsed state before filtering
-    const expandedStateMap = treeData ? saveExpandedState(treeData) : new Map();
-    console.log(`Saved expanded state for ${expandedStateMap.size} nodes`);
+    // NOTE: We don't preserve expand/collapse state when filtering.
+    // Instead, we show a clean collapsed tree with only root + first-level visible.
 
     // Helper function to check if a file should be included based on filter
     function shouldIncludeFile(node) {
@@ -2599,26 +2560,26 @@ function applyFileFilter() {
     // Restore original allNodes
     allNodes = originalNodes;
 
-    // Restore the expanded/collapsed state after rebuilding
-    if (treeData && expandedStateMap.size > 0) {
-        console.log('Restoring expanded state...');
-        restoreExpandedState(treeData, expandedStateMap);
-
-        // Count how many nodes are actually expanded after restoration
-        let expandedCount = 0;
-        function countExpanded(node) {
-            if (node.children) {
-                expandedCount++;
-                node.children.forEach(child => countExpanded(child));
-            }
-            if (node._children) {
-                node._children.forEach(child => countExpanded(child));
-            }
+    // After buildTreeStructure(), we have a collapsed tree (everything in _children).
+    // Show only root expanded with first-level children visible, everything else collapsed.
+    if (treeData) {
+        // Ensure root is expanded
+        if (treeData._children && !treeData.children) {
+            treeData.children = treeData._children;
+            treeData._children = null;
         }
-        if (treeData.children) treeData.children.forEach(child => countExpanded(child));
-        if (treeData._children) treeData._children.forEach(child => countExpanded(child));
 
-        console.log(`Restored expanded state: ${expandedCount} nodes expanded out of ${expandedStateMap.size} total`);
+        // Collapse all first-level children (so we see root + first level, but nothing deeper)
+        if (treeData.children) {
+            treeData.children.forEach(child => {
+                if (child.children) {
+                    child._children = child.children;
+                    child.children = null;
+                }
+            });
+        }
+
+        console.log('Tree reset to collapsed state: root expanded, first-level children collapsed');
     }
 
     // Completely redraw the visualization
