@@ -2,7 +2,12 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
+
+# Disable tokenizers parallelism to avoid fork deadlock warnings
+# Must be set BEFORE importing sentence_transformers or transformers
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import aiofiles
 from loguru import logger
