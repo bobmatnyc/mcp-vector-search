@@ -788,8 +788,10 @@ class SemanticIndexer:
             # Get relative path from project root for checking
             relative_path = file_path.relative_to(self.project_root)
 
-            # 1. Check dotfile filtering (if enabled in config)
-            if self.config and self.config.skip_dotfiles:
+            # 1. Check dotfile filtering (ENABLED BY DEFAULT)
+            # Skip dotfiles unless config explicitly disables it
+            skip_dotfiles = self.config.skip_dotfiles if self.config else True
+            if skip_dotfiles:
                 for part in relative_path.parts:
                     # Skip dotfiles unless they're in the whitelist
                     if part.startswith(".") and part not in ALLOWED_DOTFILES:
