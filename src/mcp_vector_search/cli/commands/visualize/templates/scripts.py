@@ -297,14 +297,14 @@ function buildTreeStructure() {
         dir_hierarchy: 0,
         dir_containment: 0,
         file_containment: 0,
-        chunk_containment: 0  // undefined links = chunk-to-chunk (class -> method)
+        chunk_hierarchy: 0  // chunk_hierarchy links = class -> method
     };
 
     let relationshipsMatched = {
         dir_hierarchy: 0,
         dir_containment: 0,
         file_containment: 0,
-        chunk_containment: 0
+        chunk_hierarchy: 0
     };
 
     // Process all relationship links
@@ -319,9 +319,9 @@ function buildTreeStructure() {
             category = 'dir_containment';
         } else if (linkType === 'file_containment') {
             category = 'file_containment';
-        } else if (linkType === undefined || linkType === 'undefined') {
-            // Undefined links are chunk-to-chunk (e.g., class -> method)
-            category = 'chunk_containment';
+        } else if (linkType === 'chunk_hierarchy' || linkType === undefined || linkType === 'undefined') {
+            // chunk_hierarchy or undefined links are chunk-to-chunk (e.g., class -> method)
+            category = 'chunk_hierarchy';
         } else {
             // Skip semantic, caller, and other non-hierarchical links
             return;
@@ -355,7 +355,7 @@ function buildTreeStructure() {
     console.log(`  dir_hierarchy: ${relationshipsMatched.dir_hierarchy}/${relationshipsProcessed.dir_hierarchy} matched`);
     console.log(`  dir_containment: ${relationshipsMatched.dir_containment}/${relationshipsProcessed.dir_containment} matched`);
     console.log(`  file_containment: ${relationshipsMatched.file_containment}/${relationshipsProcessed.file_containment} matched`);
-    console.log(`  chunk_containment: ${relationshipsMatched.chunk_containment}/${relationshipsProcessed.chunk_containment} matched`);
+    console.log(`  chunk_hierarchy (class→method): ${relationshipsMatched.chunk_hierarchy}/${relationshipsProcessed.chunk_hierarchy} matched`);
     console.log(`  Total parent-child links: ${parentMap.size}`);
     console.log('=== END TREE RELATIONSHIPS ===');
 
