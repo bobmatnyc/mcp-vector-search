@@ -156,6 +156,10 @@ def generate_html_template() -> str:
                     <span class="report-icon">📈</span>
                     <span>Trends</span>
                 </div>
+                <div class="legend-item report-btn" onclick="generateRemediationReport()">
+                    <span class="report-icon">📋</span>
+                    <span>Remediation</span>
+                </div>
             </div>
         </div>
 

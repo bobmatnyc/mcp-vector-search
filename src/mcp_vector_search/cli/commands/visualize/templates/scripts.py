@@ -3535,179 +3535,83 @@ function showDependencies() {
     const viewerTitle = document.getElementById('viewer-title');
     const viewerContent = document.getElementById('viewer-content');
 
-    viewerTitle.textContent = '🔗 Dependencies';
+    viewerTitle.textContent = '🔗 Code Structure';
 
-    // Build file-level dependency graph from caller links
-    const fileDeps = buildFileDependencyGraph();
+    // Build directory structure from nodes
+    const dirStructure = new Map();
 
-    // Calculate statistics
-    const filesWithDeps = Array.from(fileDeps.keys()).length;
-    const totalConnections = Array.from(fileDeps.values()).reduce((sum, dep) =>
-        sum + dep.dependsOn.size + dep.usedBy.size, 0) / 2; // Divide by 2 to avoid double counting
+    allNodes.forEach(node => {
+        if (node.type === 'file' && node.file_path) {
+            const parts = node.file_path.split('/');
+            const fileName = parts.pop();
+            const dirPath = parts.join('/') || '/';
 
-    // Find most connected file
-    let mostConnectedFile = null;
-    let maxConnections = 0;
-    fileDeps.forEach((dep, filePath) => {
-        const total = dep.dependsOn.size + dep.usedBy.size;
-        if (total > maxConnections) {
-            maxConnections = total;
-            mostConnectedFile = filePath;
+            if (!dirStructure.has(dirPath)) {
+                dirStructure.set(dirPath, []);
+            }
+            dirStructure.get(dirPath).push({
+                name: fileName,
+                path: node.file_path,
+                chunks: allNodes.filter(n => n.file_path === node.file_path && n.type !== 'file').length
+            });
         }
     });
 
-    // Detect circular dependencies
-    const cycles = findCircularDeps(fileDeps);
+    // Calculate stats
+    const totalDirs = dirStructure.size;
+    const totalFiles = Array.from(dirStructure.values()).reduce((sum, files) => sum + files.length, 0);
+    const totalChunks = allNodes.filter(n => n.type !== 'file' && n.type !== 'directory').length;
 
-    // Build HTML
-    let html = '<div class="dependencies-report">';
+    let html = `
+        <div class="report-section">
+            <h3>📁 Directory Overview</h3>
+            <p style="color: var(--text-secondary); margin-bottom: 15px;">Showing code organization by directory structure.</p>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-value">${totalDirs}</div>
+                    <div class="metric-label">Directories</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">${totalFiles}</div>
+                    <div class="metric-label">Files</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">${totalChunks}</div>
+                    <div class="metric-label">Code Chunks</div>
+                </div>
+            </div>
+        </div>
+        <div class="report-section">
+            <h3>📂 Directory Structure</h3>
+    `;
 
-    // Summary Stats
-    html += '<div class="dependency-summary">';
-    html += '<div class="summary-grid">';
-    html += `<div class="summary-card">
-        <div class="summary-label">Files with Dependencies</div>
-        <div class="summary-value">${filesWithDeps}</div>
-    </div>`;
-    html += `<div class="summary-card">
-        <div class="summary-label">Unique Dependencies</div>
-        <div class="summary-value">${Math.floor(totalConnections)}</div>
-    </div>`;
-    if (mostConnectedFile) {
-        const fileName = mostConnectedFile.split('/').pop();
-        html += `<div class="summary-card">
-            <div class="summary-label">Most Connected</div>
-            <div class="summary-value" style="font-size: 14px; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(mostConnectedFile)}">${escapeHtml(fileName)}</div>
-            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">${maxConnections} connections</div>
-        </div>`;
-    }
-    html += '</div>';
-    html += '</div>';
+    // Sort directories
+    const sortedDirs = Array.from(dirStructure.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 
-    // Circular Dependencies Warning
-    if (cycles.length > 0) {
-        html += '<div class="circular-deps-warning">';
-        html += '<div class="warning-header">';
-        html += '<span class="warning-icon">⚠️</span>';
-        html += `<span class="warning-title">${cycles.length} Circular Dependenc${cycles.length > 1 ? 'ies' : 'y'} Detected</span>`;
-        html += '</div>';
-        html += '<div class="cycle-list">';
-        cycles.slice(0, 5).forEach(cycle => {
-            const cycleStr = cycle.map(f => f.split('/').pop()).join(' → ');
-            html += `<div class="cycle-item" title="${cycle.map(escapeHtml).join(' → ')}">${escapeHtml(cycleStr)}</div>`;
-        });
-        if (cycles.length > 5) {
-            html += `<div class="cycle-item" style="color: var(--text-secondary);">... and ${cycles.length - 5} more</div>`;
-        }
-        html += '</div>';
-        html += '</div>';
-    }
+    sortedDirs.forEach(([dir, files]) => {
+        const dirDisplay = dir === '/' ? 'Root' : dir;
+        const totalChunksInDir = files.reduce((sum, f) => sum + f.chunks, 0);
 
-    // Dependencies Table
-    html += '<div class="dependencies-table-section">';
-    html += '<h3 class="section-title">File Dependencies</h3>';
-
-    if (filesWithDeps === 0) {
-        html += '<p style="color: var(--text-secondary); text-align: center; padding: 20px;">No dependencies found.</p>';
-    } else {
-        // Sort files by total connections (most connected first)
-        const sortedFiles = Array.from(fileDeps.entries())
-            .map(([filePath, dep]) => ({
-                filePath,
-                dependsOn: dep.dependsOn,
-                usedBy: dep.usedBy,
-                total: dep.dependsOn.size + dep.usedBy.size,
-                inCycle: cycles.some(cycle => cycle.includes(filePath))
-            }))
-            .sort((a, b) => b.total - a.total);
-
-        html += '<div class="dependencies-table-container">';
-        html += '<table class="dependencies-table">';
         html += `
-            <thead>
-                <tr>
-                    <th>File</th>
-                    <th>Depends On</th>
-                    <th>Used By</th>
-                    <th>Total</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
+            <div class="dependency-item" style="margin-bottom: 20px; padding: 12px; background: var(--bg-secondary); border-radius: 6px; border-left: 3px solid var(--accent-blue);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <strong style="color: var(--accent-blue);">📁 ${escapeHtml(dirDisplay)}</strong>
+                    <span style="color: var(--text-secondary); font-size: 12px;">${files.length} files, ${totalChunksInDir} chunks</span>
+                </div>
+                <ul style="margin: 0; padding: 0 0 0 20px; list-style: none;">
         `;
 
-        sortedFiles.forEach((file, index) => {
-            const fileName = file.filePath.split('/').pop();
-            const rowId = `dep-row-${index}`;
-            const cycleClass = file.inCycle ? 'in-cycle' : '';
-
-            html += `
-                <tr class="dependency-row ${cycleClass}" id="${rowId}">
-                    <td class="dep-file" title="${escapeHtml(file.filePath)}">
-                        ${file.inCycle ? '<span style="color: var(--error); margin-right: 4px;" title="Part of circular dependency">⚠️</span>' : ''}
-                        ${escapeHtml(fileName)}
-                    </td>
-                    <td class="dep-count">${file.dependsOn.size}</td>
-                    <td class="dep-count">${file.usedBy.size}</td>
-                    <td class="dep-total">${file.total}</td>
-                    <td class="dep-expand">
-                        <button class="expand-btn" onclick="toggleDependencyDetails('${rowId}', ${index})">▼</button>
-                    </td>
-                </tr>
-                <tr class="dependency-details" id="${rowId}-details" style="display: none;">
-                    <td colspan="5">
-                        <div class="dependency-details-content">
-                            <div class="dependency-section">
-                                <div class="dependency-section-title">→ Depends On (${file.dependsOn.size})</div>
-                                <div class="dependency-list">
-            `;
-
-            if (file.dependsOn.size === 0) {
-                html += '<span class="dependency-item-empty">None</span>';
-            } else {
-                Array.from(file.dependsOn).slice(0, 20).forEach(depFile => {
-                    const depFileName = depFile.split('/').pop();
-                    html += `<span class="dependency-item" title="${escapeHtml(depFile)}">${escapeHtml(depFileName)}</span>`;
-                });
-                if (file.dependsOn.size > 20) {
-                    html += `<span class="dependency-item-more">... and ${file.dependsOn.size - 20} more</span>`;
-                }
-            }
-
-            html += `
-                                </div>
-                            </div>
-                            <div class="dependency-section">
-                                <div class="dependency-section-title">← Used By (${file.usedBy.size})</div>
-                                <div class="dependency-list">
-            `;
-
-            if (file.usedBy.size === 0) {
-                html += '<span class="dependency-item-empty">None</span>';
-            } else {
-                Array.from(file.usedBy).slice(0, 20).forEach(depFile => {
-                    const depFileName = depFile.split('/').pop();
-                    html += `<span class="dependency-item" title="${escapeHtml(depFile)}">${escapeHtml(depFileName)}</span>`;
-                });
-                if (file.usedBy.size > 20) {
-                    html += `<span class="dependency-item-more">... and ${file.usedBy.size - 20} more</span>`;
-                }
-            }
-
-            html += `
-                                </div>
-                            </div>
-                        </div>
-                    </td>
-                </tr>
-            `;
+        files.sort((a, b) => a.name.localeCompare(b.name)).forEach(file => {
+            html += `<li style="padding: 4px 0; color: var(--text-primary);">
+                📄 ${escapeHtml(file.name)}
+                <span style="color: var(--text-secondary); font-size: 11px;">(${file.chunks} chunks)</span>
+            </li>`;
         });
 
-        html += '</tbody></table></div>';
-    }
+        html += `</ul></div>`;
+    });
 
-    html += '</div>'; // dependencies-table-section
-    html += '</div>'; // dependencies-report
+    html += '</div>';
 
     viewerContent.innerHTML = html;
 }
@@ -3987,6 +3891,210 @@ function showTrends() {
     if (window.graphTrendData && window.graphTrendData.entries && window.graphTrendData.entries.length > 0) {
         renderTrendCharts(window.graphTrendData.entries);
     }
+}
+
+// ============================================================================
+// REMEDIATION REPORT GENERATION
+// ============================================================================
+
+function generateRemediationReport() {
+    // Gather complexity data
+    const complexityData = [];
+    allNodes.forEach(node => {
+        if (node.metrics && node.metrics.complexity !== undefined) {
+            const complexity = node.metrics.complexity;
+            let grade = 'A';
+            if (complexity > 40) grade = 'F';
+            else if (complexity > 30) grade = 'D';
+            else if (complexity > 20) grade = 'C';
+            else if (complexity > 10) grade = 'B';
+
+            if (grade !== 'A' && grade !== 'B') {  // Only include C, D, F
+                complexityData.push({
+                    name: node.name || node.id,
+                    file: node.file_path || 'Unknown',
+                    type: node.type || 'unknown',
+                    complexity: complexity,
+                    grade: grade,
+                    lines: node.metrics.lines || 0
+                });
+            }
+        }
+    });
+
+    // Gather code smell data
+    const smells = [];
+    allNodes.forEach(node => {
+        if (!node.metrics) return;
+
+        const m = node.metrics;
+        const file = node.file_path || 'Unknown';
+        const name = node.name || node.id;
+
+        // Long Method
+        if (m.lines && m.lines > 50) {
+            smells.push({
+                file, name,
+                smell: 'Long Method',
+                severity: m.lines > 100 ? 'error' : 'warning',
+                detail: `${m.lines} lines (recommended: <50)`
+            });
+        }
+
+        // High Complexity
+        if (m.complexity && m.complexity > 15) {
+            smells.push({
+                file, name,
+                smell: 'High Complexity',
+                severity: m.complexity > 25 ? 'error' : 'warning',
+                detail: `Complexity: ${m.complexity} (recommended: <15)`
+            });
+        }
+
+        // Deep Nesting
+        if (m.max_depth && m.max_depth > 4) {
+            smells.push({
+                file, name,
+                smell: 'Deep Nesting',
+                severity: m.max_depth > 6 ? 'error' : 'warning',
+                detail: `Depth: ${m.max_depth} (recommended: <4)`
+            });
+        }
+
+        // God Class (for classes only)
+        if (node.type === 'class' && m.lines && m.lines > 300) {
+            smells.push({
+                file, name,
+                smell: 'God Class',
+                severity: 'error',
+                detail: `${m.lines} lines - consider breaking into smaller classes`
+            });
+        }
+    });
+
+    // Sort by severity (errors first) then by file
+    complexityData.sort((a, b) => {
+        const gradeOrder = { F: 0, D: 1, C: 2 };
+        return (gradeOrder[a.grade] || 99) - (gradeOrder[b.grade] || 99);
+    });
+
+    smells.sort((a, b) => {
+        if (a.severity !== b.severity) {
+            return a.severity === 'error' ? -1 : 1;
+        }
+        return a.file.localeCompare(b.file);
+    });
+
+    // Generate Markdown
+    const date = new Date().toISOString().split('T')[0];
+    let markdown = `# Code Remediation Report
+Generated: ${date}
+
+## Summary
+
+- **High Complexity Items**: ${complexityData.length}
+- **Code Smells Detected**: ${smells.length}
+- **Critical Issues (Errors)**: ${smells.filter(s => s.severity === 'error').length}
+
+---
+
+## 🔴 Priority: High Complexity Code
+
+These functions/methods have complexity scores that make them difficult to maintain and test.
+
+| Grade | Name | File | Complexity | Lines |
+|-------|------|------|------------|-------|
+`;
+
+    complexityData.forEach(item => {
+        const gradeEmoji = item.grade === 'F' ? '🔴' : item.grade === 'D' ? '🟠' : '🟡';
+        markdown += `| ${gradeEmoji} ${item.grade} | \\`${item.name}\\` | ${item.file} | ${item.complexity} | ${item.lines} |\n`;
+    });
+
+    markdown += `
+---
+
+## 🔍 Code Smells
+
+### Critical Issues (Errors)
+
+`;
+
+    const errors = smells.filter(s => s.severity === 'error');
+    if (errors.length === 0) {
+        markdown += '_No critical issues found._\n';
+    } else {
+        markdown += '| Smell | Name | File | Detail |\n|-------|------|------|--------|\n';
+        errors.forEach(s => {
+            markdown += `| 🔴 ${s.smell} | \\`${s.name}\\` | ${s.file} | ${s.detail} |\n`;
+        });
+    }
+
+    markdown += `
+### Warnings
+
+`;
+
+    const warnings = smells.filter(s => s.severity === 'warning');
+    if (warnings.length === 0) {
+        markdown += '_No warnings found._\n';
+    } else {
+        markdown += '| Smell | Name | File | Detail |\n|-------|------|------|--------|\n';
+        warnings.forEach(s => {
+            markdown += `| 🟡 ${s.smell} | \\`${s.name}\\` | ${s.file} | ${s.detail} |\n`;
+        });
+    }
+
+    markdown += `
+---
+
+## Recommended Actions
+
+1. **Start with Grade F items** - These have the highest complexity and are hardest to maintain
+2. **Address Critical code smells** - God Classes and deeply nested code should be refactored
+3. **Break down long methods** - Extract helper functions to reduce complexity
+4. **Add tests before refactoring** - Ensure behavior is preserved
+
+---
+
+_Generated by MCP Vector Search Visualization_
+`;
+
+    // Download the file
+    const blob = new Blob([markdown], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `remediation-report-${date}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    // Show confirmation
+    openViewerPanel();
+    document.getElementById('viewer-title').textContent = '📋 Report Downloaded';
+    document.getElementById('viewer-content').innerHTML = `
+        <div class="report-section">
+            <h3>✅ Remediation Report Generated</h3>
+            <p>The report has been downloaded as <code>remediation-report-${date}.md</code></p>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-value">${complexityData.length}</div>
+                    <div class="metric-label">Complexity Issues</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">${smells.length}</div>
+                    <div class="metric-label">Code Smells</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">${errors.length}</div>
+                    <div class="metric-label">Critical Errors</div>
+                </div>
+            </div>
+            <p style="margin-top: 15px; color: var(--text-secondary);">Share this report with your team for prioritized remediation.</p>
+        </div>
+    `;
 }
 
 // Render trend line charts using D3
