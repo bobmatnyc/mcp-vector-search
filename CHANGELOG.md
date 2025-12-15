@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.3] - 2025-12-13
+
+### Added
+- **Historical Trend Tracking** - Track codebase metrics over time
+  - Daily metric snapshots stored in `.mcp-vector-search/trends.json`
+  - One entry per day (updates existing entry on reindex)
+  - Tracks files, chunks, lines, complexity, health score, and code smells
+  - D3.js line charts in Trends visualization page
+- **Smart Dual Chunking** - Improved code parsing strategy
+  - Class skeleton chunks preserve class structure with method signatures
+  - Separate method chunks contain full implementation
+  - Better semantic search for both class overview and method details
+- **Visualizer Node Selection Highlighting**
+  - Selected nodes glow with persistent orange highlight
+  - Automatic path expansion when clicking collapsed nodes
+  - Clear visual indication of currently viewed content
+- **Markdown Report Format** - New `--output-format markdown` option for `analyze` command
+- **Development Launcher Script** - `mcp-vector-search-dev` for development environments
+
+### Fixed
+- **Class/Function Parent Linking** - Classes and functions now correctly link to file nodes
+  - Previously linked to imports chunk, causing wrong content display
+  - Clicking files now shows actual file children, not imports
+- **Visualizer Duplicate Links** - Removed duplicate directory hierarchy links
+- **Dotfile Scanning** - Skip `.venv` and other dotfiles by default during indexing
+- **JavaScript Template Syntax** - Fixed escaped backticks in visualizer templates
+
 ## [0.21.2] - 2025-12-13
 
 ### Fixed
