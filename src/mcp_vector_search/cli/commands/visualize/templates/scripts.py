@@ -2449,10 +2449,14 @@ function setFileFilter(filter) {
 function applyFileFilter() {
     if (!treeData) return;
 
-    // Map to track visibility by D3 node reference
-    const nodeVisibility = new Map();
+    console.log('=== APPLYING FILE FILTER ===');
+    console.log('Current filter:', currentFileFilter);
 
-    // Get all node elements and determine visibility
+    // Track hidden nodes by checking visibility
+    let hiddenCount = 0;
+    let visibleCount = 0;
+
+    // First pass: determine and apply visibility to nodes
     d3.selectAll('.node').each(function(d) {
         const node = d3.select(this);
         const data = d.data || d;
@@ -2477,25 +2481,39 @@ function applyFileFilter() {
             }
         }
 
+        // Store visibility on the D3 node itself for link filtering
+        d._filterVisible = shouldShow;
+
         node.style('display', shouldShow ? null : 'none');
         node.style('opacity', shouldShow ? null : 0);
 
-        // Track visibility by D3 hierarchy node reference
-        nodeVisibility.set(d, shouldShow);
+        if (shouldShow) visibleCount++;
+        else hiddenCount++;
     });
 
+    console.log(`Nodes: ${visibleCount} visible, ${hiddenCount} hidden`);
+
     // Filter links - hide links where source or target is hidden
+    let linksHidden = 0;
+    let linksVisible = 0;
+
     d3.selectAll('.link').each(function(d) {
         const link = d3.select(this);
 
-        // Check visibility of source and target nodes
-        const sourceVisible = nodeVisibility.get(d.source) !== false;
-        const targetVisible = nodeVisibility.get(d.target) !== false;
+        // Check visibility stored on the D3 nodes
+        const sourceVisible = d.source._filterVisible !== false;
+        const targetVisible = d.target._filterVisible !== false;
         const shouldShow = sourceVisible && targetVisible;
 
         link.style('display', shouldShow ? null : 'none');
         link.style('opacity', shouldShow ? null : 0);
+
+        if (shouldShow) linksVisible++;
+        else linksHidden++;
     });
+
+    console.log(`Links: ${linksVisible} visible, ${linksHidden} hidden`);
+    console.log('=== FILTER COMPLETE ===');
 
     // Update stats
     updateFilteredStats();
