@@ -2452,6 +2452,47 @@ function applyFileFilter() {
     console.log('=== APPLYING FILE FILTER ===');
     console.log('Current filter:', currentFileFilter);
 
+    // Helper function to save expanded/collapsed state of tree
+    function saveExpandedState(node, stateMap = new Map()) {
+        if (!node) return stateMap;
+
+        // Save this node's state: true if expanded (has children), false if collapsed (has _children)
+        if (node.children) {
+            stateMap.set(node.id, true); // Expanded
+        } else if (node._children) {
+            stateMap.set(node.id, false); // Collapsed
+        }
+
+        // Recursively save state of children (checking both children and _children)
+        const childArray = node.children || node._children || [];
+        childArray.forEach(child => saveExpandedState(child, stateMap));
+
+        return stateMap;
+    }
+
+    // Helper function to restore expanded/collapsed state after tree rebuild
+    function restoreExpandedState(node, stateMap) {
+        if (!node || !stateMap) return;
+
+        const savedState = stateMap.get(node.id);
+
+        // If this node was previously collapsed, collapse it now
+        if (savedState === false && node.children && !node._children) {
+            // Node is currently expanded but should be collapsed
+            node._children = node.children;
+            node.children = null;
+        }
+        // If node was expanded, it already has children by default from buildTreeStructure
+
+        // Recursively restore state of children (only traverse children that are visible)
+        const childArray = node.children || [];
+        childArray.forEach(child => restoreExpandedState(child, stateMap));
+    }
+
+    // Save current expanded/collapsed state before filtering
+    const expandedStateMap = treeData ? saveExpandedState(treeData) : new Map();
+    console.log(`Saved expanded state for ${expandedStateMap.size} nodes`);
+
     // Helper function to check if a file should be included based on filter
     function shouldIncludeFile(node) {
         if (node.type !== 'file') return true; // Always include non-files
@@ -2556,6 +2597,12 @@ function applyFileFilter() {
 
     // Restore original allNodes
     allNodes = originalNodes;
+
+    // Restore the expanded/collapsed state after rebuilding
+    if (treeData && expandedStateMap.size > 0) {
+        restoreExpandedState(treeData, expandedStateMap);
+        console.log('Restored expanded state for tree nodes');
+    }
 
     // Completely redraw the visualization
     renderVisualization();
