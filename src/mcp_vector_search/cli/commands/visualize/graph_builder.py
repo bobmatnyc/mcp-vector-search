@@ -467,20 +467,8 @@ async def build_graph_data(
         nodes.append(node)
         chunk_id_map[node["id"]] = len(nodes) - 1
 
-    # Link directories to their parent directories (hierarchical structure)
-    for dir_path_str, dir_info in dir_index.directories.items():
-        if dir_info.parent_path:
-            parent_path_str = str(dir_info.parent_path)
-            if parent_path_str in dir_nodes:
-                parent_dir_id = f"dir_{hash(parent_path_str) & 0xFFFFFFFF:08x}"
-                child_dir_id = f"dir_{hash(dir_path_str) & 0xFFFFFFFF:08x}"
-                links.append(
-                    {
-                        "source": parent_dir_id,
-                        "target": child_dir_id,
-                        "type": "dir_hierarchy",
-                    }
-                )
+    # NOTE: Directory parent→child links already created above via dir_containment
+    # (removed duplicate dir_hierarchy link creation that caused duplicate paths)
 
     # Link directories to subprojects in monorepos (simple flat structure)
     if subprojects:
