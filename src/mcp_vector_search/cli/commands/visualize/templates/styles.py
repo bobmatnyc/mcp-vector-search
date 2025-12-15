@@ -1043,16 +1043,34 @@ def get_content_pane_styles() -> str:
             font-weight: 500;
         }
 
-        /* Node highlight animation */
+        /* Node highlight animation - temporary focus */
         .node-highlight circle {
             stroke: #58a6ff !important;
-            stroke-width: 3px !important;
-            filter: drop-shadow(0 0 6px rgba(88, 166, 255, 0.6));
+            stroke-width: 4px !important;
+            filter: drop-shadow(0 0 8px rgba(88, 166, 255, 0.8));
         }
 
         .node-highlight text {
             fill: #58a6ff !important;
             font-weight: bold !important;
+        }
+
+        /* Selected node - persistent highlight for node shown in viewer */
+        .node-selected circle {
+            stroke: #f0883e !important;
+            stroke-width: 5px !important;
+            filter: drop-shadow(0 0 12px rgba(240, 136, 62, 0.9));
+            animation: selected-pulse 2s ease-in-out infinite;
+        }
+
+        .node-selected text {
+            fill: #f0883e !important;
+            font-weight: bold !important;
+        }
+
+        @keyframes selected-pulse {
+            0%, 100% { filter: drop-shadow(0 0 12px rgba(240, 136, 62, 0.9)); }
+            50% { filter: drop-shadow(0 0 20px rgba(240, 136, 62, 1.0)); }
         }
     """
 

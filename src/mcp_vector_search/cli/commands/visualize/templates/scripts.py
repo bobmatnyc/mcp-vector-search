@@ -2179,9 +2179,12 @@ function findPathToNode(node, targetId, path = []) {
 }
 
 // Highlight and scroll to a node in the rendered tree
-function highlightNodeInTree(nodeId) {
+function highlightNodeInTree(nodeId, persistent = true) {
     // Remove any existing highlight
     d3.selectAll('.node-highlight').classed('node-highlight', false);
+    if (persistent) {
+        d3.selectAll('.node-selected').classed('node-selected', false);
+    }
 
     // Find and highlight the target node in the rendered SVG
     const svg = d3.select('#graph');
@@ -2189,8 +2192,12 @@ function highlightNodeInTree(nodeId) {
         .filter(d => d.data.id === nodeId);
 
     if (!targetNode.empty()) {
-        // Add highlight class
-        targetNode.classed('node-highlight', true);
+        // Add highlight class (persistent = orange glow that stays)
+        if (persistent) {
+            targetNode.classed('node-selected', true);
+        } else {
+            targetNode.classed('node-highlight', true);
+        }
 
         // Pulse the node circle - scale up from current size
         targetNode.select('circle')
