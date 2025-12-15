@@ -2449,8 +2449,8 @@ function setFileFilter(filter) {
 function applyFileFilter() {
     if (!treeData) return;
 
-    // Track which nodes are visible by their ID
-    const visibleNodeIds = new Set();
+    // Map to track visibility by D3 node reference
+    const nodeVisibility = new Map();
 
     // Get all node elements and determine visibility
     d3.selectAll('.node').each(function(d) {
@@ -2480,19 +2480,17 @@ function applyFileFilter() {
         node.style('display', shouldShow ? null : 'none');
         node.style('opacity', shouldShow ? null : 0);
 
-        if (shouldShow && data.id) {
-            visibleNodeIds.add(data.id);
-        }
+        // Track visibility by D3 hierarchy node reference
+        nodeVisibility.set(d, shouldShow);
     });
 
     // Filter links - hide links where source or target is hidden
     d3.selectAll('.link').each(function(d) {
         const link = d3.select(this);
-        const sourceId = d.source?.data?.id || d.source?.id;
-        const targetId = d.target?.data?.id || d.target?.id;
 
-        const sourceVisible = !sourceId || visibleNodeIds.has(sourceId);
-        const targetVisible = !targetId || visibleNodeIds.has(targetId);
+        // Check visibility of source and target nodes
+        const sourceVisible = nodeVisibility.get(d.source) !== false;
+        const targetVisible = nodeVisibility.get(d.target) !== false;
         const shouldShow = sourceVisible && targetVisible;
 
         link.style('display', shouldShow ? null : 'none');
