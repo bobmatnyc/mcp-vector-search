@@ -155,6 +155,33 @@ def get_controls_styles() -> str:
             margin-right: 8px;
         }
 
+        /* Report buttons in sidebar */
+        .report-btn {
+            cursor: pointer;
+            padding: 10px 12px !important;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-primary);
+            border-radius: 6px;
+            margin-bottom: 8px !important;
+            transition: all 0.2s ease;
+        }
+
+        .report-btn:hover {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+            transform: translateX(4px);
+        }
+
+        .report-btn:hover span {
+            color: white !important;
+        }
+
+        .report-icon {
+            margin-right: 10px;
+            font-size: 16px;
+        }
+
         .stats {
             margin-top: 16px;
             padding-top: 16px;

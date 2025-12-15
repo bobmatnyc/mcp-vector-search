@@ -137,7 +137,29 @@ def generate_html_template() -> str:
         </div>
 
         <!-- Options Section -->
-        <h3>Options</h3>
+        <h3>📋 Reports</h3>
+        <div class="legend" style="margin-top: 8px;">
+            <div class="legend-category" style="border-bottom: none;">
+                <div class="legend-item report-btn" onclick="showComplexityReport()">
+                    <span class="report-icon">📊</span>
+                    <span>Complexity</span>
+                </div>
+                <div class="legend-item report-btn" onclick="showCodeSmells()">
+                    <span class="report-icon">🔍</span>
+                    <span>Code Smells</span>
+                </div>
+                <div class="legend-item report-btn" onclick="showDependencies()">
+                    <span class="report-icon">🔗</span>
+                    <span>Dependencies</span>
+                </div>
+                <div class="legend-item report-btn" onclick="showTrends()">
+                    <span class="report-icon">📈</span>
+                    <span>Trends</span>
+                </div>
+            </div>
+        </div>
+
+        <h3 style="margin-top: 16px;">Options</h3>
         <div class="legend" style="margin-top: 8px;">
             <div class="legend-category" style="border-bottom: none;">
                 <!-- Theme Toggle -->
@@ -146,24 +168,6 @@ def generate_html_template() -> str:
                         <span class="theme-icon" id="theme-icon">🌙</span>
                     </button>
                     <span style="margin-left: 8px; color: var(--text-secondary); font-size: 12px;">Theme</span>
-                </div>
-
-                <!-- Analysis Reports -->
-                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; margin-bottom: 6px;" onclick="showComplexityReport()">
-                    <span style="margin-right: 8px;">📊</span>
-                    <span>Complexity Report</span>
-                </div>
-                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; margin-bottom: 6px;" onclick="showCodeSmells()">
-                    <span style="margin-right: 8px;">🔍</span>
-                    <span>Code Smells</span>
-                </div>
-                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; margin-bottom: 6px;" onclick="showDependencies()">
-                    <span style="margin-right: 8px;">🔗</span>
-                    <span>Dependencies</span>
-                </div>
-                <div class="legend-item" style="cursor: pointer; padding: 8px; background: var(--bg-tertiary); border-radius: 4px;" onclick="showTrends()">
-                    <span style="margin-right: 8px;">📈</span>
-                    <span>Trends</span>
                 </div>
             </div>
         </div>

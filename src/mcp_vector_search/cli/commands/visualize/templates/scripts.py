@@ -2449,32 +2449,71 @@ function setFileFilter(filter) {
 function applyFileFilter() {
     if (!treeData) return;
 
-    // Get all node elements
+    // Track which nodes are visible by their ID
+    const visibleNodeIds = new Set();
+
+    // Get all node elements and determine visibility
     d3.selectAll('.node').each(function(d) {
         const node = d3.select(this);
         const data = d.data || d;
+        let shouldShow = true;
 
         if (data.type === 'directory') {
             // Directories always visible
-            node.style('display', null);
-            node.style('opacity', null);
+            shouldShow = true;
         } else if (data.type === 'file') {
             const fileType = getFileType(data.name);
-            const shouldShow = currentFileFilter === 'all' ||
-                               fileType === currentFileFilter ||
-                               fileType === 'unknown';
-
-            node.style('display', shouldShow ? null : 'none');
-            node.style('opacity', shouldShow ? null : 0);
+            shouldShow = currentFileFilter === 'all' ||
+                         fileType === currentFileFilter ||
+                         fileType === 'unknown';
         } else {
-            // Chunks - visibility based on parent file
-            node.style('display', null);
-            node.style('opacity', null);
+            // Chunks - find parent file and check its visibility
+            const parentFile = findParentFile(d);
+            if (parentFile) {
+                const fileType = getFileType(parentFile.name);
+                shouldShow = currentFileFilter === 'all' ||
+                             fileType === currentFileFilter ||
+                             fileType === 'unknown';
+            }
         }
+
+        node.style('display', shouldShow ? null : 'none');
+        node.style('opacity', shouldShow ? null : 0);
+
+        if (shouldShow && data.id) {
+            visibleNodeIds.add(data.id);
+        }
+    });
+
+    // Filter links - hide links where source or target is hidden
+    d3.selectAll('.link').each(function(d) {
+        const link = d3.select(this);
+        const sourceId = d.source?.data?.id || d.source?.id;
+        const targetId = d.target?.data?.id || d.target?.id;
+
+        const sourceVisible = !sourceId || visibleNodeIds.has(sourceId);
+        const targetVisible = !targetId || visibleNodeIds.has(targetId);
+        const shouldShow = sourceVisible && targetVisible;
+
+        link.style('display', shouldShow ? null : 'none');
+        link.style('opacity', shouldShow ? null : 0);
     });
 
     // Update stats
     updateFilteredStats();
+}
+
+// Helper to find parent file node for a chunk
+function findParentFile(node) {
+    let current = node;
+    while (current) {
+        const data = current.data || current;
+        if (data.type === 'file') {
+            return data;
+        }
+        current = current.parent;
+    }
+    return null;
 }
 
 function updateFilteredStats() {
