@@ -1835,13 +1835,10 @@ function displayFileInfo(fileData, addToHistory = true) {
 function displayChunkContent(chunkData, addToHistory = true) {
     openViewerPanel();
 
-    // DEBUG: Log chunkData to see what we're receiving
-    console.log('=== DISPLAY CHUNK CONTENT DEBUG ===');
-    console.log('chunkData:', chunkData);
-    console.log('chunkData.content exists:', 'content' in chunkData);
-    console.log('chunkData.content value:', chunkData.content ? chunkData.content.substring(0, 100) + '...' : '<empty/missing>');
-    console.log('chunkData keys:', Object.keys(chunkData));
-    console.log('=== END DISPLAY CHUNK CONTENT DEBUG ===');
+    // Highlight the selected node in the tree visualization
+    if (chunkData.id) {
+        highlightNodeInTree(chunkData.id);
+    }
 
     // Add to navigation history
     if (addToHistory) {
