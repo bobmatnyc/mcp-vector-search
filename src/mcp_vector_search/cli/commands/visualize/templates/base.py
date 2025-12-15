@@ -6,7 +6,8 @@ to generate the complete HTML page for the D3.js visualization.
 
 import time
 
-from .... import __build__, __version__
+from mcp_vector_search import __build__, __version__
+
 from .scripts import get_all_scripts
 from .styles import get_all_styles
 
