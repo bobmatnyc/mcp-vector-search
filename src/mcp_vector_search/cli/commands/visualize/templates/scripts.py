@@ -1835,9 +1835,9 @@ function displayFileInfo(fileData, addToHistory = true) {
 function displayChunkContent(chunkData, addToHistory = true) {
     openViewerPanel();
 
-    // Highlight the selected node in the tree visualization
+    // Expand path to node and highlight it in tree
     if (chunkData.id) {
-        highlightNodeInTree(chunkData.id);
+        expandAndHighlightNode(chunkData.id);
     }
 
     // Add to navigation history
@@ -2178,8 +2178,47 @@ function findPathToNode(node, targetId, path = []) {
     return [];
 }
 
+// Expand path to a node and highlight it (without triggering content display)
+function expandAndHighlightNode(nodeId) {
+    console.log('=== EXPAND AND HIGHLIGHT ===');
+    console.log('Target nodeId:', nodeId);
+
+    // Find the path to this node in the tree structure
+    const pathToNode = findPathToNode(treeData, nodeId);
+
+    if (pathToNode.length > 0) {
+        console.log('Found path:', pathToNode.map(n => n.name).join(' -> '));
+
+        // Expand all nodes along the path (except the target node itself)
+        let needsRerender = false;
+        pathToNode.slice(0, -1).forEach(node => {
+            if (node._children) {
+                console.log('Expanding:', node.name);
+                node.children = node._children;
+                node._children = null;
+                needsRerender = true;
+            }
+        });
+
+        if (needsRerender) {
+            renderVisualization();
+        }
+
+        // Highlight after a short delay to allow render to complete
+        setTimeout(() => {
+            highlightNodeInTree(nodeId);
+        }, 50);
+    } else {
+        console.log('Path not found - trying direct highlight');
+        highlightNodeInTree(nodeId);
+    }
+}
+
 // Highlight and scroll to a node in the rendered tree
 function highlightNodeInTree(nodeId, persistent = true) {
+    console.log('=== HIGHLIGHT NODE ===');
+    console.log('Looking for nodeId:', nodeId);
+
     // Remove any existing highlight
     d3.selectAll('.node-highlight').classed('node-highlight', false);
     if (persistent) {
@@ -2188,15 +2227,20 @@ function highlightNodeInTree(nodeId, persistent = true) {
 
     // Find and highlight the target node in the rendered SVG
     const svg = d3.select('#graph');
-    const targetNode = svg.selectAll('.node')
-        .filter(d => d.data.id === nodeId);
+    const allNodes = svg.selectAll('.node');
+    console.log('Total nodes in SVG:', allNodes.size());
+
+    const targetNode = allNodes.filter(d => d.data.id === nodeId);
+    console.log('Matching nodes found:', targetNode.size());
 
     if (!targetNode.empty()) {
         // Add highlight class (persistent = orange glow that stays)
         if (persistent) {
             targetNode.classed('node-selected', true);
+            console.log('Applied .node-selected class');
         } else {
             targetNode.classed('node-highlight', true);
+            console.log('Applied .node-highlight class');
         }
 
         // Pulse the node circle - scale up from current size
