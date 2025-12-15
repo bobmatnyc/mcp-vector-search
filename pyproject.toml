@@ -9,7 +9,7 @@ description = "CLI-first semantic code search with MCP integration and interacti
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
-    {name = "Robert Matsuoka", email = "bobmatnyc@gmail.com"},
+    {name = "Robert Matsuoka", email = "bob@matsuoka.com"},
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

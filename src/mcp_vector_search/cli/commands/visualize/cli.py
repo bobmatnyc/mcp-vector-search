@@ -40,10 +40,9 @@ def visualize_callback(ctx: typer.Context) -> None:
 
     When called without a subcommand, automatically starts the visualization server.
     """
-    # If no subcommand was invoked, run serve with defaults
+    # If no subcommand was invoked, invoke serve through typer for consistent behavior
     if ctx.invoked_subcommand is None:
-        # Call serve directly with default parameters
-        serve(port=8501, graph_file=get_default_graph_path(), code_only=False)
+        ctx.invoke(serve)
 
 
 @app.command()
