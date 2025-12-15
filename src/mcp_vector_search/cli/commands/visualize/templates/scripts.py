@@ -2447,126 +2447,66 @@ function setFileFilter(filter) {
 }
 
 function applyFileFilter() {
-    if (!treeData) return;
+    if (!allNodes || allNodes.length === 0) return;
 
     console.log('=== APPLYING FILE FILTER ===');
     console.log('Current filter:', currentFileFilter);
 
-    // Track hidden nodes by checking visibility
-    let hiddenCount = 0;
-    let visibleCount = 0;
-
-    // First pass: determine and apply visibility to nodes
-    d3.selectAll('.node').each(function(d) {
-        const node = d3.select(this);
-        const data = d.data || d;
-        let shouldShow = true;
-
-        if (data.type === 'directory') {
-            // Directories always visible
-            shouldShow = true;
-        } else if (data.type === 'file') {
-            const fileType = getFileType(data.name);
-            shouldShow = currentFileFilter === 'all' ||
-                         fileType === currentFileFilter ||
-                         fileType === 'unknown';
-        } else {
-            // Chunks - find parent file and check its visibility
-            const parentFile = findParentFile(d);
-            if (parentFile) {
-                const fileType = getFileType(parentFile.name);
-                shouldShow = currentFileFilter === 'all' ||
-                             fileType === currentFileFilter ||
-                             fileType === 'unknown';
-            }
-        }
-
-        // Store visibility on the D3 node itself for link filtering
-        d._filterVisible = shouldShow;
-
-        node.style('display', shouldShow ? null : 'none');
-        node.style('opacity', shouldShow ? null : 0);
-
-        if (shouldShow) visibleCount++;
-        else hiddenCount++;
-    });
-
-    console.log(`Nodes: ${visibleCount} visible, ${hiddenCount} hidden`);
-
-    // Filter links - hide links where source or target is hidden
-    let linksHidden = 0;
-    let linksVisible = 0;
-
-    d3.selectAll('.link').each(function(d) {
-        const link = d3.select(this);
-
-        // Check visibility stored on the D3 nodes
-        const sourceVisible = d.source._filterVisible !== false;
-        const targetVisible = d.target._filterVisible !== false;
-        const shouldShow = sourceVisible && targetVisible;
-
-        link.style('display', shouldShow ? null : 'none');
-        link.style('opacity', shouldShow ? null : 0);
-
-        if (shouldShow) linksVisible++;
-        else linksHidden++;
-    });
-
-    console.log(`Links: ${linksVisible} visible, ${linksHidden} hidden`);
-    console.log('=== FILTER COMPLETE ===');
-
-    // Update stats
-    updateFilteredStats();
-}
-
-// Helper to find parent file node for a chunk
-function findParentFile(node) {
-    let current = node;
-    while (current) {
-        const data = current.data || current;
-        if (data.type === 'file') {
-            return data;
-        }
-        current = current.parent;
-    }
-    return null;
-}
-
-function updateFilteredStats() {
-    const stats = document.getElementById('stats');
-    if (!stats || !treeData) return;
-
-    let totalFiles = 0;
-    let codeFiles = 0;
-    let docFiles = 0;
-    let visibleFiles = 0;
-
-    function countFiles(node) {
-        if (node.type === 'file') {
-            totalFiles++;
-            const fileType = getFileType(node.name);
-            if (fileType === 'code') codeFiles++;
-            else if (fileType === 'docs') docFiles++;
-
-            if (currentFileFilter === 'all' || fileType === currentFileFilter || fileType === 'unknown') {
-                visibleFiles++;
-            }
-        }
-        if (node.children) {
-            node.children.forEach(countFiles);
-        }
-        if (node._children) {
-            node._children.forEach(countFiles);
-        }
+    // Helper function to check if a file should be included based on filter
+    function shouldIncludeFile(node) {
+        if (node.type !== 'file') return true; // Always include non-files
+        const fileType = getFileType(node.name);
+        return currentFileFilter === 'all' ||
+               fileType === currentFileFilter ||
+               fileType === 'unknown';
     }
 
-    countFiles(treeData);
+    // Helper function to check if a chunk should be included (based on parent file)
+    function shouldIncludeChunk(node) {
+        if (!chunkTypes.includes(node.type)) return true; // Not a chunk
 
-    stats.innerHTML = `
-        <strong>Files:</strong> ${visibleFiles}/${totalFiles} shown<br>
-        <span style="color: var(--accent);">📝 Code:</span> ${codeFiles} |
-        <span style="color: var(--warning);">📄 Docs:</span> ${docFiles}
-    `;
+        // Find parent file by looking for file_path property
+        if (!node.file_path) return false; // Orphaned chunk, exclude
+
+        // Check if the parent file would be included
+        const parentFile = allNodes.find(n =>
+            n.type === 'file' && n.file_path === node.file_path
+        );
+
+        if (!parentFile) return false; // No parent file found
+        return shouldIncludeFile(parentFile);
+    }
+
+    // Filter allNodes based on current filter
+    const filteredNodes = allNodes.filter(node => {
+        if (node.type === 'directory') {
+            // Include directories if they have any matching children
+            // We'll handle this in tree building - always include for now
+            return true;
+        } else if (node.type === 'file') {
+            return shouldIncludeFile(node);
+        } else if (chunkTypes.includes(node.type)) {
+            return shouldIncludeChunk(node);
+        }
+        return true; // Include unknown types
+    });
+
+    console.log(`Filtered nodes: ${filteredNodes.length} of ${allNodes.length}`);
+
+    // Temporarily replace allNodes with filtered nodes for tree building
+    const originalNodes = allNodes;
+    allNodes = filteredNodes;
+
+    // Rebuild the tree structure with filtered nodes
+    buildTreeStructure();
+
+    // Restore original allNodes
+    allNodes = originalNodes;
+
+    // Completely redraw the visualization
+    renderVisualization();
+
+    console.log('=== FILTER COMPLETE (TREE REBUILT) ===');
 }
 
 // ============================================================================
@@ -3231,6 +3171,12 @@ function showComplexityReport() {
     html += '</div>'; // complexity-report
 
     viewerContent.innerHTML = html;
+
+    // Hide section dropdown for reports (no code sections)
+    const sectionNav = document.getElementById('section-nav');
+    if (sectionNav) {
+        sectionNav.style.display = 'none';
+    }
 }
 
 function navigateToChunk(chunkName) {
@@ -3508,6 +3454,12 @@ function showCodeSmells() {
     html += '</div>'; // code-smells-report
 
     viewerContent.innerHTML = html;
+
+    // Hide section dropdown for reports (no code sections)
+    const sectionNav = document.getElementById('section-nav');
+    if (sectionNav) {
+        sectionNav.style.display = 'none';
+    }
 }
 
 function filterCodeSmells() {
@@ -3622,6 +3574,12 @@ function showDependencies() {
     html += '</div>';
 
     viewerContent.innerHTML = html;
+
+    // Hide section dropdown for reports (no code sections)
+    const sectionNav = document.getElementById('section-nav');
+    if (sectionNav) {
+        sectionNav.style.display = 'none';
+    }
 }
 
 function buildFileDependencyGraph() {
@@ -3895,6 +3853,12 @@ function showTrends() {
 
     viewerContent.innerHTML = html;
 
+    // Hide section dropdown for reports (no code sections)
+    const sectionNav = document.getElementById('section-nav');
+    if (sectionNav) {
+        sectionNav.style.display = 'none';
+    }
+
     // Render D3 charts if trend data is available
     if (window.graphTrendData && window.graphTrendData.entries && window.graphTrendData.entries.length > 0) {
         renderTrendCharts(window.graphTrendData.entries);
@@ -4140,6 +4104,12 @@ _Generated by MCP Vector Search Visualization_
             <p style="margin-top: 15px; color: var(--text-secondary);">Share this report with your team for prioritized remediation.</p>
         </div>
     `;
+
+        // Hide section dropdown for reports (no code sections)
+        const sectionNav = document.getElementById('section-nav');
+        if (sectionNav) {
+            sectionNav.style.display = 'none';
+        }
     });
 }
 
