@@ -3537,11 +3537,19 @@ function showDependencies() {
 
     viewerTitle.textContent = '🔗 Code Structure';
 
-    // Build directory structure from nodes
+    // Code file extensions (exclude docs like .md, .txt, .rst)
+    const codeExtensions = ['.py', '.js', '.ts', '.jsx', '.tsx', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.rb', '.php', '.swift', '.kt', '.scala', '.ex', '.exs', '.clj', '.vue', '.svelte'];
+
+    function isCodeFile(filePath) {
+        const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase();
+        return codeExtensions.includes(ext);
+    }
+
+    // Build directory structure from nodes (code files only)
     const dirStructure = new Map();
 
     allNodes.forEach(node => {
-        if (node.type === 'file' && node.file_path) {
+        if (node.type === 'file' && node.file_path && isCodeFile(node.file_path)) {
             const parts = node.file_path.split('/');
             const fileName = parts.pop();
             const dirPath = parts.join('/') || '/';
