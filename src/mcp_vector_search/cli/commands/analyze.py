@@ -90,7 +90,7 @@ def main(
         "console",
         "--format",
         "-f",
-        help="Output format: console, json, sarif",
+        help="Output format: console, json, sarif, markdown",
         rich_help_panel="📊 Display Options",
     ),
     output: Path | None = typer.Option(
@@ -191,6 +191,9 @@ def main(
     [green]Export to SARIF format:[/green]
         $ mcp-vector-search analyze --format sarif --output report.sarif
 
+    [green]Export to Markdown format:[/green]
+        $ mcp-vector-search analyze --format markdown --output .
+
     [bold cyan]CI/CD Quality Gates:[/bold cyan]
 
     [green]Fail on ERROR-level smells (default):[/green]
@@ -258,7 +261,7 @@ def main(
 
     try:
         # Validate format and output options
-        valid_formats = ["console", "json", "sarif"]
+        valid_formats = ["console", "json", "sarif", "markdown"]
         format_lower = format.lower()
 
         if format_lower not in valid_formats:
@@ -267,7 +270,7 @@ def main(
             )
             raise typer.Exit(1)
 
-        # SARIF format requires output file
+        # SARIF and markdown formats should have output path (defaults to current dir)
         if format_lower == "sarif" and output is None:
             print_error("--output is required when using --format sarif")
             raise typer.Exit(1)
@@ -551,7 +554,28 @@ async def run_analysis(
                 all_smells.extend(file_smells)
 
         # Output results based on format
-        if output_format == "sarif":
+        if output_format == "markdown":
+            # Markdown format - write two files
+            from ...analysis.reporters.markdown import MarkdownReporter
+
+            reporter = MarkdownReporter()
+
+            # Generate full analysis report
+            analysis_file = reporter.generate_analysis_report(
+                project_metrics, all_smells, output_file
+            )
+            console.print(
+                f"[green]✓[/green] Analysis report written to: {analysis_file}"
+            )
+
+            # Generate fixes report if smells were detected
+            if all_smells:
+                fixes_file = reporter.generate_fixes_report(
+                    project_metrics, all_smells, output_file
+                )
+                console.print(f"[green]✓[/green] Fixes report written to: {fixes_file}")
+
+        elif output_format == "sarif":
             # SARIF format - write to file
             from ...analysis.reporters.sarif import SARIFReporter
 
