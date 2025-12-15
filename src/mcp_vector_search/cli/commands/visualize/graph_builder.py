@@ -531,12 +531,13 @@ async def build_graph_data(
                 }
             )
 
-        # Link to parent chunk
+        # Link to parent chunk (class -> method hierarchy)
         if chunk.parent_chunk_id and chunk.parent_chunk_id in chunk_id_map:
             links.append(
                 {
                     "source": chunk.parent_chunk_id,
                     "target": chunk_id,
+                    "type": "chunk_hierarchy",  # Explicitly mark chunk parent-child relationships
                 }
             )
 
