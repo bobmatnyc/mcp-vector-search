@@ -16,8 +16,18 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
 
 from .models import CodeChunk
+
+console = Console()
 
 
 def extract_function_calls(code: str) -> set[str]:
@@ -205,68 +215,81 @@ class RelationshipStore:
         """
         semantic_links = []
 
-        for i, chunk in enumerate(code_chunks):
-            if i % 20 == 0:  # Progress indicator
-                logger.debug(f"Semantic: {i}/{len(code_chunks)} chunks")
+        # Use Rich progress bar instead of scrolling text
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[cyan]Computing semantic relationships...[/cyan]"),
+            BarColumn(bar_width=40),
+            TaskProgressColumn(),
+            TextColumn("[dim]{task.completed}/{task.total} chunks[/dim]"),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task("semantic", total=len(code_chunks))
 
-            try:
-                # Search for similar chunks
-                similar_results = await database.search(
-                    query=chunk.content[:500],  # First 500 chars
-                    limit=6,  # Get 6 (exclude self = 5)
-                    similarity_threshold=0.3,
-                )
+            for i, chunk in enumerate(code_chunks):
+                progress.update(task, completed=i + 1)
 
-                # Filter out self and create links
-                for result in similar_results:
-                    target_chunk = next(
-                        (
-                            c
-                            for c in code_chunks
-                            if str(c.file_path) == str(result.file_path)
-                            and c.start_line == result.start_line
-                            and c.end_line == result.end_line
-                        ),
-                        None,
+                try:
+                    # Search for similar chunks
+                    similar_results = await database.search(
+                        query=chunk.content[:500],  # First 500 chars
+                        limit=6,  # Get 6 (exclude self = 5)
+                        similarity_threshold=0.3,
                     )
 
-                    if not target_chunk:
-                        continue
-
-                    target_chunk_id = target_chunk.chunk_id or target_chunk.id
-                    source_chunk_id = chunk.chunk_id or chunk.id
-
-                    # Skip self-references
-                    if target_chunk_id == source_chunk_id:
-                        continue
-
-                    # Add semantic link
-                    if result.similarity_score >= 0.2:
-                        semantic_links.append(
-                            {
-                                "source": source_chunk_id,
-                                "target": target_chunk_id,
-                                "type": "semantic",
-                                "similarity": result.similarity_score,
-                            }
+                    # Filter out self and create links
+                    for result in similar_results:
+                        target_chunk = next(
+                            (
+                                c
+                                for c in code_chunks
+                                if str(c.file_path) == str(result.file_path)
+                                and c.start_line == result.start_line
+                                and c.end_line == result.end_line
+                            ),
+                            None,
                         )
 
-                        # Only keep top 5 per chunk
-                        if (
-                            len(
-                                [
-                                    link
-                                    for link in semantic_links
-                                    if link["source"] == source_chunk_id
-                                ]
-                            )
-                            >= 5
-                        ):
-                            break
+                        if not target_chunk:
+                            continue
 
-            except Exception as e:
-                logger.debug(f"Failed to compute semantic for {chunk.chunk_id}: {e}")
-                continue
+                        target_chunk_id = target_chunk.chunk_id or target_chunk.id
+                        source_chunk_id = chunk.chunk_id or chunk.id
+
+                        # Skip self-references
+                        if target_chunk_id == source_chunk_id:
+                            continue
+
+                        # Add semantic link
+                        if result.similarity_score >= 0.2:
+                            semantic_links.append(
+                                {
+                                    "source": source_chunk_id,
+                                    "target": target_chunk_id,
+                                    "type": "semantic",
+                                    "similarity": result.similarity_score,
+                                }
+                            )
+
+                            # Only keep top 5 per chunk
+                            if (
+                                len(
+                                    [
+                                        link
+                                        for link in semantic_links
+                                        if link["source"] == source_chunk_id
+                                    ]
+                                )
+                                >= 5
+                            ):
+                                break
+
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to compute semantic for {chunk.chunk_id}: {e}"
+                    )
+                    continue
 
         return semantic_links
 
