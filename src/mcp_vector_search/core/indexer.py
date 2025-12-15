@@ -1168,7 +1168,9 @@ class SemanticIndexer:
             return chunks
 
         # Group chunks by type and name
-        module_chunks = [c for c in chunks if c.chunk_type in ("module", "imports")]
+        # Only actual module chunks (not imports) serve as parents for top-level code
+        # imports chunks should remain siblings of classes/functions, not parents
+        module_chunks = [c for c in chunks if c.chunk_type == "module"]
         class_chunks = [
             c for c in chunks if c.chunk_type in ("class", "interface", "mixin")
         ]
