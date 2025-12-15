@@ -2582,6 +2582,25 @@ function applyFileFilter() {
         console.log('Tree reset to collapsed state: root expanded, first-level children collapsed');
     }
 
+    // FORCE collapse everything before rendering (safety measure)
+    function forceCollapseAll(node, depth = 0) {
+        // Only root (depth 0) stays expanded
+        // Everything else gets collapsed
+        if (depth > 0 && node.children && node.children.length > 0) {
+            node._children = node.children;
+            node.children = null;
+        }
+
+        // Recurse through BOTH children and _children
+        const kids = node.children || node._children || [];
+        kids.forEach(child => forceCollapseAll(child, depth + 1));
+    }
+
+    if (treeData) {
+        forceCollapseAll(treeData, 0);
+        console.log('FORCE COLLAPSED tree - only root expanded');
+    }
+
     // Completely redraw the visualization
     renderVisualization();
 
