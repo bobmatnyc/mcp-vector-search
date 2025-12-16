@@ -2,6 +2,7 @@
 
 This module handles running the local HTTP server to serve the
 D3.js visualization interface with chunked transfer for large JSON files.
+Uses orjson for 5-10x faster JSON serialization.
 """
 
 import asyncio
@@ -10,6 +11,7 @@ import webbrowser
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
+import orjson
 import uvicorn
 from fastapi import FastAPI, Response
 from fastapi.responses import FileResponse, StreamingResponse
@@ -130,14 +132,12 @@ def create_app(viz_dir: Path) -> FastAPI:
             )
 
         try:
-            import json
+            with open(graph_file, "rb") as f:
+                data = orjson.loads(f.read())
 
-            with open(graph_file) as f:
-                data = json.load(f)
-
-            # Return nodes and links
+            # Return nodes and links using orjson for fast serialization
             return Response(
-                content=json.dumps(
+                content=orjson.dumps(
                     {"nodes": data.get("nodes", []), "links": data.get("links", [])}
                 ),
                 media_type="application/json",
@@ -175,10 +175,9 @@ def create_app(viz_dir: Path) -> FastAPI:
 
         try:
             import ast
-            import json
 
-            with open(graph_file) as f:
-                data = json.load(f)
+            with open(graph_file, "rb") as f:
+                data = orjson.loads(f.read())
 
             # Find the target chunk
             target_node = None
@@ -273,7 +272,7 @@ def create_app(viz_dir: Path) -> FastAPI:
             semantic = semantic[:10]
 
             return Response(
-                content=json.dumps(
+                content=orjson.dumps(
                     {
                         "chunk_id": chunk_id,
                         "callers": callers,
@@ -317,10 +316,9 @@ def create_app(viz_dir: Path) -> FastAPI:
 
         try:
             import ast
-            import json
 
-            with open(graph_file) as f:
-                data = json.load(f)
+            with open(graph_file, "rb") as f:
+                data = orjson.loads(f.read())
 
             # Find the target chunk
             target_node = None
@@ -342,7 +340,7 @@ def create_app(viz_dir: Path) -> FastAPI:
             )
             if not function_name:
                 return Response(
-                    content=json.dumps({"callers": [], "function_name": None}),
+                    content=orjson.dumps({"callers": [], "function_name": None}),
                     media_type="application/json",
                 )
 
@@ -391,7 +389,7 @@ def create_app(viz_dir: Path) -> FastAPI:
                     )
 
             return Response(
-                content=json.dumps(
+                content=orjson.dumps(
                     {
                         "callers": callers,
                         "function_name": function_name,
@@ -429,10 +427,8 @@ def create_app(viz_dir: Path) -> FastAPI:
             )
 
         try:
-            import json
-
-            with open(graph_file) as f:
-                data = json.load(f)
+            with open(graph_file, "rb") as f:
+                data = orjson.loads(f.read())
 
             # Find chunks associated with this file
             # Look for nodes that have this file as parent via containment links
@@ -450,7 +446,7 @@ def create_app(viz_dir: Path) -> FastAPI:
                     )
 
             return Response(
-                content=json.dumps({"chunks": chunks}),
+                content=orjson.dumps({"chunks": chunks}),
                 media_type="application/json",
                 headers={"Cache-Control": "no-cache"},
             )

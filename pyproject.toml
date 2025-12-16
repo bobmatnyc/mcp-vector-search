@@ -45,6 +45,7 @@ dependencies = [
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
     "py-mcp-installer>=0.1.4",
+    "orjson>=3.9.0",
 ]
 
 [dependency-groups]
@@ -144,6 +145,7 @@ ignore = [
 "tests/manual/*" = ["E402", "E722"]  # Allow path manipulation and broad exceptions in manual tests
 "scripts/**/*" = ["F401", "B023", "E402"]  # Scripts may import for availability checks
 "src/mcp_vector_search/cli/commands/*.py" = ["F821"]  # CLI commands may have undefined names
+"src/mcp_vector_search/core/embeddings.py" = ["E402"]  # TOKENIZERS_PARALLELISM must be set before importing sentence_transformers
 
 [tool.mypy]
 python_version = "3.11"
