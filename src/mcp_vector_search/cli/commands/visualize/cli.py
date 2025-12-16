@@ -39,7 +39,7 @@ def visualize_callback(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
         # Default to serve when no subcommand given
         # Must pass explicit defaults since typer.Option doesn't work when called directly
-        serve(port=8080, graph_file=Path("chunk-graph.json"), code_only=False)
+        serve(port=8501, graph_file=Path("chunk-graph.json"), code_only=False)
 
 
 @app.command()
@@ -186,7 +186,7 @@ async def _export_chunks(
 @app.command()
 def serve(
     port: int = typer.Option(
-        8080, "--port", "-p", help="Port for visualization server"
+        8501, "--port", "-p", help="Port for visualization server"
     ),
     graph_file: Path = typer.Option(
         Path("chunk-graph.json"),
@@ -203,7 +203,7 @@ def serve(
     """Start local HTTP server for D3.js visualization.
 
     Examples:
-        # Start server on default port 8080
+        # Start server on default port 8501
         mcp-vector-search visualize serve
 
         # Custom port
@@ -216,9 +216,9 @@ def serve(
         mcp-vector-search visualize serve --code-only
     """
     # Use specified port or find free one
-    if port == 8080:  # Default port, try to find free one
+    if port == 8501:  # Default port, try to find free one
         try:
-            port = find_free_port(8080, 8099)
+            port = find_free_port(8501, 8599)
         except OSError as e:
             console.print(f"[red]✗ {e}[/red]")
             raise typer.Exit(1)

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+- **Multiprocess File Parsing** (#61) - Parallel parsing across CPU cores
+  - Uses Python's ProcessPoolExecutor for CPU-bound tree-sitter parsing
+  - Automatically uses 75% of CPU cores (capped at 8 workers)
+  - Expected 4-8x faster parsing on multi-core systems
+  - Graceful fallback to single-process for debugging (`use_multiprocessing=False`)
+  - No change to public API - enabled by default
+- **Batch Embedding Generation** (#59) - Significant indexing performance improvement
+  - Accumulates chunks from multiple files before database insertion
+  - Single database transaction per batch (default: 10 files) instead of per-file
+  - Enables efficient batch embedding generation (32-64 embeddings at once)
+  - Expected 2-4x faster indexing for typical projects
+  - Better GPU/CPU utilization with larger embedding batches
+
 ## [0.21.3] - 2025-12-13
 
 ### Added
