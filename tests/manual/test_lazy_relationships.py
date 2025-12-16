@@ -81,9 +81,9 @@ class MyClass:
             with open(relationships_file) as f:
                 data = json.load(f)
                 # Caller relationships should be empty (lazy-loaded)
-                assert (
-                    len(data.get("callers", {})) == 0
-                ), "Callers should be empty with skip_relationships=True"
+                assert len(data.get("callers", {})) == 0, (
+                    "Callers should be empty with skip_relationships=True"
+                )
 
         print(f"✓ Indexing with skip_relationships=True took {skip_time:.2f}s")
         print(f"✓ Indexed {indexed_count} file(s)")
@@ -143,18 +143,18 @@ def function_b():
 
         # Verify relationships file exists and has data
         relationships_file = project_root / ".mcp-vector-search" / "relationships.json"
-        assert (
-            relationships_file.exists()
-        ), "Relationships file should exist with skip_relationships=False"
+        assert relationships_file.exists(), (
+            "Relationships file should exist with skip_relationships=False"
+        )
 
         import json
 
         with open(relationships_file) as f:
             data = json.load(f)
             # Should have semantic relationships
-            assert (
-                len(data.get("semantic", [])) > 0
-            ), "Should have semantic relationships"
+            assert len(data.get("semantic", [])) > 0, (
+                "Should have semantic relationships"
+            )
             # Callers might be empty if no cross-file calls, but field should exist
             assert "callers" in data, "Callers field should exist"
 
@@ -252,9 +252,9 @@ class Class_{i}:
         print(f"{'=' * 60}\n")
 
         # Lazy should be faster (or at least not slower)
-        assert (
-            lazy_time <= eager_time
-        ), "Lazy loading should be faster than or equal to eager loading"
+        assert lazy_time <= eager_time, (
+            "Lazy loading should be faster than or equal to eager loading"
+        )
 
 
 if __name__ == "__main__":
