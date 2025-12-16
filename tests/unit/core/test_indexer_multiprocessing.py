@@ -57,7 +57,7 @@ class TestSemanticIndexerMultiprocessing:
         )
 
         # Index the project
-        await indexer.index_project()
+        indexed_count = await indexer.index_project()
 
         # Verify indexing results
         assert indexed_count > 0
@@ -78,7 +78,7 @@ class TestSemanticIndexerMultiprocessing:
         )
 
         # Index the project
-        await indexer.index_project()
+        indexed_count = await indexer.index_project()
 
         # Verify indexing results (same as with multiprocessing)
         assert indexed_count > 0
@@ -160,7 +160,7 @@ class TestSemanticIndexerMultiprocessing:
         )
 
         # Index with small batch size
-        await indexer.index_project()
+        indexed_count = await indexer.index_project()
 
         # Should have indexed all files
         assert indexed_count >= 5
