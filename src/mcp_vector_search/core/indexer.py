@@ -2,7 +2,9 @@
 
 import asyncio
 import json
+import multiprocessing
 import os
+from concurrent.futures import ProcessPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,67 @@ EXTENSION_TO_LANGUAGE = {
 }
 
 
+def _parse_file_standalone(
+    args: tuple[Path, str | None],
+) -> tuple[Path, list[CodeChunk], Exception | None]:
+    """Parse a single file - standalone function for multiprocessing.
+
+    This function must be at module level (not a method) to be picklable for
+    multiprocessing. It creates its own parser registry to avoid serialization issues.
+
+    Args:
+        args: Tuple of (file_path, subproject_info_json)
+            - file_path: Path to the file to parse
+            - subproject_info_json: JSON string with subproject info or None
+
+    Returns:
+        Tuple of (file_path, chunks, error)
+        - file_path: The file path that was parsed
+        - chunks: List of parsed CodeChunk objects (empty if error)
+        - error: Exception if parsing failed, None if successful
+    """
+    file_path, subproject_info_json = args
+
+    try:
+        # Create parser registry in this process
+        parser_registry = get_parser_registry()
+
+        # Get appropriate parser
+        parser = parser_registry.get_parser_for_file(file_path)
+
+        # Parse file synchronously (tree-sitter is synchronous anyway)
+        # We need to use the synchronous version of parse_file
+        # Since parsers may have async methods, we'll read and parse directly
+        import asyncio
+
+        # Create event loop for this process if needed
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        # Run the async parse_file in this process's event loop
+        chunks = loop.run_until_complete(parser.parse_file(file_path))
+
+        # Filter out empty chunks
+        valid_chunks = [chunk for chunk in chunks if chunk.content.strip()]
+
+        # Apply subproject information if available
+        if subproject_info_json:
+            subproject_info = json.loads(subproject_info_json)
+            for chunk in valid_chunks:
+                chunk.subproject_name = subproject_info.get("name")
+                chunk.subproject_path = subproject_info.get("relative_path")
+
+        return (file_path, valid_chunks, None)
+
+    except Exception as e:
+        # Return error instead of raising to avoid process crashes
+        logger.error(f"Failed to parse file {file_path} in worker process: {e}")
+        return (file_path, [], e)
+
+
 class SemanticIndexer:
     """Semantic indexer for parsing and indexing code files."""
 
@@ -52,6 +115,7 @@ class SemanticIndexer:
         batch_size: int = 10,
         debug: bool = False,
         collectors: list[MetricCollector] | None = None,
+        use_multiprocessing: bool = True,
     ) -> None:
         """Initialize semantic indexer.
 
@@ -60,10 +124,11 @@ class SemanticIndexer:
             project_root: Project root directory
             file_extensions: File extensions to index (deprecated, use config)
             config: Project configuration (preferred over file_extensions)
-            max_workers: Maximum number of worker threads for parallel processing
+            max_workers: Maximum number of worker processes for parallel parsing (ignored if use_multiprocessing=False)
             batch_size: Number of files to process in each batch
             debug: Enable debug output for hierarchy building
             collectors: Metric collectors to run during indexing (defaults to all complexity collectors)
+            use_multiprocessing: Enable multiprocess parallel parsing (default: True, disable for debugging)
         """
         self.database = database
         self.project_root = project_root
@@ -88,13 +153,18 @@ class SemanticIndexer:
             collectors if collectors is not None else self._default_collectors()
         )
 
-        # Safely get event loop for max_workers
-        try:
-            loop = asyncio.get_event_loop()
-            self.max_workers = max_workers or min(4, (loop.get_debug() and 1) or 4)
-        except RuntimeError:
-            # No event loop in current thread
-            self.max_workers = max_workers or 4
+        # Configure multiprocessing for parallel parsing
+        self.use_multiprocessing = use_multiprocessing
+        if use_multiprocessing:
+            # Use 75% of CPU cores for parsing, but cap at 8 to avoid overhead
+            cpu_count = multiprocessing.cpu_count()
+            self.max_workers = max_workers or min(max(1, int(cpu_count * 0.75)), 8)
+            logger.debug(
+                f"Multiprocessing enabled with {self.max_workers} workers (CPU count: {cpu_count})"
+            )
+        else:
+            self.max_workers = 1
+            logger.debug("Multiprocessing disabled (single-threaded mode)")
 
         self.batch_size = batch_size
         self._index_metadata_file = (
@@ -439,10 +509,88 @@ class SemanticIndexer:
 
         return indexed_count
 
+    async def _parse_and_prepare_file(
+        self, file_path: Path, force_reindex: bool = False
+    ) -> tuple[list[CodeChunk], dict[str, Any] | None]:
+        """Parse file and prepare chunks with metrics (no database insertion).
+
+        This method extracts the parsing and metric collection logic from index_file()
+        to enable batch processing across multiple files.
+
+        Args:
+            file_path: Path to the file to parse
+            force_reindex: Whether to force reindexing (always deletes existing chunks)
+
+        Returns:
+            Tuple of (chunks_with_hierarchy, chunk_metrics)
+
+        Raises:
+            ParsingError: If file parsing fails
+        """
+        # Check if file should be indexed
+        if not self._should_index_file(file_path):
+            return ([], None)
+
+        # Always remove existing chunks when reindexing a file
+        # This prevents duplicate chunks and ensures consistency
+        await self.database.delete_by_file(file_path)
+
+        # Parse file into chunks
+        chunks = await self._parse_file(file_path)
+
+        if not chunks:
+            logger.debug(f"No chunks extracted from {file_path}")
+            return ([], None)
+
+        # Build hierarchical relationships between chunks
+        chunks_with_hierarchy = self._build_chunk_hierarchy(chunks)
+
+        # Debug: Check if hierarchy was built
+        methods_with_parents = sum(
+            1
+            for c in chunks_with_hierarchy
+            if c.chunk_type in ("method", "function") and c.parent_chunk_id
+        )
+        logger.debug(
+            f"After hierarchy build: {methods_with_parents}/{len([c for c in chunks_with_hierarchy if c.chunk_type in ('method', 'function')])} methods have parents"
+        )
+
+        # Collect metrics for chunks (if collectors are enabled)
+        chunk_metrics: dict[str, Any] | None = None
+        if self.collectors:
+            try:
+                # Read source code
+                source_code = file_path.read_bytes()
+
+                # Detect language from file extension
+                language = EXTENSION_TO_LANGUAGE.get(
+                    file_path.suffix.lower(), "unknown"
+                )
+
+                # Collect metrics for each chunk
+                chunk_metrics = {}
+                for chunk in chunks_with_hierarchy:
+                    metrics = self._collect_metrics(chunk, source_code, language)
+                    if metrics:
+                        chunk_metrics[chunk.chunk_id] = metrics.to_metadata()
+
+                logger.debug(
+                    f"Collected metrics for {len(chunk_metrics)} chunks from {file_path}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to collect metrics for {file_path}: {e}")
+                chunk_metrics = None
+
+        return (chunks_with_hierarchy, chunk_metrics)
+
     async def _process_file_batch(
         self, file_paths: list[Path], force_reindex: bool = False
     ) -> list[bool]:
-        """Process a batch of files in parallel.
+        """Process a batch of files and accumulate chunks for batch embedding.
+
+        This method processes multiple files in parallel (using multiprocessing for
+        CPU-bound parsing) and then performs a single database insertion for all chunks,
+        enabling efficient batch embedding generation.
 
         Args:
             file_paths: List of file paths to process
@@ -451,25 +599,165 @@ class SemanticIndexer:
         Returns:
             List of success flags for each file
         """
-        # Create tasks for parallel processing
-        tasks = []
+        all_chunks: list[CodeChunk] = []
+        all_metrics: dict[str, Any] = {}
+        file_to_chunks_map: dict[str, tuple[int, int]] = {}
+        success_flags: list[bool] = []
+
+        # Filter files that should be indexed and delete old chunks
+        files_to_parse = []
         for file_path in file_paths:
-            task = asyncio.create_task(self._index_file_safe(file_path, force_reindex))
-            tasks.append(task)
+            if not self._should_index_file(file_path):
+                success_flags.append(True)  # Skipped file is not an error
+                continue
+            # Delete old chunks before parsing
+            await self.database.delete_by_file(file_path)
+            files_to_parse.append(file_path)
 
-        # Wait for all tasks to complete
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        if not files_to_parse:
+            return success_flags
 
-        # Convert results to success flags
-        success_flags = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"Failed to index {file_paths[i]}: {result}")
+        # Parse files using multiprocessing if enabled
+        if self.use_multiprocessing and len(files_to_parse) > 1:
+            # Use ProcessPoolExecutor for CPU-bound parsing
+            parse_results = await self._parse_files_multiprocess(files_to_parse)
+        else:
+            # Fall back to async processing (for single file or disabled multiprocessing)
+            parse_results = await self._parse_files_async(files_to_parse)
+
+        # Accumulate chunks from all successfully parsed files
+        metadata = self._load_index_metadata()
+        for file_path, chunks, error in parse_results:
+            if error:
+                logger.error(f"Failed to parse {file_path}: {error}")
                 success_flags.append(False)
+                continue
+
+            if chunks:
+                # Build hierarchy and collect metrics for parsed chunks
+                chunks_with_hierarchy = self._build_chunk_hierarchy(chunks)
+
+                # Collect metrics if enabled
+                chunk_metrics = None
+                if self.collectors:
+                    try:
+                        source_code = file_path.read_bytes()
+                        language = EXTENSION_TO_LANGUAGE.get(
+                            file_path.suffix.lower(), "unknown"
+                        )
+                        chunk_metrics = {}
+                        for chunk in chunks_with_hierarchy:
+                            metrics = self._collect_metrics(
+                                chunk, source_code, language
+                            )
+                            if metrics:
+                                chunk_metrics[chunk.chunk_id] = metrics.to_metadata()
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to collect metrics for {file_path}: {e}"
+                        )
+
+                # Accumulate chunks
+                start_idx = len(all_chunks)
+                all_chunks.extend(chunks_with_hierarchy)
+                end_idx = len(all_chunks)
+                file_to_chunks_map[str(file_path)] = (start_idx, end_idx)
+
+                # Merge metrics
+                if chunk_metrics:
+                    all_metrics.update(chunk_metrics)
+
+                # Update metadata for successfully parsed file
+                metadata[str(file_path)] = os.path.getmtime(file_path)
+                success_flags.append(True)
             else:
-                success_flags.append(result)
+                # Empty file is not an error
+                metadata[str(file_path)] = os.path.getmtime(file_path)
+                success_flags.append(True)
+
+        # Single database insertion for entire batch
+        if all_chunks:
+            logger.info(
+                f"Batch inserting {len(all_chunks)} chunks from {len(file_paths)} files"
+            )
+            try:
+                await self.database.add_chunks(all_chunks, metrics=all_metrics)
+                logger.debug(
+                    f"Successfully indexed {len(all_chunks)} chunks from {sum(success_flags)} files"
+                )
+            except Exception as e:
+                logger.error(f"Failed to insert batch of chunks: {e}")
+                # Mark all files in this batch as failed
+                return [False] * len(file_paths)
+
+        # Save updated metadata after successful batch
+        self._save_index_metadata(metadata)
 
         return success_flags
+
+    async def _parse_files_multiprocess(
+        self, file_paths: list[Path]
+    ) -> list[tuple[Path, list[CodeChunk], Exception | None]]:
+        """Parse multiple files using multiprocessing for CPU-bound parallelism.
+
+        Args:
+            file_paths: List of file paths to parse
+
+        Returns:
+            List of tuples (file_path, chunks, error) for each file
+        """
+        # Prepare arguments for worker processes
+        parse_args = []
+        for file_path in file_paths:
+            # Get subproject info if available
+            subproject = self.monorepo_detector.get_subproject_for_file(file_path)
+            subproject_info_json = None
+            if subproject:
+                subproject_info_json = json.dumps(
+                    {
+                        "name": subproject.name,
+                        "relative_path": subproject.relative_path,
+                    }
+                )
+            parse_args.append((file_path, subproject_info_json))
+
+        # Limit workers to avoid overhead
+        max_workers = min(self.max_workers, len(file_paths))
+
+        # Run parsing in ProcessPoolExecutor
+        loop = asyncio.get_running_loop()
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks and wait for results
+            results = await loop.run_in_executor(
+                None, lambda: list(executor.map(_parse_file_standalone, parse_args))
+            )
+
+        logger.debug(
+            f"Multiprocess parsing completed: {len(results)} files parsed with {max_workers} workers"
+        )
+        return results
+
+    async def _parse_files_async(
+        self, file_paths: list[Path]
+    ) -> list[tuple[Path, list[CodeChunk], Exception | None]]:
+        """Parse multiple files using async (fallback for single file or disabled multiprocessing).
+
+        Args:
+            file_paths: List of file paths to parse
+
+        Returns:
+            List of tuples (file_path, chunks, error) for each file
+        """
+        results = []
+        for file_path in file_paths:
+            try:
+                chunks = await self._parse_file(file_path)
+                results.append((file_path, chunks, None))
+            except Exception as e:
+                logger.error(f"Failed to parse {file_path}: {e}")
+                results.append((file_path, [], e))
+
+        return results
 
     def _load_index_metadata(self) -> dict[str, float]:
         """Load file modification times from metadata file.
@@ -1050,6 +1338,9 @@ class SemanticIndexer:
     ):
         """Index files and yield progress updates for each file.
 
+        This method processes files in batches and accumulates chunks across files
+        before performing a single database insertion per batch for better performance.
+
         Args:
             files_to_index: List of file paths to index
             force_reindex: Whether to force reindexing
@@ -1060,72 +1351,33 @@ class SemanticIndexer:
         # Write version header to error log at start of indexing run
         self._write_indexing_run_header()
 
-        metadata = self._load_index_metadata()
-
-        # Process files in batches for better memory management
+        # Process files in batches for better memory management and embedding efficiency
         for i in range(0, len(files_to_index), self.batch_size):
             batch = files_to_index[i : i + self.batch_size]
 
-            # Process each file in the batch
+            # Accumulate chunks from all files in batch
+            all_chunks: list[CodeChunk] = []
+            all_metrics: dict[str, Any] = {}
+            file_to_chunks_map: dict[str, tuple[int, int]] = {}
+            file_results: dict[Path, tuple[int, bool]] = {}
+
+            # Parse all files in parallel
+            tasks = []
             for file_path in batch:
-                chunks_added = 0
-                success = False
+                task = asyncio.create_task(
+                    self._parse_and_prepare_file(file_path, force_reindex)
+                )
+                tasks.append(task)
 
-                try:
-                    # Always remove existing chunks when reindexing
-                    await self.database.delete_by_file(file_path)
+            parse_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                    # Parse file into chunks
-                    chunks = await self._parse_file(file_path)
-
-                    if chunks:
-                        # Build hierarchical relationships
-                        chunks_with_hierarchy = self._build_chunk_hierarchy(chunks)
-
-                        # Collect metrics for chunks (if collectors are enabled)
-                        chunk_metrics: dict[str, Any] | None = None
-                        if self.collectors:
-                            try:
-                                # Read source code
-                                source_code = file_path.read_bytes()
-
-                                # Detect language from file extension
-                                language = EXTENSION_TO_LANGUAGE.get(
-                                    file_path.suffix.lower(), "unknown"
-                                )
-
-                                # Collect metrics for each chunk
-                                chunk_metrics = {}
-                                for chunk in chunks_with_hierarchy:
-                                    metrics = self._collect_metrics(
-                                        chunk, source_code, language
-                                    )
-                                    if metrics:
-                                        chunk_metrics[chunk.chunk_id] = (
-                                            metrics.to_metadata()
-                                        )
-                            except Exception as e:
-                                logger.warning(
-                                    f"Failed to collect metrics for {file_path}: {e}"
-                                )
-                                chunk_metrics = None
-
-                        # Add chunks to database with metrics
-                        await self.database.add_chunks(
-                            chunks_with_hierarchy, metrics=chunk_metrics
-                        )
-                        chunks_added = len(chunks)
-                        logger.debug(f"Indexed {chunks_added} chunks from {file_path}")
-
-                    success = True
-
-                    # Update metadata after successful indexing
-                    metadata[str(file_path)] = os.path.getmtime(file_path)
-
-                except Exception as e:
-                    error_msg = f"Failed to index file {file_path}: {type(e).__name__}: {str(e)}"
+            # Accumulate chunks from successfully parsed files
+            metadata = self._load_index_metadata()
+            for file_path, result in zip(batch, parse_results, strict=True):
+                if isinstance(result, Exception):
+                    error_msg = f"Failed to index file {file_path}: {type(result).__name__}: {str(result)}"
                     logger.error(error_msg)
-                    success = False
+                    file_results[file_path] = (0, False)
 
                     # Save error to error log file
                     try:
@@ -1135,18 +1387,69 @@ class SemanticIndexer:
                             / "indexing_errors.log"
                         )
                         with open(error_log_path, "a", encoding="utf-8") as f:
-                            from datetime import datetime
+                            timestamp = datetime.now().isoformat()
+                            f.write(f"[{timestamp}] {error_msg}\n")
+                    except Exception as log_err:
+                        logger.debug(f"Failed to write error log: {log_err}")
+                    continue
 
+                chunks, metrics = result
+                if chunks:
+                    start_idx = len(all_chunks)
+                    all_chunks.extend(chunks)
+                    end_idx = len(all_chunks)
+                    file_to_chunks_map[str(file_path)] = (start_idx, end_idx)
+
+                    # Merge metrics
+                    if metrics:
+                        all_metrics.update(metrics)
+
+                    # Update metadata for successfully parsed file
+                    metadata[str(file_path)] = os.path.getmtime(file_path)
+                    file_results[file_path] = (len(chunks), True)
+                    logger.debug(f"Prepared {len(chunks)} chunks from {file_path}")
+                else:
+                    # Empty file is not an error
+                    metadata[str(file_path)] = os.path.getmtime(file_path)
+                    file_results[file_path] = (0, True)
+
+            # Single database insertion for entire batch
+            if all_chunks:
+                logger.info(
+                    f"Batch inserting {len(all_chunks)} chunks from {len(batch)} files"
+                )
+                try:
+                    await self.database.add_chunks(all_chunks, metrics=all_metrics)
+                    logger.debug(
+                        f"Successfully indexed {len(all_chunks)} chunks from batch"
+                    )
+                except Exception as e:
+                    error_msg = f"Failed to insert batch of chunks: {e}"
+                    logger.error(error_msg)
+                    # Mark all files with chunks in this batch as failed
+                    for file_path in file_to_chunks_map.keys():
+                        file_results[Path(file_path)] = (0, False)
+
+                    # Save error to error log file
+                    try:
+                        error_log_path = (
+                            self.project_root
+                            / ".mcp-vector-search"
+                            / "indexing_errors.log"
+                        )
+                        with open(error_log_path, "a", encoding="utf-8") as f:
                             timestamp = datetime.now().isoformat()
                             f.write(f"[{timestamp}] {error_msg}\n")
                     except Exception as log_err:
                         logger.debug(f"Failed to write error log: {log_err}")
 
-                # Yield progress update
-                yield (file_path, chunks_added, success)
+            # Save metadata after batch
+            self._save_index_metadata(metadata)
 
-        # Save metadata at the end
-        self._save_index_metadata(metadata)
+            # Yield progress updates for each file in batch
+            for file_path in batch:
+                chunks_added, success = file_results.get(file_path, (0, False))
+                yield (file_path, chunks_added, success)
 
     def _build_chunk_hierarchy(self, chunks: list[CodeChunk]) -> list[CodeChunk]:
         """Build parent-child relationships between chunks.
