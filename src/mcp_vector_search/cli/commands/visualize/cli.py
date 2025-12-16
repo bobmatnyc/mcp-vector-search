@@ -24,35 +24,30 @@ from .graph_builder import build_graph_data
 from .server import find_free_port, start_visualization_server
 
 app = typer.Typer(
-    help="Visualize code chunk relationships",
+    help="📊 Visualize code chunk relationships",
+    invoke_without_command=True,
 )
 console = Console()
 
 
-def get_default_graph_path() -> Path:
-    """Get the default path for graph data (in .mcp-vector-search directory)."""
-    return Path.cwd() / ".mcp-vector-search" / "chunk-graph.json"
-
-
-@app.callback(invoke_without_command=True)
+@app.callback()
 def visualize_callback(ctx: typer.Context) -> None:
     """Visualize code chunk relationships.
 
-    When called without a subcommand, automatically starts the visualization server.
+    If no subcommand is provided, defaults to starting the visualization server.
     """
-    # If no subcommand was invoked, call serve directly with defaults
-    # (ctx.invoke doesn't work well with Typer Option defaults)
     if ctx.invoked_subcommand is None:
-        serve(port=8501, graph_file=None, code_only=False)
+        # Default to serve when no subcommand given
+        serve()
 
 
 @app.command()
 def export(
     output: Path = typer.Option(
-        None,  # Default will be set in function
+        Path("chunk-graph.json"),
         "--output",
         "-o",
-        help="Output file for chunk relationship data (default: .mcp-vector-search/chunk-graph.json)",
+        help="Output file for chunk relationship data",
     ),
     file_path: str | None = typer.Option(
         None,
@@ -81,11 +76,6 @@ def export(
         # Export only code chunks (exclude documentation)
         mcp-vector-search visualize export --code-only
     """
-    # Use default path if not specified
-    if output is None:
-        output = get_default_graph_path()
-        # Ensure parent directory exists
-        output.parent.mkdir(parents=True, exist_ok=True)
     asyncio.run(_export_chunks(output, file_path, code_only))
 
 
@@ -195,16 +185,13 @@ async def _export_chunks(
 @app.command()
 def serve(
     port: int = typer.Option(
-        8501,
-        "--port",
-        "-p",
-        help="Port for visualization server (default: 8501-8599 range)",
+        8080, "--port", "-p", help="Port for visualization server"
     ),
     graph_file: Path = typer.Option(
-        None,  # Default will be set in function
+        Path("chunk-graph.json"),
         "--graph",
         "-g",
-        help="Graph JSON file to visualize (default: .mcp-vector-search/chunk-graph.json)",
+        help="Graph JSON file to visualize",
     ),
     code_only: bool = typer.Option(
         False,
@@ -215,7 +202,7 @@ def serve(
     """Start local HTTP server for D3.js visualization.
 
     Examples:
-        # Start server on default port (8501-8599 range)
+        # Start server on default port 8080
         mcp-vector-search visualize serve
 
         # Custom port
@@ -228,9 +215,9 @@ def serve(
         mcp-vector-search visualize serve --code-only
     """
     # Use specified port or find free one
-    if port == 8501:  # Default port, try to find free one in range
+    if port == 8080:  # Default port, try to find free one
         try:
-            port = find_free_port(8501, 8599)
+            port = find_free_port(8080, 8099)
         except OSError as e:
             console.print(f"[red]✗ {e}[/red]")
             raise typer.Exit(1)
@@ -245,87 +232,45 @@ def serve(
 
     viz_dir = project_manager.project_root / ".mcp-vector-search" / "visualization"
 
-    # Use default graph file path if not specified
-    if graph_file is None:
-        graph_file = get_default_graph_path()
-
     if not viz_dir.exists():
         console.print(
             f"[yellow]Visualization directory not found. Creating at {viz_dir}...[/yellow]"
         )
         viz_dir.mkdir(parents=True, exist_ok=True)
 
-    # Always regenerate index.html to ensure latest UI version
+    # Always ensure index.html exists (regenerate if missing)
     html_file = viz_dir / "index.html"
-    export_to_html(html_file)
+    if not html_file.exists():
+        console.print("[yellow]Creating visualization HTML file...[/yellow]")
+        export_to_html(html_file)
 
     # Check if we need to regenerate the graph file
-    # Regenerate if: graph doesn't exist, code_only filter, or index is newer than graph
     needs_regeneration = not graph_file.exists() or code_only
-
-    # Check if index database is newer than graph (stale graph detection)
-    if graph_file.exists() and not needs_regeneration:
-        index_db = (
-            project_manager.project_root / ".mcp-vector-search" / "chroma.sqlite3"
-        )
-        if index_db.exists():
-            graph_mtime = graph_file.stat().st_mtime
-            index_mtime = index_db.stat().st_mtime
-            if index_mtime > graph_mtime:
-                console.print(
-                    "[yellow]Index has changed since graph was generated. Regenerating...[/yellow]"
-                )
-                needs_regeneration = True
 
     if graph_file.exists() and not needs_regeneration:
         # Use existing unfiltered file
         dest = viz_dir / "chunk-graph.json"
         shutil.copy(graph_file, dest)
         console.print(f"[green]✓[/green] Copied graph data to {dest}")
-        # Start server immediately with existing graph
-        start_visualization_server(port, viz_dir, auto_open=True)
     else:
-        # Generate graph in background, start server immediately
-        import threading
+        # Generate new file (with filter if requested)
+        if graph_file.exists() and code_only:
+            console.print(
+                "[yellow]Regenerating filtered graph data (--code-only)...[/yellow]"
+            )
+        elif not graph_file.exists():
+            console.print(
+                f"[yellow]Graph file {graph_file} not found. Generating it now...[/yellow]"
+            )
 
-        def generate_graph_background() -> None:
-            """Generate graph in background thread.
+        asyncio.run(_export_chunks(graph_file, None, code_only))
+        console.print()
 
-            Runs async graph generation in separate thread to avoid blocking
-            server startup. Updates visualization directory when complete.
-            """
-            try:
-                if graph_file.exists() and code_only:
-                    console.print(
-                        "[yellow]Regenerating filtered graph data (--code-only)...[/yellow]"
-                    )
-                elif not graph_file.exists():
-                    console.print(
-                        "[yellow]Generating graph data in background...[/yellow]"
-                    )
+        # Copy the newly generated graph to visualization directory
+        if graph_file.exists():
+            dest = viz_dir / "chunk-graph.json"
+            shutil.copy(graph_file, dest)
+            console.print(f"[green]✓[/green] Copied graph data to {dest}")
 
-                # Run async export in this thread
-                asyncio.run(_export_chunks(graph_file, None, code_only))
-
-                # Copy the newly generated graph to visualization directory
-                if graph_file.exists():
-                    dest = viz_dir / "chunk-graph.json"
-                    shutil.copy(graph_file, dest)
-                    console.print(
-                        "\n[green]✓[/green] Graph data ready! Refresh browser to view."
-                    )
-                else:
-                    console.print(
-                        f"\n[yellow]⚠[/yellow] Graph generation completed but file not found at {graph_file}"
-                    )
-            except Exception as e:
-                console.print(f"\n[red]✗ Graph generation failed: {e}[/red]")
-                logger.error(f"Background graph generation failed: {e}")
-
-        # Start background generation
-        thread = threading.Thread(target=generate_graph_background, daemon=True)
-        thread.start()
-        console.print("[cyan]Graph generation started in background...[/cyan]")
-
-        # Start server immediately (graph will be populated when ready)
-        start_visualization_server(port, viz_dir, auto_open=True)
+    # Start server using refactored module
+    start_visualization_server(port, viz_dir, auto_open=True)

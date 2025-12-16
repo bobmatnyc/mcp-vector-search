@@ -630,7 +630,12 @@ def apply_state(graph_data: dict, state: VisualizationState) -> dict:
                 filtered_links.append(link)
         elif state.view_mode.value in ("tree_root", "tree_expanded"):
             # In tree modes, show containment edges only
-            if link.get("type") in ("dir_containment", "dir_hierarchy"):
+            # Must include file_containment to link code chunks to their parent files
+            if link.get("type") in (
+                "dir_containment",
+                "dir_hierarchy",
+                "file_containment",
+            ):
                 filtered_links.append(link)
 
     return {
