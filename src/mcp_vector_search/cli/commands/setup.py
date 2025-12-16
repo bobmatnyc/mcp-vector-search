@@ -31,6 +31,9 @@ from pathlib import Path
 
 import typer
 from loguru import logger
+
+# Import Platform enum to filter excluded platforms
+from py_mcp_installer import Platform
 from rich.console import Console
 from rich.panel import Panel
 
@@ -52,6 +55,9 @@ from ..output import (
 
 # Import functions from refactored install module
 from .install import _install_to_platform, detect_all_platforms
+
+# Platforms to exclude from auto-setup (user can still manually install)
+EXCLUDED_PLATFORMS_FROM_SETUP = {Platform.CLAUDE_DESKTOP}
 
 # Create console for rich output
 console = Console()
@@ -959,15 +965,35 @@ async def _run_smart_setup(
     detected_platforms_list = detect_all_platforms()
 
     if detected_platforms_list:
-        platform_names = [p.platform.value for p in detected_platforms_list]
-        print_success(
-            f"   ✅ Found {len(platform_names)} platform(s): {', '.join(platform_names)}"
-        )
-        if verbose:
-            for platform_info in detected_platforms_list:
-                print_info(
-                    f"      {platform_info.platform.value}: {platform_info.config_path}"
-                )
+        # Filter out excluded platforms for display
+        configurable_platforms = [
+            p
+            for p in detected_platforms_list
+            if p.platform not in EXCLUDED_PLATFORMS_FROM_SETUP
+        ]
+        excluded_platforms = [
+            p
+            for p in detected_platforms_list
+            if p.platform in EXCLUDED_PLATFORMS_FROM_SETUP
+        ]
+
+        if configurable_platforms:
+            platform_names = [p.platform.value for p in configurable_platforms]
+            print_success(
+                f"   ✅ Found {len(platform_names)} platform(s): {', '.join(platform_names)}"
+            )
+            if verbose:
+                for platform_info in configurable_platforms:
+                    print_info(
+                        f"      {platform_info.platform.value}: {platform_info.config_path}"
+                    )
+
+        # Note excluded platforms
+        if excluded_platforms:
+            excluded_names = [p.platform.value for p in excluded_platforms]
+            print_info(
+                f"   ℹ️  Skipping: {', '.join(excluded_names)} (use 'install mcp --platform' for manual install)"
+            )
     else:
         print_info("   No MCP platforms detected (will configure Claude Code)")
 
@@ -1065,7 +1091,12 @@ async def _run_smart_setup(
         print_info("   ✅ Claude CLI detected, using native integration")
 
     # Use detected platforms or default to empty list
-    platforms_to_configure = detected_platforms_list if detected_platforms_list else []
+    # Filter out excluded platforms (e.g., Claude Desktop) - exclusion already noted in Phase 1
+    platforms_to_configure = [
+        p
+        for p in (detected_platforms_list or [])
+        if p.platform not in EXCLUDED_PLATFORMS_FROM_SETUP
+    ]
 
     # Configure all detected platforms using new library
     for platform_info in platforms_to_configure:
