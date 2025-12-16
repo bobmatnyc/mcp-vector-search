@@ -18,6 +18,8 @@ from ...analysis.baseline import (
     BaselineManager,
     BaselineNotFoundError,
 )
+from ...analysis.storage.metrics_store import MetricsStore, MetricsStoreError
+from ...analysis.storage.trend_tracker import TrendData, TrendDirection, TrendTracker
 from ...core.exceptions import ProjectNotFoundError
 from ...core.git import GitError, GitManager, GitNotAvailableError, GitNotRepoError
 from ...core.project import ProjectManager
@@ -538,6 +540,27 @@ async def run_analysis(
         # Compute aggregates
         project_metrics.compute_aggregates()
 
+        # Save snapshot to metrics store for historical tracking
+        trend_data: TrendData | None = None
+        try:
+            metrics_db_path = project_root / ".mcp-vector-search" / "metrics.db"
+            metrics_store = MetricsStore(metrics_db_path)
+            snapshot_id = metrics_store.save_project_snapshot(project_metrics)
+            logger.debug(f"Saved metrics snapshot {snapshot_id}")
+
+            # Check for historical data and compute trends if available
+            trend_tracker = TrendTracker(metrics_store)
+            trend_data = trend_tracker.get_trends(project_root, days=30)
+
+            # Only show trends if we have at least 2 snapshots
+            if len(trend_data.snapshots) >= 2 and not json_output:
+                _print_trends(trend_data)
+
+        except MetricsStoreError as e:
+            logger.debug(f"Could not save metrics snapshot: {e}")
+        except Exception as e:
+            logger.debug(f"Trend tracking unavailable: {e}")
+
         # Detect code smells if requested
         all_smells = []
         if show_smells:
@@ -942,6 +965,97 @@ async def _analyze_file(
     except Exception as e:
         logger.debug(f"Failed to analyze file {file_path}: {e}")
         return None
+
+
+def _print_trends(trend_data: TrendData) -> None:
+    """Print trend analysis to console.
+
+    Args:
+        trend_data: TrendData from TrendTracker
+    """
+    from rich.panel import Panel
+    from rich.table import Table
+
+    # Build trend display
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Metric", style="bold")
+    table.add_column("Direction")
+    table.add_column("Change")
+
+    def trend_icon(direction: TrendDirection) -> str:
+        """Get icon for trend direction."""
+        if direction == TrendDirection.IMPROVING:
+            return "[green]↓ improving[/green]"
+        elif direction == TrendDirection.WORSENING:
+            return "[red]↑ worsening[/red]"
+        else:
+            return "[dim]→ stable[/dim]"
+
+    def format_change(change: float, invert: bool = False) -> str:
+        """Format percentage change with color."""
+        if abs(change) < 0.1:
+            return "[dim]—[/dim]"
+        # For complexity/smells, negative is good; for health, positive is good
+        is_good = (change < 0) if not invert else (change > 0)
+        color = "green" if is_good else "red"
+        sign = "+" if change > 0 else ""
+        return f"[{color}]{sign}{change:.1f}%[/{color}]"
+
+    # Complexity trend
+    table.add_row(
+        "Complexity",
+        trend_icon(trend_data.complexity_direction),
+        format_change(trend_data.avg_complexity_change),
+    )
+
+    # Smell trend
+    table.add_row(
+        "Code Smells",
+        trend_icon(trend_data.smell_direction),
+        format_change(trend_data.smell_count_change),
+    )
+
+    # Health trend
+    table.add_row(
+        "Health Score",
+        trend_icon(trend_data.health_direction),
+        format_change(
+            (
+                trend_data.health_trend[-1][1] - trend_data.health_trend[0][1]
+                if len(trend_data.health_trend) >= 2
+                else 0
+            ),
+            invert=True,
+        ),
+    )
+
+    # Show panel with snapshot count
+    snapshot_count = len(trend_data.snapshots)
+    panel = Panel(
+        table,
+        title=f"[bold cyan]Trends[/bold cyan] (last 30 days, {snapshot_count} snapshots)",
+        border_style="cyan",
+        padding=(0, 1),
+    )
+    console.print(panel)
+
+    # Show critical regressions if any
+    if trend_data.critical_regressions:
+        console.print("\n[bold red]⚠ Regressions Detected:[/bold red]")
+        for regression in trend_data.critical_regressions[:3]:
+            console.print(
+                f"  • [red]{regression.file_path}[/red]: "
+                f"complexity {regression.change_percentage:+.1f}%"
+            )
+
+    # Show significant improvements if any
+    if trend_data.significant_improvements:
+        console.print("\n[bold green]✓ Improvements:[/bold green]")
+        for improvement in trend_data.significant_improvements[:3]:
+            console.print(
+                f"  • [green]{improvement.file_path}[/green]: "
+                f"complexity {improvement.change_percentage:+.1f}%"
+            )
 
 
 if __name__ == "__main__":
