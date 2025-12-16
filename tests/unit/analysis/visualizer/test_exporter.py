@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from mcp_vector_search import __version__
 from mcp_vector_search.analysis.metrics import (
     ChunkMetrics,
     CouplingMetrics,
@@ -181,7 +182,7 @@ class TestMetadataCreation:
 
         assert isinstance(metadata, ExportMetadata)
         assert metadata.version == "1.0.0"
-        assert metadata.tool_version == "0.21.5"  # Current version
+        assert metadata.tool_version == __version__  # Dynamically get current version
         assert metadata.project_root == str(exporter.project_root)
         assert metadata.git_commit is None
         assert metadata.git_branch is None
