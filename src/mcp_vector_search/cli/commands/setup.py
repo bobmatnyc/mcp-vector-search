@@ -1012,7 +1012,27 @@ async def _run_smart_setup(
     # ===========================================================================
     # Phase 4: Indexing
     # ===========================================================================
-    if not already_initialized or force:
+    # Determine if indexing is needed:
+    # 1. Not already initialized (new setup)
+    # 2. Force flag is set
+    # 3. Index database doesn't exist
+    # 4. Index exists but is empty
+    # 5. Files have changed (incremental indexing will handle this)
+    needs_indexing = not already_initialized or force
+
+    if already_initialized and not force:
+        # Check if index exists and has content
+        index_db_path = project_root / ".mcp-vector-search" / "chroma.sqlite3"
+        if not index_db_path.exists():
+            print_info("   Index database not found, will create...")
+            needs_indexing = True
+        else:
+            # Check if index is empty or files have changed
+            # Run incremental indexing to catch any changes
+            print_info("   Checking for file changes...")
+            needs_indexing = True  # Always run incremental to catch changes
+
+    if needs_indexing:
         console.print("\n[bold blue]🔍 Indexing codebase...[/bold blue]")
 
         from .index import run_indexing
