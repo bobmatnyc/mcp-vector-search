@@ -38,7 +38,8 @@ def visualize_callback(ctx: typer.Context) -> None:
     """
     if ctx.invoked_subcommand is None:
         # Default to serve when no subcommand given
-        serve()
+        # Must pass explicit defaults since typer.Option doesn't work when called directly
+        serve(port=8080, graph_file=Path("chunk-graph.json"), code_only=False)
 
 
 @app.command()
