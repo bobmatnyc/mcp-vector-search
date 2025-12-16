@@ -58,6 +58,12 @@ def main(
         help="Force reindexing of all files",
         rich_help_panel="📊 Indexing Options",
     ),
+    auto_analyze: bool = typer.Option(
+        True,
+        "--analyze/--no-analyze",
+        help="Automatically run analysis after force reindex",
+        rich_help_panel="📊 Indexing Options",
+    ),
     batch_size: int = typer.Option(
         32,
         "--batch-size",
@@ -86,6 +92,9 @@ def main(
     Parses code files, generates semantic embeddings, and stores them in ChromaDB.
     Supports incremental indexing to skip unchanged files for faster updates.
 
+    When using --force, automatically runs code analysis after indexing completes
+    (can be disabled with --no-analyze).
+
     [bold cyan]Basic Examples:[/bold cyan]
 
     [green]Index entire project:[/green]
@@ -93,6 +102,9 @@ def main(
 
     [green]Force full reindex:[/green]
         $ mcp-vector-search index --force
+
+    [green]Force reindex without analysis:[/green]
+        $ mcp-vector-search index --force --no-analyze
 
     [green]Custom file extensions:[/green]
         $ mcp-vector-search index --extensions .py,.js,.ts,.md
@@ -134,6 +146,19 @@ def main(
                 skip_relationships=skip_relationships,
             )
         )
+
+        # Auto-analyze after force reindex
+        if force and auto_analyze:
+            from .analyze import run_analysis
+
+            print_info("\n📊 Running analysis after reindex...")
+            asyncio.run(
+                run_analysis(
+                    project_root=project_root,
+                    quick_mode=True,  # Use quick mode for speed
+                    show_smells=True,
+                )
+            )
 
     except KeyboardInterrupt:
         print_info("Indexing interrupted by user")

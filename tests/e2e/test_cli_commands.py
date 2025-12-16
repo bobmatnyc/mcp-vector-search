@@ -122,11 +122,27 @@ class TestCLICommands:
             cli_runner.invoke(app, ["init", "--extensions", ".py", "--force"])
         cli_runner.invoke(app, ["index"])
 
-        # Test force reindexing
+        # Test force reindexing (with --no-analyze to keep test focused on indexing)
+        result = cli_runner.invoke(app, ["index", "--force", "--no-analyze"])
+
+        assert result.exit_code == 0
+        assert "indexed" in result.output.lower()
+
+    def test_index_command_force_with_analyze(self, cli_runner, temp_project_dir):
+        """Test force indexing command with auto-analysis."""
+        # Initialize and index first - mock auto-index prompt
+        with patch(
+            "mcp_vector_search.cli.commands.init.confirm_action", return_value=False
+        ):
+            cli_runner.invoke(app, ["init", "--extensions", ".py", "--force"])
+        cli_runner.invoke(app, ["index"])
+
+        # Test force reindexing with auto-analysis (default behavior)
         result = cli_runner.invoke(app, ["index", "--force"])
 
         assert result.exit_code == 0
         assert "indexed" in result.output.lower()
+        assert "running analysis" in result.output.lower()
 
     def test_search_command(self, cli_runner, temp_project_dir):
         """Test search command."""
