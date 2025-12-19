@@ -517,6 +517,7 @@ async def build_graph_data(
                 {
                     "source": f"subproject_{chunk.subproject_name}",
                     "target": chunk_id,
+                    "type": "subproject_containment",
                 }
             )
 

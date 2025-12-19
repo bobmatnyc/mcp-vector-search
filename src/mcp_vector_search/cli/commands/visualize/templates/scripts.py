@@ -325,11 +325,12 @@ function buildTreeStructure() {
             category = 'dir_containment';
         } else if (linkType === 'file_containment') {
             category = 'file_containment';
-        } else if (linkType === 'chunk_hierarchy' || linkType === undefined || linkType === 'undefined') {
-            // chunk_hierarchy or undefined links are chunk-to-chunk (e.g., class -> method)
+        } else if (linkType === 'chunk_hierarchy') {
+            // chunk_hierarchy links are chunk-to-chunk (e.g., class -> method)
             category = 'chunk_hierarchy';
         } else {
-            // Skip semantic, caller, and other non-hierarchical links
+            // Skip semantic, caller, undefined, and other non-hierarchical links
+            // This includes links without a 'type' field (e.g., subproject links)
             return;
         }
 
