@@ -19,6 +19,8 @@ from fastapi.staticfiles import StaticFiles
 from rich.console import Console
 from rich.panel import Panel
 
+from mcp_vector_search import __version__
+
 console = Console()
 
 
@@ -564,7 +566,7 @@ def start_visualization_server(
                 f"URL: [cyan]{url}[/cyan]\n"
                 f"Directory: [dim]{viz_dir}[/dim]\n\n"
                 f"[dim]Press Ctrl+C to stop[/dim]",
-                title="Server Started",
+                title=f"Server Started v{__version__}",
                 border_style="green",
             )
         )
