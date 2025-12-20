@@ -1,6 +1,11 @@
 """Index command for MCP Vector Search CLI."""
 
 import asyncio
+import json
+import os
+import signal
+import subprocess
+import sys
 from pathlib import Path
 
 import typer
@@ -19,6 +24,7 @@ from ..output import (
     print_next_steps,
     print_success,
     print_tip,
+    print_warning,
 )
 
 # Create index subcommand app with callback for direct usage
@@ -36,6 +42,13 @@ def main(
         "--watch",
         "-w",
         help="Watch for file changes and update index incrementally",
+        rich_help_panel="⚙️  Advanced Options",
+    ),
+    background: bool = typer.Option(
+        False,
+        "--background",
+        "-bg",
+        help="Run indexing in background (detached process)",
         rich_help_panel="⚙️  Advanced Options",
     ),
     incremental: bool = typer.Option(
@@ -132,6 +145,11 @@ def main(
     try:
         project_root = (ctx.obj.get("project_root") if ctx.obj else None) or Path.cwd()
 
+        # Handle background mode
+        if background:
+            _spawn_background_indexer(project_root, force, extensions)
+            return
+
         # Run async indexing
         asyncio.run(
             run_indexing(
@@ -167,6 +185,120 @@ def main(
         logger.error(f"Indexing failed: {e}")
         print_error(f"Indexing failed: {e}")
         raise typer.Exit(1)
+
+
+def _spawn_background_indexer(
+    project_root: Path, force: bool = False, extensions: str | None = None
+) -> None:
+    """Spawn background indexing process.
+
+    Args:
+        project_root: Project root directory
+        force: Force reindexing of all files
+        extensions: Override file extensions (comma-separated)
+    """
+    # Check for existing background process
+    progress_file = project_root / ".mcp-vector-search" / "indexing_progress.json"
+    if progress_file.exists():
+        try:
+            with open(progress_file) as f:
+                progress = json.load(f)
+            pid = progress.get("pid")
+            if pid and _is_process_alive(pid):
+                print_warning(f"Background indexing already in progress (PID: {pid})")
+                print_info("Use 'mcp-vector-search index status' to check progress")
+                print_info("Use 'mcp-vector-search index cancel' to cancel")
+                return
+            else:
+                # Stale progress file, remove it
+                progress_file.unlink()
+        except Exception as e:
+            logger.warning(f"Failed to read progress file: {e}")
+            progress_file.unlink()
+
+    # Build command
+    python_exe = sys.executable
+    cmd = [
+        python_exe,
+        "-m",
+        "mcp_vector_search.cli.commands.index_background",
+        "--project-root",
+        str(project_root),
+    ]
+
+    if force:
+        cmd.append("--force")
+
+    if extensions:
+        cmd.extend(["--extensions", extensions])
+
+    # Spawn detached process
+    try:
+        if sys.platform == "win32":
+            # Windows detachment flags
+            detached_process = 0x00000008
+            create_new_process_group = 0x00000200
+
+            process = subprocess.Popen(
+                cmd,
+                creationflags=detached_process | create_new_process_group,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+        else:
+            # Unix detachment (fork + setsid)
+            process = subprocess.Popen(
+                cmd,
+                start_new_session=True,  # Creates new process group
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+
+        pid = process.pid
+        print_success(f"Started background indexing (PID: {pid})")
+        print_info(f"Progress file: {progress_file}")
+        print_info(
+            f"Log file: {project_root / '.mcp-vector-search' / 'indexing_background.log'}"
+        )
+        print_info("")
+        print_info("Use [cyan]mcp-vector-search index status[/cyan] to check progress")
+        print_info("Use [cyan]mcp-vector-search index cancel[/cyan] to cancel")
+
+    except Exception as e:
+        logger.error(f"Failed to spawn background process: {e}")
+        print_error(f"Failed to start background indexing: {e}")
+        raise typer.Exit(1)
+
+
+def _is_process_alive(pid: int) -> bool:
+    """Check if process with given PID is alive.
+
+    Args:
+        pid: Process ID to check
+
+    Returns:
+        True if process is alive, False otherwise
+    """
+    try:
+        if sys.platform == "win32":
+            # Windows: try to open process
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            process_query_information = 0x0400
+            handle = kernel32.OpenProcess(process_query_information, False, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        else:
+            # Unix: send signal 0 (no-op, just checks if process exists)
+            os.kill(pid, 0)
+            return True
+    except (OSError, ProcessLookupError, AttributeError):
+        return False
 
 
 async def run_indexing(
@@ -794,6 +926,237 @@ def health_cmd(
 
     # Call the health function from reset.py
     health_main(project_root=project_root, repair=repair)
+
+
+@index_app.command("status")
+def status_cmd(
+    ctx: typer.Context,
+) -> None:
+    """📊 Show background indexing status.
+
+    Displays the current progress of any background indexing process.
+
+    Examples:
+        mcp-vector-search index status
+    """
+    try:
+        project_root = ctx.obj.get("project_root") or Path.cwd()
+        _show_background_status(project_root)
+    except Exception as e:
+        logger.error(f"Status check failed: {e}")
+        print_error(f"Status check failed: {e}")
+        raise typer.Exit(1)
+
+
+@index_app.command("cancel")
+def cancel_cmd(
+    ctx: typer.Context,
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force termination without confirmation",
+    ),
+) -> None:
+    """🛑 Cancel background indexing process.
+
+    Terminates any running background indexing process and cleans up.
+
+    Examples:
+        mcp-vector-search index cancel
+        mcp-vector-search index cancel --force
+    """
+    try:
+        project_root = ctx.obj.get("project_root") or Path.cwd()
+        _cancel_background_indexer(project_root, force)
+    except Exception as e:
+        logger.error(f"Cancel failed: {e}")
+        print_error(f"Cancel failed: {e}")
+        raise typer.Exit(1)
+
+
+def _show_background_status(project_root: Path) -> None:
+    """Show background indexing status.
+
+    Args:
+        project_root: Project root directory
+    """
+    from rich.table import Table
+
+    from ..output import console
+
+    progress_file = project_root / ".mcp-vector-search" / "indexing_progress.json"
+
+    if not progress_file.exists():
+        print_info("No background indexing in progress")
+        return
+
+    # Read progress
+    try:
+        with open(progress_file) as f:
+            progress = json.load(f)
+    except Exception as e:
+        print_error(f"Failed to read progress file: {e}")
+        return
+
+    # Check if process is alive
+    pid = progress.get("pid")
+    is_alive = _is_process_alive(pid) if pid else False
+
+    if not is_alive:
+        print_warning(f"Process {pid} is no longer running")
+        print_info("The background indexing process has stopped")
+        print_info("Run [cyan]mcp-vector-search index --background[/cyan] to restart")
+        # Optionally clean up stale file
+        return
+
+    # Display progress with Rich table
+    table = Table(title="Background Indexing Status", show_header=True)
+    table.add_column("Metric", style="cyan", width=20)
+    table.add_column("Value", style="green")
+
+    # Format status with color
+    status = progress.get("status", "unknown")
+    status_colors = {
+        "initializing": "yellow",
+        "scanning": "cyan",
+        "running": "green",
+        "computing_relationships": "cyan",
+        "completed": "green",
+        "failed": "red",
+        "cancelled": "yellow",
+    }
+    status_color = status_colors.get(status, "white")
+
+    table.add_row("PID", str(pid))
+    table.add_row("Status", f"[{status_color}]{status}[/{status_color}]")
+
+    # Progress percentage
+    total = progress.get("total_files", 0)
+    processed = progress.get("processed_files", 0)
+    if total > 0:
+        percentage = (processed / total) * 100
+        table.add_row(
+            "Progress",
+            f"{processed}/{total} files ({percentage:.1f}%)",
+        )
+    else:
+        table.add_row("Progress", f"{processed} files")
+
+    current_file = progress.get("current_file")
+    if current_file:
+        table.add_row("Current File", current_file)
+
+    table.add_row("Chunks Created", str(progress.get("chunks_created", 0)))
+    table.add_row("Errors", str(progress.get("errors", 0)))
+
+    # ETA
+    eta_seconds = progress.get("eta_seconds", 0)
+    if eta_seconds > 0:
+        eta_minutes = eta_seconds / 60
+        if eta_minutes < 1:
+            table.add_row("ETA", f"{eta_seconds} seconds")
+        else:
+            table.add_row("ETA", f"{eta_minutes:.1f} minutes")
+
+    # Last updated
+    last_updated = progress.get("last_updated")
+    if last_updated:
+        table.add_row("Last Updated", last_updated)
+
+    console.print(table)
+
+    # Show log file location
+    log_file = project_root / ".mcp-vector-search" / "indexing_background.log"
+    if log_file.exists():
+        print_info(f"\nLog file: {log_file}")
+
+
+def _cancel_background_indexer(project_root: Path, force: bool = False) -> None:
+    """Cancel background indexing process.
+
+    Args:
+        project_root: Project root directory
+        force: Skip confirmation prompt
+    """
+    progress_file = project_root / ".mcp-vector-search" / "indexing_progress.json"
+
+    if not progress_file.exists():
+        print_info("No background indexing in progress")
+        return
+
+    # Read progress
+    try:
+        with open(progress_file) as f:
+            progress = json.load(f)
+    except Exception as e:
+        print_error(f"Failed to read progress file: {e}")
+        return
+
+    pid = progress.get("pid")
+    if not pid:
+        print_error("No PID found in progress file")
+        return
+
+    # Check if process is alive
+    if not _is_process_alive(pid):
+        print_warning(f"Process {pid} is not running (already completed?)")
+        # Clean up stale progress file
+        try:
+            progress_file.unlink()
+            print_info("Cleaned up stale progress file")
+        except Exception as e:
+            logger.error(f"Failed to clean up progress file: {e}")
+        return
+
+    # Confirm cancellation
+    if not force:
+        from ..output import confirm_action
+
+        if not confirm_action(
+            f"Cancel background indexing process (PID: {pid})?", default=False
+        ):
+            print_info("Cancellation aborted")
+            return
+
+    # Send termination signal
+    try:
+        if sys.platform == "win32":
+            # Windows: terminate process
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            process_terminate = 0x0001
+            handle = kernel32.OpenProcess(process_terminate, False, pid)
+            if handle:
+                kernel32.TerminateProcess(handle, 0)
+                kernel32.CloseHandle(handle)
+                print_success(f"Cancelled indexing process {pid}")
+            else:
+                print_error(f"Failed to open process {pid}")
+                return
+        else:
+            # Unix: send SIGTERM
+            os.kill(pid, signal.SIGTERM)
+            print_success(f"Cancelled indexing process {pid}")
+
+        # Clean up progress file after a brief delay
+        import time
+
+        time.sleep(0.5)
+        if progress_file.exists():
+            progress_file.unlink()
+            print_info("Cleaned up progress file")
+
+    except ProcessLookupError:
+        print_warning(f"Process {pid} not found (already completed?)")
+        if progress_file.exists():
+            progress_file.unlink()
+    except PermissionError:
+        print_error(f"Permission denied to cancel process {pid}")
+    except Exception as e:
+        logger.error(f"Failed to cancel process: {e}")
+        print_error(f"Failed to cancel process: {e}")
 
 
 def _prune_error_log(log_path: Path, max_lines: int = 1000) -> None:
