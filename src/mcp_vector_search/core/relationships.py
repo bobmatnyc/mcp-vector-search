@@ -9,6 +9,7 @@ Relationships stored:
 """
 
 import ast
+import asyncio
 import json
 import time
 from datetime import UTC, datetime
@@ -140,7 +141,10 @@ class RelationshipStore:
         self.store_path = project_root / ".mcp-vector-search" / "relationships.json"
 
     async def compute_and_store(
-        self, chunks: list[CodeChunk], database: Any
+        self,
+        chunks: list[CodeChunk],
+        database: Any,
+        max_concurrent_queries: int = 50,
     ) -> dict[str, Any]:
         """Compute relationships and save to disk.
 
@@ -151,6 +155,7 @@ class RelationshipStore:
         Args:
             chunks: List of all code chunks
             database: Vector database instance for semantic search
+            max_concurrent_queries: Maximum number of concurrent database queries (default: 50)
 
         Returns:
             Dictionary with relationship statistics
@@ -166,10 +171,11 @@ class RelationshipStore:
         # Compute semantic relationships only
         # Caller relationships are lazy-loaded on-demand via API
         logger.info(
-            f"Computing semantic relationships for {len(code_chunks)} chunks..."
+            f"Computing semantic relationships for {len(code_chunks)} chunks "
+            f"(max {max_concurrent_queries} concurrent queries)..."
         )
         semantic_links = await self._compute_semantic_relationships(
-            code_chunks, database
+            code_chunks, database, max_concurrent_queries
         )
 
         elapsed = time.time() - start_time
@@ -202,20 +208,27 @@ class RelationshipStore:
         }
 
     async def _compute_semantic_relationships(
-        self, code_chunks: list[CodeChunk], database: Any
+        self,
+        code_chunks: list[CodeChunk],
+        database: Any,
+        max_concurrent_queries: int = 50,
     ) -> list[dict[str, Any]]:
-        """Compute semantic similarity relationships between chunks.
+        """Compute semantic similarity relationships between chunks using async parallel processing.
 
         Args:
             code_chunks: List of code chunks (functions, methods, classes)
             database: Vector database for similarity search
+            max_concurrent_queries: Maximum number of concurrent database queries (default: 50)
 
         Returns:
             List of semantic link dictionaries
         """
         semantic_links = []
+        semaphore = asyncio.Semaphore(max_concurrent_queries)
+        completed_count = 0
+        total_chunks = len(code_chunks)
 
-        # Use Rich progress bar instead of scrolling text
+        # Use Rich progress bar
         with Progress(
             SpinnerColumn(),
             TextColumn("[cyan]Computing semantic relationships...[/cyan]"),
@@ -225,71 +238,85 @@ class RelationshipStore:
             console=console,
             transient=False,
         ) as progress:
-            task = progress.add_task("semantic", total=len(code_chunks))
+            task = progress.add_task("semantic", total=total_chunks)
 
-            for i, chunk in enumerate(code_chunks):
-                progress.update(task, completed=i + 1)
+            async def process_chunk(chunk: CodeChunk) -> list[dict[str, Any]]:
+                """Process a single chunk and return its semantic links."""
+                nonlocal completed_count
 
-                try:
-                    # Search for similar chunks
-                    similar_results = await database.search(
-                        query=chunk.content[:500],  # First 500 chars
-                        limit=6,  # Get 6 (exclude self = 5)
-                        similarity_threshold=0.3,
-                    )
-
-                    # Filter out self and create links
-                    for result in similar_results:
-                        target_chunk = next(
-                            (
-                                c
-                                for c in code_chunks
-                                if str(c.file_path) == str(result.file_path)
-                                and c.start_line == result.start_line
-                                and c.end_line == result.end_line
-                            ),
-                            None,
+                async with semaphore:
+                    try:
+                        # Search for similar chunks
+                        similar_results = await database.search(
+                            query=chunk.content[:500],  # First 500 chars
+                            limit=6,  # Get 6 (exclude self = 5)
+                            similarity_threshold=0.3,
                         )
 
-                        if not target_chunk:
-                            continue
-
-                        target_chunk_id = target_chunk.chunk_id or target_chunk.id
+                        chunk_links = []
                         source_chunk_id = chunk.chunk_id or chunk.id
 
-                        # Skip self-references
-                        if target_chunk_id == source_chunk_id:
-                            continue
-
-                        # Add semantic link
-                        if result.similarity_score >= 0.2:
-                            semantic_links.append(
-                                {
-                                    "source": source_chunk_id,
-                                    "target": target_chunk_id,
-                                    "type": "semantic",
-                                    "similarity": result.similarity_score,
-                                }
+                        # Filter out self and create links
+                        for result in similar_results:
+                            target_chunk = next(
+                                (
+                                    c
+                                    for c in code_chunks
+                                    if str(c.file_path) == str(result.file_path)
+                                    and c.start_line == result.start_line
+                                    and c.end_line == result.end_line
+                                ),
+                                None,
                             )
 
-                            # Only keep top 5 per chunk
-                            if (
-                                len(
-                                    [
-                                        link
-                                        for link in semantic_links
-                                        if link["source"] == source_chunk_id
-                                    ]
-                                )
-                                >= 5
-                            ):
-                                break
+                            if not target_chunk:
+                                continue
 
-                except Exception as e:
-                    logger.debug(
-                        f"Failed to compute semantic for {chunk.chunk_id}: {e}"
-                    )
+                            target_chunk_id = target_chunk.chunk_id or target_chunk.id
+
+                            # Skip self-references
+                            if target_chunk_id == source_chunk_id:
+                                continue
+
+                            # Add semantic link
+                            if result.similarity_score >= 0.2:
+                                chunk_links.append(
+                                    {
+                                        "source": source_chunk_id,
+                                        "target": target_chunk_id,
+                                        "type": "semantic",
+                                        "similarity": result.similarity_score,
+                                    }
+                                )
+
+                                # Only keep top 5 per chunk
+                                if len(chunk_links) >= 5:
+                                    break
+
+                        # Update progress
+                        completed_count += 1
+                        progress.update(task, completed=completed_count)
+
+                        return chunk_links
+
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to compute semantic for {chunk.chunk_id}: {e}"
+                        )
+                        completed_count += 1
+                        progress.update(task, completed=completed_count)
+                        return []
+
+            # Process all chunks in parallel
+            tasks = [process_chunk(chunk) for chunk in code_chunks]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Flatten results and handle exceptions
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.debug(f"Task failed with exception: {result}")
                     continue
+                semantic_links.extend(result)
 
         return semantic_links
 

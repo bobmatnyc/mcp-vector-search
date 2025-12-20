@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Performance
+- **Async Parallel Relationship Computation** (#68) - Concurrent semantic link processing
+  - Parallel processing of semantic relationships using asyncio
+  - Configurable concurrency limit via `max_concurrent_queries` parameter (default: 50)
+  - Uses semaphore to prevent database/system resource exhaustion
+  - Expected 3-5x faster relationship computation on typical 8-core machines
+  - Graceful exception handling - individual chunk failures don't break computation
+  - Backward compatible - default parameter works for all existing code
 - **Multiprocess File Parsing** (#61) - Parallel parsing across CPU cores
   - Uses Python's ProcessPoolExecutor for CPU-bound tree-sitter parsing
   - Automatically uses 75% of CPU cores (capped at 8 workers)
