@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.14] - 2025-12-20
+
+### Added
+- **Background Indexing Mode** (#69) - Non-blocking indexing for large codebases
+  - `--background/-bg` flag to run indexing as detached process
+  - `status` subcommand to display real-time progress with Rich table
+  - `cancel` subcommand to terminate running background process
+  - Atomic progress file writes (crash-safe)
+  - Cross-platform support (Unix: start_new_session, Windows: DETACHED_PROCESS)
+  - SIGTERM/SIGINT handling for graceful shutdown
+  - Concurrent indexing prevention with stale file detection
+
 ### Performance
 - **Async Parallel Relationship Computation** (#68) - Concurrent semantic link processing
   - Parallel processing of semantic relationships using asyncio
