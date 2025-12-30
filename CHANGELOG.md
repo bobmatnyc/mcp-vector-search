@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.15] - 2025-12-30
+
+### Fixed
+- **MCP Setup Command** - Removed hardcoded project path from MCP registration
+  - Setup command was storing absolute project paths in ~/.claude.json causing stale configurations
+  - MCP server now correctly resolves project path dynamically at runtime
+  - Prevents "project not found" errors when moving or sharing configurations
+
 ## [1.1.14] - 2025-12-20
 
 ### Added
