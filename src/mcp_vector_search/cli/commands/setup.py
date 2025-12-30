@@ -154,9 +154,10 @@ def register_with_claude_cli(
 
         # Build the add command using mcp-vector-search CLI
         # This works for all installation methods: pipx, homebrew, and uv
+        # Claude Code sets CWD to the project directory, so no path needed
         # claude mcp add --transport stdio mcp-vector-search \
         #   --env MCP_ENABLE_FILE_WATCHING=true \
-        #   -- mcp-vector-search mcp /project/root
+        #   -- mcp-vector-search mcp
         cmd = [
             "claude",
             "mcp",
@@ -169,7 +170,6 @@ def register_with_claude_cli(
             "--",
             "mcp-vector-search",
             "mcp",
-            str(project_root.absolute()),
         ]
 
         if verbose:
