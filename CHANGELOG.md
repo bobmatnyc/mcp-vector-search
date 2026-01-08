@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.18] - 2026-01-08
+
+### Fixed
+- **CI Pipeline Reliability** - Multiple CI/CD fixes for better reliability
+  - Don't fail build on Codecov rate limits (non-critical service)
+  - Create venv for integration tests (PEP 668 compliance)
+  - Make init command non-interactive in integration tests
+  - Correct search command argument order in integration tests
+
 ## [1.1.17] - 2026-01-07
 
 ### Fixed
