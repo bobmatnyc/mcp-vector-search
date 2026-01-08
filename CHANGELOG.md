@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.19] - 2026-01-08
+
+### Fixed
+- **CI Pipeline Improvements** - Better reliability and error handling
+  - Install package before running performance tests
+  - Skip existing PyPI uploads (don't fail if version already published)
+
 ## [1.1.18] - 2026-01-08
 
 ### Fixed
