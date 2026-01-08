@@ -132,6 +132,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
+          skip_existing: true  # Don't fail if already published
 
   performance:
     name: Performance Benchmarks
@@ -153,8 +154,10 @@ jobs:
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
 
-      - name: Install dependencies
-        run: uv sync --dev
+      - name: Install dependencies and package
+        run: |
+          uv sync --dev
+          uv pip install -e .
 
       - name: Run performance tests
         run: |
@@ -163,8 +166,8 @@ jobs:
           cd /tmp/test-project
           echo "def hello(): pass" > test.py
 
-          # Initialize and run benchmarks
-          uv run mcp-vector-search init --extensions .py --embedding-model sentence-transformers/all-MiniLM-L6-v2 --no-mcp --no-auto-indexing
+          # Initialize and run benchmarks (pipe yes for non-interactive)
+          echo "Y" | uv run mcp-vector-search init --extensions .py --embedding-model sentence-transformers/all-MiniLM-L6-v2 --no-mcp --no-auto-indexing
           uv run python3 ${{ github.workspace }}/scripts/search_performance_monitor.py --save
 
       - name: Upload performance results
