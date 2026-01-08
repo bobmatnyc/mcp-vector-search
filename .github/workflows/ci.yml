@@ -198,8 +198,8 @@ jobs:
 
       - name: Test package installation
         run: |
-          # Install from wheel
-          uv pip install dist/*.whl
+          # Install from wheel to system Python
+          uv pip install --system dist/*.whl
 
           # Test CLI is available
           mcp-vector-search --version
