@@ -212,8 +212,8 @@ jobs:
           cd /tmp/integration-test
           echo "def test(): pass" > test.py
 
-          # Initialize project
-          mcp-vector-search init --extensions .py --embedding-model sentence-transformers/all-MiniLM-L6-v2 --no-mcp --no-auto-indexing
+          # Initialize project (pipe yes for non-interactive)
+          echo "Y" | mcp-vector-search init --extensions .py --embedding-model sentence-transformers/all-MiniLM-L6-v2 --no-mcp --no-auto-indexing
 
           # Index and search
           mcp-vector-search index
