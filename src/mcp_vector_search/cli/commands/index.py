@@ -528,27 +528,28 @@ async def _run_batch_indexing(
             except Exception as e:
                 logger.error(f"Failed to update directory index: {e}")
 
-            # Compute relationships for visualization (unless skipped)
+            # Mark relationships for background computation (unless skipped)
             if not skip_relationships and indexed_count > 0:
                 try:
                     console.print(
-                        "\n[cyan]Computing relationships for instant visualization...[/cyan]"
+                        "\n[cyan]Marking relationships for background computation...[/cyan]"
                     )
                     all_chunks = await indexer.database.get_all_chunks()
 
                     if len(all_chunks) > 0:
-                        rel_stats = await indexer.relationship_store.compute_and_store(
-                            all_chunks, indexer.database
+                        await indexer.relationship_store.compute_and_store(
+                            all_chunks, indexer.database, background=True
                         )
                         console.print(
-                            f"[green]✓[/green] Pre-computed {rel_stats['semantic_links']} semantic links and "
-                            f"{rel_stats['caller_relationships']} caller relationships "
-                            f"in {rel_stats['computation_time']:.1f}s"
+                            "[green]✓[/green] Relationships marked for background computation"
+                        )
+                        console.print(
+                            "[dim]  → Use 'mcp-vector-search index relationships' to compute now[/dim]"
                         )
                 except Exception as e:
-                    logger.warning(f"Failed to compute relationships: {e}")
+                    logger.warning(f"Failed to mark relationships: {e}")
                     console.print(
-                        "[yellow]⚠ Relationships not computed (visualization will compute on demand)[/yellow]"
+                        "[yellow]⚠ Relationships not marked (visualization will compute on demand)[/yellow]"
                     )
 
             # Final progress summary
@@ -1182,6 +1183,177 @@ def _prune_error_log(log_path: Path, max_lines: int = 1000) -> None:
             )
     except Exception as e:
         logger.warning(f"Failed to prune error log: {e}")
+
+
+@index_app.command("relationships")
+def compute_relationships_cmd(
+    ctx: typer.Context,
+    background: bool = typer.Option(
+        False,
+        "--background",
+        "-bg",
+        help="Run relationship computation in background (non-blocking)",
+    ),
+) -> None:
+    """🔗 Compute semantic relationships for visualization.
+
+    By default, indexing marks relationships for background computation.
+    This command lets you compute them immediately or spawn a background task.
+
+    Examples:
+        # Compute relationships now (blocks until complete)
+        mcp-vector-search index relationships
+
+        # Compute in background (returns immediately)
+        mcp-vector-search index relationships --background
+    """
+    try:
+        project_root = ctx.obj.get("project_root") or Path.cwd()
+
+        if background:
+            # Spawn background relationship computation
+            print_info("Starting background relationship computation...")
+            _spawn_background_relationships(project_root)
+        else:
+            # Compute synchronously
+            asyncio.run(_compute_relationships_sync(project_root))
+
+    except Exception as e:
+        logger.error(f"Relationship computation failed: {e}")
+        print_error(f"Relationship computation failed: {e}")
+        raise typer.Exit(1)
+
+
+def _spawn_background_relationships(project_root: Path) -> None:
+    """Spawn background relationship computation process.
+
+    Args:
+        project_root: Project root directory
+    """
+    # Build command
+    python_exe = sys.executable
+    cmd = [
+        python_exe,
+        "-m",
+        "mcp_vector_search.cli.commands.index_background",
+        "--project-root",
+        str(project_root),
+        "--relationships-only",  # New flag for relationship-only mode
+    ]
+
+    # Spawn detached process (reuse existing background infrastructure)
+    try:
+        if sys.platform == "win32":
+            detached_process = 0x00000008
+            create_new_process_group = 0x00000200
+
+            process = subprocess.Popen(
+                cmd,
+                creationflags=detached_process | create_new_process_group,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+        else:
+            process = subprocess.Popen(
+                cmd,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+
+        pid = process.pid
+        print_success(f"Started background relationship computation (PID: {pid})")
+        print_info(
+            f"Log file: {project_root / '.mcp-vector-search' / 'relationships_background.log'}"
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to spawn background process: {e}")
+        print_error(f"Failed to start background computation: {e}")
+        raise typer.Exit(1)
+
+
+async def _compute_relationships_sync(project_root: Path) -> None:
+    """Compute relationships synchronously (blocking).
+
+    Args:
+        project_root: Project root directory
+    """
+    from rich.progress import (
+        BarColumn,
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        TimeRemainingColumn,
+    )
+
+    from ..output import console
+
+    # Load project configuration
+    project_manager = ProjectManager(project_root)
+
+    if not project_manager.is_initialized():
+        raise ProjectNotFoundError(
+            f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
+        )
+
+    config = project_manager.load_config()
+
+    console.print(f"[cyan]Project:[/cyan] {project_root}")
+    console.print(f"[cyan]Embedding model:[/cyan] {config.embedding_model}")
+
+    # Setup database
+    embedding_function, _ = create_embedding_function(config.embedding_model)
+    database = ChromaVectorDatabase(
+        persist_directory=config.index_path,
+        embedding_function=embedding_function,
+    )
+
+    async with database:
+        # Get all chunks
+        console.print("[cyan]Fetching chunks from database...[/cyan]")
+        all_chunks = await database.get_all_chunks()
+
+        if len(all_chunks) == 0:
+            console.print(
+                "[yellow]No chunks found in index. Run 'mcp-vector-search index' first.[/yellow]"
+            )
+            raise typer.Exit(1)
+
+        console.print(f"[green]✓[/green] Retrieved {len(all_chunks)} chunks\n")
+
+        # Initialize relationship store
+        from ...core.relationships import RelationshipStore
+
+        relationship_store = RelationshipStore(project_root)
+
+        # Compute relationships with progress
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=40),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Computing semantic relationships...", total=100)
+
+            # Compute and store (non-background mode)
+            rel_stats = await relationship_store.compute_and_store(
+                all_chunks, database, background=False
+            )
+
+            progress.update(task, completed=100)
+
+        # Show results
+        console.print()
+        console.print(
+            f"[green]✓[/green] Computed {rel_stats['semantic_links']} semantic links "
+            f"in {rel_stats['computation_time']:.1f}s"
+        )
+        print_success("Relationships ready for visualization")
 
 
 if __name__ == "__main__":

@@ -225,18 +225,18 @@ class BackgroundIndexer:
 
                 # Compute relationships
                 try:
-                    logger.info("Computing relationships for visualization...")
+                    logger.info("Marking relationships for background computation...")
                     self._update_progress(status="computing_relationships")
                     all_chunks = await indexer.database.get_all_chunks()
 
                     if len(all_chunks) > 0:
-                        rel_stats = await indexer.relationship_store.compute_and_store(
-                            all_chunks, indexer.database
+                        # Use background=True to avoid blocking startup
+                        await indexer.relationship_store.compute_and_store(
+                            all_chunks, indexer.database, background=True
                         )
+                        logger.info("✓ Relationships marked for background computation")
                         logger.info(
-                            f"Pre-computed {rel_stats['semantic_links']} semantic links and "
-                            f"{rel_stats['caller_relationships']} caller relationships "
-                            f"in {rel_stats['computation_time']:.1f}s"
+                            "  → Relationships will be lazy-loaded during visualization"
                         )
                 except Exception as e:
                     logger.warning(f"Failed to compute relationships: {e}")
@@ -251,6 +251,90 @@ class BackgroundIndexer:
 
         except Exception as e:
             logger.error(f"Background indexing failed: {e}", exc_info=True)
+            self._update_progress(status="failed")
+            raise
+
+    async def run_relationships_only(self) -> None:
+        """Run relationship computation only (skip file indexing).
+
+        This is used when user wants to compute relationships in background
+        after indexing has already completed.
+        """
+        try:
+            # Load project configuration
+            logger.info(f"Loading project configuration from {self.project_root}")
+            project_manager = ProjectManager(self.project_root)
+
+            if not project_manager.is_initialized():
+                raise RuntimeError(
+                    f"Project not initialized at {self.project_root}. Run 'mcp-vector-search init' first."
+                )
+
+            config = project_manager.load_config()
+
+            logger.info(f"Embedding model: {config.embedding_model}")
+
+            # Setup embedding function and cache
+            from ...config.defaults import get_default_cache_path
+
+            cache_dir = (
+                get_default_cache_path(self.project_root)
+                if config.cache_embeddings
+                else None
+            )
+            embedding_function, cache = create_embedding_function(
+                model_name=config.embedding_model,
+                cache_dir=cache_dir,
+                cache_size=config.max_cache_size,
+            )
+
+            # Setup database
+            database = ChromaVectorDatabase(
+                persist_directory=config.index_path,
+                embedding_function=embedding_function,
+            )
+
+            # Setup indexer (for relationship store access)
+            indexer = SemanticIndexer(
+                database=database,
+                project_root=self.project_root,
+                config=config,
+            )
+
+            async with database:
+                # Get chunks for relationship computation
+                self._update_progress(status="loading_chunks")
+                logger.info("Loading chunks from database...")
+                all_chunks = await indexer.database.get_all_chunks()
+
+                if len(all_chunks) == 0:
+                    logger.warning("No chunks found in database")
+                    self._update_progress(status="completed")
+                    return
+
+                logger.info(f"Found {len(all_chunks)} chunks")
+
+                # Compute relationships
+                logger.info("Computing semantic relationships...")
+                self._update_progress(status="computing_relationships")
+
+                rel_stats = await indexer.relationship_store.compute_and_store(
+                    all_chunks, indexer.database, background=False
+                )
+
+                logger.info(
+                    f"Computed {rel_stats['semantic_links']} semantic links "
+                    f"in {rel_stats['computation_time']:.1f}s"
+                )
+
+                # Mark as completed
+                self._update_progress(status="completed", current_file=None)
+                logger.info("Relationship computation completed")
+
+        except Exception as e:
+            logger.error(
+                f"Background relationship computation failed: {e}", exc_info=True
+            )
             self._update_progress(status="failed")
             raise
 
@@ -313,19 +397,36 @@ def main() -> None:
         type=str,
         help="Override file extensions (comma-separated)",
     )
+    parser.add_argument(
+        "--relationships-only",
+        action="store_true",
+        help="Only compute relationships (skip file indexing)",
+    )
 
     args = parser.parse_args()
 
     # Setup paths
     project_root = args.project_root.resolve()
     config_dir = project_root / ".mcp-vector-search"
-    progress_file = config_dir / "indexing_progress.json"
-    log_file = config_dir / "indexing_background.log"
+
+    # Use different files for relationships-only mode
+    if args.relationships_only:
+        progress_file = config_dir / "relationships_progress.json"
+        log_file = config_dir / "relationships_background.log"
+    else:
+        progress_file = config_dir / "indexing_progress.json"
+        log_file = config_dir / "indexing_background.log"
 
     # Setup logging
     setup_logging(log_file)
 
-    logger.info(f"Starting background indexing (PID: {os.getpid()})")
+    if args.relationships_only:
+        logger.info(
+            f"Starting background relationship computation (PID: {os.getpid()})"
+        )
+    else:
+        logger.info(f"Starting background indexing (PID: {os.getpid()})")
+
     logger.info(f"Project root: {project_root}")
     logger.info(f"Force reindex: {args.force}")
 
@@ -342,11 +443,14 @@ def main() -> None:
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    # Run indexing
+    # Run indexing or relationships-only
     try:
-        asyncio.run(
-            bg_indexer.run(force_reindex=args.force, extensions=args.extensions)
-        )
+        if args.relationships_only:
+            asyncio.run(bg_indexer.run_relationships_only())
+        else:
+            asyncio.run(
+                bg_indexer.run(force_reindex=args.force, extensions=args.extensions)
+            )
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
         bg_indexer._update_progress(status="cancelled")

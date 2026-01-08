@@ -145,6 +145,7 @@ class RelationshipStore:
         chunks: list[CodeChunk],
         database: Any,
         max_concurrent_queries: int = 50,
+        background: bool = False,
     ) -> dict[str, Any]:
         """Compute relationships and save to disk.
 
@@ -156,6 +157,7 @@ class RelationshipStore:
             chunks: List of all code chunks
             database: Vector database instance for semantic search
             max_concurrent_queries: Maximum number of concurrent database queries (default: 50)
+            background: If True, skip computation and return immediately (for background processing)
 
         Returns:
             Dictionary with relationship statistics
@@ -167,6 +169,33 @@ class RelationshipStore:
         code_chunks = [
             c for c in chunks if c.chunk_type in ["function", "method", "class"]
         ]
+
+        # If background mode, create empty relationships file and return
+        # Actual computation will happen in background task
+        if background:
+            relationships = {
+                "version": "1.1",
+                "computed_at": datetime.now(UTC).isoformat(),
+                "chunk_count": len(chunks),
+                "code_chunk_count": len(code_chunks),
+                "computation_time_seconds": 0,
+                "semantic": [],
+                "callers": {},
+                "status": "pending",  # Mark as pending background computation
+            }
+
+            # Save empty file
+            self.store_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.store_path, "w") as f:
+                json.dump(relationships, f, indent=2)
+
+            logger.info("✓ Relationships marked for background computation")
+            return {
+                "semantic_links": 0,
+                "caller_relationships": 0,
+                "computation_time": 0,
+                "background": True,
+            }
 
         # Compute semantic relationships only
         # Caller relationships are lazy-loaded on-demand via API
@@ -189,6 +218,7 @@ class RelationshipStore:
             "computation_time_seconds": elapsed,
             "semantic": semantic_links,
             "callers": {},  # Empty - loaded on-demand via /api/callers/{chunk_id}
+            "status": "complete",
         }
 
         # Save to disk

@@ -81,7 +81,7 @@ explore unfamiliar projects, and integrate with AI coding tools via MCP.
 [bold cyan]MAIN COMMANDS:[/bold cyan]
   setup     🚀 Zero-config setup (indexes + configures MCP)
   search    🔍 Semantic search (finds code by meaning)
-  chat      🤖 LLM-powered Q&A about your code (needs API key)
+  chat/ask  🤖 LLM-powered Q&A about your code (needs API key)
   status    📊 Show project status
   visualize 📊 Interactive code graph
 
@@ -94,7 +94,7 @@ explore unfamiliar projects, and integrate with AI coding tools via MCP.
   mcp-vector-search search "error handling"
   mcp-vector-search search --files "*.ts" "authentication"
   mcp-vector-search chat "where is the database configured?"
-  mcp-vector-search chat "how does auth work in this project?"
+  mcp-vector-search ask "how does auth work in this project?"
 
 [bold cyan]MORE COMMANDS:[/bold cyan]
   install    📦 Install project and MCP integrations
@@ -166,6 +166,9 @@ app.add_typer(search_app, name="search", help="🔍 Search code semantically")
 
 # 7.5. CHAT - LLM-powered intelligent search
 app.add_typer(chat_app, name="chat", help="🤖 Ask questions about code with LLM")
+app.add_typer(
+    chat_app, name="ask", help="🤖 Ask questions about code with LLM (alias for chat)"
+)
 
 # 8. INDEX - Index codebase
 app.add_typer(index_app, name="index", help="📇 Index codebase for semantic search")

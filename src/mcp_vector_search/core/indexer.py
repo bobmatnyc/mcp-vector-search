@@ -463,27 +463,27 @@ class SemanticIndexer:
             f"Indexing complete: {indexed_count} files indexed, {failed_count} failed"
         )
 
-        # Compute and store relationships for visualization (unless skipped)
+        # Mark relationships for background computation (unless skipped)
+        # Default behavior: skip blocking computation, mark for background processing
         if not skip_relationships and indexed_count > 0:
             try:
-                logger.info("Computing relationships for instant visualization...")
+                logger.info("Marking relationships for background computation...")
                 # Get all chunks from database for relationship computation
                 all_chunks = await self.database.get_all_chunks()
 
                 if len(all_chunks) > 0:
-                    # Compute and store relationships
-                    rel_stats = await self.relationship_store.compute_and_store(
-                        all_chunks, self.database
+                    # Mark for background computation (non-blocking)
+                    await self.relationship_store.compute_and_store(
+                        all_chunks, self.database, background=True
                     )
+                    logger.info("✓ Relationships marked for background computation")
                     logger.info(
-                        f"✓ Pre-computed {rel_stats['semantic_links']} semantic links and "
-                        f"{rel_stats['caller_relationships']} caller relationships "
-                        f"in {rel_stats['computation_time']:.1f}s"
+                        "  Use 'mcp-vector-search index relationships' to compute now or wait for background task"
                     )
                 else:
                     logger.warning("No chunks found for relationship computation")
             except Exception as e:
-                logger.warning(f"Failed to compute relationships: {e}")
+                logger.warning(f"Failed to mark relationships: {e}")
                 logger.debug("Visualization will compute relationships on demand")
 
         # Save trend snapshot after successful indexing
