@@ -198,8 +198,11 @@ jobs:
 
       - name: Test package installation
         run: |
-          # Install from wheel to system Python
-          uv pip install --system dist/*.whl
+          # Create venv and install from wheel
+          uv venv /tmp/test-venv
+          export VIRTUAL_ENV=/tmp/test-venv
+          export PATH="$VIRTUAL_ENV/bin:$PATH"
+          uv pip install dist/*.whl
 
           # Test CLI is available
           mcp-vector-search --version
