@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.17] - 2026-01-07
+
+### Fixed
+- **Visualization Node Convergence Bug** - Fixed missing link types in D3 force simulation
+  - Added `subproject_containment` and `dependency` link types to D3 visualization
+  - Previously missing link types caused nodes to not converge to stable positions
+  - Force simulation now properly recognizes all relationship types
+  - Fixes erratic node movement and improves graph stability
+
+### CI/CD
+- **Streamlined CI Pipeline** - Reduced CI complexity and removed ineffective checks
+  - Simplified test matrix to ubuntu-latest + Python 3.11 only
+  - Removed broken documentation check job
+  - Removed ineffective security job (used `|| true` making it always pass)
+  - Made performance benchmarks release-only to reduce CI load
+  - Removed duplicate pytest.ini (consolidated to pyproject.toml config)
+
 ## [1.1.16] - 2026-01-07
 
 ### Performance
