@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.16] - 2026-01-07
+
+### Performance
+- **Async Relationship Computation During Startup** - Non-blocking relationship processing
+  - Changed default indexing behavior to mark relationships for background computation instead of blocking
+  - Indexing now completes immediately without waiting for relationship computation
+  - Relationships computed asynchronously during background processing or on-demand
+  - Expected 2-5x faster initial indexing completion for large codebases
+
+### Added
+- **On-Demand Relationship Computation** - New command for manual relationship processing
+  - New `mcp-vector-search index relationships` command for on-demand computation
+  - `--background` flag for non-blocking relationship computation
+  - `--relationships-only` mode in background indexer for targeted computation
+  - Separate progress tracking for indexing vs relationship computation
+- **CLI Alias** - Better UX for common commands
+  - Added "ask" as alias for "chat" command
+
+### Fixed
+- Removed unused variable assignments in relationship computation code
+
 ## [1.1.15] - 2025-12-30
 
 ### Fixed
