@@ -217,4 +217,4 @@ jobs:
 
           # Index and search
           mcp-vector-search index
-          mcp-vector-search search "function" --limit 5
+          mcp-vector-search search --limit 5 "function"
