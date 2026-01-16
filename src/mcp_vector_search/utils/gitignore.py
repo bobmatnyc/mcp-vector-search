@@ -65,9 +65,6 @@ class GitignorePattern:
                 parent = "/".join(path_parts[:i])
                 if fnmatch.fnmatch(parent, pattern):
                     return True
-            # If no parent matches and this is not a directory, don't exclude
-            if not is_directory:
-                return False
 
         # Try exact match first
         if fnmatch.fnmatch(path, pattern):
