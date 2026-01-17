@@ -166,7 +166,7 @@ class MCPVectorSearchServer:
         tools = [
             Tool(
                 name="search_code",
-                description="Search for code using semantic similarity",
+                description="Search codebase using natural language queries (text-to-code search). Use when you know what functionality you're looking for but not where it's implemented. Example: 'authentication middleware' or 'database connection pooling' to find relevant code.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -215,7 +215,7 @@ class MCPVectorSearchServer:
             ),
             Tool(
                 name="search_similar",
-                description="Find code similar to a specific file or function",
+                description="Find code snippets similar to a specific file or function (code-to-code similarity). Use when looking for duplicate code, similar patterns, or related implementations. Example: 'Find functions similar to auth_handler.py' to discover related authentication code.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -247,7 +247,7 @@ class MCPVectorSearchServer:
             ),
             Tool(
                 name="search_context",
-                description="Search for code based on contextual description",
+                description="Search for code using rich contextual descriptions with optional focus areas. Use when you need broader context around specific concerns. Example: 'code handling user sessions' with focus_areas=['security', 'authentication'] to find session management with security emphasis.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -334,7 +334,7 @@ class MCPVectorSearchServer:
             ),
             Tool(
                 name="find_smells",
-                description="Returns list of code smells",
+                description="Identify code quality issues, anti-patterns, bad practices, and technical debt. Detects Long Methods, Deep Nesting, Long Parameter Lists, God Classes, and Complex Methods. Use when assessing code quality, finding refactoring opportunities, or identifying maintainability issues.",
                 inputSchema={
                     "type": "object",
                     "properties": {
