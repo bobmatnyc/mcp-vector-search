@@ -74,7 +74,7 @@ def main(
         False,
         "--force",
         "-f",
-        help="Force re-initialization if project is already initialized",
+        help="Force re-initialization with current defaults (regenerates config, backs up old config to .bak)",
         rich_help_panel="⚙️  Advanced Options",
     ),
     auto_index: bool = typer.Option(
