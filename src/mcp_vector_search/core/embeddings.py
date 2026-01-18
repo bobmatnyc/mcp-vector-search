@@ -158,16 +158,22 @@ class EmbeddingCache:
 class CodeBERTEmbeddingFunction:
     """ChromaDB-compatible embedding function using CodeBERT."""
 
-    def __init__(self, model_name: str = "microsoft/codebert-base") -> None:
+    def __init__(
+        self,
+        model_name: str = "microsoft/codebert-base",
+        timeout: float = 300.0,  # 5 minutes default timeout
+    ) -> None:
         """Initialize CodeBERT embedding function.
 
         Args:
             model_name: Name of the sentence transformer model
+            timeout: Timeout in seconds for embedding generation (default: 300s)
         """
         try:
             self.model = SentenceTransformer(model_name)
             self.model_name = model_name
-            logger.info(f"Loaded embedding model: {model_name}")
+            self.timeout = timeout
+            logger.info(f"Loaded embedding model: {model_name} (timeout: {timeout}s)")
         except Exception as e:
             logger.error(f"Failed to load embedding model {model_name}: {e}")
             raise EmbeddingError(f"Failed to load embedding model: {e}") from e
@@ -175,11 +181,31 @@ class CodeBERTEmbeddingFunction:
     def __call__(self, input: list[str]) -> list[list[float]]:
         """Generate embeddings for input texts (ChromaDB interface)."""
         try:
-            embeddings = self.model.encode(input, convert_to_numpy=True)
-            return embeddings.tolist()
+            # Use ThreadPoolExecutor with timeout for embedding generation
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self._generate_embeddings, input)
+                try:
+                    embeddings = future.result(timeout=self.timeout)
+                    return embeddings
+                except TimeoutError:
+                    logger.error(
+                        f"Embedding generation timed out after {self.timeout}s for batch of {len(input)} texts"
+                    )
+                    raise EmbeddingError(
+                        f"Embedding generation timed out after {self.timeout}s"
+                    )
+        except EmbeddingError:
+            raise
         except Exception as e:
             logger.error(f"Failed to generate embeddings: {e}")
             raise EmbeddingError(f"Failed to generate embeddings: {e}") from e
+
+    def _generate_embeddings(self, input: list[str]) -> list[list[float]]:
+        """Internal method to generate embeddings (runs in thread pool)."""
+        embeddings = self.model.encode(input, convert_to_numpy=True)
+        return embeddings.tolist()
 
 
 class BatchEmbeddingProcessor:

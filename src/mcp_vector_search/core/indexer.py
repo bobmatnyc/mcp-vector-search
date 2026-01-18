@@ -41,6 +41,40 @@ EXTENSION_TO_LANGUAGE = {
 }
 
 
+def cleanup_stale_locks(project_dir: Path) -> None:
+    """Remove stale SQLite journal files that indicate interrupted transactions.
+
+    Journal files (-journal, -wal, -shm) can be left behind if indexing is
+    interrupted or crashes, preventing future database access. This function
+    safely removes stale lock files at index startup.
+
+    Args:
+        project_dir: Project root directory containing .mcp-vector-search/
+    """
+    mcp_dir = project_dir / ".mcp-vector-search"
+    if not mcp_dir.exists():
+        return
+
+    # SQLite journal file extensions that indicate locks/transactions
+    lock_extensions = ["-journal", "-wal", "-shm"]
+
+    removed_count = 0
+    for ext in lock_extensions:
+        lock_path = mcp_dir / f"chroma.sqlite3{ext}"
+        if lock_path.exists():
+            try:
+                lock_path.unlink()
+                logger.warning(f"Removed stale database lock file: {lock_path.name}")
+                removed_count += 1
+            except Exception as e:
+                logger.error(f"Failed to remove stale lock file {lock_path}: {e}")
+
+    if removed_count > 0:
+        logger.info(
+            f"Cleaned up {removed_count} stale lock files (indexing can now proceed)"
+        )
+
+
 def _parse_file_standalone(
     args: tuple[Path, str | None],
 ) -> tuple[Path, list[CodeChunk], Exception | None]:
@@ -367,6 +401,9 @@ class SemanticIndexer:
         """
         logger.info(f"Starting indexing of project: {self.project_root}")
 
+        # Clean up stale lock files from previous interrupted indexing runs
+        cleanup_stale_locks(self.project_root)
+
         # Find all indexable files
         all_files = self._find_indexable_files()
 
@@ -397,9 +434,25 @@ class SemanticIndexer:
         indexed_count = 0
         failed_count = 0
 
+        # Heartbeat logging to detect stuck indexing
+        import time
+
+        heartbeat_interval = 60  # Log every 60 seconds
+        last_heartbeat = time.time()
+
         # Process files in batches for better memory management
         for i in range(0, len(files_to_index), self.batch_size):
             batch = files_to_index[i : i + self.batch_size]
+
+            # Heartbeat logging
+            now = time.time()
+            if now - last_heartbeat >= heartbeat_interval:
+                percentage = ((i + len(batch)) / len(files_to_index)) * 100
+                logger.info(
+                    f"Indexing heartbeat: {i + len(batch)}/{len(files_to_index)} files "
+                    f"({percentage:.1f}%), {indexed_count} indexed, {failed_count} failed"
+                )
+                last_heartbeat = now
 
             if show_progress:
                 logger.info(
