@@ -51,7 +51,7 @@ def main(
         None,
         "--extensions",
         "-e",
-        help="Comma-separated list of file extensions to index (e.g., '.py,.js,.ts,.txt,.md')",
+        help="Filter to specific file extensions (comma-separated, e.g., '.py,.js,.ts'). Default: all supported code files.",
         rich_help_panel="📁 Configuration",
     ),
     embedding_model: str = typer.Option(

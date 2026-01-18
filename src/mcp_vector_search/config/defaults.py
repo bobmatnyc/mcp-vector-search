@@ -9,63 +9,200 @@ ALLOWED_DOTFILES = {
     ".circleci",  # CircleCI config
 }
 
-# Default file extensions to index (prioritize supported languages)
+# Default file extensions to index - ALL supported code files
+# This comprehensive list includes Tree-Sitter supported languages and fallback parsing
+# Users can filter to specific extensions using the --extensions CLI flag
 DEFAULT_FILE_EXTENSIONS = [
-    ".py",  # Python (fully supported)
-    ".js",  # JavaScript (fully supported)
-    ".ts",  # TypeScript (fully supported)
-    ".jsx",  # React JSX (fully supported)
-    ".tsx",  # React TSX (fully supported)
-    ".mjs",  # ES6 modules (fully supported)
-    ".java",  # Java (fallback parsing)
-    ".cpp",  # C++ (fallback parsing)
-    ".c",  # C (fallback parsing)
-    ".h",  # C/C++ headers (fallback parsing)
-    ".hpp",  # C++ headers (fallback parsing)
-    ".cs",  # C# (fallback parsing)
-    ".go",  # Go (fallback parsing)
-    ".rs",  # Rust (fallback parsing)
-    ".php",  # PHP (fallback parsing)
-    ".rb",  # Ruby (fallback parsing)
-    ".swift",  # Swift (fallback parsing)
-    ".kt",  # Kotlin (fallback parsing)
-    ".scala",  # Scala (fallback parsing)
-    ".sh",  # Shell scripts (fallback parsing)
-    ".bash",  # Bash scripts (fallback parsing)
-    ".zsh",  # Zsh scripts (fallback parsing)
-    ".json",  # JSON configuration files
-    ".md",  # Markdown documentation
-    ".txt",  # Plain text files
+    # Python - Tree-Sitter fully supported
+    ".py",
+    ".pyw",
+    ".pyi",
+    # JavaScript - Tree-Sitter fully supported
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    # TypeScript - Tree-Sitter fully supported
+    ".ts",
+    ".tsx",
+    ".mts",
+    ".cts",
+    # Web - Tree-Sitter supported
+    ".html",
+    ".htm",
+    ".css",
+    ".scss",
+    ".sass",
+    ".less",
+    # Data/Config formats
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".xml",
+    # Documentation
+    ".md",
+    ".markdown",
+    ".rst",
+    ".txt",
+    # Shell scripts - Tree-Sitter supported
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".fish",
+    # JVM languages - fallback parsing
+    ".java",
+    ".kt",
+    ".scala",
+    ".groovy",
+    # C/C++ - Tree-Sitter supported
+    ".c",
+    ".cpp",
+    ".cc",
+    ".cxx",
+    ".h",
+    ".hpp",
+    ".hxx",
+    # C# - fallback parsing
+    ".cs",
+    # Go - Tree-Sitter supported
+    ".go",
+    # Rust - Tree-Sitter supported
+    ".rs",
+    # Ruby - Tree-Sitter supported
+    ".rb",
+    ".rake",
+    ".gemspec",
+    # PHP - Tree-Sitter supported
+    ".php",
+    ".phtml",
+    # Swift - fallback parsing
+    ".swift",
+    # Dart - fallback parsing
+    ".dart",
+    # R - fallback parsing
+    ".r",
+    ".R",
+    # SQL - fallback parsing
+    ".sql",
+    # Lua - fallback parsing
+    ".lua",
+    # Perl - fallback parsing
+    ".pl",
+    ".pm",
+    # Elixir - fallback parsing
+    ".ex",
+    ".exs",
+    # Clojure - fallback parsing
+    ".clj",
+    ".cljs",
+    ".cljc",
+    # Haskell - fallback parsing
+    ".hs",
+    # OCaml - fallback parsing
+    ".ml",
+    ".mli",
+    # Vim - fallback parsing
+    ".vim",
+    # Emacs Lisp - fallback parsing
+    ".el",
 ]
 
 # Language mappings for parsers
 LANGUAGE_MAPPINGS: dict[str, str] = {
+    # Python
     ".py": "python",
     ".pyw": "python",
+    ".pyi": "python",
+    # JavaScript
     ".js": "javascript",
     ".jsx": "javascript",
     ".mjs": "javascript",
+    ".cjs": "javascript",
+    # TypeScript
     ".ts": "typescript",
     ".tsx": "typescript",
-    ".java": "java",
-    ".cpp": "cpp",
-    ".c": "c",
-    ".h": "c",
-    ".hpp": "cpp",
-    ".cs": "c_sharp",
-    ".go": "go",
-    ".rs": "rust",
-    ".php": "php",
-    ".rb": "ruby",
-    ".swift": "swift",
-    ".kt": "kotlin",
-    ".scala": "scala",
+    ".mts": "typescript",
+    ".cts": "typescript",
+    # Web
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".scss": "scss",
+    ".sass": "sass",
+    ".less": "less",
+    # Data/Config
+    ".json": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".toml": "toml",
+    ".xml": "xml",
+    # Documentation
+    ".md": "markdown",
+    ".markdown": "markdown",
+    ".rst": "rst",
+    ".txt": "text",
+    # Shell
     ".sh": "bash",
     ".bash": "bash",
     ".zsh": "bash",
-    ".json": "json",
-    ".md": "markdown",
-    ".txt": "text",
+    ".fish": "fish",
+    # JVM languages
+    ".java": "java",
+    ".kt": "kotlin",
+    ".scala": "scala",
+    ".groovy": "groovy",
+    # C/C++
+    ".c": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".hxx": "cpp",
+    # C#
+    ".cs": "c_sharp",
+    # Go
+    ".go": "go",
+    # Rust
+    ".rs": "rust",
+    # Ruby
+    ".rb": "ruby",
+    ".rake": "ruby",
+    ".gemspec": "ruby",
+    # PHP
+    ".php": "php",
+    ".phtml": "php",
+    # Swift
+    ".swift": "swift",
+    # Dart
+    ".dart": "dart",
+    # R
+    ".r": "r",
+    ".R": "r",
+    # SQL
+    ".sql": "sql",
+    # Lua
+    ".lua": "lua",
+    # Perl
+    ".pl": "perl",
+    ".pm": "perl",
+    # Elixir
+    ".ex": "elixir",
+    ".exs": "elixir",
+    # Clojure
+    ".clj": "clojure",
+    ".cljs": "clojure",
+    ".cljc": "clojure",
+    # Haskell
+    ".hs": "haskell",
+    # OCaml
+    ".ml": "ocaml",
+    ".mli": "ocaml",
+    # Vim
+    ".vim": "vim",
+    # Emacs Lisp
+    ".el": "elisp",
 }
 
 # Default embedding models by use case
