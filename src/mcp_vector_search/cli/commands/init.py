@@ -51,7 +51,7 @@ def main(
         None,
         "--extensions",
         "-e",
-        help="Comma-separated list of file extensions to index (e.g., '.py,.js,.ts,.txt,.md')",
+        help="Filter to specific file extensions (comma-separated, e.g., '.py,.js,.ts'). Default: all supported code files.",
         rich_help_panel="📁 Configuration",
     ),
     embedding_model: str = typer.Option(
@@ -74,7 +74,7 @@ def main(
         False,
         "--force",
         "-f",
-        help="Force re-initialization if project is already initialized",
+        help="Force re-initialization with current defaults (regenerates config, backs up old config to .bak)",
         rich_help_panel="⚙️  Advanced Options",
     ),
     auto_index: bool = typer.Option(

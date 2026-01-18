@@ -5,6 +5,8 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
+from .defaults import DEFAULT_FILE_EXTENSIONS
+
 
 class ProjectConfig(BaseSettings):
     """Type-safe project configuration with validation."""
@@ -14,7 +16,7 @@ class ProjectConfig(BaseSettings):
         default=".mcp-vector-search", description="Index storage path"
     )
     file_extensions: list[str] = Field(
-        default=[".py", ".js", ".ts", ".jsx", ".tsx"],
+        default_factory=lambda: list(DEFAULT_FILE_EXTENSIONS),
         description="File extensions to index",
     )
     embedding_model: str = Field(

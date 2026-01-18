@@ -143,6 +143,25 @@ class ChromaConnectionPool:
                 ),
             )
 
+            # Configure SQLite busy_timeout to prevent indefinite waits on locked database
+            # This gives SQLite 30 seconds to acquire a lock before raising an error
+            try:
+                # Access the underlying SQLite connection through ChromaDB's internal API
+                # ChromaDB uses DuckDB by default, but falls back to SQLite for persistence
+                chroma_db_path = self.persist_directory / "chroma.sqlite3"
+                if chroma_db_path.exists():
+                    import sqlite3
+
+                    # Open a direct connection to configure busy_timeout
+                    temp_conn = sqlite3.connect(str(chroma_db_path))
+                    temp_conn.execute("PRAGMA busy_timeout = 30000")  # 30 seconds
+                    temp_conn.close()
+                    logger.debug(
+                        "Configured SQLite busy_timeout=30000ms for deadlock protection"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to configure SQLite busy_timeout: {e}")
+
             # Create or get collection
             collection = client.get_or_create_collection(
                 name=self.collection_name,

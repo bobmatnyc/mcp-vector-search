@@ -175,6 +175,19 @@ class ChromaVectorDatabase(VectorDatabase):
                     ),
                 )
 
+                # Configure SQLite busy_timeout to prevent indefinite waits on locked database
+                try:
+                    chroma_db_path = self.persist_directory / "chroma.sqlite3"
+                    if chroma_db_path.exists():
+                        import sqlite3
+
+                        temp_conn = sqlite3.connect(str(chroma_db_path))
+                        temp_conn.execute("PRAGMA busy_timeout = 30000")  # 30 seconds
+                        temp_conn.close()
+                        logger.debug("Configured SQLite busy_timeout=30000ms")
+                except Exception as e:
+                    logger.warning(f"Failed to configure SQLite busy_timeout: {e}")
+
                 # Create or get collection
                 self._collection = self._client.get_or_create_collection(
                     name=self.collection_name,

@@ -103,6 +103,15 @@ class ProjectManager:
             )
 
         try:
+            # Backup existing config if forcing re-initialization
+            config_path = get_default_config_path(self.project_root)
+            if force and config_path.exists():
+                backup_path = config_path.with_suffix(".json.bak")
+                import shutil
+
+                shutil.copy2(config_path, backup_path)
+                logger.info(f"Backed up existing config to {backup_path}")
+
             # Create index directory
             index_path = get_default_index_path(self.project_root)
             index_path.mkdir(parents=True, exist_ok=True)
@@ -124,17 +133,23 @@ class ProjectManager:
                     "Please manually add '.mcp-vector-search/' to your .gitignore file"
                 )
 
+            # When force=True, always use current defaults if no extensions specified
+            # This ensures config regeneration picks up new file types
+            resolved_extensions = (
+                file_extensions
+                if file_extensions is not None
+                else DEFAULT_FILE_EXTENSIONS
+            )
+
             # Detect languages and files
             detected_languages = self.detect_languages()
-            file_count = self.count_indexable_files(
-                file_extensions or DEFAULT_FILE_EXTENSIONS
-            )
+            file_count = self.count_indexable_files(resolved_extensions)
 
             # Create configuration
             config = ProjectConfig(
                 project_root=self.project_root,
                 index_path=index_path,
-                file_extensions=file_extensions or DEFAULT_FILE_EXTENSIONS,
+                file_extensions=resolved_extensions,
                 embedding_model=embedding_model,
                 similarity_threshold=similarity_threshold,
                 languages=detected_languages,
@@ -143,8 +158,9 @@ class ProjectManager:
             # Save configuration
             self.save_config(config)
 
+            action = "Re-initialized" if force else "Initialized"
             logger.info(
-                f"Initialized project at {self.project_root}",
+                f"{action} project at {self.project_root}",
                 languages=detected_languages,
                 file_count=file_count,
                 extensions=config.file_extensions,
