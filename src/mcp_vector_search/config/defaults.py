@@ -110,61 +110,99 @@ DEFAULT_CHUNK_SIZES = {
 
 # Directories to ignore during indexing
 DEFAULT_IGNORE_PATTERNS = [
+    # Version control
     ".git",
-    ".svn",
     ".hg",
+    ".svn",
+    # Python caches and environments
     "__pycache__",
-    ".pytest_cache",
+    ".hypothesis",  # Hypothesis property-based testing
     ".mypy_cache",  # mypy type checking cache
+    ".nox",  # Nox test automation
+    ".pytest_cache",
     ".ruff_cache",  # ruff linter cache
-    "node_modules",
+    ".tox",  # Tox testing environments
     ".venv",
     "venv",
-    ".env",
+    # JavaScript/Node.js
+    ".npm",  # npm cache
+    ".nyc_output",  # Istanbul/nyc coverage
+    ".yarn",  # Yarn cache
+    "bower_components",
+    "coverage",  # Jest/Mocha coverage reports
+    "node_modules",
+    # Build outputs
+    "_build",  # Sphinx and other doc builders
     "build",
     "dist",
+    "htmlcov",  # Python coverage HTML reports
+    "site",  # MkDocs and other static site builders
     "target",
+    "wheels",  # Python wheel build artifacts
+    # Generic caches
+    ".cache",
+    # IDEs and editors
     ".idea",
     ".vscode",
+    # Environment and config
+    ".env",
+    # Build artifacts and packages
     "*.egg-info",
+    "vendor",  # Dependency vendoring
+    # OS files
     ".DS_Store",
     "Thumbs.db",
+    # Tool-specific directories
     ".claude-mpm",  # Claude MPM directory
     ".mcp-vector-search",  # Our own index directory
 ]
 
 # File patterns to ignore
 DEFAULT_IGNORE_FILES = [
+    # Python compiled and build artifacts
     "*.pyc",
     "*.pyo",
     "*.pyd",
-    "*.so",
+    "*.egg",  # Python egg files
+    "*.whl",  # Python wheel files
+    ".coverage",  # Python coverage data file
+    "pip-wheel-metadata",  # pip wheel metadata
+    # Native libraries and executables
+    "*.a",
+    "*.bin",
     "*.dll",
     "*.dylib",
     "*.exe",
-    "*.bin",
-    "*.obj",
-    "*.o",
-    "*.a",
     "*.lib",
+    "*.o",
+    "*.obj",
+    "*.so",
+    # Java archives
+    "*.ear",
     "*.jar",
     "*.war",
-    "*.ear",
-    "*.zip",
-    "*.tar",
-    "*.gz",
-    "*.bz2",
-    "*.xz",
+    # Archive files
     "*.7z",
-    "*.rar",
+    "*.bz2",
+    "*.gz",
     "*.iso",
+    "*.rar",
+    "*.tar",
+    "*.xz",
+    "*.zip",
+    # Disk images
     "*.dmg",
     "*.img",
-    "*.log",
-    "*.tmp",
-    "*.temp",
+    # Editor swap and temporary files
+    "*.sublime-*",  # Sublime Text
+    "*.swo",  # Vim swap files
+    "*.swp",  # Vim swap files
+    # Temporary and cache files
     "*.cache",
     "*.lock",
+    "*.log",
+    "*.temp",
+    "*.tmp",
 ]
 
 
