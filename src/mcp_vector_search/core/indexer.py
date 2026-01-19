@@ -1,6 +1,7 @@
 """Semantic indexer for MCP Vector Search."""
 
 import asyncio
+import fnmatch
 import json
 import multiprocessing
 import os
@@ -1176,21 +1177,25 @@ class SemanticIndexer:
                     return True
 
             # 3. Check each part of the path against default ignore patterns
+            # Supports both exact matches and wildcard patterns (e.g., ".*" for all dotfiles)
             for part in relative_path.parts:
-                if part in self._ignore_patterns:
-                    logger.debug(
-                        f"Path ignored by default pattern '{part}': {file_path}"
-                    )
-                    return True
+                for pattern in self._ignore_patterns:
+                    # Use fnmatch for wildcard support (*, ?, [seq], [!seq])
+                    if fnmatch.fnmatch(part, pattern):
+                        logger.debug(
+                            f"Path ignored by pattern '{pattern}' matching '{part}': {file_path}"
+                        )
+                        return True
 
             # 4. Check if any parent directory should be ignored
             for parent in relative_path.parents:
                 for part in parent.parts:
-                    if part in self._ignore_patterns:
-                        logger.debug(
-                            f"Path ignored by parent pattern '{part}': {file_path}"
-                        )
-                        return True
+                    for pattern in self._ignore_patterns:
+                        if fnmatch.fnmatch(part, pattern):
+                            logger.debug(
+                                f"Path ignored by parent pattern '{pattern}' matching '{part}': {file_path}"
+                            )
+                            return True
 
             return False
 

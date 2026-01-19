@@ -247,6 +247,12 @@ DEFAULT_CHUNK_SIZES = {
 
 # Directories to ignore during indexing
 DEFAULT_IGNORE_PATTERNS = [
+    # Exclude all hidden/dot directories by default
+    # This wildcard pattern catches ALL directories starting with a dot
+    # Users can override this in their project config if needed
+    # Note: ALLOWED_DOTFILES (like .github) are whitelisted separately
+    ".*",
+    # Specific patterns below are kept for documentation and fallback
     # Version control
     ".git",
     ".hg",
