@@ -1,7 +1,7 @@
 """MCP Vector Search - CLI-first semantic code search with MCP integration."""
 
-__version__ = "1.1.27"
-__build__ = "127"
+__version__ = "1.1.28"
+__build__ = "128"
 __author__ = "Robert Matsuoka"
 __email__ = "bob@matsuoka.com"
 
