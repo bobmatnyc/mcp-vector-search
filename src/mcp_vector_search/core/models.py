@@ -276,12 +276,17 @@ class IndexStats(BaseModel):
     """Statistics about the search index."""
 
     total_files: int = Field(..., description="Total number of indexed files")
-    total_chunks: int = Field(..., description="Total number of code chunks")
+    total_chunks: int | str = Field(
+        ..., description="Total number of code chunks (or status message for large DBs)"
+    )
     languages: dict[str, int] = Field(..., description="Language distribution")
     file_types: dict[str, int] = Field(..., description="File type distribution")
     index_size_mb: float = Field(..., description="Index size in megabytes")
     last_updated: str = Field(..., description="Last update timestamp")
     embedding_model: str = Field(..., description="Embedding model used")
+    database_size_bytes: int = Field(
+        default=0, description="Raw database file size in bytes"
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -293,6 +298,7 @@ class IndexStats(BaseModel):
             "index_size_mb": self.index_size_mb,
             "last_updated": self.last_updated,
             "embedding_model": self.embedding_model,
+            "database_size_bytes": self.database_size_bytes,
         }
 
 

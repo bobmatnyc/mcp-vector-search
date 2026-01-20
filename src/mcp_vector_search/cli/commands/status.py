@@ -76,6 +76,18 @@ def main(
         help="Output status in JSON format",
         rich_help_panel="📊 Display Options",
     ),
+    skip_stats: bool = typer.Option(
+        False,
+        "--skip-stats",
+        help="Skip detailed statistics collection (useful for large databases >500MB)",
+        rich_help_panel="🔍 Diagnostics",
+    ),
+    force_stats: bool = typer.Option(
+        False,
+        "--force-stats",
+        help="Force full statistics even for large databases (may crash on very large DBs)",
+        rich_help_panel="🔍 Diagnostics",
+    ),
 ) -> None:
     """📊 Show project status and indexing statistics.
 
@@ -126,6 +138,8 @@ def main(
                         mcp=mcp,
                         metrics=metrics,
                         json_output=json_output,
+                        skip_stats=skip_stats,
+                        force_stats=force_stats,
                     ),
                     timeout=30.0,  # 30 second timeout
                 )
@@ -152,8 +166,21 @@ async def show_status(
     mcp: bool = False,
     metrics: bool = False,
     json_output: bool = False,
+    skip_stats: bool = False,
+    force_stats: bool = False,
 ) -> None:
-    """Show comprehensive project status."""
+    """Show comprehensive project status.
+
+    Args:
+        project_root: Project root directory
+        verbose: Show detailed information
+        health_check: Perform health check
+        mcp: Check MCP integration
+        metrics: Show metrics summary
+        json_output: Output as JSON
+        skip_stats: Skip statistics collection
+        force_stats: Force stats even for large databases
+    """
     status_data = {}
 
     try:
@@ -197,8 +224,26 @@ async def show_status(
         )
 
         # Get indexing stats (using database stats only, no filesystem scan)
+        # Determine whether to skip stats based on flags and database size
+        should_skip_stats = skip_stats and not force_stats
+
         async with database:
-            db_stats = await database.get_stats()
+            db_stats = await database.get_stats(skip_stats=should_skip_stats)
+
+            # Show warning if large database detected
+            if isinstance(db_stats.total_chunks, str):
+                if not json_output:
+                    console.print(
+                        f"\n[yellow]⚠️  Large database detected ({db_stats.index_size_mb:.1f} MB)[/yellow]"
+                    )
+                    console.print(
+                        "    [yellow]Detailed statistics skipped to prevent potential crashes.[/yellow]"
+                    )
+                    if not force_stats:
+                        console.print(
+                            "    [dim]Use --force-stats to attempt full statistics (may crash).[/dim]\n"
+                        )
+
             index_stats = await indexer.get_indexing_stats(db_stats=db_stats)
 
         # Get project information with pre-computed file count (avoids filesystem scan)
@@ -311,7 +356,14 @@ def _display_status(
     console.print(
         f"  Indexed Files: {index_data['indexed_files']}/{index_data['total_files']}"
     )
-    console.print(f"  Total Chunks: {index_data['total_chunks']}")
+
+    # Handle both int and string values for total_chunks
+    total_chunks = index_data["total_chunks"]
+    if isinstance(total_chunks, str):
+        console.print(f"  Total Chunks: [yellow]{total_chunks}[/yellow]")
+    else:
+        console.print(f"  Total Chunks: {total_chunks}")
+
     console.print(f"  Index Size: {index_data['index_size_mb']:.2f} MB")
 
     # Version information
@@ -437,7 +489,8 @@ async def perform_health_check(project_root: Path, config) -> dict[str, Any]:
                 embedding_function=embedding_function,
             )
             async with database:
-                await database.get_stats()
+                # Skip stats for health check to avoid crashes on large DBs
+                await database.get_stats(skip_stats=True)
             health_status["components"]["database"] = "ok"
         except Exception as e:
             health_status["components"]["database"] = "error"

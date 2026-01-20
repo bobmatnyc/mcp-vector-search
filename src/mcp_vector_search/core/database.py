@@ -572,13 +572,49 @@ class ChromaVectorDatabase(VectorDatabase):
             logger.error(f"Failed to delete chunks for {file_path}: {e}")
             raise DatabaseError(f"Failed to delete chunks: {e}") from e
 
-    async def get_stats(self) -> IndexStats:
-        """Get database statistics with optimized chunked queries."""
+    async def get_stats(self, skip_stats: bool = False) -> IndexStats:
+        """Get database statistics with optimized chunked queries.
+
+        Args:
+            skip_stats: If True, skip detailed statistics collection to avoid potential crashes
+                       on large databases (automatically enabled for databases >500MB)
+        """
         if not self._collection:
             raise DatabaseNotInitializedError("Database not initialized")
 
         try:
-            # Get total count (fast operation)
+            # SAFETY CHECK: Detect large databases before calling count()
+            # ChromaDB's Rust backend can segfault on large databases (>500MB)
+            chroma_db_path = self.persist_directory / "chroma.sqlite3"
+            db_size_mb = 0.0
+            db_size_bytes = 0
+
+            if chroma_db_path.exists():
+                db_size_bytes = chroma_db_path.stat().st_size
+                db_size_mb = db_size_bytes / (1024 * 1024)
+
+                # Automatically enable safe mode for large databases
+                if db_size_mb > 500 and not skip_stats:
+                    logger.warning(
+                        f"Large database detected ({db_size_mb:.1f} MB). "
+                        "Skipping detailed statistics to prevent potential crashes."
+                    )
+                    skip_stats = True
+
+            # If skip_stats is enabled, return minimal safe stats
+            if skip_stats:
+                return IndexStats(
+                    total_files=0,
+                    total_chunks="Large DB (count skipped for safety)",
+                    languages={},
+                    file_types={},
+                    index_size_mb=db_size_mb,
+                    last_updated="Skipped (large database)",
+                    embedding_model="unknown",
+                    database_size_bytes=db_size_bytes,
+                )
+
+            # Get total count (fast operation, but can crash on large DBs)
             count = self._collection.count()
 
             if count == 0:
