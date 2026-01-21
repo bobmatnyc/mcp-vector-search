@@ -29,6 +29,7 @@ class TestExitCodes:
         result = runner.invoke(
             analyze_app,
             [
+                "complexity",
                 "--project-root",
                 str(tmp_path),
                 "--fail-on-smell",
@@ -60,6 +61,7 @@ class TestExitCodes:
         result = runner.invoke(
             analyze_app,
             [
+                "complexity",
                 "--project-root",
                 str(tmp_path),
                 "--path",
@@ -91,6 +93,7 @@ class TestExitCodes:
         result = runner.invoke(
             analyze_app,
             [
+                "complexity",
                 "--project-root",
                 str(tmp_path),
                 "--fail-on-smell",
@@ -118,6 +121,7 @@ class TestExitCodes:
         result = runner.invoke(
             analyze_app,
             [
+                "complexity",
                 "--project-root",
                 str(tmp_path),
                 "--fail-on-smell",
@@ -146,6 +150,7 @@ class TestExitCodes:
         result = runner.invoke(
             analyze_app,
             [
+                "complexity",
                 "--project-root",
                 str(tmp_path),
                 "--fail-on-smell",
@@ -172,6 +177,7 @@ class TestExitCodes:
         result = runner.invoke(
             analyze_app,
             [
+                "complexity",
                 "--project-root",
                 str(tmp_path),
                 # Note: --fail-on-smell NOT specified
@@ -197,6 +203,7 @@ class TestExitCodes:
         result = runner.invoke(
             analyze_app,
             [
+                "complexity",
                 "--project-root",
                 str(tmp_path),
                 "--fail-on-smell",
@@ -220,6 +227,7 @@ class TestExitCodes:
             result = runner.invoke(
                 analyze_app,
                 [
+                    "complexity",
                     "--project-root",
                     str(tmp_path),
                     "--fail-on-smell",

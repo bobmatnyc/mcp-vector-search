@@ -22,6 +22,12 @@ class TestAnalyzeCommand:
         assert result.exit_code == 0
         assert "Analyze code complexity" in result.stdout
 
+    def test_analyze_complexity_help(self):
+        """Test that analyze complexity --help works."""
+        result = runner.invoke(analyze_app, ["complexity", "--help"])
+        assert result.exit_code == 0
+        assert "complexity" in result.stdout.lower()
+
     @pytest.mark.asyncio
     async def test_find_analyzable_files_no_filter(self, tmp_path):
         """Test finding files without filters."""
@@ -144,14 +150,14 @@ def complex_function(a, b, c):
         assert file_metrics is None
 
     def test_analyze_command_json_output(self, tmp_path):
-        """Test analyze command with JSON output."""
+        """Test analyze complexity command with JSON output."""
         # Create a simple test file
         test_file = tmp_path / "test.py"
         test_file.write_text("def foo(): pass")
 
         result = runner.invoke(
             analyze_app,
-            ["--project-root", str(tmp_path), "--json", "--quick"],
+            ["complexity", "--project-root", str(tmp_path), "--json", "--quick"],
             catch_exceptions=False,
         )
 
@@ -166,28 +172,28 @@ def complex_function(a, b, c):
         assert "complexity_distribution" in result.stdout
 
     def test_analyze_command_quick_mode(self, tmp_path):
-        """Test analyze command in quick mode."""
+        """Test analyze complexity command in quick mode."""
         # Create a simple test file
         test_file = tmp_path / "test.py"
         test_file.write_text("def foo(): pass")
 
         result = runner.invoke(
             analyze_app,
-            ["--project-root", str(tmp_path), "--quick"],
+            ["complexity", "--project-root", str(tmp_path), "--quick"],
         )
 
         # Should succeed
         assert result.exit_code == 0 or "No files found" in result.stdout
 
     def test_analyze_command_language_filter(self, tmp_path):
-        """Test analyze command with language filter."""
+        """Test analyze complexity command with language filter."""
         # Create test files
         (tmp_path / "test.py").write_text("def foo(): pass")
         (tmp_path / "test.js").write_text("function bar() {}")
 
         result = runner.invoke(
             analyze_app,
-            ["--project-root", str(tmp_path), "--language", "python", "--quick"],
+            ["complexity", "--project-root", str(tmp_path), "--language", "python", "--quick"],
         )
 
         # Should succeed
