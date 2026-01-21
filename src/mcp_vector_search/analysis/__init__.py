@@ -70,6 +70,12 @@ from .collectors.coupling import (
     build_import_graph,
 )
 from .collectors.smells import CodeSmell, SmellDetector, SmellSeverity
+from .dead_code import (
+    Confidence,
+    DeadCodeAnalyzer,
+    DeadCodeFinding,
+    DeadCodeReport,
+)
 from .debt import (
     DebtCategory,
     DebtItem,
@@ -77,6 +83,7 @@ from .debt import (
     RemediationTime,
     TechnicalDebtEstimator,
 )
+from .entry_points import EntryPoint, EntryPointDetector, EntryPointType
 from .metrics import ChunkMetrics, CouplingMetrics, FileMetrics, ProjectMetrics
 
 __all__ = [
@@ -108,4 +115,11 @@ __all__ = [
     "DebtItem",
     "DebtSummary",
     "RemediationTime",
+    "EntryPointDetector",
+    "EntryPoint",
+    "EntryPointType",
+    "DeadCodeAnalyzer",
+    "DeadCodeFinding",
+    "DeadCodeReport",
+    "Confidence",
 ]
