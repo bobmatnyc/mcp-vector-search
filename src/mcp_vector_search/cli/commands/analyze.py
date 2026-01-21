@@ -1,6 +1,7 @@
 """Analyze command for MCP Vector Search CLI."""
 
 import asyncio
+import sys
 from pathlib import Path
 
 import typer
@@ -30,9 +31,20 @@ from ..output import console, print_error, print_info, print_json
 analyze_app = typer.Typer(help="📈 Analyze code complexity and quality")
 
 
-@analyze_app.callback(invoke_without_command=True)
-def main(
-    ctx: typer.Context,
+# Main callback - no invoke_without_command to allow subcommands to work properly
+@analyze_app.callback()
+def analyze_callback() -> None:
+    """Analyze code complexity and quality.
+
+    Available commands:
+      complexity - Analyze code complexity (cyclomatic, cognitive, smells)
+      dead-code  - Detect dead/unreachable code
+    """
+    pass
+
+
+@analyze_app.command(name="complexity")
+def complexity_analysis(
     project_root: Path | None = typer.Option(
         None,
         "--project-root",
@@ -209,10 +221,6 @@ def main(
 
     [dim]💡 Tip: Use --quick for faster analysis on large projects.[/dim]
     """
-    if ctx.invoked_subcommand is not None:
-        # A subcommand was invoked - let it handle the request
-        return
-
     # Handle standalone baseline operations first
     baseline_manager = BaselineManager()
 
@@ -1058,7 +1066,7 @@ def _print_trends(trend_data: TrendData) -> None:
             )
 
 
-@analyze_app.command()
+@analyze_app.command(name="dead-code")
 def dead_code(
     project_root: Path | None = typer.Option(
         None,
@@ -1238,8 +1246,9 @@ async def run_dead_code_analysis(
         # Initialize database to get chunks
         print_info("Loading indexed code chunks...")
 
-        db_path = project_manager.get_db_path()
-        embedding_function = create_embedding_function()
+        config = project_manager.load_config()
+        db_path = Path(config.index_path)
+        embedding_function, _ = create_embedding_function(config.embedding_model)
 
         async with ChromaVectorDatabase(
             persist_directory=db_path,
