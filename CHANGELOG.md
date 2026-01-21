@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-01-21
+
+### Added
+- **Dead Code Analysis** (`mcp-vector-search analyze dead-code`)
+  - Entry point detection (main blocks, CLI commands, routes, tests, exports)
+  - AST-based reachability analysis from entry points
+  - Confidence levels (HIGH/MEDIUM/LOW) to reduce false positives
+  - Output formats: Console, JSON, SARIF, Markdown
+  - CI/CD integration with `--fail-on-dead` flag
+  - Custom entry points via `--entry-point` flag
+  - File exclusions via `--exclude` patterns
+
+### Changed
+- Refactored `analyze` command to use subcommands
+  - `mcp-vector-search analyze complexity` (previously `analyze`)
+  - `mcp-vector-search analyze dead-code` (new)
+
 ## [1.1.19] - 2026-01-08
 
 ### Fixed
