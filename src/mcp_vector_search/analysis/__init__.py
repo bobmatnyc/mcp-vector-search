@@ -76,6 +76,14 @@ from .dead_code import (
     DeadCodeFinding,
     DeadCodeReport,
 )
+from .dead_code_formatters import (
+    ConsoleFormatter,
+    DeadCodeFormatter,
+    JsonFormatter,
+    MarkdownFormatter,
+    SarifFormatter,
+    get_formatter,
+)
 from .debt import (
     DebtCategory,
     DebtItem,
@@ -122,4 +130,10 @@ __all__ = [
     "DeadCodeFinding",
     "DeadCodeReport",
     "Confidence",
+    "DeadCodeFormatter",
+    "ConsoleFormatter",
+    "JsonFormatter",
+    "SarifFormatter",
+    "MarkdownFormatter",
+    "get_formatter",
 ]

@@ -1058,5 +1058,269 @@ def _print_trends(trend_data: TrendData) -> None:
             )
 
 
+@analyze_app.command()
+def dead_code(
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory (auto-detected if not specified)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        rich_help_panel="🔧 Global Options",
+    ),
+    entry_point: list[str] = typer.Option(
+        [],
+        "--entry-point",
+        "-e",
+        help="Custom entry point in format 'file.py:function_name'",
+        rich_help_panel="🔍 Entry Point Options",
+    ),
+    include_public: bool = typer.Option(
+        False,
+        "--include-public",
+        help="Treat all public functions as entry points",
+        rich_help_panel="🔍 Entry Point Options",
+    ),
+    min_confidence: str = typer.Option(
+        "low",
+        "--min-confidence",
+        help="Minimum confidence level: high, medium, low",
+        rich_help_panel="🔍 Filters",
+    ),
+    exclude: list[str] = typer.Option(
+        [],
+        "--exclude",
+        help="Exclude file patterns (e.g., '**/tests/**', '**/_*.py')",
+        rich_help_panel="🔍 Filters",
+    ),
+    output_format: str = typer.Option(
+        "console",
+        "--output",
+        "-o",
+        help="Output format: console, json, sarif, markdown",
+        rich_help_panel="📊 Output Options",
+    ),
+    output_file: Path | None = typer.Option(
+        None,
+        "--output-file",
+        "-f",
+        help="Output file path (stdout if not specified)",
+        rich_help_panel="📊 Output Options",
+    ),
+    fail_on_dead: bool = typer.Option(
+        False,
+        "--fail-on-dead",
+        help="Exit with code 1 if dead code is detected (for CI/CD)",
+        rich_help_panel="🚦 Quality Gates",
+    ),
+) -> None:
+    """🧹 Detect dead/unreachable code in your project.
+
+    Analyzes your codebase to identify functions that are never called from
+    any entry point. Entry points include main blocks, CLI commands, HTTP routes,
+    tests, and module exports.
+
+    [bold cyan]Basic Examples:[/bold cyan]
+
+    [green]Analyze project for dead code:[/green]
+        $ mcp-vector-search analyze dead-code
+
+    [green]Include public functions as entry points:[/green]
+        $ mcp-vector-search analyze dead-code --include-public
+
+    [green]Filter by confidence level:[/green]
+        $ mcp-vector-search analyze dead-code --min-confidence high
+
+    [green]Custom entry point:[/green]
+        $ mcp-vector-search analyze dead-code --entry-point "main.py:run"
+
+    [bold cyan]Output Formats:[/bold cyan]
+
+    [green]Export to JSON:[/green]
+        $ mcp-vector-search analyze dead-code --output json
+
+    [green]Export to SARIF for GitHub:[/green]
+        $ mcp-vector-search analyze dead-code --output sarif --output-file report.sarif
+
+    [green]Export to Markdown report:[/green]
+        $ mcp-vector-search analyze dead-code --output markdown --output-file report.md
+
+    [bold cyan]CI/CD Integration:[/bold cyan]
+
+    [green]Fail build if dead code found:[/green]
+        $ mcp-vector-search analyze dead-code --fail-on-dead
+
+    [green]Exclude test files:[/green]
+        $ mcp-vector-search analyze dead-code --exclude "**/tests/**"
+
+    [dim]💡 Tip: Use --include-public if you're building a library with public API.[/dim]
+    """
+    try:
+        # Use provided project_root or current working directory
+        if project_root is None:
+            project_root = Path.cwd()
+
+        # Run dead code analysis
+        asyncio.run(
+            run_dead_code_analysis(
+                project_root=project_root,
+                custom_entry_points=entry_point,
+                include_public=include_public,
+                min_confidence=min_confidence,
+                exclude_patterns=exclude,
+                output_format=output_format,
+                output_file=output_file,
+                fail_on_dead=fail_on_dead,
+            )
+        )
+
+    except typer.Exit:
+        # Re-raise typer.Exit to preserve exit codes
+        raise
+    except Exception as e:
+        logger.error(f"Dead code analysis failed: {e}")
+        print_error(f"Dead code analysis failed: {e}")
+        raise typer.Exit(2)
+
+
+async def run_dead_code_analysis(
+    project_root: Path,
+    custom_entry_points: list[str],
+    include_public: bool = False,
+    min_confidence: str = "low",
+    exclude_patterns: list[str] | None = None,
+    output_format: str = "console",
+    output_file: Path | None = None,
+    fail_on_dead: bool = False,
+) -> None:
+    """Run dead code analysis workflow.
+
+    Args:
+        project_root: Root directory of the project
+        custom_entry_points: List of custom entry points
+        include_public: Treat public functions as entry points
+        min_confidence: Minimum confidence level (high, medium, low)
+        exclude_patterns: File path patterns to exclude
+        output_format: Output format (console, json, sarif, markdown)
+        output_file: Output file path (None for stdout)
+        fail_on_dead: Exit with code 1 if dead code found
+    """
+    from ...analysis.dead_code import Confidence, DeadCodeAnalyzer
+    from ...analysis.dead_code_formatters import get_formatter
+    from ...core.database import ChromaVectorDatabase
+    from ...core.embeddings import create_embedding_function
+
+    try:
+        # Check if project is initialized
+        project_manager = ProjectManager(project_root)
+        if not project_manager.is_initialized():
+            print_error(
+                f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
+            )
+            raise typer.Exit(1)
+
+        # Map string confidence to enum
+        confidence_map = {
+            "high": Confidence.HIGH,
+            "medium": Confidence.MEDIUM,
+            "low": Confidence.LOW,
+        }
+        min_confidence_enum = confidence_map.get(min_confidence.lower())
+        if not min_confidence_enum:
+            print_error(
+                f"Invalid confidence level: {min_confidence}. Must be: high, medium, low"
+            )
+            raise typer.Exit(1)
+
+        # Initialize database to get chunks
+        print_info("Loading indexed code chunks...")
+
+        db_path = project_manager.get_db_path()
+        embedding_function = create_embedding_function()
+
+        async with ChromaVectorDatabase(
+            persist_directory=db_path,
+            embedding_function=embedding_function,
+        ) as db:
+            # Get all chunks from database
+            chunks = await db.get_all_chunks()
+
+            if not chunks:
+                print_error("No code chunks found. Run 'mcp-vector-search index' first.")
+                raise typer.Exit(1)
+
+            print_info(f"Analyzing {len(chunks)} code chunks...")
+
+            # Convert CodeChunk objects to dict format expected by analyzer
+            chunks_dict = []
+            for chunk in chunks:
+                chunks_dict.append(
+                    {
+                        "type": chunk.chunk_type,
+                        "content": chunk.content,
+                        "function_name": chunk.function_name,
+                        "class_name": chunk.class_name,
+                        "file_path": chunk.file_path,
+                        "start_line": chunk.start_line,
+                        "end_line": chunk.end_line,
+                        "decorators": chunk.decorators or [],
+                    }
+                )
+
+            # Parse custom entry points
+            custom_entry_point_names = []
+            for ep_str in custom_entry_points:
+                if ":" in ep_str:
+                    # Format: file.py:function_name
+                    _, func_name = ep_str.split(":", 1)
+                    custom_entry_point_names.append(func_name)
+                else:
+                    # Just function name
+                    custom_entry_point_names.append(ep_str)
+
+            # Create analyzer
+            analyzer = DeadCodeAnalyzer(
+                include_public_entry_points=include_public,
+                custom_entry_points=custom_entry_point_names,
+                exclude_patterns=exclude_patterns or [],
+                min_confidence=min_confidence_enum,
+            )
+
+            # Run analysis
+            report = analyzer.analyze(project_root, chunks_dict)
+
+            # Format output
+            formatter = get_formatter(output_format)
+
+            if output_file:
+                # Write to file
+                with open(output_file, "w", encoding="utf-8") as f:
+                    formatter.format(report, f)
+                console.print(
+                    f"[green]✓[/green] Report written to: {output_file}"
+                )
+            else:
+                # Write to stdout
+                formatter.format(report, sys.stdout)
+
+            # Quality gate check
+            if fail_on_dead and report.unreachable_count > 0:
+                console.print(
+                    f"\n[red]❌ Quality gate failed: {report.unreachable_count} "
+                    f"unreachable function(s) detected[/red]"
+                )
+                raise typer.Exit(1)
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        logger.error(f"Dead code analysis failed: {e}", exc_info=True)
+        print_error(f"Analysis failed: {e}")
+        raise typer.Exit(2)
+
+
 if __name__ == "__main__":
     analyze_app()
