@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
-from .defaults import DEFAULT_FILE_EXTENSIONS
+from .defaults import DEFAULT_EMBEDDING_MODELS, DEFAULT_FILE_EXTENSIONS
 
 
 class ProjectConfig(BaseSettings):
@@ -20,8 +20,8 @@ class ProjectConfig(BaseSettings):
         description="File extensions to index",
     )
     embedding_model: str = Field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
-        description="Embedding model name",
+        default_factory=lambda: DEFAULT_EMBEDDING_MODELS["code"],
+        description="Embedding model name (default: CodeXEmbed-400M for code understanding)",
     )
     similarity_threshold: float = Field(
         default=0.3, ge=0.0, le=1.0, description="Similarity threshold"
@@ -96,7 +96,9 @@ class DatabaseConfig(BaseSettings):
         default="code_search", description="ChromaDB collection name"
     )
     batch_size: int = Field(
-        default=32, gt=0, description="Batch size for embedding operations"
+        default=128,
+        gt=0,
+        description="Batch size for embedding operations (optimized for modern hardware)",
     )
     enable_telemetry: bool = Field(
         default=False, description="Enable ChromaDB telemetry"

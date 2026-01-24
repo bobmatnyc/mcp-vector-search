@@ -206,11 +206,50 @@ LANGUAGE_MAPPINGS: dict[str, str] = {
 }
 
 # Default embedding models by use case
+# NEW DEFAULT (v1.3.0): CodeXEmbed-400M for superior code understanding
+# Legacy model (all-MiniLM-L6-v2) available for backward compatibility
 DEFAULT_EMBEDDING_MODELS = {
-    "code": "sentence-transformers/all-MiniLM-L6-v2",  # Changed from microsoft/codebert-base which doesn't exist
-    "multilingual": "sentence-transformers/all-MiniLM-L6-v2",
-    "fast": "sentence-transformers/all-MiniLM-L12-v2",
-    "precise": "sentence-transformers/all-mpnet-base-v2",  # Changed from microsoft/unixcoder-base
+    "code": "Salesforce/SFR-Embedding-Code-400M_R",  # CodeXEmbed-400M: SOTA local code embeddings
+    "multilingual": "Salesforce/SFR-Embedding-Code-400M_R",  # Supports 12 programming languages
+    "fast": "sentence-transformers/all-MiniLM-L6-v2",  # Legacy: fast but lower quality
+    "precise": "Salesforce/SFR-Embedding-Code-400M_R",  # Best quality for code
+    "legacy": "sentence-transformers/all-MiniLM-L6-v2",  # Backward compatibility (384 dims)
+}
+
+# Model specifications for dimension auto-detection and validation
+MODEL_SPECIFICATIONS = {
+    # CodeXEmbed models (code-specific, state-of-the-art)
+    "Salesforce/SFR-Embedding-Code-400M_R": {
+        "dimensions": 1024,  # Actual output dimensions from HuggingFace model
+        "context_length": 2048,
+        "type": "code",
+        "description": "CodeXEmbed-400M: State-of-the-art code embeddings (12 languages)",
+    },
+    "Salesforce/SFR-Embedding-Code-2B_R": {
+        "dimensions": 1024,  # Actual output dimensions from HuggingFace model
+        "context_length": 2048,
+        "type": "code",
+        "description": "CodeXEmbed-2B: Highest quality code embeddings (large model)",
+    },
+    # Legacy sentence-transformers models
+    "sentence-transformers/all-MiniLM-L6-v2": {
+        "dimensions": 384,
+        "context_length": 256,
+        "type": "general",
+        "description": "Legacy: Fast general-purpose embeddings (not code-optimized)",
+    },
+    "sentence-transformers/all-mpnet-base-v2": {
+        "dimensions": 768,
+        "context_length": 512,
+        "type": "general",
+        "description": "General-purpose embeddings with higher quality",
+    },
+    "sentence-transformers/all-MiniLM-L12-v2": {
+        "dimensions": 384,
+        "context_length": 256,
+        "type": "general",
+        "description": "Balanced speed and quality for general text",
+    },
 }
 
 # Default similarity thresholds by language
@@ -379,3 +418,72 @@ def get_similarity_threshold(language: str) -> float:
 def get_chunk_size(language: str) -> int:
     """Get the default chunk size for a language."""
     return DEFAULT_CHUNK_SIZES.get(language.lower(), DEFAULT_CHUNK_SIZES["default"])
+
+
+def get_model_dimensions(model_name: str) -> int:
+    """Get embedding dimensions for a model.
+
+    Args:
+        model_name: Model identifier (e.g., "Salesforce/SFR-Embedding-Code-400M_R")
+
+    Returns:
+        Number of embedding dimensions (768 for CodeXEmbed, 384 for legacy)
+
+    Raises:
+        ValueError: If model is unknown and dimensions cannot be inferred
+    """
+    if model_name in MODEL_SPECIFICATIONS:
+        return MODEL_SPECIFICATIONS[model_name]["dimensions"]
+
+    # Fallback: Try to infer from model name patterns
+    if "MiniLM" in model_name and "L6" in model_name:
+        return 384  # all-MiniLM-L6-v2 pattern
+    elif "mpnet" in model_name:
+        return 768  # all-mpnet-base-v2 pattern
+    elif "SFR-Embedding-Code" in model_name or "CodeXEmbed" in model_name:
+        return 768  # CodeXEmbed models
+
+    # Unknown model - raise error to force explicit configuration
+    raise ValueError(
+        f"Unknown embedding model: {model_name}. "
+        f"Please add model specifications to MODEL_SPECIFICATIONS in defaults.py"
+    )
+
+
+def get_model_context_length(model_name: str) -> int:
+    """Get maximum context length for a model.
+
+    Args:
+        model_name: Model identifier
+
+    Returns:
+        Maximum number of tokens (2048 for CodeXEmbed, 256 for legacy)
+    """
+    if model_name in MODEL_SPECIFICATIONS:
+        return MODEL_SPECIFICATIONS[model_name]["context_length"]
+
+    # Fallback: Conservative default
+    return 512
+
+
+def is_code_specific_model(model_name: str) -> bool:
+    """Check if model is optimized for code understanding.
+
+    Args:
+        model_name: Model identifier
+
+    Returns:
+        True if model is code-specific, False otherwise
+    """
+    if model_name in MODEL_SPECIFICATIONS:
+        return MODEL_SPECIFICATIONS[model_name]["type"] == "code"
+
+    # Pattern matching for known code models
+    code_model_patterns = [
+        "SFR-Embedding-Code",
+        "CodeXEmbed",
+        "CodeT5",
+        "codebert",
+        "unixcoder",
+    ]
+    return any(pattern in model_name for pattern in code_model_patterns)

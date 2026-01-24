@@ -88,6 +88,9 @@ class MCPVectorSearchServer:
             return
 
         try:
+            # Run pending migrations first
+            await self._run_migrations()
+
             # Load project configuration
             config = self.project_manager.load_config()
 
@@ -141,6 +144,39 @@ class MCPVectorSearchServer:
         except Exception as e:
             logger.error(f"Failed to initialize MCP server: {e}")
             raise
+
+    async def _run_migrations(self) -> None:
+        """Run pending migrations on startup.
+
+        Migrations are run automatically but failures only log warnings
+        to avoid blocking server startup.
+        """
+        try:
+            from ..migrations import MigrationRunner
+            from ..migrations.v1_2_2_codexembed import CodeXEmbedMigration
+
+            runner = MigrationRunner(self.project_root)
+            runner.register_migrations([CodeXEmbedMigration()])
+
+            pending = runner.get_pending_migrations()
+            if pending:
+                logger.info(f"Running {len(pending)} pending migration(s)...")
+                results = runner.run_pending_migrations()
+
+                for result in results:
+                    if result.status.value == "success":
+                        logger.info(f"✓ Migration {result.migration_id} completed")
+                    elif result.status.value == "failed":
+                        logger.warning(
+                            f"Migration {result.migration_id} failed: {result.message}"
+                        )
+                    # Skipped migrations are silently ignored
+            else:
+                logger.debug("No pending migrations")
+
+        except Exception as e:
+            # Don't block server startup on migration failures
+            logger.warning(f"Migration check failed (non-fatal): {e}")
 
     async def cleanup(self) -> None:
         """Cleanup resources."""

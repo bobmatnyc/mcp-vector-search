@@ -23,9 +23,9 @@ class TestSemanticIndexerMultiprocessing:
 
         # Verify multiprocessing is enabled
         assert indexer.use_multiprocessing is True
-        # Worker count should be based on CPU count
+        # Worker count should be 75% of CPU count (no cap for full CPU utilization)
         cpu_count = multiprocessing.cpu_count()
-        expected_workers = min(max(1, int(cpu_count * 0.75)), 8)
+        expected_workers = max(1, int(cpu_count * 0.75))
         assert indexer.max_workers == expected_workers
 
     @pytest.mark.asyncio

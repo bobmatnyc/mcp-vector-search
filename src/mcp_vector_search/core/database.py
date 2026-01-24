@@ -9,6 +9,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from loguru import logger
 
+from ..config.defaults import get_model_dimensions
 from .connection_pool import ChromaConnectionPool
 from .exceptions import (
     DatabaseError,
@@ -188,17 +189,26 @@ class ChromaVectorDatabase(VectorDatabase):
                 except Exception as e:
                     logger.warning(f"Failed to configure SQLite busy_timeout: {e}")
 
-                # Create or get collection
+                # Create or get collection with optimized HNSW parameters
+                # M=32, ef_construction=400, ef_search=75 provide better search quality
+                # at the cost of slightly slower indexing (acceptable trade-off for code search)
                 self._collection = self._client.get_or_create_collection(
                     name=self.collection_name,
                     embedding_function=self.embedding_function,
                     metadata={
                         "description": "Semantic code search collection",
+                        "hnsw:space": "cosine",  # Cosine similarity for semantic search
+                        "hnsw:construction_ef": 400,  # Higher construction quality (default: 200)
+                        "hnsw:M": 32,  # More connections per node (default: 16)
+                        "hnsw:search_ef": 75,  # Better search recall (default: 10)
                     },
                 )
 
                 # Reset recovery flag on successful initialization
                 self._recovery_attempted = False
+
+                # Check for dimension mismatch (migration detection)
+                await self._check_dimension_compatibility()
 
                 logger.debug(f"ChromaDB initialized at {self.persist_directory}")
 
@@ -249,6 +259,10 @@ class ChromaVectorDatabase(VectorDatabase):
                             embedding_function=self.embedding_function,
                             metadata={
                                 "description": "Semantic code search collection",
+                                "hnsw:space": "cosine",
+                                "hnsw:construction_ef": 400,
+                                "hnsw:M": 32,
+                                "hnsw:search_ef": 75,
                             },
                         )
 
@@ -831,6 +845,73 @@ class ChromaVectorDatabase(VectorDatabase):
                 where[key] = value
 
         return where
+
+    async def _check_dimension_compatibility(self) -> None:
+        """Check for embedding dimension mismatch and warn if re-indexing needed.
+
+        Detects when index was created with different embedding model (different dimensions).
+        Logs clear warning to guide users through migration.
+        """
+        if not self._collection:
+            return
+
+        try:
+            # Get collection count to check if index exists
+            count = self._collection.count()
+            if count == 0:
+                # Empty index, no compatibility check needed
+                return
+
+            # Get embedding function model name
+            model_name = getattr(self.embedding_function, "model_name", None)
+            if not model_name:
+                # Can't determine model, skip check
+                return
+
+            # Get expected dimensions for current model
+            try:
+                expected_dims = get_model_dimensions(model_name)
+            except ValueError:
+                # Unknown model, can't validate dimensions
+                logger.debug(
+                    f"Cannot validate dimensions for unknown model: {model_name}"
+                )
+                return
+
+            # Peek at one embedding to get actual dimensions
+            # This is more reliable than checking metadata
+            try:
+                result = self._collection.peek(limit=1)
+                if result and "embeddings" in result and result["embeddings"]:
+                    actual_dims = len(result["embeddings"][0])
+
+                    if actual_dims != expected_dims:
+                        logger.warning(
+                            f"\n"
+                            f"╔═══════════════════════════════════════════════════════════════════╗\n"
+                            f"║ EMBEDDING DIMENSION MISMATCH DETECTED                             ║\n"
+                            f"╠═══════════════════════════════════════════════════════════════════╣\n"
+                            f"║ Current model: {model_name:<50}║\n"
+                            f"║ Expected dimensions: {expected_dims:<47}║\n"
+                            f"║ Index dimensions: {actual_dims:<50}║\n"
+                            f"║                                                                   ║\n"
+                            f"║ The index was created with a different embedding model.          ║\n"
+                            f"║ Re-indexing is required for correct search results.              ║\n"
+                            f"║                                                                   ║\n"
+                            f"║ To re-index:                                                      ║\n"
+                            f"║   mcp-vector-search index --force                                 ║\n"
+                            f"║                                                                   ║\n"
+                            f"║ Or use legacy model for compatibility:                            ║\n"
+                            f"║   export MCP_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2║\n"
+                            f"╚═══════════════════════════════════════════════════════════════════╝\n"
+                        )
+            except Exception as peek_error:
+                logger.debug(
+                    f"Could not peek embeddings for dimension check: {peek_error}"
+                )
+
+        except Exception as e:
+            logger.debug(f"Dimension compatibility check failed: {e}")
 
     async def _detect_and_recover_corruption(self) -> None:
         """Detect and recover from index corruption proactively.

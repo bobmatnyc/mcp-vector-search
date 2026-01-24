@@ -32,6 +32,7 @@ import aiofiles
 from loguru import logger
 from sentence_transformers import SentenceTransformer
 
+from ..config.defaults import get_model_dimensions, is_code_specific_model
 from .exceptions import EmbeddingError
 
 
@@ -170,13 +171,65 @@ class CodeBERTEmbeddingFunction:
             timeout: Timeout in seconds for embedding generation (default: 300s)
         """
         try:
-            self.model = SentenceTransformer(model_name)
+            # Auto-detect CUDA availability for GPU acceleration
+            import torch
+
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+            # Detect model dimensions and log info
+            try:
+                expected_dims = get_model_dimensions(model_name)
+                is_code_model = is_code_specific_model(model_name)
+                model_type = "code-specific" if is_code_model else "general-purpose"
+            except ValueError:
+                # Unknown model - will be logged as warning
+                expected_dims = "unknown"
+                model_type = "unknown"
+
+            # Log model download for large models (CodeXEmbed is ~1.5GB)
+            if "SFR-Embedding-Code" in model_name or "CodeXEmbed" in model_name:
+                logger.info(
+                    f"Loading {model_name} (~1.5GB download on first use)... "
+                    f"This may take a few minutes."
+                )
+
+            # trust_remote_code=True needed for CodeXEmbed and other models with custom code
+            self.model = SentenceTransformer(
+                model_name, device=device, trust_remote_code=True
+            )
             self.model_name = model_name
             self.timeout = timeout
-            logger.info(f"Loaded embedding model: {model_name} (timeout: {timeout}s)")
+
+            # Get actual dimensions from loaded model
+            actual_dims = self.model.get_sentence_embedding_dimension()
+
+            # Log GPU/CPU usage and model details
+            if device == "cuda":
+                gpu_name = torch.cuda.get_device_name(0)
+                logger.info(
+                    f"Loaded {model_type} embedding model: {model_name} "
+                    f"on GPU ({gpu_name}) with {actual_dims} dimensions (timeout: {timeout}s)"
+                )
+            else:
+                logger.info(
+                    f"Loaded {model_type} embedding model: {model_name} "
+                    f"on CPU with {actual_dims} dimensions (timeout: {timeout}s)"
+                )
+
+            # Validate dimensions match expected
+            if expected_dims != "unknown" and actual_dims != expected_dims:
+                logger.warning(
+                    f"Model dimension mismatch: expected {expected_dims}, got {actual_dims}. "
+                    f"Update MODEL_SPECIFICATIONS in defaults.py"
+                )
+
         except Exception as e:
             logger.error(f"Failed to load embedding model {model_name}: {e}")
             raise EmbeddingError(f"Failed to load embedding model: {e}") from e
+
+    def name(self) -> str:
+        """Return embedding function name (ChromaDB requirement)."""
+        return f"CodeBERTEmbeddingFunction:{self.model_name}"
 
     def __call__(self, input: list[str]) -> list[list[float]]:
         """Generate embeddings for input texts (ChromaDB interface)."""
@@ -215,14 +268,14 @@ class BatchEmbeddingProcessor:
         self,
         embedding_function: CodeBERTEmbeddingFunction,
         cache: EmbeddingCache | None = None,
-        batch_size: int = 32,
+        batch_size: int = 128,  # Increased from 32 to 128 for better throughput on modern hardware
     ) -> None:
         """Initialize batch embedding processor.
 
         Args:
             embedding_function: Function to generate embeddings
             cache: Optional embedding cache
-            batch_size: Size of batches for processing
+            batch_size: Size of batches for processing (default: 128 for modern hardware)
         """
         self.embedding_function = embedding_function
         self.cache = cache
@@ -318,13 +371,25 @@ def create_embedding_function(
         # Use ChromaDB's built-in sentence transformer function
         from chromadb.utils import embedding_functions
 
-        # Map our model names to sentence-transformers compatible names
+        # Map legacy model names to current defaults
+        # This ensures backward compatibility with old config files
         model_mapping = {
-            "microsoft/codebert-base": "sentence-transformers/all-MiniLM-L6-v2",  # Fallback to working model
-            "microsoft/unixcoder-base": "sentence-transformers/all-MiniLM-L6-v2",  # Fallback to working model
+            # Legacy CodeBERT models (deprecated, never existed in sentence-transformers)
+            "microsoft/codebert-base": "Salesforce/SFR-Embedding-Code-400M_R",
+            "microsoft/unixcoder-base": "Salesforce/SFR-Embedding-Code-400M_R",
+            # Maintain existing mappings for smooth migration
+            "codebert": "Salesforce/SFR-Embedding-Code-400M_R",
+            "unixcoder": "Salesforce/SFR-Embedding-Code-400M_R",
         }
 
         actual_model = model_mapping.get(model_name, model_name)
+
+        # Log migration warning if model was remapped
+        if actual_model != model_name:
+            logger.warning(
+                f"Model '{model_name}' is deprecated. Automatically using '{actual_model}' instead. "
+                f"Please update your configuration to use the new model explicitly."
+            )
 
         embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name=actual_model

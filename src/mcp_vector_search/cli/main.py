@@ -124,6 +124,7 @@ from .commands.index import index_app  # noqa: E402
 from .commands.init import init_app  # noqa: E402
 from .commands.install import install_app  # noqa: E402
 from .commands.mcp import mcp_app  # noqa: E402
+from .commands.migrate import migrate_app  # noqa: E402
 from .commands.reset import reset_app  # noqa: E402
 from .commands.search import search_app, search_main  # noqa: E402, F401
 from .commands.setup import setup_app  # noqa: E402
@@ -181,6 +182,9 @@ app.add_typer(config_app, name="config", help="⚙️  Manage project configurat
 
 # 10.5. RESET - Reset and recovery operations
 app.add_typer(reset_app, name="reset", help="🔄 Reset and recovery operations")
+
+# 10.6. MIGRATE - Database migrations
+app.add_typer(migrate_app, name="migrate", help="🔄 Database migration operations")
 
 # 11. ANALYZE - Code complexity analysis
 app.add_typer(

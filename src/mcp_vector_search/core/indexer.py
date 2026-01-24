@@ -20,6 +20,7 @@ from ..analysis.trends import TrendTracker
 from ..config.defaults import ALLOWED_DOTFILES, DEFAULT_IGNORE_PATTERNS
 from ..config.settings import ProjectConfig
 from ..parsers.registry import get_parser_registry
+from ..utils.cancellation import CancellationToken
 from ..utils.gitignore import create_gitignore_parser
 from ..utils.monorepo import MonorepoDetector
 from .database import VectorDatabase
@@ -191,9 +192,9 @@ class SemanticIndexer:
         # Configure multiprocessing for parallel parsing
         self.use_multiprocessing = use_multiprocessing
         if use_multiprocessing:
-            # Use 75% of CPU cores for parsing, but cap at 8 to avoid overhead
+            # Use 75% of CPU cores for parsing (no artificial cap for full CPU utilization)
             cpu_count = multiprocessing.cpu_count()
-            self.max_workers = max_workers or min(max(1, int(cpu_count * 0.75)), 8)
+            self.max_workers = max_workers or max(1, int(cpu_count * 0.75))
             logger.debug(
                 f"Multiprocessing enabled with {self.max_workers} workers (CPU count: {cpu_count})"
             )
@@ -224,6 +225,10 @@ class SemanticIndexer:
         else:
             self.gitignore_parser = None
             logger.debug("Gitignore filtering disabled by configuration")
+
+        # Cache for _should_ignore_path to avoid repeated parent path checks
+        # Key: str(path), Value: bool (should ignore)
+        self._ignore_path_cache: dict[str, bool] = {}
 
         # Initialize monorepo detector
         self.monorepo_detector = MonorepoDetector(project_root)
@@ -1034,19 +1039,39 @@ class SemanticIndexer:
 
         return self._indexable_files_cache
 
-    def _scan_files_sync(self) -> list[Path]:
+    def _scan_files_sync(
+        self, cancel_token: CancellationToken | None = None
+    ) -> list[Path]:
         """Synchronous file scanning (runs in thread pool).
 
         Uses os.walk with directory filtering to avoid traversing ignored directories.
 
+        Args:
+            cancel_token: Optional cancellation token to interrupt scanning
+
         Returns:
             List of indexable file paths
+
+        Raises:
+            OperationCancelledError: If cancelled via cancel_token
         """
         indexable_files = []
+        dir_count = 0
 
         # Use os.walk for efficient directory traversal with early filtering
         for root, dirs, files in os.walk(self.project_root):
+            # Check for cancellation periodically (every directory)
+            if cancel_token:
+                cancel_token.check()
+
             root_path = Path(root)
+            dir_count += 1
+
+            # Log progress periodically
+            if dir_count % 100 == 0:
+                logger.debug(
+                    f"Scanned {dir_count} directories, found {len(indexable_files)} indexable files"
+                )
 
             # Filter out ignored directories IN-PLACE to prevent os.walk from traversing them
             # This is much more efficient than checking every file in ignored directories
@@ -1064,13 +1089,24 @@ class SemanticIndexer:
                 if self._should_index_file(file_path, skip_file_check=True):
                     indexable_files.append(file_path)
 
+        logger.debug(
+            f"File scan complete: {dir_count} directories, {len(indexable_files)} indexable files"
+        )
         return indexable_files
 
-    async def _find_indexable_files_async(self) -> list[Path]:
+    async def _find_indexable_files_async(
+        self, cancel_token: CancellationToken | None = None
+    ) -> list[Path]:
         """Find all files asynchronously without blocking event loop.
+
+        Args:
+            cancel_token: Optional cancellation token to interrupt scanning
 
         Returns:
             List of file paths to index
+
+        Raises:
+            OperationCancelledError: If cancelled via cancel_token
         """
         import time
         from concurrent.futures import ThreadPoolExecutor
@@ -1091,7 +1127,7 @@ class SemanticIndexer:
         loop = asyncio.get_running_loop()
         with ThreadPoolExecutor(max_workers=1) as executor:
             indexable_files = await loop.run_in_executor(
-                executor, self._scan_files_sync
+                executor, lambda: self._scan_files_sync(cancel_token)
             )
 
         # Update cache
@@ -1144,6 +1180,8 @@ class SemanticIndexer:
     ) -> bool:
         """Check if a path should be ignored.
 
+        PERFORMANCE: Cached to avoid repeated checks on parent directories.
+
         Args:
             file_path: Path to check
             is_directory: Optional hint if path is a directory (avoids filesystem check)
@@ -1151,6 +1189,11 @@ class SemanticIndexer:
         Returns:
             True if path should be ignored
         """
+        # Check cache first
+        cache_key = str(file_path)
+        if cache_key in self._ignore_path_cache:
+            return self._ignore_path_cache[cache_key]
+
         try:
             # Get relative path from project root for checking
             relative_path = file_path.relative_to(self.project_root)
@@ -1165,6 +1208,7 @@ class SemanticIndexer:
                         logger.debug(
                             f"Path ignored by dotfile filter '{part}': {file_path}"
                         )
+                        self._ignore_path_cache[cache_key] = True
                         return True
 
             # 2. Check gitignore rules if available and enabled
@@ -1174,9 +1218,11 @@ class SemanticIndexer:
                     file_path, is_directory=is_directory
                 ):
                     logger.debug(f"Path ignored by .gitignore: {file_path}")
+                    self._ignore_path_cache[cache_key] = True
                     return True
 
             # 3. Check each part of the path against default ignore patterns
+            # PERFORMANCE: Combine part and parent checks to avoid duplicate iteration
             # Supports both exact matches and wildcard patterns (e.g., ".*" for all dotfiles)
             for part in relative_path.parts:
                 for pattern in self._ignore_patterns:
@@ -1185,22 +1231,16 @@ class SemanticIndexer:
                         logger.debug(
                             f"Path ignored by pattern '{pattern}' matching '{part}': {file_path}"
                         )
+                        self._ignore_path_cache[cache_key] = True
                         return True
 
-            # 4. Check if any parent directory should be ignored
-            for parent in relative_path.parents:
-                for part in parent.parts:
-                    for pattern in self._ignore_patterns:
-                        if fnmatch.fnmatch(part, pattern):
-                            logger.debug(
-                                f"Path ignored by parent pattern '{pattern}' matching '{part}': {file_path}"
-                            )
-                            return True
-
+            # Cache negative result
+            self._ignore_path_cache[cache_key] = False
             return False
 
         except ValueError:
             # Path is not relative to project root
+            self._ignore_path_cache[cache_key] = True
             return True
 
     async def _parse_file(self, file_path: Path) -> list[CodeChunk]:

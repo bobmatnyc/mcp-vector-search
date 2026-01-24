@@ -6,6 +6,7 @@ from pathlib import Path
 from loguru import logger
 
 from ..config.defaults import (
+    DEFAULT_EMBEDDING_MODELS,
     DEFAULT_FILE_EXTENSIONS,
     DEFAULT_IGNORE_PATTERNS,
     get_default_config_path,
@@ -79,7 +80,7 @@ class ProjectManager:
     def initialize(
         self,
         file_extensions: list[str] | None = None,
-        embedding_model: str = "microsoft/codebert-base",
+        embedding_model: str | None = None,
         similarity_threshold: float = 0.5,
         force: bool = False,
     ) -> ProjectConfig:
@@ -101,6 +102,11 @@ class ProjectManager:
             raise ProjectInitializationError(
                 f"Project already initialized at {self.project_root}. Use --force to re-initialize."
             )
+
+        # Use new default model if not specified
+        if embedding_model is None:
+            embedding_model = DEFAULT_EMBEDDING_MODELS["code"]
+            logger.debug(f"Using default embedding model: {embedding_model}")
 
         try:
             # Backup existing config if forcing re-initialization

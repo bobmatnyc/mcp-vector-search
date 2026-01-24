@@ -25,6 +25,18 @@ class GitignorePattern:
         self.is_directory_only = is_directory_only
         self.pattern = self._normalize_pattern(pattern)
 
+        # Pre-compile regex pattern if needed (cache for performance)
+        self._regex = None
+        if "**" in self.pattern:
+            regex_pattern = self.pattern.replace("**", ".*")
+            regex_pattern = regex_pattern.replace("*", "[^/]*")
+            regex_pattern = regex_pattern.replace("?", "[^/]")
+            regex_pattern = f"^{regex_pattern}$"
+            try:
+                self._regex = re.compile(regex_pattern)
+            except re.error:
+                self._regex = None
+
     def _normalize_pattern(self, pattern: str) -> str:
         """Normalize the pattern for matching."""
         # Remove leading ! for negation patterns
@@ -44,6 +56,8 @@ class GitignorePattern:
     def matches(self, path: str, is_directory: bool = False) -> bool:
         """Check if this pattern matches the given path.
 
+        PERFORMANCE: Optimized to minimize string operations and regex compilations.
+
         Args:
             path: Relative path from repository root
             is_directory: Whether the path is a directory
@@ -51,46 +65,37 @@ class GitignorePattern:
         Returns:
             True if the pattern matches
         """
-        # Convert path separators for consistent matching
+        # Convert path separators for consistent matching (once)
         path = path.replace("\\", "/")
         pattern = self.pattern.replace("\\", "/")
+
+        # FAST PATH: Try exact match first (cheapest operation)
+        if fnmatch.fnmatch(path, pattern):
+            return True
+
+        # FAST PATH: Use pre-compiled regex for ** patterns
+        if self._regex:
+            if self._regex.match(path):
+                return True
+
+        # Split path once for reuse
+        path_parts = path.split("/")
 
         # For directory-only patterns, check if any parent directory matches
         # This implements Git's behavior where "dir/" excludes both the directory
         # AND all files within it recursively
         if self.is_directory_only:
-            path_parts = path.split("/")
             # Check each parent directory component
             for i in range(1, len(path_parts) + 1):
                 parent = "/".join(path_parts[:i])
                 if fnmatch.fnmatch(parent, pattern):
                     return True
 
-        # Try exact match first
-        if fnmatch.fnmatch(path, pattern):
-            return True
-
-        # Try matching any parent directory
-        path_parts = path.split("/")
+        # Try matching any parent directory (suffix matching)
         for i in range(len(path_parts)):
             subpath = "/".join(path_parts[i:])
             if fnmatch.fnmatch(subpath, pattern):
                 return True
-
-        # Try matching with ** patterns (glob-style)
-        if "**" in pattern:
-            # Convert ** to regex pattern
-            regex_pattern = pattern.replace("**", ".*")
-            regex_pattern = regex_pattern.replace("*", "[^/]*")
-            regex_pattern = regex_pattern.replace("?", "[^/]")
-            regex_pattern = f"^{regex_pattern}$"
-
-            try:
-                if re.match(regex_pattern, path):
-                    return True
-            except re.error:
-                # Fallback to simple fnmatch if regex fails
-                pass
 
         return False
 
