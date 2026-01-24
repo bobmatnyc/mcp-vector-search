@@ -206,13 +206,15 @@ LANGUAGE_MAPPINGS: dict[str, str] = {
 }
 
 # Default embedding models by use case
-# NEW DEFAULT (v1.3.0): CodeXEmbed-400M for superior code understanding
-# Legacy model (all-MiniLM-L6-v2) available for backward compatibility
+# MiniLM-L6-v2 is the default: fast, reliable, good enough for code search
+# CodeXEmbed integration pending (see issue #81 for status)
 DEFAULT_EMBEDDING_MODELS = {
-    "code": "Salesforce/SFR-Embedding-Code-400M_R",  # CodeXEmbed-400M: SOTA local code embeddings
-    "multilingual": "Salesforce/SFR-Embedding-Code-400M_R",  # Supports 12 programming languages
-    "fast": "sentence-transformers/all-MiniLM-L6-v2",  # Legacy: fast but lower quality
-    "precise": "Salesforce/SFR-Embedding-Code-400M_R",  # Best quality for code
+    # MiniLM is the default - fast, reliable, good enough for code search
+    # CodeXEmbed integration pending (see issue #81)
+    "code": "sentence-transformers/all-MiniLM-L6-v2",  # Default: fast and reliable
+    "multilingual": "sentence-transformers/all-MiniLM-L6-v2",  # Default for now
+    "fast": "sentence-transformers/all-MiniLM-L6-v2",  # Fastest option
+    "precise": "sentence-transformers/all-mpnet-base-v2",  # Higher quality general model
     "legacy": "sentence-transformers/all-MiniLM-L6-v2",  # Backward compatibility (384 dims)
 }
 
