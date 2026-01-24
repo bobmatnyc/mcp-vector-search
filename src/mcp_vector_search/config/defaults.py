@@ -231,6 +231,19 @@ MODEL_SPECIFICATIONS = {
         "type": "code",
         "description": "CodeXEmbed-2B: Highest quality code embeddings (large model)",
     },
+    # Microsoft code models (work without trust_remote_code)
+    "microsoft/graphcodebert-base": {
+        "dimensions": 768,
+        "context_length": 512,
+        "type": "code",
+        "description": "GraphCodeBERT: Code embeddings with data flow understanding (6 languages)",
+    },
+    "microsoft/codebert-base": {
+        "dimensions": 768,
+        "context_length": 512,
+        "type": "code",
+        "description": "CodeBERT: Bimodal code/text embeddings (6 languages)",
+    },
     # Legacy sentence-transformers models
     "sentence-transformers/all-MiniLM-L6-v2": {
         "dimensions": 384,
