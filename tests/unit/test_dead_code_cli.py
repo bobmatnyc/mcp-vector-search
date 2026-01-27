@@ -6,9 +6,8 @@ Full integration testing is done via e2e tests.
 
 from __future__ import annotations
 
-from typer.testing import CliRunner
-
 import pytest
+from typer.testing import CliRunner
 
 from mcp_vector_search.cli.main import app
 

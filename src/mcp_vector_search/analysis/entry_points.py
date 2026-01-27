@@ -359,7 +359,7 @@ class EntryPointDetector:
                 for target in node.targets:
                     if isinstance(target, ast.Name) and target.id == "__all__":
                         # Extract list of exported names
-                        if isinstance(node.value, (ast.List, ast.Tuple)):
+                        if isinstance(node.value, ast.List | ast.Tuple):
                             for elt in node.value.elts:
                                 if isinstance(elt, ast.Constant) and isinstance(
                                     elt.value, str
