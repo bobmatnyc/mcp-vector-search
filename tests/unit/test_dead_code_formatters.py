@@ -193,7 +193,10 @@ def test_sarif_formatter(sample_report: DeadCodeReport) -> None:
     result_high = results[0]
     assert result_high["ruleId"] == "dead-code-high"
     assert "_legacy_converter" in result_high["message"]["text"]
-    assert result_high["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "utils/converters.py"
+    assert (
+        result_high["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+        == "utils/converters.py"
+    )
     assert result_high["locations"][0]["physicalLocation"]["region"]["startLine"] == 45
     assert result_high["locations"][0]["physicalLocation"]["region"]["endLine"] == 67
 

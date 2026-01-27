@@ -193,7 +193,14 @@ def complex_function(a, b, c):
 
         result = runner.invoke(
             analyze_app,
-            ["complexity", "--project-root", str(tmp_path), "--language", "python", "--quick"],
+            [
+                "complexity",
+                "--project-root",
+                str(tmp_path),
+                "--language",
+                "python",
+                "--quick",
+            ],
         )
 
         # Should succeed

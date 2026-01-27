@@ -1258,7 +1258,9 @@ async def run_dead_code_analysis(
             chunks = await db.get_all_chunks()
 
             if not chunks:
-                print_error("No code chunks found. Run 'mcp-vector-search index' first.")
+                print_error(
+                    "No code chunks found. Run 'mcp-vector-search index' first."
+                )
                 raise typer.Exit(1)
 
             print_info(f"Analyzing {len(chunks)} code chunks...")
@@ -1308,9 +1310,7 @@ async def run_dead_code_analysis(
                 # Write to file
                 with open(output_file, "w", encoding="utf-8") as f:
                     formatter.format(report, f)
-                console.print(
-                    f"[green]✓[/green] Report written to: {output_file}"
-                )
+                console.print(f"[green]✓[/green] Report written to: {output_file}")
             else:
                 # Write to stdout
                 formatter.format(report, sys.stdout)
