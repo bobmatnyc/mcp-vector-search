@@ -2493,6 +2493,259 @@ def get_trends_styles() -> str:
     """
 
 
+def get_visualization_mode_styles() -> str:
+    """Get styles for visualization mode selector and treemap/sunburst.
+
+    Returns:
+        CSS string for visualization mode controls and new viz types
+    """
+    return """
+        /* Visualization Mode Selector */
+        .viz-mode-buttons {
+            display: flex;
+            gap: 4px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
+            border-radius: 6px;
+            padding: 4px;
+        }
+
+        .viz-mode-btn {
+            flex: 1;
+            padding: 8px 10px;
+            background: transparent;
+            border: none;
+            border-radius: 4px;
+            color: var(--text-secondary);
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .viz-mode-btn:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .viz-mode-btn.active {
+            background: var(--accent);
+            color: var(--bg-primary);
+        }
+
+        .viz-mode-btn.active:hover {
+            background: var(--accent-hover);
+        }
+
+        /* Treemap Styles */
+        .treemap-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+
+        .treemap-cell {
+            position: absolute;
+            overflow: hidden;
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+            box-sizing: border-box;
+        }
+
+        .treemap-cell:hover {
+            opacity: 0.85;
+        }
+
+        .treemap-cell-inner {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            padding: 4px;
+            box-sizing: border-box;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 2px;
+        }
+
+        .treemap-label {
+            font-size: 11px;
+            font-weight: 500;
+            color: rgba(255, 255, 255, 0.95);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+
+        .treemap-label-parent {
+            font-size: 13px;
+            font-weight: 600;
+            padding: 4px 8px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 3px 3px 0 0;
+        }
+
+        .treemap-value {
+            font-size: 9px;
+            color: rgba(255, 255, 255, 0.7);
+            pointer-events: none;
+        }
+
+        /* Sunburst Styles */
+        .sunburst-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sunburst-arc {
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+        }
+
+        .sunburst-arc:hover {
+            opacity: 0.8;
+        }
+
+        .sunburst-label {
+            pointer-events: none;
+            font-size: 10px;
+            fill: rgba(255, 255, 255, 0.9);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .sunburst-center-label {
+            font-size: 14px;
+            font-weight: 600;
+            fill: var(--text-primary);
+            text-anchor: middle;
+            dominant-baseline: middle;
+        }
+
+        .sunburst-center-value {
+            font-size: 10px;
+            fill: var(--text-secondary);
+            text-anchor: middle;
+        }
+
+        /* Shared Breadcrumb Trail for Treemap/Sunburst */
+        .viz-breadcrumb {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 12px;
+            background: rgba(13, 17, 23, 0.9);
+            border: 1px solid var(--border-primary);
+            border-radius: 6px;
+            font-size: 12px;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+
+        .viz-breadcrumb-item {
+            color: var(--accent);
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+
+        .viz-breadcrumb-item:hover {
+            color: var(--accent-hover);
+            text-decoration: underline;
+        }
+
+        .viz-breadcrumb-separator {
+            color: var(--text-tertiary);
+        }
+
+        .viz-breadcrumb-current {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .viz-breadcrumb-home {
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .viz-breadcrumb-home:hover {
+            color: var(--accent);
+        }
+
+        /* Complexity Grade Colors (for treemap/sunburst cells) */
+        .grade-A { fill: #238636; background: #238636; }
+        .grade-B { fill: #1f6feb; background: #1f6feb; }
+        .grade-C { fill: #d29922; background: #d29922; }
+        .grade-D { fill: #f0883e; background: #f0883e; }
+        .grade-F { fill: #da3633; background: #da3633; }
+        .grade-none { fill: #6e7681; background: #6e7681; }
+
+        /* Tooltip for Treemap/Sunburst */
+        .viz-tooltip {
+            position: absolute;
+            padding: 10px 14px;
+            background: rgba(22, 27, 34, 0.95);
+            border: 1px solid var(--border-primary);
+            border-radius: 6px;
+            font-size: 12px;
+            color: var(--text-primary);
+            pointer-events: none;
+            z-index: 200;
+            max-width: 300px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+            opacity: 0;
+            transition: opacity 0.15s ease;
+        }
+
+        .viz-tooltip.visible {
+            opacity: 1;
+        }
+
+        .viz-tooltip-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .viz-tooltip-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .viz-tooltip-label {
+            color: var(--text-tertiary);
+        }
+
+        /* Animation for zoom transitions */
+        @keyframes treemap-zoom {
+            from { opacity: 0.5; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .treemap-zooming .treemap-cell {
+            animation: treemap-zoom 0.3s ease-out;
+        }
+
+        @keyframes sunburst-zoom {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .sunburst-zooming path {
+            animation: sunburst-zoom 0.4s ease-out;
+        }
+    """
+
+
 def get_all_styles() -> str:
     """Get all CSS styles combined.
 
@@ -2518,5 +2771,6 @@ def get_all_styles() -> str:
             get_code_smells_styles(),
             get_dependencies_styles(),
             get_trends_styles(),
+            get_visualization_mode_styles(),
         ]
     )

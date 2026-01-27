@@ -43,6 +43,51 @@ let currentLayout = 'linear';  // 'linear' or 'circular'
 let treeData = null;
 let isViewerOpen = false;
 
+// Visualization mode: 'tree', 'treemap', 'sunburst'
+let currentVizMode = 'tree';
+// Grouping mode: 'file' (directory structure) or 'ast' (by code type)
+let currentGroupingMode = 'file';
+// For treemap/sunburst zoom state - store ID to find node after hierarchy rebuild
+let currentZoomRootId = null;
+let vizHierarchy = null;
+
+// Performance optimization: Cached hierarchies and pre-filtered data
+let cachedFileHierarchy = null;
+let cachedASTHierarchy = null;
+let cachedChunkNodes = null;  // Pre-filtered chunk nodes
+let nodeIdMap = null;  // Map for O(1) node lookups by ID
+let hierarchyCacheVersion = 0;  // Increment to invalidate caches
+
+// Initialize performance caches - called once after data load
+function initializeCaches() {
+    console.time('initializeCaches');
+
+    // Pre-filter chunk nodes once (avoids repeated O(n) filtering)
+    cachedChunkNodes = allNodes.filter(node => chunkTypes.includes(node.type));
+    console.log(`Cached ${cachedChunkNodes.length} chunk nodes`);
+
+    // Build node ID map for O(1) lookups
+    nodeIdMap = new Map();
+    allNodes.forEach(node => {
+        nodeIdMap.set(node.id, node);
+    });
+    console.log(`Built nodeIdMap with ${nodeIdMap.size} entries`);
+
+    // Clear hierarchy caches (will be built on demand)
+    cachedFileHierarchy = null;
+    cachedASTHierarchy = null;
+    hierarchyCacheVersion++;
+
+    console.timeEnd('initializeCaches');
+}
+
+// Invalidate caches when data changes
+function invalidateHierarchyCaches() {
+    cachedFileHierarchy = null;
+    cachedASTHierarchy = null;
+    hierarchyCacheVersion++;
+}
+
 // Navigation history for back/forward
 let navigationHistory = [];
 let navigationIndex = -1;
@@ -207,6 +252,9 @@ async function loadGraphDataActual() {
         }
 
         console.log(`Loaded ${allNodes.length} nodes and ${allLinks.length} links`);
+
+        // Performance optimization: Initialize caches
+        initializeCaches();
 
         // DEBUG: Log first few nodes to see actual structure
         console.log('=== SAMPLE NODE STRUCTURE ===');
@@ -1192,7 +1240,9 @@ function getNodeRadius(d) {
 
 function renderVisualization() {
     console.log('=== RENDER VISUALIZATION ===');
+    console.log(`Current viz mode: ${currentVizMode}`);
     console.log(`Current layout: ${currentLayout}`);
+    console.log(`Current grouping: ${currentGroupingMode}`);
     console.log(`Tree data exists: ${treeData !== null}`);
     if (treeData) {
         console.log(`Root node: ${treeData.name}, children: ${(treeData.children || []).length}, _children: ${(treeData._children || []).length}`);
@@ -1203,12 +1253,22 @@ function renderVisualization() {
     console.log(`Graph element found: ${!graphElement.empty()}`);
     graphElement.selectAll('*').remove();
 
-    if (currentLayout === 'linear') {
-        console.log('Calling renderLinearTree()...');
-        renderLinearTree();
+    // Dispatch to appropriate visualization
+    if (currentVizMode === 'treemap') {
+        console.log('Calling renderTreemap()...');
+        renderTreemap();
+    } else if (currentVizMode === 'sunburst') {
+        console.log('Calling renderSunburst()...');
+        renderSunburst();
     } else {
-        console.log('Calling renderCircularTree()...');
-        renderCircularTree();
+        // Default tree mode
+        if (currentLayout === 'linear') {
+            console.log('Calling renderLinearTree()...');
+            renderLinearTree();
+        } else {
+            console.log('Calling renderCircularTree()...');
+            renderCircularTree();
+        }
     }
     console.log('=== END RENDER VISUALIZATION ===');
 }
@@ -4507,6 +4567,691 @@ function showComingSoon(reportName) {
 }
 
 // ============================================================================
+// VISUALIZATION MODE CONTROLS
+// ============================================================================
+
+function setVisualizationMode(mode) {
+    if (mode === currentVizMode) return;
+
+    currentVizMode = mode;
+    currentZoomRootId = null;  // Reset zoom state
+
+    // Update button states
+    document.querySelectorAll('.viz-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+
+    // Show/hide tree layout toggle (only for tree mode)
+    const treeLayoutGroup = document.getElementById('tree-layout-group');
+    if (treeLayoutGroup) {
+        treeLayoutGroup.style.display = mode === 'tree' ? 'block' : 'none';
+    }
+
+    // Show/hide grouping mode toggle (only for treemap/sunburst)
+    const groupingGroup = document.getElementById('grouping-mode-group');
+    if (groupingGroup) {
+        groupingGroup.style.display = (mode === 'treemap' || mode === 'sunburst') ? 'block' : 'none';
+    }
+
+    console.log(`Visualization mode changed to: ${mode}`);
+    renderVisualization();
+}
+
+function toggleGroupingMode() {
+    const toggle = document.getElementById('grouping-toggle');
+    currentGroupingMode = toggle.checked ? 'ast' : 'file';
+
+    // Update label highlighting
+    const fileLabel = document.getElementById('grouping-label-file');
+    const astLabel = document.getElementById('grouping-label-ast');
+    if (fileLabel) fileLabel.classList.toggle('active', currentGroupingMode === 'file');
+    if (astLabel) astLabel.classList.toggle('active', currentGroupingMode === 'ast');
+
+    currentZoomRootId = null;  // Reset zoom when grouping changes
+    console.log(`Grouping mode changed to: ${currentGroupingMode}`);
+    renderVisualization();
+}
+
+// ============================================================================
+// HIERARCHY TRANSFORMATION FUNCTIONS
+// ============================================================================
+
+function buildFileHierarchy() {
+    // Return cached version if available
+    if (cachedFileHierarchy) {
+        console.log('Using cached file hierarchy');
+        return cachedFileHierarchy;
+    }
+
+    console.time('buildFileHierarchy');
+
+    // Build hierarchy from treeData (already structured by file/directory)
+    // We need to ensure it's in D3-compatible format with value for sizing
+
+    function processNode(node) {
+        // Extract only needed properties (avoid full object cloning)
+        const result = {
+            name: node.name,
+            id: node.id,
+            type: node.type,
+            file_path: node.file_path,
+            complexity: node.complexity,
+            lines_of_code: node.lines_of_code || (node.end_line && node.start_line ? node.end_line - node.start_line + 1 : 0),
+            start_line: node.start_line,
+            end_line: node.end_line,
+            content: node.content,
+            docstring: node.docstring,
+            language: node.language
+        };
+
+        const children = node.children || node._children || [];
+        if (children.length > 0) {
+            result.children = children.map(child => processNode(child));
+        }
+
+        return result;
+    }
+
+    if (!treeData) {
+        cachedFileHierarchy = { name: 'root', children: [] };
+    } else {
+        cachedFileHierarchy = processNode(treeData);
+    }
+
+    console.timeEnd('buildFileHierarchy');
+    return cachedFileHierarchy;
+}
+
+function buildASTHierarchy() {
+    // Return cached version if available
+    if (cachedASTHierarchy) {
+        console.log('Using cached AST hierarchy');
+        return cachedASTHierarchy;
+    }
+
+    console.time('buildASTHierarchy');
+
+    // Group all chunk nodes by: Language → Type (function/class/method) → Individual chunks
+    // This gives a flatter view organized by code structure
+
+    const byLanguage = new Map();
+
+    // Language extension map (defined once outside loop)
+    const langMap = {
+        'py': 'Python', 'js': 'JavaScript', 'ts': 'TypeScript',
+        'tsx': 'TypeScript', 'jsx': 'JavaScript', 'java': 'Java',
+        'go': 'Go', 'rs': 'Rust', 'rb': 'Ruby', 'php': 'PHP',
+        'c': 'C', 'cpp': 'C++', 'cs': 'C#', 'swift': 'Swift'
+    };
+
+    // Use pre-cached chunk nodes (already filtered in initializeCaches)
+    const chunkNodesToProcess = cachedChunkNodes || allNodes.filter(node => chunkTypes.includes(node.type));
+
+    chunkNodesToProcess.forEach(node => {
+        // Determine language from file extension
+        let language = node.language || 'Unknown';
+        if (!language || language === 'Unknown') {
+            if (node.file_path) {
+                const ext = node.file_path.split('.').pop().toLowerCase();
+                language = langMap[ext] || ext.toUpperCase();
+            }
+        }
+
+        if (!byLanguage.has(language)) {
+            byLanguage.set(language, new Map());
+        }
+
+        const byType = byLanguage.get(language);
+        const chunkType = node.type || 'code';
+
+        if (!byType.has(chunkType)) {
+            byType.set(chunkType, []);
+        }
+
+        byType.get(chunkType).push({
+            name: node.name || node.id.substring(0, 20),
+            id: node.id,
+            type: node.type,
+            file_path: node.file_path,
+            complexity: node.complexity,
+            lines_of_code: node.lines_of_code || (node.end_line && node.start_line ? node.end_line - node.start_line + 1 : 1),
+            start_line: node.start_line,
+            end_line: node.end_line,
+            content: node.content,
+            docstring: node.docstring,
+            language: language
+        });
+    });
+
+    // Convert to D3 hierarchy format
+    const root = {
+        name: 'Codebase',
+        id: 'root',
+        type: 'root',
+        children: []
+    };
+
+    byLanguage.forEach((byType, language) => {
+        const langNode = {
+            name: language,
+            id: `lang-${language}`,
+            type: 'language',
+            children: []
+        };
+
+        byType.forEach((chunks, chunkType) => {
+            const typeNode = {
+                name: capitalize(chunkType) + 's',
+                id: `type-${language}-${chunkType}`,
+                type: 'category',
+                children: chunks
+            };
+            langNode.children.push(typeNode);
+        });
+
+        root.children.push(langNode);
+    });
+
+    cachedASTHierarchy = root;
+    console.timeEnd('buildASTHierarchy');
+    return cachedASTHierarchy;
+}
+
+// Build a Map of descendants for O(1) lookup by ID
+function buildDescendantMap(root) {
+    const map = new Map();
+    root.descendants().forEach(d => {
+        if (d.data.id) {
+            map.set(d.data.id, d);
+        }
+    });
+    return map;
+}
+
+function capitalize(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+// Get complexity grade color for treemap/sunburst
+function getComplexityColor(complexity) {
+    if (complexity === undefined || complexity === null) return '#6e7681';  // gray for no data
+    if (complexity <= 5) return '#238636';   // A - green
+    if (complexity <= 10) return '#1f6feb';  // B - blue
+    if (complexity <= 15) return '#d29922';  // C - yellow
+    if (complexity <= 20) return '#f0883e';  // D - orange
+    return '#da3633';                         // F - red
+}
+
+// Get color for a node based on its complexity or type
+function getNodeColor(d) {
+    // If it's a leaf node with complexity, use complexity color
+    if (d.data.complexity !== undefined && d.data.complexity !== null) {
+        return getComplexityColor(d.data.complexity);
+    }
+
+    // Color by node type for non-leaf nodes
+    const typeColors = {
+        'directory': '#79c0ff',
+        'file': '#58a6ff',
+        'language': '#8957e5',
+        'category': '#6e7681',
+        'function': '#d29922',
+        'method': '#8957e5',
+        'class': '#1f6feb',
+        'root': '#6e7681'
+    };
+
+    return typeColors[d.data.type] || '#6e7681';
+}
+
+// ============================================================================
+// TREEMAP VISUALIZATION
+// ============================================================================
+
+function renderTreemap() {
+    console.time('renderTreemap');
+    const svg = d3.select('#graph');
+    // Faster DOM clearing than selectAll('*').remove()
+    svg.node().innerHTML = '';
+
+    const { width, height } = getViewportDimensions();
+
+    // Build hierarchy based on grouping mode
+    const hierarchyData = currentGroupingMode === 'ast' ? buildASTHierarchy() : buildFileHierarchy();
+
+    // Create D3 hierarchy
+    const root = d3.hierarchy(hierarchyData)
+        .sum(d => {
+            // Use lines_of_code for sizing, minimum of 1 for visibility
+            if (!d.children || d.children.length === 0) {
+                return Math.max(d.lines_of_code || 1, 1);
+            }
+            return 0;
+        })
+        .sort((a, b) => b.value - a.value);
+
+    vizHierarchy = root;
+
+    // Build descendant map for O(1) lookup (replaces repeated linear search)
+    const descendantMap = buildDescendantMap(root);
+
+    // Find zoom root by ID if set (O(1) lookup instead of O(n))
+    let displayRoot = root;
+    if (currentZoomRootId) {
+        const foundNode = descendantMap.get(currentZoomRootId);
+        if (foundNode) {
+            displayRoot = foundNode;
+        } else {
+            // Node not found, reset zoom
+            currentZoomRootId = null;
+        }
+    }
+
+    // Create treemap layout
+    const treemap = d3.treemap()
+        .size([width, height])
+        .paddingTop(22)
+        .paddingRight(3)
+        .paddingBottom(3)
+        .paddingLeft(3)
+        .paddingInner(2)
+        .round(true);
+
+    treemap(displayRoot);
+
+    // Create container group
+    const g = svg.append('g')
+        .attr('class', 'treemap-container');
+
+    // Add breadcrumb if zoomed
+    if (currentZoomRootId && displayRoot !== root) {
+        renderTreemapBreadcrumb(svg, width, displayRoot, root);
+    }
+
+    // Create cells
+    const cell = g.selectAll('g')
+        .data(displayRoot.descendants())
+        .join('g')
+        .attr('transform', d => `translate(${d.x0},${d.y0})`);
+
+    // Add rectangles
+    cell.append('rect')
+        .attr('class', 'treemap-cell')
+        .attr('width', d => Math.max(0, d.x1 - d.x0))
+        .attr('height', d => Math.max(0, d.y1 - d.y0))
+        .attr('fill', d => getNodeColor(d))
+        .attr('stroke', 'rgba(0,0,0,0.3)')
+        .attr('stroke-width', 0.5)
+        .style('cursor', 'pointer')
+        .on('click', handleTreemapClick)
+        .on('mouseover', handleTreemapHover)
+        .on('mouseout', hideVizTooltip)
+        .append('title')
+        .text(d => `${d.data.name}\\n${d.value} lines`);
+
+    // Add labels for cells large enough
+    cell.filter(d => (d.x1 - d.x0) > 40 && (d.y1 - d.y0) > 20)
+        .append('text')
+        .attr('class', 'treemap-label')
+        .attr('x', 4)
+        .attr('y', 14)
+        .text(d => {
+            const width = d.x1 - d.x0;
+            const name = d.data.name;
+            // Truncate if too long
+            const maxChars = Math.floor(width / 7);
+            return name.length > maxChars ? name.substring(0, maxChars - 1) + '…' : name;
+        })
+        .style('fill', '#fff')
+        .style('font-size', '11px')
+        .style('pointer-events', 'none');
+
+    // Add value labels for larger cells
+    cell.filter(d => (d.x1 - d.x0) > 60 && (d.y1 - d.y0) > 35 && !d.children)
+        .append('text')
+        .attr('class', 'treemap-value')
+        .attr('x', 4)
+        .attr('y', 26)
+        .text(d => {
+            const loc = d.value;
+            const complexity = d.data.complexity;
+            let text = `${loc} lines`;
+            if (complexity !== undefined && complexity !== null) {
+                text += ` (${getComplexityGrade(complexity)})`;
+            }
+            return text;
+        })
+        .style('fill', 'rgba(255,255,255,0.7)')
+        .style('font-size', '9px')
+        .style('pointer-events', 'none');
+
+    // Create tooltip element if it doesn't exist
+    ensureVizTooltip();
+
+    console.timeEnd('renderTreemap');
+    console.log(`Rendered ${displayRoot.descendants().length} treemap cells`);
+}
+
+function handleTreemapClick(event, d) {
+    event.stopPropagation();
+
+    // If it's a leaf node (code chunk), show the content
+    if (!d.children || d.children.length === 0) {
+        if (d.data.content || chunkTypes.includes(d.data.type)) {
+            // Find the original node data
+            // Use cached nodeIdMap for O(1) lookup instead of O(n) find
+            const nodeData = (nodeIdMap && nodeIdMap.get(d.data.id)) || d.data;
+            displayChunkContent(nodeData);
+        }
+        return;
+    }
+
+    // Store the path to this node for zoom (d.data.id or path based)
+    // We need to store a way to find this node after re-building hierarchy
+    currentZoomRootId = d.data.id;
+    renderVisualization();
+}
+
+function handleTreemapHover(event, d) {
+    const tooltip = document.getElementById('viz-tooltip');
+    if (!tooltip) return;
+
+    let html = `<div class="viz-tooltip-title">${escapeHtml(d.data.name)}</div>`;
+    html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Type:</span> ${d.data.type}</div>`;
+    html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Lines:</span> ${d.value}</div>`;
+
+    if (d.data.complexity !== undefined && d.data.complexity !== null) {
+        const grade = getComplexityGrade(d.data.complexity);
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Complexity:</span> ${d.data.complexity.toFixed(1)} (${grade})</div>`;
+    }
+
+    if (d.data.file_path) {
+        const shortPath = d.data.file_path.split('/').slice(-2).join('/');
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">File:</span> ${escapeHtml(shortPath)}</div>`;
+    }
+
+    tooltip.innerHTML = html;
+    tooltip.classList.add('visible');
+
+    // Position tooltip
+    const rect = event.target.getBoundingClientRect();
+    tooltip.style.left = (rect.left + rect.width / 2) + 'px';
+    tooltip.style.top = (rect.top - tooltip.offsetHeight - 5) + 'px';
+}
+
+function renderTreemapBreadcrumb(svg, width, currentNode, root) {
+    // Build path from root to current node
+    const path = [];
+    let node = currentNode;
+    while (node) {
+        path.unshift(node);
+        node = node.parent;
+    }
+
+    // Create breadcrumb container
+    const breadcrumb = svg.append('g')
+        .attr('class', 'viz-breadcrumb-container')
+        .attr('transform', 'translate(10, 10)');
+
+    // Background
+    breadcrumb.append('rect')
+        .attr('fill', 'rgba(13, 17, 23, 0.9)')
+        .attr('stroke', 'var(--border-primary)')
+        .attr('rx', 6)
+        .attr('width', width - 20)
+        .attr('height', 30);
+
+    // Home icon
+    breadcrumb.append('text')
+        .attr('x', 12)
+        .attr('y', 20)
+        .attr('class', 'viz-breadcrumb-home')
+        .text('🏠')
+        .style('cursor', 'pointer')
+        .on('click', () => {
+            currentZoomRootId = null;
+            renderVisualization();
+        });
+
+    let xPos = 35;
+    path.forEach((n, i) => {
+        // Separator
+        if (i > 0) {
+            breadcrumb.append('text')
+                .attr('x', xPos)
+                .attr('y', 20)
+                .attr('class', 'viz-breadcrumb-separator')
+                .text(' / ')
+                .style('fill', 'var(--text-tertiary)');
+            xPos += 20;
+        }
+
+        const isLast = i === path.length - 1;
+        const text = breadcrumb.append('text')
+            .attr('x', xPos)
+            .attr('y', 20)
+            .text(n.data.name)
+            .style('fill', isLast ? 'var(--text-primary)' : 'var(--accent)')
+            .style('font-size', '12px')
+            .style('cursor', isLast ? 'default' : 'pointer');
+
+        if (!isLast) {
+            text.on('click', () => {
+                currentZoomRootId = n.data.id;
+                renderVisualization();
+            });
+        }
+
+        xPos += n.data.name.length * 7 + 5;
+    });
+}
+
+// ============================================================================
+// SUNBURST VISUALIZATION
+// ============================================================================
+
+function renderSunburst() {
+    console.time('renderSunburst');
+    const svg = d3.select('#graph');
+    // Faster DOM clearing than selectAll('*').remove()
+    svg.node().innerHTML = '';
+
+    const { width, height } = getViewportDimensions();
+    const radius = Math.min(width, height) / 2 - 10;
+
+    // Build hierarchy based on grouping mode
+    const hierarchyData = currentGroupingMode === 'ast' ? buildASTHierarchy() : buildFileHierarchy();
+
+    // Create D3 hierarchy
+    const root = d3.hierarchy(hierarchyData)
+        .sum(d => {
+            if (!d.children || d.children.length === 0) {
+                return Math.max(d.lines_of_code || 1, 1);
+            }
+            return 0;
+        })
+        .sort((a, b) => b.value - a.value);
+
+    vizHierarchy = root;
+
+    // Build descendant map for O(1) lookup (replaces repeated linear search)
+    const descendantMap = buildDescendantMap(root);
+
+    // Find zoom root by ID if set (O(1) lookup instead of O(n))
+    let displayRoot = root;
+    if (currentZoomRootId) {
+        const foundNode = descendantMap.get(currentZoomRootId);
+        if (foundNode) {
+            displayRoot = foundNode;
+        } else {
+            currentZoomRootId = null;
+        }
+    }
+
+    // Create partition layout
+    const partition = d3.partition()
+        .size([2 * Math.PI, radius]);
+
+    partition(displayRoot);
+
+    // Create arc generator
+    const arc = d3.arc()
+        .startAngle(d => d.x0)
+        .endAngle(d => d.x1)
+        .padAngle(d => Math.min((d.x1 - d.x0) / 2, 0.005))
+        .padRadius(radius / 2)
+        .innerRadius(d => d.y0)
+        .outerRadius(d => d.y1 - 1);
+
+    // Create container group centered
+    const g = svg.append('g')
+        .attr('transform', `translate(${width / 2}, ${height / 2})`);
+
+    // Create arcs
+    const arcs = g.selectAll('path')
+        .data(displayRoot.descendants().filter(d => d.depth > 0))  // Exclude root
+        .join('path')
+        .attr('class', 'sunburst-arc')
+        .attr('d', arc)
+        .attr('fill', d => getNodeColor(d))
+        .attr('stroke', '#0d1117')
+        .attr('stroke-width', 0.5)
+        .style('cursor', 'pointer')
+        .on('click', handleSunburstClick)
+        .on('mouseover', handleSunburstHover)
+        .on('mouseout', hideVizTooltip);
+
+    // Add title for tooltip
+    arcs.append('title')
+        .text(d => `${d.data.name}\\n${d.value} lines`);
+
+    // Add labels for arcs large enough
+    const labelArcs = displayRoot.descendants().filter(d => {
+        const angle = d.x1 - d.x0;
+        const radius = (d.y0 + d.y1) / 2;
+        const arcLength = angle * radius;
+        return d.depth > 0 && arcLength > 30 && (d.y1 - d.y0) > 15;
+    });
+
+    g.selectAll('text.sunburst-label')
+        .data(labelArcs)
+        .join('text')
+        .attr('class', 'sunburst-label')
+        .attr('transform', d => {
+            const x = (d.x0 + d.x1) / 2 * 180 / Math.PI;
+            const y = (d.y0 + d.y1) / 2;
+            return `rotate(${x - 90}) translate(${y}, 0) rotate(${x < 180 ? 0 : 180})`;
+        })
+        .attr('dy', '0.35em')
+        .attr('text-anchor', 'middle')
+        .text(d => {
+            const arcLength = (d.x1 - d.x0) * ((d.y0 + d.y1) / 2);
+            const maxChars = Math.floor(arcLength / 7);
+            const name = d.data.name;
+            return name.length > maxChars ? name.substring(0, maxChars - 1) + '…' : name;
+        })
+        .style('fill', '#fff')
+        .style('font-size', '10px')
+        .style('pointer-events', 'none');
+
+    // Add center label
+    const centerText = displayRoot.data.name;
+    const centerValue = displayRoot.value;
+
+    g.append('text')
+        .attr('class', 'sunburst-center-label')
+        .attr('dy', '-0.3em')
+        .text(centerText.length > 15 ? centerText.substring(0, 14) + '…' : centerText);
+
+    g.append('text')
+        .attr('class', 'sunburst-center-value')
+        .attr('dy', '1em')
+        .text(`${centerValue.toLocaleString()} lines`);
+
+    // Add click handler on center to zoom out
+    g.append('circle')
+        .attr('r', displayRoot.y1 * 0.3)
+        .attr('fill', 'transparent')
+        .style('cursor', currentZoomRootId ? 'pointer' : 'default')
+        .on('click', () => {
+            if (currentZoomRootId && displayRoot.parent) {
+                currentZoomRootId = displayRoot.parent === vizHierarchy ? null : displayRoot.parent.data.id;
+                renderVisualization();
+            }
+        });
+
+    // Create tooltip element if it doesn't exist
+    ensureVizTooltip();
+
+    console.timeEnd('renderSunburst');
+    console.log(`Rendered ${displayRoot.descendants().length} sunburst arcs`);
+}
+
+function handleSunburstClick(event, d) {
+    event.stopPropagation();
+
+    // If it's a leaf node (code chunk), show the content
+    if (!d.children || d.children.length === 0) {
+        if (d.data.content || chunkTypes.includes(d.data.type)) {
+            // Use cached nodeIdMap for O(1) lookup instead of O(n) find
+            const nodeData = (nodeIdMap && nodeIdMap.get(d.data.id)) || d.data;
+            displayChunkContent(nodeData);
+        }
+        return;
+    }
+
+    // Zoom into this node by ID
+    currentZoomRootId = d.data.id;
+    renderVisualization();
+}
+
+function handleSunburstHover(event, d) {
+    const tooltip = document.getElementById('viz-tooltip');
+    if (!tooltip) return;
+
+    let html = `<div class="viz-tooltip-title">${escapeHtml(d.data.name)}</div>`;
+    html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Type:</span> ${d.data.type}</div>`;
+    html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Lines:</span> ${d.value}</div>`;
+
+    if (d.data.complexity !== undefined && d.data.complexity !== null) {
+        const grade = getComplexityGrade(d.data.complexity);
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Complexity:</span> ${d.data.complexity.toFixed(1)} (${grade})</div>`;
+    }
+
+    if (d.data.file_path) {
+        const shortPath = d.data.file_path.split('/').slice(-2).join('/');
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">File:</span> ${escapeHtml(shortPath)}</div>`;
+    }
+
+    tooltip.innerHTML = html;
+    tooltip.classList.add('visible');
+
+    // Position tooltip near mouse
+    tooltip.style.left = (event.pageX + 10) + 'px';
+    tooltip.style.top = (event.pageY - 10) + 'px';
+}
+
+// ============================================================================
+// SHARED TOOLTIP FUNCTIONS
+// ============================================================================
+
+function ensureVizTooltip() {
+    if (!document.getElementById('viz-tooltip')) {
+        const tooltip = document.createElement('div');
+        tooltip.id = 'viz-tooltip';
+        tooltip.className = 'viz-tooltip';
+        document.body.appendChild(tooltip);
+    }
+}
+
+function hideVizTooltip() {
+    const tooltip = document.getElementById('viz-tooltip');
+    if (tooltip) {
+        tooltip.classList.remove('visible');
+    }
+}
+
+// ============================================================================
 // INITIALIZATION
 // ============================================================================
 
@@ -4518,12 +5263,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load theme preference before anything else
     loadThemePreference();
 
-    // Initialize toggle label highlighting
-    const labels = document.querySelectorAll('.toggle-label');
-    console.log(`Found ${labels.length} toggle labels`);
+    // Initialize toggle label highlighting for layout toggle
+    const labels = document.querySelectorAll('#tree-layout-group .toggle-label');
+    console.log(`Found ${labels.length} layout toggle labels`);
     if (labels[0]) {
         labels[0].classList.add('active');
         console.log('Activated first toggle label (linear mode)');
+    }
+
+    // Initialize grouping toggle label highlighting
+    const groupingFileLabel = document.getElementById('grouping-label-file');
+    if (groupingFileLabel) {
+        groupingFileLabel.classList.add('active');
     }
 
     // Close search results when clicking outside

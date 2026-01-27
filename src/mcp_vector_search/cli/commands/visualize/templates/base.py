@@ -48,7 +48,16 @@ def generate_html_template() -> str:
         <div class="version-badge">v{__version__} (build {__build__})</div>
 
         <div class="control-group">
-            <label style="color: var(--text-primary); margin-bottom: 8px;">Layout Mode</label>
+            <label style="color: var(--text-primary); margin-bottom: 8px;">Visualization Mode</label>
+            <div class="viz-mode-buttons">
+                <button class="viz-mode-btn active" data-mode="tree" onclick="setVisualizationMode('tree')">Tree</button>
+                <button class="viz-mode-btn" data-mode="treemap" onclick="setVisualizationMode('treemap')">Treemap</button>
+                <button class="viz-mode-btn" data-mode="sunburst" onclick="setVisualizationMode('sunburst')">Sunburst</button>
+            </div>
+        </div>
+
+        <div class="control-group" id="tree-layout-group">
+            <label style="color: var(--text-primary); margin-bottom: 8px;">Tree Layout</label>
             <div class="toggle-switch-container">
                 <span class="toggle-label">Linear</span>
                 <label class="toggle-switch">
@@ -56,6 +65,18 @@ def generate_html_template() -> str:
                     <span class="toggle-slider"></span>
                 </label>
                 <span class="toggle-label">Circular</span>
+            </div>
+        </div>
+
+        <div class="control-group" id="grouping-mode-group" style="display: none;">
+            <label style="color: var(--text-primary); margin-bottom: 8px;">Group By</label>
+            <div class="toggle-switch-container">
+                <span class="toggle-label" id="grouping-label-file">File</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="grouping-toggle" onchange="toggleGroupingMode()">
+                    <span class="toggle-slider"></span>
+                </label>
+                <span class="toggle-label" id="grouping-label-ast">AST Type</span>
             </div>
         </div>
 
