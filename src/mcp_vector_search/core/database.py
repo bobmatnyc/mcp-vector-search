@@ -393,22 +393,6 @@ class ChromaVectorDatabase(VectorDatabase):
             ids = []
 
             for chunk in chunks:
-                # Debug: Check first chunk content
-                if len(documents) == 0:
-                    import sys
-
-                    has_meta = "Language:" in chunk.content and "File:" in chunk.content
-                    print("\n[DATABASE] First chunk content check:", file=sys.stderr)
-                    print(f"  Type: {chunk.chunk_type}", file=sys.stderr)
-                    print(f"  File: {chunk.file_path.name}", file=sys.stderr)
-                    print(
-                        f"  Has metadata IN chunk.content: {has_meta}", file=sys.stderr
-                    )
-                    print(
-                        f"  Last 100 chars: {repr(chunk.content[-100:])}",
-                        file=sys.stderr,
-                    )
-
                 # Store original content directly in documents (no metadata appended)
                 # The embedding will be created from the original content
                 documents.append(chunk.content)
@@ -791,9 +775,6 @@ class ChromaVectorDatabase(VectorDatabase):
 
     def _create_searchable_text(self, chunk: CodeChunk) -> str:
         """Create optimized searchable text from code chunk."""
-        import sys
-
-        print("WARNING: _create_searchable_text IS BEING CALLED!", file=sys.stderr)
         parts = [chunk.content]
 
         # Add contextual information

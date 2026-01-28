@@ -951,7 +951,6 @@ class SemanticSearchEngine:
                 result.similarity_score = min(1.0, result.similarity_score + 0.1)
 
             # Check if result content relates to context
-            result.content.lower()
             if result.function_name:
                 func_name_lower = result.function_name.lower()
                 if func_name_lower in context_text:
