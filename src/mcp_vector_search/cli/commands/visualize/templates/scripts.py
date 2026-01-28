@@ -2764,18 +2764,49 @@ function navigateToFileByPath(filePath) {
                filePath.endsWith(n.name);
     });
 
-    if (fileNode) {
-        console.log(`Found file node: ${fileNode.name} (id: ${fileNode.id})`);
-        focusNodeInTree(fileNode.id);
-    } else {
-        console.log(`File node not found for path: ${filePath}`);
+    let targetNode = fileNode;
+    if (!targetNode) {
         // Try to find by just the filename
         const fileName = filePath.split('/').pop();
-        const fileByName = allNodes.find(n => n.type === 'file' && n.name === fileName);
-        if (fileByName) {
-            console.log(`Found file by name: ${fileByName.name}`);
-            focusNodeInTree(fileByName.id);
+        targetNode = allNodes.find(n => n.type === 'file' && n.name === fileName);
+    }
+
+    if (!targetNode) {
+        console.log(`File node not found for path: ${filePath}`);
+        return;
+    }
+
+    console.log(`Found file node: ${targetNode.name} (id: ${targetNode.id})`);
+
+    // Handle navigation based on current visualization mode
+    if (currentVizMode === 'treemap' || currentVizMode === 'sunburst') {
+        // Close the viewer panel first
+        closeViewerPanel();
+
+        // For treemap/sunburst, zoom to the file's parent directory
+        // Find the parent directory by looking at the file path
+        const parentPath = filePath.split('/').slice(0, -1).join('/');
+        const parentDir = allNodes.find(n =>
+            n.type === 'directory' &&
+            (n.path === parentPath || n.file_path === parentPath ||
+             (n.path && parentPath.endsWith(n.path)) ||
+             (n.file_path && parentPath.endsWith(n.file_path)))
+        );
+
+        if (parentDir) {
+            console.log(`Zooming to parent directory: ${parentDir.name}`);
+            currentZoomRootId = parentDir.id;
+        } else {
+            // If no parent found, zoom to file itself (for file grouping mode)
+            // or reset to root
+            console.log(`Parent directory not found, resetting zoom`);
+            currentZoomRootId = null;
         }
+
+        renderVisualization();
+    } else {
+        // For tree mode, use the existing tree focus behavior
+        focusNodeInTree(targetNode.id);
     }
 }
 
