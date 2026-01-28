@@ -14,7 +14,8 @@ from mcp_vector_search.analysis.collectors.complexity import (
 )
 from mcp_vector_search.analysis.metrics import ChunkMetrics
 from mcp_vector_search.config.settings import ProjectConfig
-from mcp_vector_search.core.indexer import EXTENSION_TO_LANGUAGE, SemanticIndexer
+from mcp_vector_search.core.indexer import SemanticIndexer
+from mcp_vector_search.core.metrics_collector import EXTENSION_TO_LANGUAGE
 from mcp_vector_search.core.models import CodeChunk
 
 

@@ -99,7 +99,7 @@ class TestChromaVectorDatabase:
 
         # All results should match filter
         for result in results:
-            assert result.chunk.language == "python"
+            assert result.language == "python"
 
     @pytest.mark.asyncio
     async def test_search_limit(self, database, sample_code_chunks):
@@ -195,24 +195,23 @@ class TestChromaVectorDatabase:
 
     def test_build_where_clause(self, temp_dir, mock_embedding_function):
         """Test building where clauses for filters."""
-        db = ChromaVectorDatabase(
-            persist_directory=temp_dir / "test_db",
-            embedding_function=mock_embedding_function,
-        )
+        from mcp_vector_search.core.query_builder import QueryBuilder
+
+        query_builder = QueryBuilder()
 
         # Test simple filter
         filters = {"language": "python"}
-        where_clause = db._build_where_clause(filters)
+        where_clause = query_builder.build_where_clause(filters)
         assert where_clause == {"language": "python"}
 
         # Test multiple filters
         filters = {"language": "python", "chunk_type": "function"}
-        where_clause = db._build_where_clause(filters)
+        where_clause = query_builder.build_where_clause(filters)
         assert where_clause == {"language": "python", "chunk_type": "function"}
 
         # Test empty filters
-        where_clause = db._build_where_clause({})
-        assert where_clause == {}
+        where_clause = query_builder.build_where_clause({})
+        assert where_clause is None
 
     @pytest.mark.asyncio
     async def test_concurrent_operations(self, database, sample_code_chunks):
@@ -557,8 +556,8 @@ class TestPooledChromaVectorDatabase:
                 MagicMock(),  # Success on retry
             ]
 
-            # Mock _recover_from_corruption to avoid actual cleanup
-            db2._recover_from_corruption = AsyncMock()
+            # Mock _corruption_recovery.recover to avoid actual cleanup
+            db2._corruption_recovery.recover = AsyncMock()
 
             # Mock get_or_create_collection
             mock_collection = MagicMock()
@@ -570,7 +569,7 @@ class TestPooledChromaVectorDatabase:
             await db2.initialize()
 
             # Verify recovery was called
-            db2._recover_from_corruption.assert_called_once()
+            db2._corruption_recovery.recover.assert_called_once()
 
             # Verify client was called twice (initial + retry)
             assert mock_client.call_count == 2
@@ -607,8 +606,8 @@ class TestPooledChromaVectorDatabase:
             # Always raise Rust panic (both initial and retry)
             mock_client.side_effect = rust_panic_error
 
-            # Mock _recover_from_corruption
-            db._recover_from_corruption = AsyncMock()
+            # Mock _corruption_recovery.recover
+            db._corruption_recovery.recover = AsyncMock()
 
             # Initialize should raise DatabaseError after recovery fails
             with pytest.raises(DatabaseError) as exc_info:
@@ -618,7 +617,7 @@ class TestPooledChromaVectorDatabase:
             assert "mcp-vector-search reset" in str(exc_info.value)
 
             # Verify recovery was called once
-            db._recover_from_corruption.assert_called_once()
+            db._corruption_recovery.recover.assert_called_once()
 
             # Verify client was called twice (initial + retry)
             assert mock_client.call_count == 2
