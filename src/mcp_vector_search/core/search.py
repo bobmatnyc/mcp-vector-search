@@ -1,75 +1,34 @@
 """Semantic search engine for MCP Vector Search."""
 
-import asyncio
 import re
 import time
-from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
 import aiofiles
 from loguru import logger
 
-from ..config.constants import DEFAULT_CACHE_SIZE
 from .auto_indexer import AutoIndexer, SearchTriggeredIndexer
-from .boilerplate import BoilerplateFilter
 from .database import VectorDatabase
 from .exceptions import RustPanicError, SearchError
 from .models import SearchResult
+from .query_analyzer import QueryAnalyzer
+from .query_processor import QueryProcessor
+from .result_enhancer import ResultEnhancer
+from .result_ranker import ResultRanker
+from .search_retry_handler import SearchRetryHandler
 
 
 class SemanticSearchEngine:
-    """Semantic search engine for code search."""
+    """Semantic search engine for code search.
 
-    # Query expansion constants (class-level for performance)
-    _QUERY_EXPANSIONS = {
-        # Common abbreviations
-        "auth": "authentication authorize login",
-        "db": "database data storage",
-        "api": "application programming interface endpoint",
-        "ui": "user interface frontend view",
-        "util": "utility helper function",
-        "config": "configuration settings options",
-        "async": "asynchronous await promise",
-        "sync": "synchronous blocking",
-        "func": "function method",
-        "var": "variable",
-        "param": "parameter argument",
-        "init": "initialize setup create",
-        "parse": "parsing parser analyze",
-        "validate": "validation check verify",
-        "handle": "handler process manage",
-        "error": "exception failure bug",
-        "test": "testing unittest spec",
-        "mock": "mocking stub fake",
-        "log": "logging logger debug",
-        # Programming concepts
-        "class": "class object type",
-        "method": "method function procedure",
-        "property": "property attribute field",
-        "import": "import require include",
-        "export": "export module public",
-        "return": "return yield output",
-        "loop": "loop iterate for while",
-        "condition": "condition if else branch",
-        "array": "array list collection",
-        "string": "string text character",
-        "number": "number integer float",
-        "boolean": "boolean true false",
-    }
-
-    # Reranking boost constants (class-level for performance)
-    _BOOST_EXACT_IDENTIFIER = 0.15
-    _BOOST_PARTIAL_IDENTIFIER = 0.05
-    _BOOST_FILE_NAME_EXACT = 0.08
-    _BOOST_FILE_NAME_PARTIAL = 0.03
-    _BOOST_FUNCTION_CHUNK = 0.05
-    _BOOST_CLASS_CHUNK = 0.03
-    _BOOST_SOURCE_FILE = 0.02
-    _BOOST_SHALLOW_PATH = 0.02
-    _PENALTY_TEST_FILE = -0.02
-    _PENALTY_DEEP_PATH = -0.01
-    _PENALTY_BOILERPLATE = -0.15
+    This class coordinates search operations by delegating to specialized components:
+    - QueryProcessor: Query preprocessing and threshold calculation
+    - SearchRetryHandler: Retry logic and error handling
+    - ResultEnhancer: Result enhancement with context and caching
+    - ResultRanker: Result reranking and scoring
+    - QueryAnalyzer: Query analysis and suggestions
+    """
 
     def __init__(
         self,
@@ -99,165 +58,16 @@ class SemanticSearchEngine:
         if auto_indexer and enable_auto_reindex:
             self.search_triggered_indexer = SearchTriggeredIndexer(auto_indexer)
 
-        # File content cache for performance (proper LRU with OrderedDict)
-        self._file_cache: OrderedDict[Path, list[str]] = OrderedDict()
-        self._cache_maxsize = DEFAULT_CACHE_SIZE
-        self._cache_hits = 0
-        self._cache_misses = 0
-
         # Health check throttling (only check every 60 seconds)
         self._last_health_check: float = 0.0
         self._health_check_interval: float = 60.0
 
-        # Boilerplate filter for smart result ranking
-        self._boilerplate_filter = BoilerplateFilter()
-
-    @staticmethod
-    def _is_rust_panic_error(error: Exception) -> bool:
-        """Detect ChromaDB Rust panic errors.
-
-        Args:
-            error: Exception to check
-
-        Returns:
-            True if this is a Rust panic error
-        """
-        error_msg = str(error).lower()
-
-        # Check for the specific Rust panic pattern
-        # "range start index X out of range for slice of length Y"
-        if "range start index" in error_msg and "out of range" in error_msg:
-            return True
-
-        # Check for other Rust panic indicators
-        rust_panic_patterns = [
-            "rust panic",
-            "pyo3_runtime.panicexception",
-            "thread 'tokio-runtime-worker' panicked",
-            "rust/sqlite/src/db.rs",  # Specific to the known ChromaDB issue
-        ]
-
-        return any(pattern in error_msg for pattern in rust_panic_patterns)
-
-    @staticmethod
-    def _is_corruption_error(error: Exception) -> bool:
-        """Detect index corruption errors.
-
-        Args:
-            error: Exception to check
-
-        Returns:
-            True if this is a corruption error
-        """
-        error_msg = str(error).lower()
-
-        corruption_indicators = [
-            "pickle",
-            "unpickling",
-            "eof",
-            "ran out of input",
-            "hnsw",
-            "deserialize",
-            "corrupt",
-        ]
-
-        return any(indicator in error_msg for indicator in corruption_indicators)
-
-    async def _search_with_retry(
-        self,
-        query: str,
-        limit: int,
-        filters: dict[str, Any] | None,
-        threshold: float,
-        max_retries: int = 3,
-    ) -> list[SearchResult]:
-        """Execute search with retry logic and exponential backoff.
-
-        Args:
-            query: Processed search query
-            limit: Maximum number of results
-            filters: Optional filters
-            threshold: Similarity threshold
-            max_retries: Maximum retry attempts (default: 3)
-
-        Returns:
-            List of search results
-
-        Raises:
-            RustPanicError: If Rust panic persists after retries
-            SearchError: If search fails for other reasons
-        """
-        last_error = None
-        backoff_delays = [0, 0.1, 0.5]  # Immediate, 100ms, 500ms
-
-        for attempt in range(max_retries):
-            try:
-                # Add delay for retries (exponential backoff)
-                if attempt > 0 and backoff_delays[attempt] > 0:
-                    await asyncio.sleep(backoff_delays[attempt])
-                    logger.debug(
-                        f"Retrying search after {backoff_delays[attempt]}s delay (attempt {attempt + 1}/{max_retries})"
-                    )
-
-                # Perform the actual search
-                results = await self.database.search(
-                    query=query,
-                    limit=limit,
-                    filters=filters,
-                    similarity_threshold=threshold,
-                )
-
-                # Success! If we had retries, log that we recovered
-                if attempt > 0:
-                    logger.info(
-                        f"Search succeeded after {attempt + 1} attempts (recovered from transient error)"
-                    )
-
-                return results
-
-            except BaseException as e:
-                # Re-raise system exceptions we should never catch
-                if isinstance(e, KeyboardInterrupt | SystemExit | GeneratorExit):
-                    raise
-
-                last_error = e
-
-                # Check if this is a Rust panic
-                if self._is_rust_panic_error(e):
-                    logger.warning(
-                        f"ChromaDB Rust panic detected (attempt {attempt + 1}/{max_retries}): {e}"
-                    )
-
-                    # If this is the last retry, escalate to corruption recovery
-                    if attempt == max_retries - 1:
-                        logger.error(
-                            "Rust panic persisted after all retries - index may be corrupted"
-                        )
-                        raise RustPanicError(
-                            "ChromaDB Rust panic detected. The HNSW index may be corrupted. "
-                            "Please run 'mcp-vector-search reset' followed by 'mcp-vector-search index' to rebuild."
-                        ) from e
-
-                    # Otherwise, continue to next retry
-                    continue
-
-                # Check for general corruption
-                elif self._is_corruption_error(e):
-                    logger.error(f"Index corruption detected: {e}")
-                    raise SearchError(
-                        "Index corruption detected. Please run 'mcp-vector-search reset' "
-                        "followed by 'mcp-vector-search index' to rebuild."
-                    ) from e
-
-                # Some other error - don't retry, just fail
-                else:
-                    logger.error(f"Search failed: {e}")
-                    raise SearchError(f"Search failed: {e}") from e
-
-        # Should never reach here, but just in case
-        raise SearchError(
-            f"Search failed after {max_retries} retries: {last_error}"
-        ) from last_error
+        # Initialize helper components
+        self._query_processor = QueryProcessor(base_threshold=similarity_threshold)
+        self._retry_handler = SearchRetryHandler()
+        self._result_enhancer = ResultEnhancer()
+        self._result_ranker = ResultRanker()
+        self._query_analyzer = QueryAnalyzer(self._query_processor)
 
     async def search(
         self,
@@ -283,40 +93,24 @@ class SemanticSearchEngine:
             return []
 
         # Throttled health check before search (only every 60 seconds)
-        current_time = time.time()
-        if current_time - self._last_health_check >= self._health_check_interval:
-            try:
-                if hasattr(self.database, "health_check"):
-                    is_healthy = await self.database.health_check()
-                    if not is_healthy:
-                        logger.warning(
-                            "Database health check failed - attempting recovery"
-                        )
-                        # Health check already attempts recovery, so we can proceed
-                    self._last_health_check = current_time
-            except Exception as e:
-                logger.warning(f"Health check failed: {e}")
-                self._last_health_check = current_time
+        await self._perform_health_check()
 
         # Auto-reindex check before search
-        if self.search_triggered_indexer:
-            try:
-                await self.search_triggered_indexer.pre_search_hook()
-            except Exception as e:
-                logger.warning(f"Auto-reindex check failed: {e}")
+        await self._perform_auto_reindex_check()
 
         threshold = (
             similarity_threshold
             if similarity_threshold is not None
-            else self._get_adaptive_threshold(query)
+            else self._query_processor.get_adaptive_threshold(query)
         )
 
         try:
             # Preprocess query
-            processed_query = self._preprocess_query(query)
+            processed_query = self._query_processor.preprocess_query(query)
 
             # Perform vector search with retry logic
-            results = await self._search_with_retry(
+            results = await self._retry_handler.search_with_retry(
+                database=self.database,
                 query=processed_query,
                 limit=limit,
                 filters=filters,
@@ -326,11 +120,13 @@ class SemanticSearchEngine:
             # Post-process results
             enhanced_results = []
             for result in results:
-                enhanced_result = await self._enhance_result(result, include_context)
+                enhanced_result = await self._result_enhancer.enhance_result(
+                    result, include_context
+                )
                 enhanced_results.append(enhanced_result)
 
             # Apply additional ranking if needed
-            ranked_results = self._rerank_results(enhanced_results, query)
+            ranked_results = self._result_ranker.rerank_results(enhanced_results, query)
 
             logger.debug(
                 f"Search for '{query}' with threshold {threshold:.3f} returned {len(ranked_results)} results"
@@ -418,457 +214,6 @@ class SemanticSearchEngine:
             include_context=True,
         )
 
-    def _preprocess_query(self, query: str) -> str:
-        """Preprocess search query for better results.
-
-        Args:
-            query: Raw search query
-
-        Returns:
-            Processed query
-        """
-        # Remove extra whitespace
-        query = re.sub(r"\s+", " ", query.strip())
-
-        # Use class-level query expansions (no dict creation overhead)
-        words = query.lower().split()
-        expanded_words = []
-
-        for word in words:
-            # Add original word
-            expanded_words.append(word)
-
-            # Add expansions if available
-            if word in self._QUERY_EXPANSIONS:
-                expanded_words.extend(self._QUERY_EXPANSIONS[word].split())
-
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_words = []
-        for word in expanded_words:
-            if word not in seen:
-                seen.add(word)
-                unique_words.append(word)
-
-        return " ".join(unique_words)
-
-    def _get_adaptive_threshold(self, query: str) -> float:
-        """Get adaptive similarity threshold based on query characteristics.
-
-        Args:
-            query: Search query
-
-        Returns:
-            Adaptive similarity threshold
-        """
-        base_threshold = self.similarity_threshold
-        query_lower = query.lower()
-        words = query.split()
-
-        # Adjust threshold based on query characteristics
-
-        # 1. Single word queries - lower threshold for broader results
-        if len(words) == 1:
-            return max(0.01, base_threshold - 0.29)
-
-        # 2. Very specific technical terms - lower threshold
-        technical_terms = [
-            "javascript",
-            "typescript",
-            "python",
-            "java",
-            "cpp",
-            "rust",
-            "go",
-            "function",
-            "class",
-            "method",
-            "variable",
-            "import",
-            "export",
-            "async",
-            "await",
-            "promise",
-            "callback",
-            "api",
-            "database",
-            "parser",
-            "compiler",
-            "interpreter",
-            "syntax",
-            "semantic",
-            "mcp",
-            "gateway",
-            "server",
-            "client",
-            "protocol",
-        ]
-
-        if any(term in query_lower for term in technical_terms):
-            return max(0.01, base_threshold - 0.29)
-
-        # 3. Short queries (2-3 words) - slightly lower threshold
-        if len(words) <= 3:
-            return max(0.1, base_threshold - 0.1)
-
-        # 4. Long queries (>6 words) - higher threshold for precision
-        if len(words) > 6:
-            return min(0.8, base_threshold + 0.1)
-
-        # 5. Queries with exact identifiers (CamelCase, snake_case)
-        if re.search(r"\b[A-Z][a-zA-Z]*\b", query) or "_" in query:
-            return max(0.05, base_threshold - 0.25)
-
-        # 6. Common programming patterns
-        if any(pattern in query for pattern in ["()", ".", "->", "=>", "::"]):
-            return max(0.25, base_threshold - 0.1)
-
-        return base_threshold
-
-    async def _read_file_lines_cached(self, file_path: Path) -> list[str]:
-        """Read file lines with proper LRU caching for performance.
-
-        Args:
-            file_path: Path to the file
-
-        Returns:
-            List of file lines
-
-        Raises:
-            FileNotFoundError: If file doesn't exist
-        """
-        # Check cache - move to end if found (most recently used)
-        if file_path in self._file_cache:
-            self._cache_hits += 1
-            # Move to end (most recently used)
-            self._file_cache.move_to_end(file_path)
-            return self._file_cache[file_path]
-
-        self._cache_misses += 1
-
-        # Read file asynchronously
-        try:
-            async with aiofiles.open(file_path, encoding="utf-8") as f:
-                content = await f.read()
-                lines = content.splitlines(keepends=True)
-
-            # Proper LRU: if cache is full, remove least recently used (first item)
-            if len(self._file_cache) >= self._cache_maxsize:
-                # Remove least recently used entry (first item in OrderedDict)
-                self._file_cache.popitem(last=False)
-
-            # Add to cache (will be at end, most recently used)
-            self._file_cache[file_path] = lines
-            return lines
-
-        except FileNotFoundError:
-            # Cache the miss to avoid repeated failed attempts
-            if len(self._file_cache) >= self._cache_maxsize:
-                self._file_cache.popitem(last=False)
-            self._file_cache[file_path] = []
-            raise
-
-    async def _enhance_result(
-        self, result: SearchResult, include_context: bool
-    ) -> SearchResult:
-        """Enhance search result with additional information.
-
-        Args:
-            result: Original search result
-            include_context: Whether to include context lines
-
-        Returns:
-            Enhanced search result
-        """
-        if not include_context:
-            return result
-
-        try:
-            # Read the source file using cached method
-            lines = await self._read_file_lines_cached(result.file_path)
-
-            if not lines:  # File not found or empty
-                return result
-
-            # Get context lines before and after
-            context_size = 3
-            start_idx = max(0, result.start_line - 1 - context_size)
-            end_idx = min(len(lines), result.end_line + context_size)
-
-            context_before = [
-                line.rstrip() for line in lines[start_idx : result.start_line - 1]
-            ]
-            context_after = [line.rstrip() for line in lines[result.end_line : end_idx]]
-
-            # Update result with context
-            result.context_before = context_before
-            result.context_after = context_after
-
-        except FileNotFoundError:
-            # File was deleted since indexing - silently skip context
-            # This is normal when index is stale; use --force to reindex
-            logger.debug(f"File no longer exists (stale index): {result.file_path}")
-            result.file_missing = True  # Mark for potential filtering
-        except Exception as e:
-            logger.warning(f"Failed to get context for {result.file_path}: {e}")
-
-        return result
-
-    def _rerank_results(
-        self, results: list[SearchResult], query: str
-    ) -> list[SearchResult]:
-        """Apply advanced ranking to search results using multiple factors.
-
-        Args:
-            results: Original search results
-            query: Original search query
-
-        Returns:
-            Reranked search results
-        """
-        if not results:
-            return results
-
-        # Pre-compute lowercased strings once (avoid repeated .lower() calls)
-        query_lower = query.lower()
-        query_words = set(query_lower.split())
-
-        # Pre-compute file extensions for source files
-        source_exts = frozenset(
-            [".py", ".js", ".ts", ".java", ".cpp", ".c", ".go", ".rs"]
-        )
-
-        for result in results:
-            # Start with base similarity score
-            score = result.similarity_score
-
-            # Factor 1: Exact matches in identifiers (high boost)
-            if result.function_name:
-                func_name_lower = result.function_name.lower()
-                if query_lower in func_name_lower:
-                    score += self._BOOST_EXACT_IDENTIFIER
-                # Partial word matches
-                score += sum(
-                    self._BOOST_PARTIAL_IDENTIFIER
-                    for word in query_words
-                    if word in func_name_lower
-                )
-
-            if result.class_name:
-                class_name_lower = result.class_name.lower()
-                if query_lower in class_name_lower:
-                    score += self._BOOST_EXACT_IDENTIFIER
-                # Partial word matches
-                score += sum(
-                    self._BOOST_PARTIAL_IDENTIFIER
-                    for word in query_words
-                    if word in class_name_lower
-                )
-
-            # Factor 2: File name relevance
-            file_name_lower = result.file_path.name.lower()
-            if query_lower in file_name_lower:
-                score += self._BOOST_FILE_NAME_EXACT
-            score += sum(
-                self._BOOST_FILE_NAME_PARTIAL
-                for word in query_words
-                if word in file_name_lower
-            )
-
-            # Factor 3: Content density (how many query words appear)
-            content_lower = result.content.lower()
-            word_matches = sum(1 for word in query_words if word in content_lower)
-            if word_matches > 0:
-                score += (word_matches / len(query_words)) * 0.1
-
-            # Factor 4: Code structure preferences (combined conditions)
-            if result.chunk_type == "function":
-                score += self._BOOST_FUNCTION_CHUNK
-            elif result.chunk_type == "class":
-                score += self._BOOST_CLASS_CHUNK
-
-            # Factor 5: File type preferences (prefer source files over tests)
-            file_ext = result.file_path.suffix.lower()
-            if file_ext in source_exts:
-                score += self._BOOST_SOURCE_FILE
-            if "test" in file_name_lower:  # Already computed
-                score += self._PENALTY_TEST_FILE
-
-            # Factor 6: Path depth preference
-            path_depth = len(result.file_path.parts)
-            if path_depth <= 3:
-                score += self._BOOST_SHALLOW_PATH
-            elif path_depth > 5:
-                score += self._PENALTY_DEEP_PATH
-
-            # Factor 7: Boilerplate penalty (penalize common boilerplate patterns)
-            # Apply penalty to function names (constructors, lifecycle methods, etc.)
-            if result.function_name:
-                boilerplate_penalty = self._boilerplate_filter.get_penalty(
-                    name=result.function_name,
-                    language=result.language,
-                    query=query,
-                    penalty=self._PENALTY_BOILERPLATE,
-                )
-                score += boilerplate_penalty
-
-            # Ensure score doesn't exceed 1.0
-            result.similarity_score = min(1.0, score)
-
-        # Sort by enhanced similarity score
-        results.sort(key=lambda r: r.similarity_score, reverse=True)
-
-        # Update ranks
-        for i, result in enumerate(results):
-            result.rank = i + 1
-
-        return results
-
-    def analyze_query(self, query: str) -> dict[str, Any]:
-        """Analyze search query and provide suggestions for improvement.
-
-        Args:
-            query: Search query to analyze
-
-        Returns:
-            Dictionary with analysis results and suggestions
-        """
-        analysis = {
-            "original_query": query,
-            "processed_query": self._preprocess_query(query),
-            "query_type": "general",
-            "suggestions": [],
-            "confidence": "medium",
-        }
-
-        query_lower = query.lower()
-
-        # Detect query type
-        if any(word in query_lower for word in ["function", "method", "def", "func"]):
-            analysis["query_type"] = "function_search"
-            analysis["suggestions"].append(
-                "Try searching for specific function names or patterns"
-            )
-        elif any(word in query_lower for word in ["class", "object", "type"]):
-            analysis["query_type"] = "class_search"
-            analysis["suggestions"].append(
-                "Include class inheritance or interface information"
-            )
-        elif any(word in query_lower for word in ["error", "exception", "bug", "fix"]):
-            analysis["query_type"] = "error_handling"
-            analysis["suggestions"].append("Include error types or exception names")
-        elif any(word in query_lower for word in ["test", "spec", "mock"]):
-            analysis["query_type"] = "testing"
-            analysis["suggestions"].append("Specify test framework or testing patterns")
-        elif any(word in query_lower for word in ["config", "setting", "option"]):
-            analysis["query_type"] = "configuration"
-            analysis["suggestions"].append(
-                "Include configuration file types or setting names"
-            )
-
-        # Analyze query complexity
-        words = query.split()
-        if len(words) == 1:
-            analysis["confidence"] = "low"
-            analysis["suggestions"].append(
-                "Try adding more descriptive words for better results"
-            )
-        elif len(words) > 10:
-            analysis["confidence"] = "low"
-            analysis["suggestions"].append(
-                "Consider simplifying your query for better matching"
-            )
-        else:
-            analysis["confidence"] = "high"
-
-        # Check for common programming patterns
-        if re.search(r"\b\w+\(\)", query):
-            analysis["suggestions"].append(
-                "Function call detected - searching for function definitions"
-            )
-        if re.search(r"\b[A-Z][a-zA-Z]*\b", query):
-            analysis["suggestions"].append(
-                "CamelCase detected - searching for class or type names"
-            )
-        if re.search(r"\b\w+\.\w+", query):
-            analysis["suggestions"].append(
-                "Dot notation detected - searching for method calls or properties"
-            )
-
-        return analysis
-
-    def suggest_related_queries(
-        self, query: str, results: list[SearchResult]
-    ) -> list[str]:
-        """Suggest related queries based on search results.
-
-        Args:
-            query: Original search query
-            results: Search results
-
-        Returns:
-            List of suggested related queries
-        """
-        suggestions = []
-
-        if not results:
-            # No results - suggest broader queries
-            words = query.lower().split()
-            if len(words) > 1:
-                # Try individual words
-                suggestions.extend(words[:3])  # Top 3 words
-
-            # Suggest common related terms
-            related_terms = {
-                "auth": ["login", "user", "session", "token"],
-                "database": ["query", "model", "schema", "connection"],
-                "api": ["endpoint", "request", "response", "handler"],
-                "test": ["mock", "assert", "spec", "unit"],
-                "error": ["exception", "handle", "catch", "debug"],
-            }
-
-            for word in words:
-                if word in related_terms:
-                    suggestions.extend(related_terms[word][:2])
-        else:
-            # Extract common patterns from results
-            function_names = [r.function_name for r in results if r.function_name]
-            class_names = [r.class_name for r in results if r.class_name]
-
-            # Suggest function names
-            if function_names:
-                unique_functions = list(set(function_names))[:3]
-                suggestions.extend(unique_functions)
-
-            # Suggest class names
-            if class_names:
-                unique_classes = list(set(class_names))[:3]
-                suggestions.extend(unique_classes)
-
-            # Suggest file-based queries
-            file_patterns = set()
-            for result in results[:5]:  # Top 5 results
-                file_name = result.file_path.stem
-                if "_" in file_name:
-                    file_patterns.update(file_name.split("_"))
-                elif file_name not in suggestions:
-                    file_patterns.add(file_name)
-
-            suggestions.extend(list(file_patterns)[:3])
-
-        # Remove duplicates and original query words
-        query_words = set(query.lower().split())
-        unique_suggestions = []
-        for suggestion in suggestions:
-            if (
-                suggestion
-                and suggestion.lower() not in query_words
-                and suggestion not in unique_suggestions
-            ):
-                unique_suggestions.append(suggestion)
-
-        return unique_suggestions[:5]  # Return top 5 suggestions
-
     async def search_with_context(
         self,
         query: str,
@@ -888,7 +233,7 @@ class SemanticSearchEngine:
             Dictionary with results, analysis, and suggestions
         """
         # Analyze the query
-        query_analysis = self.analyze_query(query)
+        query_analysis = self._query_analyzer.analyze_query(query)
 
         # Perform the search
         results = await self.search(
@@ -899,14 +244,16 @@ class SemanticSearchEngine:
         )
 
         # Get related query suggestions
-        suggestions = self.suggest_related_queries(query, results)
+        suggestions = self._query_analyzer.suggest_related_queries(query, results)
 
         # Enhance results with additional context if context files provided
         if context_files:
-            results = await self._enhance_with_file_context(results, context_files)
+            results = await self._result_enhancer.enhance_with_file_context(
+                results, context_files
+            )
 
         # Calculate result quality metrics
-        quality_metrics = self._calculate_result_quality(results, query)
+        quality_metrics = self._query_analyzer.calculate_result_quality(results, query)
 
         return {
             "query": query,
@@ -917,113 +264,92 @@ class SemanticSearchEngine:
             "total_results": len(results),
         }
 
-    async def _enhance_with_file_context(
-        self, results: list[SearchResult], context_files: list[Path]
-    ) -> list[SearchResult]:
-        """Enhance results by considering context from specific files.
+    def analyze_query(self, query: str) -> dict[str, Any]:
+        """Analyze search query and provide suggestions for improvement.
 
         Args:
-            results: Original search results
-            context_files: Files to use for context
+            query: Search query to analyze
 
         Returns:
-            Enhanced search results
+            Dictionary with analysis results and suggestions
         """
-        # Read context from files using async I/O
-        context_content = []
-        for file_path in context_files:
-            try:
-                async with aiofiles.open(file_path, encoding="utf-8") as f:
-                    content = await f.read()
-                    context_content.append(content)
-            except Exception as e:
-                logger.warning(f"Failed to read context file {file_path}: {e}")
+        return self._query_analyzer.analyze_query(query)
 
-        if not context_content:
-            return results
-
-        # Boost results that are related to context files
-        context_text = " ".join(context_content).lower()
-
-        for result in results:
-            # Check if result is from one of the context files
-            if result.file_path in context_files:
-                result.similarity_score = min(1.0, result.similarity_score + 0.1)
-
-            # Check if result content relates to context
-            if result.function_name:
-                func_name_lower = result.function_name.lower()
-                if func_name_lower in context_text:
-                    result.similarity_score = min(1.0, result.similarity_score + 0.05)
-
-            if result.class_name:
-                class_name_lower = result.class_name.lower()
-                if class_name_lower in context_text:
-                    result.similarity_score = min(1.0, result.similarity_score + 0.05)
-
-        # Re-sort by updated scores
-        results.sort(key=lambda r: r.similarity_score, reverse=True)
-
-        # Update ranks
-        for i, result in enumerate(results):
-            result.rank = i + 1
-
-        return results
-
-    def _calculate_result_quality(
-        self, results: list[SearchResult], query: str
-    ) -> dict[str, Any]:
-        """Calculate quality metrics for search results.
+    def suggest_related_queries(
+        self, query: str, results: list[SearchResult]
+    ) -> list[str]:
+        """Suggest related queries based on search results.
 
         Args:
+            query: Original search query
             results: Search results
-            query: Original query
 
         Returns:
-            Dictionary with quality metrics
+            List of suggested related queries
         """
-        if not results:
+        return self._query_analyzer.suggest_related_queries(query, results)
+
+    async def get_search_stats(self) -> dict[str, Any]:
+        """Get search engine statistics.
+
+        Returns:
+            Dictionary with search statistics
+        """
+        try:
+            db_stats = await self.database.get_stats()
+
             return {
-                "average_score": 0.0,
-                "score_distribution": {},
-                "diversity": 0.0,
-                "coverage": 0.0,
+                "total_chunks": db_stats.total_chunks,
+                "languages": db_stats.languages,
+                "similarity_threshold": self.similarity_threshold,
+                "project_root": str(self.project_root),
             }
 
-        # Calculate average similarity score
-        scores = [r.similarity_score for r in results]
-        avg_score = sum(scores) / len(scores)
+        except Exception as e:
+            logger.error(f"Failed to get search stats: {e}")
+            return {"error": str(e)}
 
-        # Score distribution
-        high_quality = sum(1 for s in scores if s >= 0.8)
-        medium_quality = sum(1 for s in scores if 0.6 <= s < 0.8)
-        low_quality = sum(1 for s in scores if s < 0.6)
+    def clear_cache(self) -> None:
+        """Clear the file read cache."""
+        self._result_enhancer.clear_cache()
 
-        # Diversity (unique files)
-        unique_files = len({r.file_path for r in results})
-        diversity = unique_files / len(results) if results else 0.0
+    def get_cache_info(self) -> dict[str, Any]:
+        """Get cache statistics.
 
-        # Coverage (how many query words are covered)
-        query_words = set(query.lower().split())
-        covered_words = set()
-        for result in results:
-            content_words = set(result.content.lower().split())
-            covered_words.update(query_words.intersection(content_words))
+        Returns:
+            Dictionary with cache statistics including hits, misses, size, and hit rate
+        """
+        return self._result_enhancer.get_cache_info()
 
-        coverage = len(covered_words) / len(query_words) if query_words else 0.0
+    # Private helper methods
 
-        return {
-            "average_score": round(avg_score, 3),
-            "score_distribution": {
-                "high_quality": high_quality,
-                "medium_quality": medium_quality,
-                "low_quality": low_quality,
-            },
-            "diversity": round(diversity, 3),
-            "coverage": round(coverage, 3),
-        }
+    async def _perform_health_check(self) -> None:
+        """Perform throttled health check on database."""
+        current_time = time.time()
+        if current_time - self._last_health_check >= self._health_check_interval:
+            try:
+                if hasattr(self.database, "health_check"):
+                    is_healthy = await self.database.health_check()
+                    if not is_healthy:
+                        logger.warning(
+                            "Database health check failed - attempting recovery"
+                        )
+                        # Health check already attempts recovery, so we can proceed
+                    self._last_health_check = current_time
+            except Exception as e:
+                logger.warning(f"Health check failed: {e}")
+                self._last_health_check = current_time
 
-    def _extract_function_content(self, content: str, function_name: str) -> str | None:
+    async def _perform_auto_reindex_check(self) -> None:
+        """Perform auto-reindex check before search."""
+        if self.search_triggered_indexer:
+            try:
+                await self.search_triggered_indexer.pre_search_hook()
+            except Exception as e:
+                logger.warning(f"Auto-reindex check failed: {e}")
+
+    @staticmethod
+    def _extract_function_content(content: str, function_name: str) -> str | None:
         """Extract content of a specific function from code.
 
         Args:
@@ -1056,46 +382,69 @@ class SemanticSearchEngine:
 
         return None
 
-    async def get_search_stats(self) -> dict[str, Any]:
-        """Get search engine statistics.
+    # Expose internal methods for backward compatibility (used in tests)
+    def _get_adaptive_threshold(self, query: str) -> float:
+        """Get adaptive similarity threshold (backward compatibility)."""
+        return self._query_processor.get_adaptive_threshold(query)
 
-        Returns:
-            Dictionary with search statistics
-        """
-        try:
-            db_stats = await self.database.get_stats()
+    def _preprocess_query(self, query: str) -> str:
+        """Preprocess query (backward compatibility)."""
+        return self._query_processor.preprocess_query(query)
 
-            return {
-                "total_chunks": db_stats.total_chunks,
-                "languages": db_stats.languages,
-                "similarity_threshold": self.similarity_threshold,
-                "project_root": str(self.project_root),
-            }
+    async def _enhance_result(
+        self, result: SearchResult, include_context: bool
+    ) -> SearchResult:
+        """Enhance result (backward compatibility)."""
+        return await self._result_enhancer.enhance_result(result, include_context)
 
-        except Exception as e:
-            logger.error(f"Failed to get search stats: {e}")
-            return {"error": str(e)}
+    def _rerank_results(
+        self, results: list[SearchResult], query: str
+    ) -> list[SearchResult]:
+        """Rerank results (backward compatibility)."""
+        return self._result_ranker.rerank_results(results, query)
 
-    def clear_cache(self) -> None:
-        """Clear the file read cache."""
-        self._file_cache.clear()
-        self._cache_hits = 0
-        self._cache_misses = 0
-        logger.debug("File read cache cleared")
+    async def _read_file_lines_cached(self, file_path: Path) -> list[str]:
+        """Read file lines cached (backward compatibility)."""
+        return await self._result_enhancer.read_file_lines_cached(file_path)
 
-    def get_cache_info(self) -> dict[str, Any]:
-        """Get cache statistics.
+    def _calculate_result_quality(
+        self, results: list[SearchResult], query: str
+    ) -> dict[str, Any]:
+        """Calculate result quality (backward compatibility)."""
+        return self._query_analyzer.calculate_result_quality(results, query)
 
-        Returns:
-            Dictionary with cache statistics including hits, misses, size, and hit rate
-        """
-        total_requests = self._cache_hits + self._cache_misses
-        hit_rate = self._cache_hits / total_requests if total_requests > 0 else 0.0
+    async def _enhance_with_file_context(
+        self, results: list[SearchResult], context_files: list[Path]
+    ) -> list[SearchResult]:
+        """Enhance with file context (backward compatibility)."""
+        return await self._result_enhancer.enhance_with_file_context(
+            results, context_files
+        )
 
-        return {
-            "hits": self._cache_hits,
-            "misses": self._cache_misses,
-            "size": len(self._file_cache),
-            "maxsize": self._cache_maxsize,
-            "hit_rate": f"{hit_rate:.2%}",
-        }
+    async def _search_with_retry(
+        self,
+        query: str,
+        limit: int,
+        filters: dict[str, Any] | None,
+        threshold: float,
+        max_retries: int = 3,
+    ) -> list[SearchResult]:
+        """Search with retry (backward compatibility)."""
+        return await self._retry_handler.search_with_retry(
+            database=self.database,
+            query=query,
+            limit=limit,
+            filters=filters,
+            threshold=threshold,
+            max_retries=max_retries,
+        )
+
+    @staticmethod
+    def _is_rust_panic_error(error: Exception) -> bool:
+        """Detect Rust panic errors (backward compatibility)."""
+        return SearchRetryHandler.is_rust_panic_error(error)
+
+    @staticmethod
+    def _is_corruption_error(error: Exception) -> bool:
+        """Detect corruption errors (backward compatibility)."""
+        return SearchRetryHandler.is_corruption_error(error)
