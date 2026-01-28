@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from rich.console import Console
 from rich.table import Table
 

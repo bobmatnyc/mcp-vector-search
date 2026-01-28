@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from loguru import logger
 from rich.console import Console
 
 
