@@ -193,10 +193,32 @@ class CodeBERTEmbeddingFunction:
                     f"This may take a few minutes."
                 )
 
-            # trust_remote_code=True needed for CodeXEmbed and other models with custom code
-            self.model = SentenceTransformer(
-                model_name, device=device, trust_remote_code=True
+            # Suppress benign position_ids warning from transformers library
+            # Warning: "embeddings.position_ids UNEXPECTED" is harmless and expected
+            # The position_ids buffer is automatically regenerated during model init
+            import logging
+            import warnings
+
+            transformers_logger = logging.getLogger("transformers.modeling_utils")
+            original_level = transformers_logger.level
+            transformers_logger.setLevel(logging.ERROR)
+
+            # Also suppress warnings about position_ids
+            warnings.filterwarnings(
+                "ignore",
+                message=".*position_ids.*",
+                category=UserWarning,
             )
+
+            try:
+                # trust_remote_code=True needed for CodeXEmbed and other models with custom code
+                self.model = SentenceTransformer(
+                    model_name, device=device, trust_remote_code=True
+                )
+            finally:
+                # Restore original logging level
+                transformers_logger.setLevel(original_level)
+                warnings.filterwarnings("default", message=".*position_ids.*")
             self.model_name = model_name
             self.timeout = timeout
 
@@ -369,6 +391,9 @@ def create_embedding_function(
     """
     try:
         # Use ChromaDB's built-in sentence transformer function
+        import logging
+        import warnings
+
         from chromadb.utils import embedding_functions
 
         # Map legacy model names to current defaults
@@ -391,9 +416,29 @@ def create_embedding_function(
                 f"Please update your configuration to use the new model explicitly."
             )
 
-        embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=actual_model
+        # Suppress benign position_ids warning from transformers library
+        # This warning appears when ChromaDB loads the SentenceTransformer model
+        transformers_logger = logging.getLogger("transformers.modeling_utils")
+        original_level = transformers_logger.level
+        transformers_logger.setLevel(logging.ERROR)
+
+        # Also suppress warnings about position_ids
+        warnings.filterwarnings(
+            "ignore",
+            message=".*position_ids.*",
+            category=UserWarning,
         )
+
+        try:
+            embedding_function = (
+                embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name=actual_model
+                )
+            )
+        finally:
+            # Restore original logging level
+            transformers_logger.setLevel(original_level)
+            warnings.filterwarnings("default", message=".*position_ids.*")
 
         logger.debug(f"Created ChromaDB embedding function with model: {actual_model}")
 
