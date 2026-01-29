@@ -181,7 +181,8 @@ class ChromaVectorDatabase(VectorDatabase):
             # Ensure directory exists
             self.persist_directory.mkdir(parents=True, exist_ok=True)
 
-            # LAYER 1: Check for corruption before initializing (SQLite + HNSW checks)
+            # LAYER 1: Proactive corruption detection (SQLite + HNSW .pkl/.bin files)
+            # This MUST run before any ChromaDB operations to prevent bus errors
             if await self._corruption_recovery.detect_corruption():
                 logger.info("Corruption detected, initiating automatic recovery...")
                 await self._corruption_recovery.recover()
@@ -207,7 +208,8 @@ class ChromaVectorDatabase(VectorDatabase):
                     self._client, self.embedding_function
                 )
 
-                # Check for dimension mismatch (migration detection)
+                # LAYER 3: Check for dimension mismatch (migration detection)
+                # This uses subprocess-isolated count() to survive bus errors
                 await self._dimension_checker.check_compatibility(
                     self._collection, self.embedding_function
                 )

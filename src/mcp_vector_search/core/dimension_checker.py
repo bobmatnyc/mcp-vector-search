@@ -1,5 +1,7 @@
 """Embedding dimension compatibility checker for ChromaDB."""
 
+import multiprocessing
+import signal
 from typing import Any
 
 from loguru import logger
@@ -15,6 +17,103 @@ class DimensionChecker:
     """
 
     @staticmethod
+    def _safe_count_subprocess(
+        collection: Any, result_queue: multiprocessing.Queue
+    ) -> None:
+        """Subprocess worker to safely call collection.count().
+
+        This runs in a separate process to isolate potential bus errors.
+        If the count operation crashes (bus error), the parent process
+        can detect it and handle gracefully.
+
+        Args:
+            collection: ChromaDB collection instance
+            result_queue: Queue to return the count result
+        """
+        try:
+            # Disable signal handling in subprocess to allow clean termination
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+            # Attempt the dangerous count operation
+            count = collection.count()
+            result_queue.put(("success", count))
+
+        except Exception as e:
+            # Catch Python exceptions
+            result_queue.put(("error", str(e)))
+
+    @staticmethod
+    async def _safe_collection_count(
+        collection: Any, timeout: float = 5.0
+    ) -> int | None:
+        """Safely get collection count with subprocess isolation.
+
+        Uses multiprocessing to isolate the count operation. If ChromaDB's
+        Rust backend encounters corrupted HNSW files and triggers a bus error,
+        the subprocess dies but the main process survives.
+
+        Args:
+            collection: ChromaDB collection instance
+            timeout: Timeout in seconds for count operation
+
+        Returns:
+            Collection count, or None if operation failed/timed out
+        """
+        try:
+            # Create a queue for result communication
+            ctx = multiprocessing.get_context("spawn")
+            result_queue = ctx.Queue()
+
+            # Create subprocess for isolated count operation
+            process = ctx.Process(
+                target=DimensionChecker._safe_count_subprocess,
+                args=(collection, result_queue),
+            )
+
+            # Start process
+            process.start()
+
+            # Wait for result with timeout
+            process.join(timeout=timeout)
+
+            # Check if process completed successfully
+            if process.is_alive():
+                # Timeout - kill process
+                logger.warning(
+                    f"Collection count timed out after {timeout}s - possible corruption"
+                )
+                process.terminate()
+                process.join(timeout=1.0)
+                if process.is_alive():
+                    process.kill()  # Force kill if terminate doesn't work
+                return None
+
+            # Check exit code
+            if process.exitcode != 0:
+                # Process crashed (likely bus error)
+                logger.warning(
+                    f"Collection count subprocess crashed with exit code {process.exitcode} - likely index corruption"
+                )
+                return None
+
+            # Try to get result from queue
+            if not result_queue.empty():
+                status, value = result_queue.get_nowait()
+                if status == "success":
+                    return value
+                else:
+                    logger.warning(f"Collection count failed: {value}")
+                    return None
+
+            # No result available
+            logger.warning("Collection count completed but no result returned")
+            return None
+
+        except Exception as e:
+            logger.warning(f"Error in safe collection count: {e}")
+            return None
+
+    @staticmethod
     async def check_compatibility(collection: Any, embedding_function: Any) -> None:
         """Check for embedding dimension mismatch and warn if re-indexing needed.
 
@@ -26,8 +125,22 @@ class DimensionChecker:
             return
 
         try:
-            # Get collection count to check if index exists
-            count = collection.count()
+            # SAFETY: Use subprocess-isolated count to prevent bus errors
+            # If the index is corrupted, collection.count() can trigger a
+            # SIGBUS in ChromaDB's Rust backend. Isolating this in a subprocess
+            # allows the main process to survive and trigger recovery.
+            count = await DimensionChecker._safe_collection_count(
+                collection, timeout=5.0
+            )
+
+            if count is None:
+                # Count failed - likely index corruption
+                logger.warning(
+                    "Failed to get collection count - index may be corrupted. "
+                    "Run 'mcp-vector-search reset index' to rebuild."
+                )
+                return
+
             if count == 0:
                 # Empty index, no compatibility check needed
                 return

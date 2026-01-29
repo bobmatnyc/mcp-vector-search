@@ -35,20 +35,21 @@ class CorruptionRecovery:
         Returns:
             True if corruption detected, False otherwise
         """
-        # If database doesn't exist yet, nothing to check
+        corruption_detected = False
+
+        # Layer 1: Check SQLite database integrity (if it exists)
         chroma_db_path = self.persist_directory / "chroma.sqlite3"
-        if not chroma_db_path.exists():
-            return False
+        if chroma_db_path.exists():
+            if await self._check_sqlite_corruption(chroma_db_path):
+                corruption_detected = True
 
-        # Layer 1: Check SQLite database integrity
-        if await self._check_sqlite_corruption(chroma_db_path):
-            return True
-
-        # Layer 2: Check HNSW index files
+        # Layer 2: Check HNSW index files (if they exist)
+        # CRITICAL: Run this check even if SQLite doesn't exist, because
+        # corrupted .bin files can cause bus errors before SQLite is accessed
         if await self._check_hnsw_corruption():
-            return True
+            corruption_detected = True
 
-        return False
+        return corruption_detected
 
     async def _check_sqlite_corruption(self, db_path: Path) -> bool:
         """Check SQLite database for corruption.
@@ -90,24 +91,26 @@ class CorruptionRecovery:
         # Look for HNSW index files
         pickle_files = list(index_path.glob("**/*.pkl"))
         pickle_files.extend(list(index_path.glob("**/*.pickle")))
-        pickle_files.extend(list(index_path.glob("**/*.bin")))
+        bin_files = list(index_path.glob("**/*.bin"))
 
-        logger.debug(f"Checking {len(pickle_files)} HNSW index files for corruption...")
+        logger.debug(
+            f"Checking {len(pickle_files)} pickle files and {len(bin_files)} binary files for corruption..."
+        )
 
+        # Validate pickle files
         for pickle_file in pickle_files:
             try:
                 # Check file size - suspiciously small files might be corrupted
                 file_size = pickle_file.stat().st_size
                 if file_size == 0:
                     logger.warning(
-                        f"Empty HNSW index file detected: {pickle_file} (0 bytes)"
+                        f"Empty HNSW pickle file detected: {pickle_file} (0 bytes)"
                     )
                     return True
 
-                # Only validate pickle files (not binary .bin files)
-                if pickle_file.suffix in (".pkl", ".pickle"):
-                    if await self._validate_pickle_file(pickle_file):
-                        return True
+                # Validate pickle file contents
+                if await self._validate_pickle_file(pickle_file):
+                    return True
 
             except (EOFError, pickle.UnpicklingError) as e:
                 logger.warning(f"Pickle corruption detected in {pickle_file}: {e}")
@@ -119,9 +122,18 @@ class CorruptionRecovery:
                     logger.warning(f"Rust panic pattern detected in {pickle_file}: {e}")
                     return True
 
-                logger.warning(f"Error reading HNSW index file {pickle_file}: {e}")
+                logger.warning(f"Error reading HNSW pickle file {pickle_file}: {e}")
                 # Continue checking other files before deciding to recover
                 continue
+
+        # Validate binary .bin files (CRITICAL: prevents bus errors)
+        for bin_file in bin_files:
+            try:
+                if await self._validate_bin_file(bin_file):
+                    return True
+            except Exception as e:
+                logger.warning(f"Error validating binary file {bin_file}: {e}")
+                return True
 
         logger.debug("HNSW index files validation passed")
         return False
@@ -155,6 +167,59 @@ class CorruptionRecovery:
                         return True
 
         return False
+
+    async def _validate_bin_file(self, bin_file: Path) -> bool:
+        """Validate HNSW binary index file to prevent bus errors.
+
+        This method reads the first few KB of .bin files to detect corruption
+        BEFORE ChromaDB's Rust backend tries to access them. This prevents
+        SIGBUS crashes that cannot be caught with try/except.
+
+        Args:
+            bin_file: Path to binary HNSW index file
+
+        Returns:
+            True if corruption detected, False otherwise
+        """
+        try:
+            file_size = bin_file.stat().st_size
+
+            # Zero-size files are definitely corrupted
+            if file_size == 0:
+                logger.warning(f"Empty binary HNSW file detected: {bin_file} (0 bytes)")
+                return True
+
+            # Suspiciously small files (< 100 bytes) are likely corrupted
+            if file_size < 100:
+                logger.warning(
+                    f"Suspiciously small binary HNSW file: {bin_file} ({file_size} bytes)"
+                )
+                return True
+
+            # Attempt to read first 4KB to verify file accessibility
+            # This catches truncated files and I/O errors before Rust does
+            chunk_size = min(4096, file_size)
+            with open(bin_file, "rb") as f:
+                header = f.read(chunk_size)
+
+                # Verify we read the expected amount
+                if len(header) < chunk_size:
+                    logger.warning(
+                        f"Truncated binary HNSW file: {bin_file} (expected {chunk_size} bytes, got {len(header)})"
+                    )
+                    return True
+
+                # Check for all-zero files (corrupted/incomplete writes)
+                if header == b"\x00" * len(header):
+                    logger.warning(f"All-zero binary HNSW file detected: {bin_file}")
+                    return True
+
+            # File appears valid
+            return False
+
+        except OSError as e:
+            logger.warning(f"I/O error reading binary HNSW file {bin_file}: {e}")
+            return True
 
     def is_rust_panic_error(self, error: Exception) -> bool:
         """Check if an error matches Rust panic patterns.

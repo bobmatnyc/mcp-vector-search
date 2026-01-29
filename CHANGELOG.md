@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.9] - 2026-01-28
+
+### Fixed
+- **Bus Error Prevention** - Multi-layered defense against ChromaDB HNSW index corruption
+  - Added binary validation to detect corrupted index files before loading
+  - Subprocess isolation layer to prevent parent process crashes
+  - Improved initialization order to reduce corruption risk
+  - 13 new tests for bus error protection and recovery scenarios
+
 ## [1.2.2] - 2026-01-23
 
 ### Changed
