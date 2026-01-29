@@ -12,7 +12,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 
 from ...core.database import ChromaVectorDatabase
-from ...core.embeddings import create_embedding_function
+from ...core.embeddings import create_embedding_function, suppress_stdout_stderr
 from ...core.exceptions import ProjectNotFoundError
 from ...core.llm_client import LLMClient
 from ...core.project import ProjectManager
@@ -441,17 +441,18 @@ async def run_single_query(
         print_error(str(e))
         raise typer.Exit(1)
 
-    # Initialize search engine
-    embedding_function, _ = create_embedding_function(config.embedding_model)
-    database = ChromaVectorDatabase(
-        persist_directory=config.index_path,
-        embedding_function=embedding_function,
-    )
-    search_engine = SemanticSearchEngine(
-        database=database,
-        project_root=project_root,
-        similarity_threshold=config.similarity_threshold,
-    )
+    # Initialize search engine (suppress verbose model loading output)
+    with suppress_stdout_stderr():
+        embedding_function, _ = create_embedding_function(config.embedding_model)
+        database = ChromaVectorDatabase(
+            persist_directory=config.index_path,
+            embedding_function=embedding_function,
+        )
+        search_engine = SemanticSearchEngine(
+            database=database,
+            project_root=project_root,
+            similarity_threshold=config.similarity_threshold,
+        )
 
     # Create session for single query
     session = EnhancedChatSession(CONVERSATIONAL_SYSTEM_PROMPT)
@@ -519,17 +520,18 @@ async def run_chat_repl(
         print_error(str(e))
         raise typer.Exit(1)
 
-    # Initialize search components
-    embedding_function, _ = create_embedding_function(config.embedding_model)
-    database = ChromaVectorDatabase(
-        persist_directory=config.index_path,
-        embedding_function=embedding_function,
-    )
-    search_engine = SemanticSearchEngine(
-        database=database,
-        project_root=project_root,
-        similarity_threshold=config.similarity_threshold,
-    )
+    # Initialize search components (suppress verbose model loading output)
+    with suppress_stdout_stderr():
+        embedding_function, _ = create_embedding_function(config.embedding_model)
+        database = ChromaVectorDatabase(
+            persist_directory=config.index_path,
+            embedding_function=embedding_function,
+        )
+        search_engine = SemanticSearchEngine(
+            database=database,
+            project_root=project_root,
+            similarity_threshold=config.similarity_threshold,
+        )
 
     # Create session
     session = EnhancedChatSession(CONVERSATIONAL_SYSTEM_PROMPT)
