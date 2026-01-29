@@ -35,13 +35,13 @@ class LLMClient:
     # Default models for each provider (comparable performance/cost)
     DEFAULT_MODELS = {
         "openai": "gpt-4o-mini",  # Fast, cheap, comparable to claude-3-haiku
-        "openrouter": "anthropic/claude-opus-4",  # Claude Opus 4 for chat REPL
+        "openrouter": "anthropic/claude-opus-4.5",  # Claude Opus 4.5 for chat REPL
     }
 
     # Advanced "thinking" models for complex queries (--think flag)
     THINKING_MODELS = {
         "openai": "gpt-4o",  # More capable, better reasoning
-        "openrouter": "anthropic/claude-sonnet-4",  # Claude Sonnet 4 for deep analysis
+        "openrouter": "anthropic/claude-opus-4.5",  # Claude Opus 4.5 for deep analysis
     }
 
     # API endpoints
