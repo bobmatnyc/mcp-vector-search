@@ -1,8 +1,7 @@
-"""Chat command for LLM-powered intelligent code search."""
+"""Chat command for LLM-powered intelligent code search with interactive REPL."""
 
 import asyncio
-import os
-from fnmatch import fnmatch
+import json
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +13,7 @@ from rich.panel import Panel
 
 from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function
-from ...core.exceptions import ProjectNotFoundError, SearchError
+from ...core.exceptions import ProjectNotFoundError
 from ...core.llm_client import LLMClient
 from ...core.project import ProjectManager
 from ...core.search import SemanticSearchEngine
@@ -22,29 +21,27 @@ from ..didyoumean import create_enhanced_typer
 from ..output import (
     console,
     print_error,
-    print_info,
-    print_success,
     print_warning,
 )
 
 
 def show_api_key_help() -> None:
     """Display helpful error message when API key is missing."""
-    message = """[bold yellow]⚠️  No LLM API Key Found[/bold yellow]
+    message = """[bold yellow]No LLM API Key Found[/bold yellow]
 
 The chat feature requires an API key for an LLM provider.
 
 [bold cyan]Set one of these environment variables:[/bold cyan]
-  • [green]OPENAI_API_KEY[/green]       - For OpenAI (GPT-4, etc.) [dim](recommended)[/dim]
-  • [green]OPENROUTER_API_KEY[/green]  - For OpenRouter (Claude, GPT, etc.)
+  [green]OPENAI_API_KEY[/green]       - For OpenAI (GPT-4, etc.)
+  [green]OPENROUTER_API_KEY[/green]  - For OpenRouter (Claude, GPT, etc.) [dim](recommended)[/dim]
 
 [bold cyan]Example:[/bold cyan]
   [yellow]export OPENAI_API_KEY="sk-..."[/yellow]
   [yellow]export OPENROUTER_API_KEY="sk-or-..."[/yellow]
 
 [bold cyan]Get API keys at:[/bold cyan]
-  • OpenAI: [link=https://platform.openai.com/api-keys]https://platform.openai.com/api-keys[/link]
-  • OpenRouter: [link=https://openrouter.ai/keys]https://openrouter.ai/keys[/link]
+  OpenAI: [link=https://platform.openai.com/api-keys]https://platform.openai.com/api-keys[/link]
+  OpenRouter: [link=https://openrouter.ai/keys]https://openrouter.ai/keys[/link]
 
 [dim]Alternatively, run: [cyan]mcp-vector-search setup[/cyan] for interactive setup[/dim]"""
 
@@ -56,16 +53,17 @@ The chat feature requires an API key for an LLM provider.
     console.print(panel)
 
 
-class ChatSession:
-    """Manages conversation history with automatic compaction.
+class EnhancedChatSession:
+    """Enhanced session with 5-pair compaction and task tracking.
 
-    Keeps system prompt intact, compacts older messages when history grows large,
-    and maintains recent exchanges for context.
+    Features:
+    - Keeps last 5 user/assistant exchange pairs verbatim
+    - Compacts older exchanges into history summary
+    - Tracks current task context
+    - Always preserves system prompt and task context
     """
 
-    # Threshold for compaction (estimated tokens, ~4 chars per token)
-    COMPACTION_THRESHOLD = 8000 * 4  # ~32000 chars
-    RECENT_EXCHANGES_TO_KEEP = 3  # Keep last N user/assistant pairs
+    RECENT_EXCHANGES_TO_KEEP = 5  # Keep last 5 pairs
 
     def __init__(self, system_prompt: str) -> None:
         """Initialize session with system prompt.
@@ -74,82 +72,216 @@ class ChatSession:
             system_prompt: Initial system message
         """
         self.system_prompt = system_prompt
-        self.messages: list[dict[str, str]] = [
-            {"role": "system", "content": system_prompt}
-        ]
+        self.messages: list[dict[str, Any]] = []
+        self.history_summary: str = ""
+        self.current_task: dict[str, str] | None = None  # {description, status}
+
+    def set_task(self, description: str) -> None:
+        """Set the current task being worked on.
+
+        Args:
+            description: Task description
+        """
+        self.current_task = {
+            "description": description,
+            "status": "in_progress",
+        }
+
+    def update_task_status(self, status: str) -> None:
+        """Update current task status.
+
+        Args:
+            status: New status (in_progress, completed, blocked)
+        """
+        if self.current_task:
+            self.current_task["status"] = status
+
+    def clear_task(self) -> None:
+        """Clear the current task."""
+        self.current_task = None
 
     def add_message(self, role: str, content: str) -> None:
         """Add message to history and compact if needed.
 
         Args:
-            role: Message role (user/assistant)
+            role: Message role (user/assistant/tool)
             content: Message content
         """
         self.messages.append({"role": role, "content": content})
 
-        # Check if compaction needed
-        total_chars = sum(len(msg["content"]) for msg in self.messages)
-        if total_chars > self.COMPACTION_THRESHOLD:
+        # Count user/assistant pairs
+        pairs = sum(1 for m in self.messages if m["role"] == "user")
+
+        # Compact on 6th pair (keep 5)
+        if pairs > self.RECENT_EXCHANGES_TO_KEEP:
             self._compact_history()
 
-    def _compact_history(self) -> None:
-        """Compact conversation history by summarizing older exchanges.
+    def add_tool_message(self, message: dict[str, Any]) -> None:
+        """Add a tool call or tool result message.
 
-        Strategy:
-        1. Keep system prompt intact
-        2. Summarize older exchanges into brief context
-        3. Keep recent N exchanges verbatim
+        Args:
+            message: Full message dict (may contain tool_calls)
         """
+        self.messages.append(message)
+
+    def _compact_history(self) -> None:
+        """Compact conversation by summarizing oldest pair into history_summary."""
         logger.debug("Compacting conversation history")
 
-        # Separate system prompt and conversation
-        system_msg = self.messages[0]
-        conversation = self.messages[1:]
+        # Find the first user message and its response
+        first_user_idx = None
+        first_assistant_idx = None
 
-        # Keep recent exchanges (last N user/assistant pairs)
-        recent_start = max(0, len(conversation) - (self.RECENT_EXCHANGES_TO_KEEP * 2))
-        older_messages = conversation[:recent_start]
-        recent_messages = conversation[recent_start:]
+        for i, msg in enumerate(self.messages):
+            if msg["role"] == "user" and first_user_idx is None:
+                first_user_idx = i
+            elif msg["role"] == "assistant" and first_user_idx is not None:
+                first_assistant_idx = i
+                break
 
-        # Summarize older messages
-        if older_messages:
-            summary_parts = []
-            for msg in older_messages:
-                role = msg["role"].capitalize()
-                content_preview = msg["content"][:100].replace("\n", " ")
-                summary_parts.append(f"{role}: {content_preview}...")
+        if first_user_idx is None or first_assistant_idx is None:
+            return
 
-            summary = "\n".join(summary_parts)
-            summary_msg = {
-                "role": "system",
-                "content": f"[Previous conversation summary]\n{summary}\n[End summary]",
-            }
+        # Extract the pair to summarize
+        user_msg = self.messages[first_user_idx]["content"]
+        assistant_msg = self.messages[first_assistant_idx].get("content", "")
 
-            # Rebuild messages: system + summary + recent
-            self.messages = [system_msg, summary_msg] + recent_messages
+        # Create summary of this exchange
+        user_preview = user_msg[:150].replace("\n", " ")
+        assistant_preview = (
+            assistant_msg[:150].replace("\n", " ") if assistant_msg else "[tool calls]"
+        )
 
-            logger.debug(
-                f"Compacted {len(older_messages)} old messages, kept {len(recent_messages)} recent"
-            )
+        summary_entry = (
+            f"- User asked: {user_preview}...\n  Assistant: {assistant_preview}..."
+        )
 
-    def get_messages(self) -> list[dict[str, str]]:
-        """Get current message history.
+        # Append to history summary
+        if self.history_summary:
+            self.history_summary += f"\n{summary_entry}"
+        else:
+            self.history_summary = summary_entry
+
+        # Remove the compacted messages (including any tool messages between)
+        # Find all messages up to and including the first assistant response
+        messages_to_remove = first_assistant_idx + 1
+
+        # Also remove any tool results that followed this exchange
+        while (
+            messages_to_remove < len(self.messages)
+            and self.messages[messages_to_remove].get("role") == "tool"
+        ):
+            messages_to_remove += 1
+
+        self.messages = self.messages[messages_to_remove:]
+
+        logger.debug(
+            f"Compacted {messages_to_remove} messages, history now has {len(self.messages)} messages"
+        )
+
+    def get_messages(self) -> list[dict[str, Any]]:
+        """Build complete message list for API call.
+
+        Structure: [system, history_summary?, task_context?, ...recent_messages]
 
         Returns:
             List of message dictionaries
         """
-        return self.messages.copy()
+        result = [{"role": "system", "content": self.system_prompt}]
+
+        # Add history summary if exists
+        if self.history_summary:
+            result.append(
+                {
+                    "role": "system",
+                    "content": f"[Previous Conversation Summary]\n{self.history_summary}\n[End Summary]",
+                }
+            )
+
+        # Add task context if exists
+        if self.current_task:
+            result.append(
+                {
+                    "role": "system",
+                    "content": f"[Current Task]\nDescription: {self.current_task['description']}\nStatus: {self.current_task['status']}\n[End Task]",
+                }
+            )
+
+        # Add recent messages
+        result.extend(self.messages)
+
+        return result
 
     def clear(self) -> None:
         """Clear conversation history, keeping only system prompt."""
-        self.messages = [{"role": "system", "content": self.system_prompt}]
+        self.messages = []
+        self.history_summary = ""
+        # Keep current_task intact
 
 
 # Create chat subcommand app with "did you mean" functionality
 chat_app = create_enhanced_typer(
-    help="🤖 LLM-powered intelligent code search",
+    help="Chat with your codebase using Claude Opus 4",
     invoke_without_command=True,
 )
+
+
+def show_intro() -> None:
+    """Display the REPL intro statement."""
+    intro = """[bold cyan]MCP Vector Search - Chat[/bold cyan]
+
+[dim]I'm here to help you understand and work with your codebase.[/dim]
+
+[bold]What I can do:[/bold]
+  Search and explain code semantically
+  Answer questions about architecture and patterns
+  Analyze code quality and complexity
+  Write analysis reports to markdown files
+  Search the web for documentation
+
+[dim]I'll respond conversationally. Ask for code when you need it![/dim]
+
+[bold]Commands:[/bold] /task, /status, /clear, /exit"""
+
+    panel = Panel(
+        intro,
+        border_style="cyan",
+        padding=(1, 2),
+    )
+    console.print(panel)
+
+
+# Conversational system prompt
+CONVERSATIONAL_SYSTEM_PROMPT = """You are a helpful code assistant. IMPORTANT GUIDELINES:
+
+1. BE CONVERSATIONAL AND FRIENDLY
+   - Explain concepts in plain language first
+   - Use a natural, helpful tone
+   - Don't be overly formal or robotic
+
+2. DO NOT SHOW CODE UNLESS ASKED
+   - Summarize search results rather than showing raw code
+   - Describe what functions/classes do without dumping code
+   - Only show code when user explicitly asks: "show me", "what's the code", "show the implementation"
+
+3. WHEN SHOWING CODE
+   - Use markdown code blocks with language hints
+   - Keep snippets focused and relevant
+   - Add brief explanations
+
+4. TOOL USAGE
+   - Use search_code to find relevant code
+   - Use read_file for full file context
+   - Use write_markdown to create reports
+   - Use analyze_code for quality metrics
+   - Use web_search for external documentation
+
+5. TASK TRACKING
+   - Track ONE task at a time
+   - Update when user gives a new task
+   - Reference the current task in your responses when relevant
+
+Remember: Be helpful, conversational, and only show code when explicitly requested."""
 
 
 @chat_app.callback(invoke_without_command=True)
@@ -157,7 +289,7 @@ def chat_main(
     ctx: typer.Context,
     query: str | None = typer.Argument(
         None,
-        help="Natural language query about your code",
+        help="Initial question (or omit to start interactive REPL)",
     ),
     project_root: Path | None = typer.Option(
         None,
@@ -168,303 +300,108 @@ def chat_main(
         file_okay=False,
         dir_okay=True,
         readable=True,
-        rich_help_panel="🔧 Global Options",
-    ),
-    limit: int = typer.Option(
-        5,
-        "--limit",
-        "-l",
-        help="Maximum number of results to return",
-        min=1,
-        max=20,
-        rich_help_panel="📊 Result Options",
+        rich_help_panel="Global Options",
     ),
     model: str | None = typer.Option(
         None,
         "--model",
         "-m",
-        help="Model to use (defaults based on provider: gpt-4o-mini for OpenAI, claude-3-haiku for OpenRouter)",
-        rich_help_panel="🤖 LLM Options",
+        help="Model to use (default: claude-opus-4 via OpenRouter)",
+        rich_help_panel="LLM Options",
     ),
     provider: str | None = typer.Option(
-        None,
+        "openrouter",
         "--provider",
-        help="LLM provider to use: 'openai' or 'openrouter' (auto-detect if not specified)",
-        rich_help_panel="🤖 LLM Options",
+        help="LLM provider: 'openai' or 'openrouter' (default: openrouter)",
+        rich_help_panel="LLM Options",
     ),
     timeout: float | None = typer.Option(
-        30.0,
+        60.0,
         "--timeout",
         help="API timeout in seconds",
         min=5.0,
-        max=120.0,
-        rich_help_panel="🤖 LLM Options",
-    ),
-    json_output: bool = typer.Option(
-        False,
-        "--json",
-        help="Output results in JSON format",
-        rich_help_panel="📊 Result Options",
-    ),
-    files: str | None = typer.Option(
-        None,
-        "--files",
-        "-f",
-        help="Filter by file glob patterns (e.g., '*.py', 'src/*.js'). Matches basename or relative path.",
-        rich_help_panel="🔍 Filters",
-    ),
-    think: bool = typer.Option(
-        False,
-        "--think",
-        "-t",
-        help="Use advanced model for complex queries (gpt-4o / claude-sonnet-4). Better reasoning, higher cost.",
-        rich_help_panel="🤖 LLM Options",
+        max=300.0,
+        rich_help_panel="LLM Options",
     ),
 ) -> None:
-    """🤖 Ask questions about your code in natural language.
+    """Interactive chat REPL powered by Claude Opus 4.
 
-    Uses LLM (OpenAI or OpenRouter) to intelligently search your codebase and answer
-    questions like "where is X defined?", "how does Y work?", etc.
+    Start an interactive session to explore and understand your codebase.
+    Ask questions naturally - I'll explain concepts conversationally and
+    only show code when you ask for it.
+
+    [bold cyan]Quick Start:[/bold cyan]
+        $ mcp-vector-search chat
+
+    [bold cyan]With Initial Question:[/bold cyan]
+        $ mcp-vector-search chat "how does the search work?"
+
+    [bold cyan]Commands in REPL:[/bold cyan]
+        /task <description>  - Set current task
+        /status              - Show task and session status
+        /clear               - Clear conversation history
+        /exit                - Exit the REPL
 
     [bold cyan]Setup:[/bold cyan]
-
-    [green]Option A - OpenAI (recommended):[/green]
-        $ export OPENAI_API_KEY="your-key-here"
-        Get a key at: [cyan]https://platform.openai.com/api-keys[/cyan]
-
-    [green]Option B - OpenRouter:[/green]
-        $ export OPENROUTER_API_KEY="your-key-here"
+        $ export OPENROUTER_API_KEY="your-key"
         Get a key at: [cyan]https://openrouter.ai/keys[/cyan]
-
-    [dim]Provider is auto-detected. OpenAI is preferred if both keys are set.[/dim]
-
-    [bold cyan]Examples:[/bold cyan]
-
-    [green]Ask where a parameter is set:[/green]
-        $ mcp-vector-search chat "where is similarity_threshold set?"
-
-    [green]Ask how something works:[/green]
-        $ mcp-vector-search chat "how does the indexing process work?"
-
-    [green]Find implementation details:[/green]
-        $ mcp-vector-search chat "show me the search ranking algorithm"
-
-    [green]Force specific provider:[/green]
-        $ mcp-vector-search chat "question" --provider openai
-        $ mcp-vector-search chat "question" --provider openrouter
-
-    [green]Use custom model:[/green]
-        $ mcp-vector-search chat "question" --model gpt-4o
-        $ mcp-vector-search chat "question" --model anthropic/claude-3.5-sonnet
-
-    [bold cyan]Advanced:[/bold cyan]
-
-    [green]Filter by file pattern:[/green]
-        $ mcp-vector-search chat "how does validation work?" --files "*.py"
-        $ mcp-vector-search chat "find React components" --files "src/*.tsx"
-
-    [green]Limit results:[/green]
-        $ mcp-vector-search chat "find auth code" --limit 3
-
-    [green]Custom timeout:[/green]
-        $ mcp-vector-search chat "complex question" --timeout 60
-
-    [green]Use advanced model for complex queries:[/green]
-        $ mcp-vector-search chat "explain the authentication flow" --think
-
-    [dim]💡 Tip: Use --think for complex architectural questions. It uses gpt-4o or
-    claude-sonnet-4 for better reasoning at higher cost.[/dim]
     """
-    # If no query provided and no subcommand invoked, exit (show help)
-    if query is None:
-        if ctx.invoked_subcommand is None:
-            # No query and no subcommand - show help
-            raise typer.Exit()
-        else:
-            # A subcommand was invoked - let it handle the request
-            return
+    # A subcommand was invoked - let it handle the request
+    if ctx.invoked_subcommand is not None:
+        return
+
+    # Get project root
+    if project_root is None:
+        if ctx.obj and isinstance(ctx.obj, dict):
+            project_root = ctx.obj.get("project_root")
+        if project_root is None:
+            project_root = Path.cwd()
 
     try:
-        project_root = project_root or ctx.obj.get("project_root") or Path.cwd()
-
-        # Validate provider if specified
-        if provider and provider not in ("openai", "openrouter"):
-            print_error(
-                f"Invalid provider: {provider}. Must be 'openai' or 'openrouter'"
+        if query:
+            # Single query mode - process and exit
+            asyncio.run(
+                run_single_query(
+                    project_root=project_root,
+                    query=query,
+                    model=model,
+                    provider=provider or "openrouter",
+                    timeout=timeout or 60.0,
+                )
             )
-            raise typer.Exit(1)
-
-        # Run the chat with intent detection and routing
-        asyncio.run(
-            run_chat_with_intent(
-                project_root=project_root,
-                query=query,
-                limit=limit,
-                model=model,
-                provider=provider,
-                timeout=timeout,
-                json_output=json_output,
-                files=files,
-                think=think,
+        else:
+            # No query - start interactive REPL
+            asyncio.run(
+                run_chat_repl(
+                    project_root=project_root,
+                    model=model,
+                    provider=provider or "openrouter",
+                    timeout=timeout or 60.0,
+                )
             )
-        )
-
     except (typer.Exit, SystemExit):
-        # Re-raise exit exceptions without printing additional error messages
-        # The error message has already been shown to the user
         raise
     except Exception as e:
-        #  Log real exceptions (not typer.Exit)
-        if not isinstance(e, typer.Exit | SystemExit):
-            logger.error(f"Chat failed: {e}")
-            print_error(f"Chat failed: {e}")
-        raise typer.Exit(
-            1
-        ) from None  # Suppress exception chain to avoid double-printing
+        logger.error(f"Chat failed: {e}")
+        print_error(f"Chat failed: {e}")
+        raise typer.Exit(1) from None
 
 
-async def run_chat_with_intent(
+async def run_single_query(
     project_root: Path,
     query: str,
-    limit: int = 5,
     model: str | None = None,
-    provider: str | None = None,
-    timeout: float = 30.0,
-    json_output: bool = False,
-    files: str | None = None,
-    think: bool = False,
+    provider: str = "openrouter",
+    timeout: float = 60.0,
 ) -> None:
-    """Route to appropriate chat mode based on detected intent.
+    """Run a single query and exit.
 
     Args:
         project_root: Project root directory
-        query: User's natural language query
-        limit: Maximum results to return
-        model: Model to use (optional)
+        query: User's question
+        model: Model to use
         provider: LLM provider
         timeout: API timeout
-        json_output: Whether to output JSON
-        files: File pattern filter
-        think: Use advanced model
-    """
-    # Initialize LLM client for intent detection
-    from ...core.config_utils import (
-        get_openai_api_key,
-        get_openrouter_api_key,
-        get_preferred_llm_provider,
-    )
-
-    config_dir = project_root / ".mcp-vector-search"
-    openai_key = get_openai_api_key(config_dir)
-    openrouter_key = get_openrouter_api_key(config_dir)
-
-    # Determine provider (same logic as before)
-    if not provider:
-        preferred_provider = get_preferred_llm_provider(config_dir)
-        if preferred_provider == "openai" and openai_key:
-            provider = "openai"
-        elif preferred_provider == "openrouter" and openrouter_key:
-            provider = "openrouter"
-        elif openai_key:
-            provider = "openai"
-        elif openrouter_key:
-            provider = "openrouter"
-        else:
-            console.print()  # Blank line for spacing
-            show_api_key_help()
-            raise typer.Exit(1)
-
-    # Create temporary client for intent detection (use fast model)
-    try:
-        intent_client = LLMClient(
-            openai_api_key=openai_key,
-            openrouter_api_key=openrouter_key,
-            provider=provider,
-            timeout=timeout,
-            think=False,  # Use fast model for intent detection
-        )
-
-        # Detect intent
-        intent = await intent_client.detect_intent(query)
-
-        # Show intent to user
-        if intent == "find":
-            console.print("\n[cyan]🔍 Intent: Find[/cyan] - Searching codebase\n")
-            await run_chat_search(
-                project_root=project_root,
-                query=query,
-                limit=limit,
-                model=model,
-                provider=provider,
-                timeout=timeout,
-                json_output=json_output,
-                files=files,
-                think=think,
-            )
-        elif intent == "analyze":
-            # Analysis mode - analyze code quality and metrics
-            console.print(
-                "\n[cyan]📊 Intent: Analyze[/cyan] - Analyzing code quality\n"
-            )
-            await run_chat_analyze(
-                project_root=project_root,
-                query=query,
-                model=model,
-                provider=provider,
-                timeout=timeout,
-                think=think,
-            )
-        else:
-            # Answer mode - force think mode and enter interactive session
-            console.print(
-                "\n[cyan]💬 Intent: Answer[/cyan] - Entering interactive mode\n"
-            )
-            await run_chat_answer(
-                project_root=project_root,
-                initial_query=query,
-                limit=limit,
-                model=model,
-                provider=provider,
-                timeout=timeout,
-                files=files,
-            )
-
-    except Exception as e:
-        logger.error(f"Intent detection failed: {e}")
-        # Default to find mode on error
-        console.print("\n[yellow]⚠ Using default search mode[/yellow]\n")
-        await run_chat_search(
-            project_root=project_root,
-            query=query,
-            limit=limit,
-            model=model,
-            provider=provider,
-            timeout=timeout,
-            json_output=json_output,
-            files=files,
-            think=think,
-        )
-
-
-async def run_chat_answer(
-    project_root: Path,
-    initial_query: str,
-    limit: int = 5,
-    model: str | None = None,
-    provider: str | None = None,
-    timeout: float = 30.0,
-    files: str | None = None,
-) -> None:
-    """Run interactive answer mode with streaming responses.
-
-    Args:
-        project_root: Project root directory
-        initial_query: Initial user question
-        limit: Max search results for context
-        model: Model to use (optional, defaults to advanced model)
-        provider: LLM provider
-        timeout: API timeout
-        files: File pattern filter
     """
     from ...core.config_utils import get_openai_api_key, get_openrouter_api_key
 
@@ -472,7 +409,15 @@ async def run_chat_answer(
     openai_key = get_openai_api_key(config_dir)
     openrouter_key = get_openrouter_api_key(config_dir)
 
-    # Load project configuration
+    # Validate provider
+    if provider == "openai" and not openai_key:
+        show_api_key_help()
+        raise typer.Exit(1)
+    elif provider == "openrouter" and not openrouter_key:
+        show_api_key_help()
+        raise typer.Exit(1)
+
+    # Load project
     project_manager = ProjectManager(project_root)
     if not project_manager.is_initialized():
         raise ProjectNotFoundError(
@@ -481,7 +426,7 @@ async def run_chat_answer(
 
     config = project_manager.load_config()
 
-    # Initialize LLM client with advanced model (force think mode)
+    # Initialize LLM client
     try:
         llm_client = LLMClient(
             openai_api_key=openai_key,
@@ -489,11 +434,8 @@ async def run_chat_answer(
             model=model,
             provider=provider,
             timeout=timeout,
-            think=True,  # Always use advanced model for answer mode
         )
-        provider_display = llm_client.provider.capitalize()
-        model_info = f"{llm_client.model} [bold magenta](thinking mode)[/bold magenta]"
-        print_success(f"Connected to {provider_display}: {model_info}")
+        console.print(f"[dim]Using {llm_client.provider}: {llm_client.model}[/dim]\n")
     except ValueError as e:
         print_error(str(e))
         raise typer.Exit(1)
@@ -510,658 +452,52 @@ async def run_chat_answer(
         similarity_threshold=config.similarity_threshold,
     )
 
-    # Initialize session (cleared on startup)
-    system_prompt = """You are a helpful code assistant analyzing a codebase. Answer questions based on provided code context.
+    # Create session for single query
+    session = EnhancedChatSession(CONVERSATIONAL_SYSTEM_PROMPT)
 
-Guidelines:
-- Be concise but thorough
-- Reference specific functions, classes, or files
-- Use code examples when helpful
-- If context is insufficient, say so
-- Use markdown formatting"""
-
-    session = ChatSession(system_prompt)
-
-    # Process initial query
-    await _process_answer_query(
-        query=initial_query,
+    # Process query
+    await _process_query(
+        query=query,
         llm_client=llm_client,
         search_engine=search_engine,
         database=database,
         session=session,
         project_root=project_root,
-        limit=limit,
-        files=files,
         config=config,
     )
 
-    # Interactive loop
-    console.print("\n[dim]Type your questions or '/exit' to quit[/dim]\n")
 
-    while True:
-        try:
-            # Get user input
-            user_input = console.input("\n[bold cyan]You:[/bold cyan] ").strip()
-
-            if not user_input:
-                continue
-
-            # Check for exit command
-            if user_input.lower() in ("/exit", "/quit", "exit", "quit"):
-                console.print("\n[cyan]👋 Session ended.[/cyan]")
-                break
-
-            # Process query
-            await _process_answer_query(
-                query=user_input,
-                llm_client=llm_client,
-                search_engine=search_engine,
-                database=database,
-                session=session,
-                project_root=project_root,
-                limit=limit,
-                files=files,
-                config=config,
-            )
-
-        except KeyboardInterrupt:
-            console.print("\n\n[cyan]👋 Session ended.[/cyan]")
-            break
-        except EOFError:
-            console.print("\n\n[cyan]👋 Session ended.[/cyan]")
-            break
-        except Exception as e:
-            logger.error(f"Error processing query: {e}")
-            print_error(f"Error: {e}")
-
-
-async def run_chat_analyze(
+async def run_chat_repl(
     project_root: Path,
-    query: str,
     model: str | None = None,
-    provider: str | None = None,
-    timeout: float = 30.0,
-    think: bool = False,
+    provider: str = "openrouter",
+    timeout: float = 60.0,
 ) -> None:
-    """Run analysis mode with streaming interpretation.
-
-    This function:
-    1. Parses the user's analysis question
-    2. Determines which metrics/tools to invoke
-    3. Calls appropriate analysis tools
-    4. Passes results to LLM with specialized analysis prompt
-    5. Returns interpreted insights with streaming output
+    """Run the interactive chat REPL.
 
     Args:
         project_root: Project root directory
-        query: User's analysis question
-        model: Model to use (optional)
+        model: Model to use
         provider: LLM provider
         timeout: API timeout
-        think: Use advanced model for complex analysis
     """
-    import json
-
-    from ...analysis import ProjectMetrics
-    from ...analysis.interpretation import AnalysisInterpreter, EnhancedJSONExporter
     from ...core.config_utils import get_openai_api_key, get_openrouter_api_key
-    from ...parsers.registry import ParserRegistry
+    from ...core.search import SemanticSearchEngine
 
     config_dir = project_root / ".mcp-vector-search"
     openai_key = get_openai_api_key(config_dir)
     openrouter_key = get_openrouter_api_key(config_dir)
 
-    # Load project configuration
-    project_manager = ProjectManager(project_root)
-    if not project_manager.is_initialized():
-        raise ProjectNotFoundError(
-            f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
-        )
-
-    config = project_manager.load_config()
-
-    # Initialize LLM client (use advanced model for analysis)
-    try:
-        llm_client = LLMClient(
-            openai_api_key=openai_key,
-            openrouter_api_key=openrouter_key,
-            model=model,
-            provider=provider,
-            timeout=timeout,
-            think=True,  # Always use advanced model for analysis
-        )
-        provider_display = llm_client.provider.capitalize()
-        model_info = f"{llm_client.model} [bold magenta](analysis mode)[/bold magenta]"
-        print_success(f"Connected to {provider_display}: {model_info}")
-    except ValueError as e:
-        print_error(str(e))
+    # Validate provider and keys
+    if provider == "openai" and not openai_key:
+        show_api_key_help()
+        raise typer.Exit(1)
+    elif provider == "openrouter" and not openrouter_key:
+        show_api_key_help()
         raise typer.Exit(1)
 
-    # Determine query type and run appropriate analysis
-    console.print(f"\n[cyan]🔍 Analyzing:[/cyan] [white]{query}[/white]\n")
-
-    # Initialize parser registry and collect metrics
-    console.print("[cyan]📊 Collecting metrics...[/cyan]")
-    parser_registry = ParserRegistry()
-    project_metrics = ProjectMetrics(root_path=project_root)
-
-    # Parse all files
-    for file_ext in config.file_extensions:
-        parser = parser_registry.get_parser(file_ext)
-        if parser:
-            # Find all files with this extension
-            for file_path in project_root.rglob(f"*{file_ext}"):
-                # Skip ignored directories
-                should_skip = False
-                for ignore_pattern in config.ignore_patterns:
-                    if ignore_pattern in str(file_path):
-                        should_skip = True
-                        break
-
-                if should_skip:
-                    continue
-
-                try:
-                    chunks = parser.parse_file(file_path)
-                    project_metrics.add_file(file_path, chunks)
-                except Exception as e:
-                    logger.warning(f"Failed to parse {file_path}: {e}")
-
-    # Generate enhanced export with LLM context
-    console.print("[cyan]🧮 Computing analysis context...[/cyan]")
-    exporter = EnhancedJSONExporter(project_root=project_root)
-    enhanced_export = exporter.export_with_context(
-        project_metrics,
-        include_smells=True,
-    )
-
-    # Create analysis prompt based on query type
-    analysis_context = json.dumps(enhanced_export.model_dump(), indent=2)
-
-    # Analysis system prompt with grading rubric and code smell interpretation
-    analysis_system_prompt = """You are a code quality expert analyzing a codebase. You have access to comprehensive metrics and code smell analysis.
-
-**Metric Definitions:**
-- **Cognitive Complexity**: Measures how difficult code is to understand (control flow, nesting, operators)
-  - Grade A: 0-5 (simple), B: 6-10 (moderate), C: 11-15 (complex), D: 16-20 (very complex), F: 21+ (extremely complex)
-- **Cyclomatic Complexity**: Counts independent paths through code (branches, loops)
-  - Low: 1-5, Moderate: 6-10, High: 11-20, Very High: 21+
-- **Instability**: Ratio of outgoing to total dependencies (I = Ce / (Ca + Ce))
-  - 0.0 = Stable (hard to change), 1.0 = Unstable (easy to change)
-- **LCOM4**: Lack of Cohesion - number of connected components in class
-  - 1 = Highly cohesive (single responsibility), 2+ = Low cohesion (multiple responsibilities)
-
-**Code Smell Severity:**
-- **Error**: Critical issues blocking maintainability (God Classes, Extreme Complexity)
-- **Warning**: Moderate issues needing attention (Long Methods, Deep Nesting)
-- **Info**: Minor issues, cosmetic improvements (Long Parameter Lists)
-
-**Threshold Context:**
-- **Well Below**: <50% of threshold (healthy)
-- **Below**: 50-100% of threshold (acceptable)
-- **At Threshold**: 100-110% (monitor closely)
-- **Above**: 110-150% (needs attention)
-- **Well Above**: >150% (urgent action required)
-
-**Output Format:**
-Provide structured insights with:
-1. **Executive Summary**: Overall quality grade and key findings
-2. **Priority Issues**: Most critical problems to address (if any)
-3. **Specific Metrics**: Answer the user's specific question with data
-4. **Recommendations**: Actionable next steps prioritized by impact
-
-Use markdown formatting. Be concise but thorough. Reference specific files, functions, or classes when relevant."""
-
-    # Build messages for analysis
-    messages = [
-        {"role": "system", "content": analysis_system_prompt},
-        {
-            "role": "user",
-            "content": f"""Analysis Data:
-{analysis_context}
-
-User Question: {query}
-
-Please analyze the codebase and answer the user's question based on the metrics and code smell data provided.""",
-        },
-    ]
-
-    # Stream the response
-    console.print("\n[bold cyan]🤖 Analysis:[/bold cyan]\n")
-
-    try:
-        # Use Rich Live for rendering streamed markdown
-        accumulated_response = ""
-        with Live(
-            "", console=console, auto_refresh=True, vertical_overflow="visible"
-        ) as live:
-            async for chunk in llm_client.stream_chat_completion(messages):
-                accumulated_response += chunk
-                # Update live display with accumulated markdown
-                live.update(Markdown(accumulated_response))
-
-        console.print()  # Blank line after completion
-
-    except Exception as e:
-        logger.error(f"Analysis streaming failed: {e}")
-        print_error(f"Failed to stream analysis: {e}")
-
-        # Fallback: Use interpreter for summary
-        console.print("\n[yellow]⚠ Falling back to summary interpretation[/yellow]\n")
-        interpreter = AnalysisInterpreter()
-        summary = interpreter.interpret(
-            enhanced_export, focus="summary", verbosity="normal"
-        )
-        console.print(Markdown(summary))
-
-
-async def _process_answer_query(
-    query: str,
-    llm_client: LLMClient,
-    search_engine: SemanticSearchEngine,
-    database: ChromaVectorDatabase,
-    session: ChatSession,
-    project_root: Path,
-    limit: int,
-    files: str | None,
-    config: Any,
-) -> None:
-    """Process a single answer query with agentic tool use.
-
-    Args:
-        query: User query
-        llm_client: LLM client instance
-        search_engine: Search engine instance
-        database: Vector database
-        session: Chat session
-        project_root: Project root path
-        limit: Max results
-        files: File pattern filter
-        config: Project config
-    """
-    # Define search tools for the LLM
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "search_code",
-                "description": "Search the codebase for relevant code snippets using semantic search",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query to find relevant code (e.g., 'authentication logic', 'database connection', 'error handling')",
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of results to return (default: 5, max: 10)",
-                            "default": 5,
-                        },
-                    },
-                    "required": ["query"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "read_file",
-                "description": "Read the full content of a specific file",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Relative path to the file from project root",
-                        }
-                    },
-                    "required": ["file_path"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "list_files",
-                "description": "List files in the codebase matching a pattern",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "pattern": {
-                            "type": "string",
-                            "description": "Glob pattern to match files (e.g., '*.py', 'src/**/*.ts', 'tests/')",
-                        }
-                    },
-                    "required": ["pattern"],
-                },
-            },
-        },
-    ]
-
-    # System prompt for tool use
-    system_prompt = """You are a helpful code assistant with access to search tools. Use these tools to find and analyze code in the codebase.
-
-Available tools:
-- search_code: Search for relevant code using semantic search
-- read_file: Read the full content of a specific file
-- list_files: List files matching a pattern
-
-Guidelines:
-1. Use search_code to find relevant code snippets
-2. Use read_file when you need to see the full file context
-3. Use list_files to understand the project structure
-4. Make multiple searches if needed to gather enough context
-5. After gathering sufficient information, provide your analysis
-
-Always base your answers on actual code from the tools. If you can't find relevant code, say so."""
-
-    # Tool execution functions
-    async def execute_search_code(query_str: str, limit_val: int = 5) -> str:
-        """Execute search_code tool."""
-        try:
-            limit_val = min(limit_val, 10)  # Cap at 10
-            async with database:
-                results = await search_engine.search(
-                    query=query_str,
-                    limit=limit_val,
-                    similarity_threshold=config.similarity_threshold,
-                    include_context=True,
-                )
-
-                # Post-filter by file pattern if specified
-                if files and results:
-                    filtered_results = []
-                    for result in results:
-                        try:
-                            rel_path = str(result.file_path.relative_to(project_root))
-                        except ValueError:
-                            rel_path = str(result.file_path)
-
-                        if fnmatch(rel_path, files) or fnmatch(
-                            os.path.basename(rel_path), files
-                        ):
-                            filtered_results.append(result)
-                    results = filtered_results
-
-            if not results:
-                return "No results found for this query."
-
-            # Format results
-            result_parts = []
-            for i, result in enumerate(results, 1):
-                try:
-                    rel_path = str(result.file_path.relative_to(project_root))
-                except ValueError:
-                    rel_path = str(result.file_path)
-
-                result_parts.append(
-                    f"[Result {i}: {rel_path}]\n"
-                    f"Location: {result.location}\n"
-                    f"Lines {result.start_line}-{result.end_line}\n"
-                    f"Similarity: {result.similarity_score:.3f}\n"
-                    f"```\n{result.content}\n```\n"
-                )
-            return "\n".join(result_parts)
-
-        except Exception as e:
-            logger.error(f"search_code tool failed: {e}")
-            return f"Error searching code: {e}"
-
-    async def execute_read_file(file_path: str) -> str:
-        """Execute read_file tool."""
-        try:
-            # Normalize path
-            if file_path.startswith("/"):
-                full_path = Path(file_path)
-            else:
-                full_path = project_root / file_path
-
-            # Security check: file must be within project
-            try:
-                full_path.relative_to(project_root)
-            except ValueError:
-                return f"Error: File must be within project root: {project_root}"
-
-            if not full_path.exists():
-                return f"Error: File not found: {file_path}"
-
-            if not full_path.is_file():
-                return f"Error: Not a file: {file_path}"
-
-            # Read file with size limit
-            max_size = 100_000  # 100KB
-            file_size = full_path.stat().st_size
-            if file_size > max_size:
-                return f"Error: File too large ({file_size} bytes). Use search_code instead."
-
-            content = full_path.read_text(errors="replace")
-            return f"File: {file_path}\n```\n{content}\n```"
-
-        except Exception as e:
-            logger.error(f"read_file tool failed: {e}")
-            return f"Error reading file: {e}"
-
-    async def execute_list_files(pattern: str) -> str:
-        """Execute list_files tool."""
-        try:
-            from glob import glob
-
-            # Use glob to find matching files
-            matches = glob(str(project_root / pattern), recursive=True)
-
-            if not matches:
-                return f"No files found matching pattern: {pattern}"
-
-            # Get relative paths and limit results
-            rel_paths = []
-            for match in matches[:50]:  # Limit to 50 files
-                try:
-                    rel_path = Path(match).relative_to(project_root)
-                    rel_paths.append(str(rel_path))
-                except ValueError:
-                    continue
-
-            if not rel_paths:
-                return f"No files found matching pattern: {pattern}"
-
-            return f"Files matching '{pattern}':\n" + "\n".join(
-                f"- {p}" for p in sorted(rel_paths)
-            )
-
-        except Exception as e:
-            logger.error(f"list_files tool failed: {e}")
-            return f"Error listing files: {e}"
-
-    # Get conversation history
-    conversation_history = session.get_messages()[1:]  # Skip system prompt
-
-    # Build messages: system + history + current query
-    messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(conversation_history)
-    messages.append({"role": "user", "content": query})
-
-    # Agentic loop
-    max_iterations = 25
-    for _iteration in range(max_iterations):
-        try:
-            response = await llm_client.chat_with_tools(messages, tools)
-
-            # Extract message from response
-            choice = response.get("choices", [{}])[0]
-            message = choice.get("message", {})
-
-            # Check for tool calls
-            tool_calls = message.get("tool_calls", [])
-
-            if tool_calls:
-                # Add assistant message with tool calls
-                messages.append(message)
-
-                # Execute each tool call
-                for tool_call in tool_calls:
-                    tool_id = tool_call.get("id")
-                    function = tool_call.get("function", {})
-                    function_name = function.get("name")
-                    arguments_str = function.get("arguments", "{}")
-
-                    # Parse arguments
-                    try:
-                        import json
-
-                        arguments = json.loads(arguments_str)
-                    except json.JSONDecodeError:
-                        arguments = {}
-
-                    # Display tool usage
-                    console.print(
-                        f"\n[dim]🔧 Using tool: {function_name}({', '.join(f'{k}={repr(v)}' for k, v in arguments.items())})[/dim]"
-                    )
-
-                    # Execute tool
-                    if function_name == "search_code":
-                        result = await execute_search_code(
-                            arguments.get("query", ""),
-                            arguments.get("limit", 5),
-                        )
-                        console.print(
-                            f"[dim]   Found {len(result.split('[Result')) - 1} results[/dim]"
-                        )
-                    elif function_name == "read_file":
-                        result = await execute_read_file(arguments.get("file_path", ""))
-                        console.print("[dim]   Read file[/dim]")
-                    elif function_name == "list_files":
-                        result = await execute_list_files(arguments.get("pattern", ""))
-                        console.print("[dim]   Listed files[/dim]")
-                    else:
-                        result = f"Error: Unknown tool: {function_name}"
-
-                    # Add tool result to messages
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_id,
-                            "content": result,
-                        }
-                    )
-
-            else:
-                # No tool calls - final response
-                final_content = message.get("content", "")
-
-                if not final_content:
-                    print_error("LLM returned empty response")
-                    return
-
-                # Stream the final response
-                console.print("\n[bold cyan]🤖 Assistant:[/bold cyan]\n")
-
-                # Use Rich Live for rendering
-                with Live("", console=console, auto_refresh=True) as live:
-                    live.update(Markdown(final_content))
-
-                # Add to session history
-                session.add_message("user", query)
-                session.add_message("assistant", final_content)
-
-                return
-
-        except Exception as e:
-            logger.error(f"Tool execution loop failed: {e}")
-            print_error(f"Error: {e}")
-            return
-
-    # Max iterations reached
-    print_warning(
-        "\n⚠ Maximum iterations reached. The assistant may not have gathered enough information."
-    )
-
-
-async def run_chat_search(
-    project_root: Path,
-    query: str,
-    limit: int = 5,
-    model: str | None = None,
-    provider: str | None = None,
-    timeout: float = 30.0,
-    json_output: bool = False,
-    files: str | None = None,
-    think: bool = False,
-) -> None:
-    """Run LLM-powered chat search.
-
-    Implementation Flow:
-    1. Initialize LLM client and validate API key
-    2. Generate 2-3 targeted search queries from natural language
-    3. Execute each search query against vector database
-    4. Have LLM analyze all results and select most relevant ones
-    5. Display results with explanations
-
-    Args:
-        project_root: Project root directory
-        query: Natural language query from user
-        limit: Maximum number of results to return
-        model: Model to use (optional, defaults based on provider)
-        provider: LLM provider ('openai' or 'openrouter', auto-detect if None)
-        timeout: API timeout in seconds
-        json_output: Whether to output JSON format
-        files: Optional glob pattern to filter files (e.g., '*.py', 'src/*.js')
-        think: Use advanced "thinking" model for complex queries
-    """
-    # Check for API keys (environment variable or config file)
-    from ...core.config_utils import (
-        get_openai_api_key,
-        get_openrouter_api_key,
-        get_preferred_llm_provider,
-    )
-
-    config_dir = project_root / ".mcp-vector-search"
-    openai_key = get_openai_api_key(config_dir)
-    openrouter_key = get_openrouter_api_key(config_dir)
-
-    # Determine which provider to use
-    if provider:
-        # Explicit provider specified
-        if provider == "openai" and not openai_key:
-            print_error("OpenAI API key not found.")
-            print_info("\n[bold]To use OpenAI:[/bold]")
-            print_info(
-                "1. Get an API key from [cyan]https://platform.openai.com/api-keys[/cyan]"
-            )
-            print_info("2. Set environment variable:")
-            print_info("   [yellow]export OPENAI_API_KEY='your-key'[/yellow]")
-            print_info("")
-            print_info("Or run: [cyan]mcp-vector-search setup[/cyan]")
-            raise typer.Exit(1)
-        elif provider == "openrouter" and not openrouter_key:
-            print_error("OpenRouter API key not found.")
-            print_info("\n[bold]To use OpenRouter:[/bold]")
-            print_info("1. Get an API key from [cyan]https://openrouter.ai/keys[/cyan]")
-            print_info("2. Set environment variable:")
-            print_info("   [yellow]export OPENROUTER_API_KEY='your-key'[/yellow]")
-            print_info("")
-            print_info("Or run: [cyan]mcp-vector-search setup[/cyan]")
-            raise typer.Exit(1)
-    else:
-        # Auto-detect provider
-        preferred_provider = get_preferred_llm_provider(config_dir)
-
-        if preferred_provider == "openai" and openai_key:
-            provider = "openai"
-        elif preferred_provider == "openrouter" and openrouter_key:
-            provider = "openrouter"
-        elif openai_key:
-            provider = "openai"
-        elif openrouter_key:
-            provider = "openrouter"
-        else:
-            console.print()  # Blank line for spacing
-            show_api_key_help()
-            raise typer.Exit(1)
-
     # Load project configuration
     project_manager = ProjectManager(project_root)
-
     if not project_manager.is_initialized():
         raise ProjectNotFoundError(
             f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
@@ -1177,278 +513,672 @@ async def run_chat_search(
             model=model,
             provider=provider,
             timeout=timeout,
-            think=think,
         )
-        provider_display = llm_client.provider.capitalize()
-        model_info = f"{llm_client.model}"
-        if think:
-            model_info += " [bold magenta](thinking mode)[/bold magenta]"
-        print_success(f"Connected to {provider_display}: {model_info}")
     except ValueError as e:
         print_error(str(e))
         raise typer.Exit(1)
 
-    # Step 1: Generate search queries from natural language
-    console.print(f"\n[cyan]💭 Analyzing query:[/cyan] [white]{query}[/white]")
-
-    try:
-        search_queries = await llm_client.generate_search_queries(query, limit=3)
-
-        if not search_queries:
-            print_error("Failed to generate search queries from your question.")
-            raise typer.Exit(1)
-
-        console.print(
-            f"\n[cyan]🔍 Generated {len(search_queries)} search queries:[/cyan]"
-        )
-        for i, sq in enumerate(search_queries, 1):
-            console.print(f"  {i}. [yellow]{sq}[/yellow]")
-
-    except SearchError as e:
-        print_error(f"Failed to generate queries: {e}")
-        raise typer.Exit(1)
-
-    # Step 2: Execute each search query
-    console.print("\n[cyan]🔎 Searching codebase...[/cyan]")
-
+    # Initialize search components
     embedding_function, _ = create_embedding_function(config.embedding_model)
     database = ChromaVectorDatabase(
         persist_directory=config.index_path,
         embedding_function=embedding_function,
     )
-
     search_engine = SemanticSearchEngine(
         database=database,
         project_root=project_root,
         similarity_threshold=config.similarity_threshold,
     )
 
-    # Execute all searches
-    search_results = {}
-    total_results = 0
+    # Create session
+    session = EnhancedChatSession(CONVERSATIONAL_SYSTEM_PROMPT)
 
+    # Show intro
+    show_intro()
+    console.print(
+        f"\n[dim]Connected to {llm_client.provider}: {llm_client.model}[/dim]"
+    )
+    console.print("[dim]Type your questions or use /exit to quit[/dim]\n")
+
+    # REPL loop
+    while True:
+        try:
+            # Get user input
+            user_input = console.input("[bold cyan]You:[/bold cyan] ").strip()
+
+            if not user_input:
+                continue
+
+            # Handle special commands
+            if user_input.startswith("/"):
+                command = user_input.lower().split()[0]
+                args = user_input[len(command) :].strip()
+
+                if command in ("/exit", "/quit"):
+                    console.print("\n[cyan]Goodbye![/cyan]")
+                    break
+
+                elif command == "/clear":
+                    session.clear()
+                    console.print("[green]Conversation cleared.[/green]\n")
+                    continue
+
+                elif command == "/task":
+                    if args:
+                        session.set_task(args)
+                        console.print(f"[green]Task set:[/green] {args}\n")
+                    else:
+                        console.print("[yellow]Usage: /task <description>[/yellow]\n")
+                    continue
+
+                elif command == "/status":
+                    _show_status(session)
+                    continue
+
+                else:
+                    console.print(f"[yellow]Unknown command: {command}[/yellow]")
+                    console.print(
+                        "[dim]Available: /task, /status, /clear, /exit[/dim]\n"
+                    )
+                    continue
+
+            # Process query
+            await _process_query(
+                query=user_input,
+                llm_client=llm_client,
+                search_engine=search_engine,
+                database=database,
+                session=session,
+                project_root=project_root,
+                config=config,
+            )
+
+        except KeyboardInterrupt:
+            console.print("\n\n[cyan]Goodbye![/cyan]")
+            break
+        except EOFError:
+            console.print("\n\n[cyan]Goodbye![/cyan]")
+            break
+        except Exception as e:
+            logger.error(f"Error processing query: {e}")
+            print_error(f"Error: {e}")
+
+
+def _show_status(session: EnhancedChatSession) -> None:
+    """Show session status.
+
+    Args:
+        session: Current chat session
+    """
+    console.print("\n[bold cyan]Session Status[/bold cyan]")
+
+    # Task status
+    if session.current_task:
+        console.print(
+            f"  [bold]Current Task:[/bold] {session.current_task['description']}"
+        )
+        console.print(f"  [bold]Status:[/bold] {session.current_task['status']}")
+    else:
+        console.print("  [dim]No active task[/dim]")
+
+    # Conversation stats
+    msg_count = len(session.messages)
+    has_history = bool(session.history_summary)
+    console.print(f"  [bold]Messages in context:[/bold] {msg_count}")
+    console.print(
+        f"  [bold]Has compacted history:[/bold] {'Yes' if has_history else 'No'}"
+    )
+    console.print()
+
+
+def _get_tools() -> list[dict[str, Any]]:
+    """Get tool definitions for the LLM.
+
+    Returns:
+        List of tool definitions
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_code",
+                "description": "Search the codebase for relevant code using semantic search. Use this to find implementations, patterns, or answers to questions about the code.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query (e.g., 'authentication logic', 'database connection')",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum results (default: 5, max: 10)",
+                            "default": 5,
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read the full content of a specific file. Use when you need complete context.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Relative path to file from project root",
+                        },
+                    },
+                    "required": ["file_path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "write_markdown",
+                "description": "Write a markdown report to a file. Use for analysis reports, documentation, or summaries.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filename": {
+                            "type": "string",
+                            "description": "Filename for the report (e.g., 'analysis-report.md')",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Markdown content to write",
+                        },
+                    },
+                    "required": ["filename", "content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "analyze_code",
+                "description": "Get code quality metrics for the project. Returns complexity, code smells, and recommendations.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "focus": {
+                            "type": "string",
+                            "description": "Analysis focus: 'summary', 'complexity', 'smells', or 'all'",
+                            "default": "summary",
+                        },
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the web for documentation, tutorials, or solutions. Use for external references.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_files",
+                "description": "List files matching a pattern in the project.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": "Glob pattern (e.g., '*.py', 'src/**/*.ts')",
+                        },
+                    },
+                    "required": ["pattern"],
+                },
+            },
+        },
+    ]
+
+
+async def _execute_tool(
+    tool_name: str,
+    arguments: dict[str, Any],
+    search_engine: Any,
+    database: Any,
+    project_root: Path,
+    config: Any,
+) -> str:
+    """Execute a tool and return result.
+
+    Args:
+        tool_name: Name of the tool to execute
+        arguments: Tool arguments
+        search_engine: Search engine instance
+        database: Vector database
+        project_root: Project root path
+        config: Project config
+
+    Returns:
+        Tool execution result as string
+    """
+    if tool_name == "search_code":
+        return await _tool_search_code(
+            arguments.get("query", ""),
+            arguments.get("limit", 5),
+            search_engine,
+            database,
+            project_root,
+            config,
+        )
+
+    elif tool_name == "read_file":
+        return await _tool_read_file(
+            arguments.get("file_path", ""),
+            project_root,
+        )
+
+    elif tool_name == "write_markdown":
+        return await _tool_write_markdown(
+            arguments.get("filename", "report.md"),
+            arguments.get("content", ""),
+            project_root,
+        )
+
+    elif tool_name == "analyze_code":
+        return await _tool_analyze_code(
+            arguments.get("focus", "summary"),
+            project_root,
+            config,
+        )
+
+    elif tool_name == "web_search":
+        return await _tool_web_search(
+            arguments.get("query", ""),
+        )
+
+    elif tool_name == "list_files":
+        return await _tool_list_files(
+            arguments.get("pattern", "*"),
+            project_root,
+        )
+
+    else:
+        return f"Error: Unknown tool '{tool_name}'"
+
+
+async def _tool_search_code(
+    query: str,
+    limit: int,
+    search_engine: Any,
+    database: Any,
+    project_root: Path,
+    config: Any,
+) -> str:
+    """Execute search_code tool."""
     try:
+        limit = min(limit, 10)
         async with database:
-            for search_query in search_queries:
-                results = await search_engine.search(
-                    query=search_query,
-                    limit=limit * 2,  # Get more results for LLM to analyze
-                    similarity_threshold=config.similarity_threshold,
-                    include_context=True,
-                )
+            results = await search_engine.search(
+                query=query,
+                limit=limit,
+                similarity_threshold=config.similarity_threshold,
+                include_context=True,
+            )
 
-                # Post-filter results by file pattern if specified
-                if files and results:
-                    filtered_results = []
-                    for result in results:
-                        # Get relative path from project root
-                        try:
-                            rel_path = str(result.file_path.relative_to(project_root))
-                        except ValueError:
-                            # If file is outside project root, use absolute path
-                            rel_path = str(result.file_path)
+        if not results:
+            return "No results found for this query."
 
-                        # Match against glob pattern (both full path and basename)
-                        if fnmatch(rel_path, files) or fnmatch(
-                            os.path.basename(rel_path), files
-                        ):
-                            filtered_results.append(result)
-                    results = filtered_results
+        # Format results
+        parts = []
+        for i, result in enumerate(results, 1):
+            try:
+                rel_path = str(result.file_path.relative_to(project_root))
+            except ValueError:
+                rel_path = str(result.file_path)
 
-                search_results[search_query] = results
-                total_results += len(results)
-
-                console.print(
-                    f"  • [yellow]{search_query}[/yellow]: {len(results)} results"
-                )
+            parts.append(
+                f"[Result {i}: {rel_path}]\n"
+                f"Location: {result.location}\n"
+                f"Lines {result.start_line}-{result.end_line}\n"
+                f"Similarity: {result.similarity_score:.3f}\n"
+                f"```\n{result.content}\n```\n"
+            )
+        return "\n".join(parts)
 
     except Exception as e:
-        logger.error(f"Search execution failed: {e}")
-        print_error(f"Search failed: {e}")
-        raise typer.Exit(1)
+        logger.error(f"search_code failed: {e}")
+        return f"Error searching code: {e}"
 
-    if total_results == 0:
-        print_warning("\n⚠️  No results found for any search query.")
-        print_info("\n[bold]Suggestions:[/bold]")
-        print_info("  • Try rephrasing your question")
-        print_info("  • Use more general terms")
-        print_info(
-            "  • Check if relevant files are indexed with [cyan]mcp-vector-search status[/cyan]"
-        )
-        raise typer.Exit(0)
 
-    # Step 3: Have LLM analyze and rank results
-    console.print(f"\n[cyan]🤖 Analyzing {total_results} results...[/cyan]")
-
+async def _tool_read_file(file_path: str, project_root: Path) -> str:
+    """Execute read_file tool."""
     try:
-        ranked_results = await llm_client.analyze_and_rank_results(
-            original_query=query,
-            search_results=search_results,
-            top_n=limit,
-        )
-
-        if not ranked_results:
-            print_warning("\n⚠️  LLM could not identify relevant results.")
-            raise typer.Exit(0)
-
-    except SearchError as e:
-        print_error(f"Result analysis failed: {e}")
-        # Fallback: show raw search results
-        print_warning("\nShowing raw search results instead...")
-        await _show_fallback_results(search_results, limit)
-        raise typer.Exit(1)
-
-    # Step 4: Display results with explanations
-    if json_output:
-        await _display_json_results(ranked_results)
-    else:
-        await _display_rich_results(ranked_results, query)
-
-
-async def _display_rich_results(
-    ranked_results: list[dict],
-    original_query: str,
-) -> None:
-    """Display results in rich formatted output.
-
-    Args:
-        ranked_results: List of ranked results with explanations
-        original_query: Original user query
-    """
-    from rich.panel import Panel
-    from rich.syntax import Syntax
-
-    console.print(
-        f"\n[bold cyan]🎯 Top Results for:[/bold cyan] [white]{original_query}[/white]\n"
-    )
-
-    for i, item in enumerate(ranked_results, 1):
-        result = item["result"]
-        relevance = item["relevance"]
-        explanation = item["explanation"]
-        query = item["query"]
-
-        # Determine relevance emoji and color
-        if relevance == "High":
-            relevance_emoji = "🟢"
-            relevance_color = "green"
-        elif relevance == "Medium":
-            relevance_emoji = "🟡"
-            relevance_color = "yellow"
+        if file_path.startswith("/"):
+            full_path = Path(file_path)
         else:
-            relevance_emoji = "🔴"
-            relevance_color = "red"
+            full_path = project_root / file_path
 
-        # Header with result number and file
-        console.print(f"[bold]📍 Result {i} of {len(ranked_results)}[/bold]")
-        console.print(
-            f"[cyan]📂 {result.file_path.relative_to(result.file_path.parent.parent)}[/cyan]"
+        # Security check
+        try:
+            full_path.relative_to(project_root)
+        except ValueError:
+            return "Error: File must be within project root"
+
+        if not full_path.exists():
+            return f"Error: File not found: {file_path}"
+
+        if not full_path.is_file():
+            return f"Error: Not a file: {file_path}"
+
+        # Size limit
+        max_size = 100_000
+        if full_path.stat().st_size > max_size:
+            return "Error: File too large. Use search_code instead."
+
+        content = full_path.read_text(errors="replace")
+        return f"File: {file_path}\n```\n{content}\n```"
+
+    except Exception as e:
+        logger.error(f"read_file failed: {e}")
+        return f"Error reading file: {e}"
+
+
+async def _tool_write_markdown(filename: str, content: str, project_root: Path) -> str:
+    """Execute write_markdown tool."""
+    try:
+        # Ensure filename is safe
+        if "/" in filename or "\\" in filename:
+            filename = Path(filename).name
+
+        if not filename.endswith(".md"):
+            filename += ".md"
+
+        # Write to reports directory
+        reports_dir = project_root / "reports"
+        reports_dir.mkdir(exist_ok=True)
+
+        output_path = reports_dir / filename
+        output_path.write_text(content)
+
+        return f"Report written to: {output_path.relative_to(project_root)}"
+
+    except Exception as e:
+        logger.error(f"write_markdown failed: {e}")
+        return f"Error writing report: {e}"
+
+
+async def _tool_analyze_code(focus: str, project_root: Path, config: Any) -> str:
+    """Execute analyze_code tool."""
+    try:
+        from ...analysis import ProjectMetrics
+        from ...analysis.interpretation import EnhancedJSONExporter
+        from ...parsers.registry import ParserRegistry
+
+        parser_registry = ParserRegistry()
+        project_metrics = ProjectMetrics(root_path=project_root)
+
+        # Parse files
+        for file_ext in config.file_extensions:
+            parser = parser_registry.get_parser(file_ext)
+            if parser:
+                for file_path in project_root.rglob(f"*{file_ext}"):
+                    should_skip = any(
+                        ignore in str(file_path) for ignore in config.ignore_patterns
+                    )
+                    if should_skip:
+                        continue
+
+                    try:
+                        chunks = parser.parse_file(file_path)
+                        project_metrics.add_file(file_path, chunks)
+                    except Exception:
+                        pass
+
+        # Generate metrics
+        exporter = EnhancedJSONExporter(project_root=project_root)
+        export = exporter.export_with_context(
+            project_metrics,
+            include_smells=(focus in ("smells", "all")),
         )
 
-        # Relevance and explanation
-        console.print(
-            f"\n{relevance_emoji} [bold {relevance_color}]Relevance: {relevance}[/bold {relevance_color}]"
+        # Format based on focus
+        if focus == "summary":
+            summary = export.project_summary
+            return f"""Project Analysis Summary:
+- Files analyzed: {summary.get("total_files", "N/A")}
+- Total functions: {summary.get("total_functions", "N/A")}
+- Average complexity: {summary.get("average_complexity", "N/A")}
+- Health grade: {summary.get("health_grade", "N/A")}"""
+
+        elif focus == "complexity":
+            hotspots = export.model_dump().get("complexity_hotspots", [])[:5]
+            if not hotspots:
+                return "No complexity hotspots found."
+            lines = ["Top complexity hotspots:"]
+            for h in hotspots:
+                lines.append(
+                    f"- {h.get('name', 'Unknown')}: complexity {h.get('complexity', 'N/A')}"
+                )
+            return "\n".join(lines)
+
+        elif focus == "smells":
+            smells = export.model_dump().get("code_smells", [])[:10]
+            if not smells:
+                return "No code smells detected."
+            lines = ["Code smells detected:"]
+            for s in smells:
+                lines.append(
+                    f"- [{s.get('severity', 'info')}] {s.get('smell_type', 'Unknown')}: {s.get('message', '')}"
+                )
+            return "\n".join(lines)
+
+        else:  # all
+            return json.dumps(export.model_dump(), indent=2)[:5000]
+
+    except Exception as e:
+        logger.error(f"analyze_code failed: {e}")
+        return f"Error analyzing code: {e}"
+
+
+async def _tool_web_search(query: str) -> str:
+    """Execute web_search tool."""
+    try:
+        import httpx
+
+        # Use DuckDuckGo instant answers API (no auth needed)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://api.duckduckgo.com/",
+                params={
+                    "q": query,
+                    "format": "json",
+                    "no_html": 1,
+                },
+            )
+
+            if response.status_code != 200:
+                return f"Web search failed: HTTP {response.status_code}"
+
+            data = response.json()
+
+            # Extract useful info
+            parts = []
+
+            # Abstract (main result)
+            if data.get("Abstract"):
+                parts.append(f"Summary: {data['Abstract']}")
+                if data.get("AbstractURL"):
+                    parts.append(f"Source: {data['AbstractURL']}")
+
+            # Related topics
+            related = data.get("RelatedTopics", [])[:3]
+            if related:
+                parts.append("\nRelated:")
+                for topic in related:
+                    if isinstance(topic, dict) and topic.get("Text"):
+                        parts.append(f"- {topic['Text'][:200]}")
+
+            if not parts:
+                return f"No direct results found. Try searching: https://www.google.com/search?q={query.replace(' ', '+')}"
+
+            return "\n".join(parts)
+
+    except Exception as e:
+        logger.error(f"web_search failed: {e}")
+        return f"Web search error: {e}. Try manual search."
+
+
+async def _tool_list_files(pattern: str, project_root: Path) -> str:
+    """Execute list_files tool."""
+    try:
+        from glob import glob
+
+        matches = glob(str(project_root / pattern), recursive=True)
+
+        if not matches:
+            return f"No files found matching: {pattern}"
+
+        rel_paths = []
+        for match in matches[:50]:
+            try:
+                rel_path = Path(match).relative_to(project_root)
+                rel_paths.append(str(rel_path))
+            except ValueError:
+                continue
+
+        if not rel_paths:
+            return f"No files found matching: {pattern}"
+
+        return f"Files matching '{pattern}':\n" + "\n".join(
+            f"- {p}" for p in sorted(rel_paths)
         )
-        console.print(f"[dim]Search query: {query}[/dim]")
-        console.print(f"\n💡 [italic]{explanation}[/italic]\n")
 
-        # Code snippet with syntax highlighting
-        file_ext = result.file_path.suffix.lstrip(".")
-        code_syntax = Syntax(
-            result.content,
-            lexer=file_ext or "python",
-            theme="monokai",
-            line_numbers=True,
-            start_line=result.start_line,
-        )
-
-        panel = Panel(
-            code_syntax,
-            title=f"[bold]{result.function_name or result.class_name or 'Code'}[/bold]",
-            border_style="cyan",
-        )
-        console.print(panel)
-
-        # Metadata
-        metadata = []
-        if result.function_name:
-            metadata.append(f"Function: [cyan]{result.function_name}[/cyan]")
-        if result.class_name:
-            metadata.append(f"Class: [cyan]{result.class_name}[/cyan]")
-        metadata.append(f"Lines: [cyan]{result.start_line}-{result.end_line}[/cyan]")
-        metadata.append(f"Similarity: [cyan]{result.similarity_score:.3f}[/cyan]")
-
-        console.print("[dim]" + " | ".join(metadata) + "[/dim]")
-        console.print()  # Blank line between results
-
-    # Footer with tips
-    console.print("[dim]─" * 80 + "[/dim]")
-    console.print(
-        "\n[dim]💡 Tip: Try different phrasings or add more specific terms for better results[/dim]"
-    )
+    except Exception as e:
+        logger.error(f"list_files failed: {e}")
+        return f"Error listing files: {e}"
 
 
-async def _display_json_results(ranked_results: list[dict]) -> None:
-    """Display results in JSON format.
-
-    Args:
-        ranked_results: List of ranked results with explanations
-    """
-    from ..output import print_json
-
-    json_data = []
-    for item in ranked_results:
-        result = item["result"]
-        json_data.append(
-            {
-                "file": str(result.file_path),
-                "start_line": result.start_line,
-                "end_line": result.end_line,
-                "function_name": result.function_name,
-                "class_name": result.class_name,
-                "content": result.content,
-                "similarity_score": result.similarity_score,
-                "relevance": item["relevance"],
-                "explanation": item["explanation"],
-                "search_query": item["query"],
-            }
-        )
-
-    print_json(json_data, title="Chat Search Results")
-
-
-async def _show_fallback_results(
-    search_results: dict[str, list],
-    limit: int,
+async def _process_query(
+    query: str,
+    llm_client: LLMClient,
+    search_engine: Any,
+    database: Any,
+    session: EnhancedChatSession,
+    project_root: Path,
+    config: Any,
 ) -> None:
-    """Show fallback results when LLM analysis fails.
+    """Process a user query with tool use.
 
     Args:
-        search_results: Dictionary of search queries to results
-        limit: Number of results to show
+        query: User's question
+        llm_client: LLM client
+        search_engine: Search engine
+        database: Vector database
+        session: Chat session
+        project_root: Project root
+        config: Project config
     """
-    from ..output import print_search_results
+    tools = _get_tools()
 
-    # Flatten and deduplicate results
-    all_results = []
-    seen_files = set()
+    # Add user message to session
+    session.add_message("user", query)
 
-    for results in search_results.values():
-        for result in results:
-            file_key = (result.file_path, result.start_line)
-            if file_key not in seen_files:
-                all_results.append(result)
-                seen_files.add(file_key)
+    # Get conversation context
+    messages = session.get_messages()
 
-    # Sort by similarity score
-    all_results.sort(key=lambda r: r.similarity_score, reverse=True)
+    # Agentic tool loop
+    max_iterations = 15
+    for _iteration in range(max_iterations):
+        try:
+            response = await llm_client.chat_with_tools(messages, tools)
 
-    # Show top N
-    print_search_results(
-        results=all_results[:limit],
-        query="Combined search results",
-        show_content=True,
-    )
+            choice = response.get("choices", [{}])[0]
+            message = choice.get("message", {})
+            tool_calls = message.get("tool_calls", [])
+
+            if tool_calls:
+                # Add assistant message with tool calls
+                messages.append(message)
+
+                # Execute tools
+                for tool_call in tool_calls:
+                    tool_id = tool_call.get("id")
+                    function = tool_call.get("function", {})
+                    function_name = function.get("name")
+                    arguments_str = function.get("arguments", "{}")
+
+                    try:
+                        arguments = json.loads(arguments_str)
+                    except json.JSONDecodeError:
+                        arguments = {}
+
+                    # Show tool usage
+                    args_display = ", ".join(
+                        f"{k}={repr(v)[:30]}" for k, v in arguments.items()
+                    )
+                    console.print(f"[dim]{function_name}({args_display})[/dim]")
+
+                    # Execute tool
+                    result = await _execute_tool(
+                        function_name,
+                        arguments,
+                        search_engine,
+                        database,
+                        project_root,
+                        config,
+                    )
+
+                    # Add tool result
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_id,
+                            "content": result,
+                        }
+                    )
+
+            else:
+                # Final response - no more tool calls
+                final_content = message.get("content", "")
+
+                if not final_content:
+                    print_error("Empty response from LLM")
+                    return
+
+                # Display response
+                console.print("\n[bold cyan]Assistant:[/bold cyan]\n")
+
+                with Live(
+                    "", console=console, auto_refresh=True, vertical_overflow="visible"
+                ) as live:
+                    live.update(Markdown(final_content))
+
+                console.print()
+
+                # Add to session
+                session.add_message("assistant", final_content)
+
+                return
+
+        except Exception as e:
+            logger.error(f"Query processing failed: {e}")
+            print_error(f"Error: {e}")
+            return
+
+    # Max iterations reached
+    print_warning("Maximum tool iterations reached.")
 
 
 if __name__ == "__main__":
