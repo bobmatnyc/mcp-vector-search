@@ -930,7 +930,7 @@ async def _tool_analyze_code(focus: str, project_root: Path, config: Any) -> str
         from ...parsers.registry import ParserRegistry
 
         parser_registry = ParserRegistry()
-        project_metrics = ProjectMetrics(root_path=project_root)
+        project_metrics = ProjectMetrics(project_root=str(project_root))
 
         # Parse files
         for file_ext in config.file_extensions:

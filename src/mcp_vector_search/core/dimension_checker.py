@@ -102,15 +102,15 @@ class DimensionChecker:
                 if status == "success":
                     return value
                 else:
-                    logger.warning(f"Collection count failed: {value}")
+                    logger.debug(f"Collection count failed: {value}")
                     return None
 
             # No result available
-            logger.warning("Collection count completed but no result returned")
+            logger.debug("Collection count completed but no result returned")
             return None
 
         except Exception as e:
-            logger.warning(f"Error in safe collection count: {e}")
+            logger.debug(f"Error in safe collection count: {e}")
             return None
 
     @staticmethod
@@ -134,10 +134,11 @@ class DimensionChecker:
             )
 
             if count is None:
-                # Count failed - likely index corruption
-                logger.warning(
-                    "Failed to get collection count - index may be corrupted. "
-                    "Run 'mcp-vector-search reset index' to rebuild."
+                # Count failed - could be pickling issue or index corruption
+                # Use debug level to avoid noise during normal chat operation
+                logger.debug(
+                    "Failed to get collection count - may need to run "
+                    "'mcp-vector-search reset index' if issues persist."
                 )
                 return
 
