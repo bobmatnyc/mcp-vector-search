@@ -35,13 +35,13 @@ class LLMClient:
     # Default models for each provider (comparable performance/cost)
     DEFAULT_MODELS = {
         "openai": "gpt-4o-mini",  # Fast, cheap, comparable to claude-3-haiku
-        "openrouter": "anthropic/claude-opus-4-20250514",  # Claude Opus 4 for chat REPL
+        "openrouter": "anthropic/claude-3.5-sonnet",  # Claude 3.5 Sonnet for chat REPL
     }
 
     # Advanced "thinking" models for complex queries (--think flag)
     THINKING_MODELS = {
         "openai": "gpt-4o",  # More capable, better reasoning
-        "openrouter": "anthropic/claude-sonnet-4",  # Claude Sonnet 4 for deep analysis
+        "openrouter": "anthropic/claude-3-opus",  # Claude 3 Opus for deep analysis
     }
 
     # API endpoints
@@ -327,7 +327,18 @@ Select the top {top_n} most relevant results:"""
             status_code = e.response.status_code
             error_msg = f"{provider_name} API error (HTTP {status_code})"
 
-            if status_code == 401:
+            # Try to get more details from the response
+            try:
+                error_body = e.response.json()
+                error_detail = error_body.get("error", {}).get("message", "")
+                if error_detail:
+                    error_msg = f"{error_msg}: {error_detail}"
+            except Exception:
+                pass
+
+            if status_code == 400:
+                error_msg = f"{error_msg}. Check model name and request format."
+            elif status_code == 401:
                 env_var = (
                     "OPENAI_API_KEY"
                     if self.provider == "openai"
@@ -736,7 +747,18 @@ Guidelines:
             status_code = e.response.status_code
             error_msg = f"{provider_name} API error (HTTP {status_code})"
 
-            if status_code == 401:
+            # Try to get more details from the response
+            try:
+                error_body = e.response.json()
+                error_detail = error_body.get("error", {}).get("message", "")
+                if error_detail:
+                    error_msg = f"{error_msg}: {error_detail}"
+            except Exception:
+                pass
+
+            if status_code == 400:
+                error_msg = f"{error_msg}. Check model name and request format."
+            elif status_code == 401:
                 env_var = (
                     "OPENAI_API_KEY"
                     if self.provider == "openai"
