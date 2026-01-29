@@ -14,12 +14,138 @@
 # Project-specific variables (customize as needed)
 PROJECT_NAME := mcp-vector-search
 PYTHON_VERSION := 3.11
+UV := uv
 
 # Additional project-specific configuration
 SCRIPTS_DIR := scripts
 VERSION_MANAGER := $(PYTHON) $(SCRIPTS_DIR)/version_manager.py
 CHANGESET_MANAGER := $(PYTHON) $(SCRIPTS_DIR)/changeset.py
 DOCS_UPDATER := $(PYTHON) $(SCRIPTS_DIR)/update_docs.py
+
+# ============================================================================
+# Quick Publish Targets (uses .env.local for PyPI credentials)
+# ============================================================================
+# Usage: make publish         # Bump patch, build, publish, tag, push
+#        make publish-minor   # Bump minor version
+#        make publish-major   # Bump major version
+
+VERSION_PY := src/mcp_vector_search/__init__.py
+
+.PHONY: publish publish-minor publish-major publish-only
+
+# Get current version from __init__.py
+get-version = $(shell grep -E '^__version__' $(VERSION_PY) | sed 's/.*"\(.*\)"/\1/')
+
+publish: ## Bump patch version, build, publish to PyPI, tag, and push
+	@echo "$(BLUE)═══════════════════════════════════════════════════$(NC)"
+	@echo "$(BLUE)  Publishing Patch Release$(NC)"
+	@echo "$(BLUE)═══════════════════════════════════════════════════$(NC)"
+	@CURRENT=$$(grep -E '^__version__' $(VERSION_PY) | sed 's/.*"\(.*\)"/\1/'); \
+	MAJOR=$$(echo $$CURRENT | cut -d. -f1); \
+	MINOR=$$(echo $$CURRENT | cut -d. -f2); \
+	PATCH=$$(echo $$CURRENT | cut -d. -f3); \
+	NEW_PATCH=$$((PATCH + 1)); \
+	NEW_VERSION="$$MAJOR.$$MINOR.$$NEW_PATCH"; \
+	echo "$(YELLOW)Version: $$CURRENT → $$NEW_VERSION$(NC)"; \
+	sed -i '' "s/__version__ = \".*\"/__version__ = \"$$NEW_VERSION\"/" $(VERSION_PY); \
+	echo "$(GREEN)✓ Version bumped$(NC)"; \
+	git add $(VERSION_PY); \
+	git commit -m "chore: bump version to $$NEW_VERSION"; \
+	echo "$(GREEN)✓ Committed$(NC)"; \
+	git tag "v$$NEW_VERSION"; \
+	echo "$(GREEN)✓ Tagged v$$NEW_VERSION$(NC)"; \
+	git push && git push --tags; \
+	echo "$(GREEN)✓ Pushed to origin$(NC)"; \
+	rm -rf dist/; \
+	$(UV) build; \
+	echo "$(GREEN)✓ Built package$(NC)"; \
+	if [ -f .env.local ]; then \
+		. .env.local && UV_PUBLISH_TOKEN="$$PYPI_TOKEN" $(UV) publish; \
+		echo "$(GREEN)✓ Published to PyPI$(NC)"; \
+	else \
+		echo "$(RED)✗ .env.local not found - set PYPI_TOKEN$(NC)"; \
+		exit 1; \
+	fi; \
+	echo "$(GREEN)═══════════════════════════════════════════════════$(NC)"; \
+	echo "$(GREEN)  ✓ Published mcp-vector-search $$NEW_VERSION$(NC)"; \
+	echo "$(GREEN)═══════════════════════════════════════════════════$(NC)"
+
+publish-minor: ## Bump minor version, build, publish to PyPI, tag, and push
+	@echo "$(BLUE)═══════════════════════════════════════════════════$(NC)"
+	@echo "$(BLUE)  Publishing Minor Release$(NC)"
+	@echo "$(BLUE)═══════════════════════════════════════════════════$(NC)"
+	@CURRENT=$$(grep -E '^__version__' $(VERSION_PY) | sed 's/.*"\(.*\)"/\1/'); \
+	MAJOR=$$(echo $$CURRENT | cut -d. -f1); \
+	MINOR=$$(echo $$CURRENT | cut -d. -f2); \
+	NEW_MINOR=$$((MINOR + 1)); \
+	NEW_VERSION="$$MAJOR.$$NEW_MINOR.0"; \
+	echo "$(YELLOW)Version: $$CURRENT → $$NEW_VERSION$(NC)"; \
+	sed -i '' "s/__version__ = \".*\"/__version__ = \"$$NEW_VERSION\"/" $(VERSION_PY); \
+	echo "$(GREEN)✓ Version bumped$(NC)"; \
+	git add $(VERSION_PY); \
+	git commit -m "chore: bump version to $$NEW_VERSION"; \
+	echo "$(GREEN)✓ Committed$(NC)"; \
+	git tag "v$$NEW_VERSION"; \
+	echo "$(GREEN)✓ Tagged v$$NEW_VERSION$(NC)"; \
+	git push && git push --tags; \
+	echo "$(GREEN)✓ Pushed to origin$(NC)"; \
+	rm -rf dist/; \
+	$(UV) build; \
+	echo "$(GREEN)✓ Built package$(NC)"; \
+	if [ -f .env.local ]; then \
+		. .env.local && UV_PUBLISH_TOKEN="$$PYPI_TOKEN" $(UV) publish; \
+		echo "$(GREEN)✓ Published to PyPI$(NC)"; \
+	else \
+		echo "$(RED)✗ .env.local not found - set PYPI_TOKEN$(NC)"; \
+		exit 1; \
+	fi; \
+	echo "$(GREEN)═══════════════════════════════════════════════════$(NC)"; \
+	echo "$(GREEN)  ✓ Published mcp-vector-search $$NEW_VERSION$(NC)"; \
+	echo "$(GREEN)═══════════════════════════════════════════════════$(NC)"
+
+publish-major: ## Bump major version, build, publish to PyPI, tag, and push
+	@echo "$(BLUE)═══════════════════════════════════════════════════$(NC)"
+	@echo "$(BLUE)  Publishing Major Release$(NC)"
+	@echo "$(BLUE)═══════════════════════════════════════════════════$(NC)"
+	@CURRENT=$$(grep -E '^__version__' $(VERSION_PY) | sed 's/.*"\(.*\)"/\1/'); \
+	MAJOR=$$(echo $$CURRENT | cut -d. -f1); \
+	NEW_MAJOR=$$((MAJOR + 1)); \
+	NEW_VERSION="$$NEW_MAJOR.0.0"; \
+	echo "$(YELLOW)Version: $$CURRENT → $$NEW_VERSION$(NC)"; \
+	sed -i '' "s/__version__ = \".*\"/__version__ = \"$$NEW_VERSION\"/" $(VERSION_PY); \
+	echo "$(GREEN)✓ Version bumped$(NC)"; \
+	git add $(VERSION_PY); \
+	git commit -m "chore: bump version to $$NEW_VERSION"; \
+	echo "$(GREEN)✓ Committed$(NC)"; \
+	git tag "v$$NEW_VERSION"; \
+	echo "$(GREEN)✓ Tagged v$$NEW_VERSION$(NC)"; \
+	git push && git push --tags; \
+	echo "$(GREEN)✓ Pushed to origin$(NC)"; \
+	rm -rf dist/; \
+	$(UV) build; \
+	echo "$(GREEN)✓ Built package$(NC)"; \
+	if [ -f .env.local ]; then \
+		. .env.local && UV_PUBLISH_TOKEN="$$PYPI_TOKEN" $(UV) publish; \
+		echo "$(GREEN)✓ Published to PyPI$(NC)"; \
+	else \
+		echo "$(RED)✗ .env.local not found - set PYPI_TOKEN$(NC)"; \
+		exit 1; \
+	fi; \
+	echo "$(GREEN)═══════════════════════════════════════════════════$(NC)"; \
+	echo "$(GREEN)  ✓ Published mcp-vector-search $$NEW_VERSION$(NC)"; \
+	echo "$(GREEN)═══════════════════════════════════════════════════$(NC)"
+
+publish-only: ## Publish current version to PyPI (no version bump)
+	@echo "$(BLUE)Publishing current version to PyPI...$(NC)"
+	@rm -rf dist/
+	@$(UV) build
+	@if [ -f .env.local ]; then \
+		. .env.local && UV_PUBLISH_TOKEN="$$PYPI_TOKEN" $(UV) publish; \
+		echo "$(GREEN)✓ Published to PyPI$(NC)"; \
+	else \
+		echo "$(RED)✗ .env.local not found - set PYPI_TOKEN$(NC)"; \
+		exit 1; \
+	fi
 
 # ============================================================================
 # Project-Specific Custom Targets
