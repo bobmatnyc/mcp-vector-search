@@ -223,6 +223,7 @@ class EnhancedChatSession:
 chat_app = create_enhanced_typer(
     help="Chat with your codebase using Claude Opus 4",
     invoke_without_command=True,
+    no_args_is_help=False,  # Allow running without args to start REPL
 )
 
 
