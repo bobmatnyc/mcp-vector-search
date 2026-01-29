@@ -1,10 +1,13 @@
 """Embedding generation for MCP Vector Search."""
 
+import contextlib
 import hashlib
+import io
 import json
 import logging
 import multiprocessing
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -23,6 +26,27 @@ os.environ["TQDM_DISABLE"] = "1"
 warnings.filterwarnings("ignore", message=".*position_ids.*")
 warnings.filterwarnings("ignore", message=".*not sharded.*")
 warnings.filterwarnings("ignore", category=FutureWarning, module="transformers")
+
+
+@contextlib.contextmanager
+def suppress_stdout_stderr():
+    """Context manager to suppress stdout and stderr.
+
+    Used to hide verbose model loading output like "BertModel LOAD REPORT"
+    that is printed directly to stdout rather than using the logging system.
+    """
+    # Save original stdout/stderr
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    try:
+        # Redirect to null
+        sys.stdout = io.StringIO()
+        sys.stderr = io.StringIO()
+        yield
+    finally:
+        # Restore original stdout/stderr
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
 
 
 # Configure tokenizers parallelism based on process context
@@ -212,10 +236,11 @@ class CodeBERTEmbeddingFunction:
                 )
 
             # trust_remote_code=True needed for CodeXEmbed and other models with custom code
-            # Logging suppression is handled at module level
-            self.model = SentenceTransformer(
-                model_name, device=device, trust_remote_code=True
-            )
+            # Suppress stdout to hide "BertModel LOAD REPORT" noise
+            with suppress_stdout_stderr():
+                self.model = SentenceTransformer(
+                    model_name, device=device, trust_remote_code=True
+                )
             self.model_name = model_name
             self.timeout = timeout
 
@@ -411,9 +436,13 @@ def create_embedding_function(
                 f"Please update your configuration to use the new model explicitly."
             )
 
-        embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=actual_model
-        )
+        # Suppress stdout to hide "BertModel LOAD REPORT" noise
+        with suppress_stdout_stderr():
+            embedding_function = (
+                embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name=actual_model
+                )
+            )
 
         logger.debug(f"Created ChromaDB embedding function with model: {actual_model}")
 
