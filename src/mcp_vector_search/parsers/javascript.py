@@ -142,7 +142,7 @@ class JavaScriptParser(BaseParser):
         start_line = node.start_point[0] + 1
         end_line = node.end_point[0] + 1
 
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
         docstring = self._extract_jsdoc_from_node(node, lines)
 
         # Calculate complexity
@@ -183,7 +183,7 @@ class JavaScriptParser(BaseParser):
         start_line = node.start_point[0] + 1
         end_line = node.end_point[0] + 1
 
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
         docstring = self._extract_jsdoc_from_node(node, lines)
 
         # Calculate complexity
@@ -223,7 +223,7 @@ class JavaScriptParser(BaseParser):
                             start_line = child.start_point[0] + 1
                             end_line = child.end_point[0] + 1
 
-                            content = self._get_line_range(lines, start_line, end_line)
+                            content = child.text.decode()
                             docstring = self._extract_jsdoc_from_node(child, lines)
 
                             # Calculate complexity
@@ -262,7 +262,7 @@ class JavaScriptParser(BaseParser):
         start_line = node.start_point[0] + 1
         end_line = node.end_point[0] + 1
 
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
         docstring = self._extract_jsdoc_from_node(node, lines)
 
         # Calculate complexity
@@ -292,7 +292,7 @@ class JavaScriptParser(BaseParser):
         start_line = node.start_point[0] + 1
         end_line = node.end_point[0] + 1
 
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
         docstring = self._extract_jsdoc_from_node(node, lines)
 
         # Calculate complexity

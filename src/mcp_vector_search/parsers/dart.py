@@ -151,7 +151,7 @@ class DartParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get function content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract dartdoc if present
         dartdoc = self._extract_dartdoc(node, lines)
@@ -181,7 +181,7 @@ class DartParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get class content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract dartdoc if present
         dartdoc = self._extract_dartdoc(node, lines)
@@ -210,7 +210,7 @@ class DartParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get constructor content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract dartdoc if present
         dartdoc = self._extract_dartdoc(node, lines)
@@ -240,7 +240,7 @@ class DartParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get mixin content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract dartdoc if present
         dartdoc = self._extract_dartdoc(node, lines)
@@ -267,9 +267,7 @@ class DartParser(BaseParser):
 
         for child in node.children:
             if child.type in ["import_or_export", "library_name"]:
-                start_line = child.start_point[0] + 1
-                end_line = child.end_point[0] + 1
-                import_content = self._get_line_range(lines, start_line, end_line)
+                import_content = child.text.decode()
                 module_lines.append(import_content.strip())
 
         if module_lines:

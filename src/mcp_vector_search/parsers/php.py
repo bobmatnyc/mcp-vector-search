@@ -173,7 +173,7 @@ class PHPParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get function content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract PHPDoc if present
         phpdoc = self._extract_phpdoc(node, lines)
@@ -213,7 +213,7 @@ class PHPParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get method content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract PHPDoc if present
         phpdoc = self._extract_phpdoc(node, lines)
@@ -243,7 +243,7 @@ class PHPParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get class content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract PHPDoc if present
         phpdoc = self._extract_phpdoc(node, lines)
@@ -277,7 +277,7 @@ class PHPParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get interface content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract PHPDoc if present
         phpdoc = self._extract_phpdoc(node, lines)
@@ -311,7 +311,7 @@ class PHPParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get trait content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract PHPDoc if present
         phpdoc = self._extract_phpdoc(node, lines)
@@ -343,9 +343,7 @@ class PHPParser(BaseParser):
 
         for child in node.children:
             if child.type in ["namespace_use_declaration", "namespace_definition"]:
-                start_line = child.start_point[0] + 1
-                end_line = child.end_point[0] + 1
-                import_content = self._get_line_range(lines, start_line, end_line)
+                import_content = child.text.decode()
                 module_lines.append(import_content.strip())
 
         if module_lines:

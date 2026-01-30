@@ -168,7 +168,7 @@ class RubyParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get method content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract RDoc if present
         rdoc = self._extract_rdoc(node, lines)
@@ -206,7 +206,7 @@ class RubyParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get method content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract RDoc if present
         rdoc = self._extract_rdoc(node, lines)
@@ -239,7 +239,7 @@ class RubyParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get class content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract RDoc if present
         rdoc = self._extract_rdoc(node, lines)
@@ -271,7 +271,7 @@ class RubyParser(BaseParser):
         end_line = node.end_point[0] + 1
 
         # Get module content
-        content = self._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract RDoc if present
         rdoc = self._extract_rdoc(node, lines)
@@ -301,9 +301,7 @@ class RubyParser(BaseParser):
                 # Check if it's a require/require_relative
                 child_text = child.text.decode("utf-8")
                 if child_text.startswith("require") or "require_relative" in child_text:
-                    start_line = child.start_point[0] + 1
-                    end_line = child.end_point[0] + 1
-                    require_content = self._get_line_range(lines, start_line, end_line)
+                    require_content = child.text.decode()
                     module_lines.append(require_content.strip())
 
         if module_lines:

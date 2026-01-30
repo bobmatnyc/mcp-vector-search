@@ -44,7 +44,7 @@ class FunctionExtractor(NodeExtractorBase):
         end_line = node.end_point[0] + 1
 
         # Get function content
-        content = self.base_parser._get_line_range(lines, start_line, end_line)
+        content = node.text.decode()
 
         # Extract docstring if present
         docstring = DocstringExtractor.extract_from_node(node, lines)
@@ -149,11 +149,7 @@ class ModuleExtractor(NodeExtractorBase):
 
         for child in node.children:
             if child.type in ["import_statement", "import_from_statement"]:
-                start_line = child.start_point[0] + 1
-                end_line = child.end_point[0] + 1
-                import_content = self.base_parser._get_line_range(
-                    lines, start_line, end_line
-                )
+                import_content = child.text.decode()
                 module_lines.append(import_content.strip())
 
         if module_lines:
