@@ -255,7 +255,7 @@ class ChromaVectorDatabase(VectorDatabase):
                 # Retry initialization ONE TIME
                 await self.initialize()
             else:
-                logger.error(f"Failed to initialize ChromaDB: {e}")
+                logger.debug(f"Failed to initialize ChromaDB: {e}")
                 raise DatabaseInitializationError(
                     f"ChromaDB initialization failed: {e}"
                 ) from e

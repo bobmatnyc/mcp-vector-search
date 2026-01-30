@@ -2,7 +2,6 @@
 
 import contextlib
 import hashlib
-import io
 import json
 import logging
 import multiprocessing
@@ -30,23 +29,37 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="transformers")
 
 @contextlib.contextmanager
 def suppress_stdout_stderr():
-    """Context manager to suppress stdout and stderr.
+    """Context manager to suppress stdout and stderr at OS level.
 
     Used to hide verbose model loading output like "BertModel LOAD REPORT"
-    that is printed directly to stdout rather than using the logging system.
+    that is printed directly to file descriptors by native code (Rust/C),
+    which bypasses Python's sys.stdout/stderr redirection.
     """
-    # Save original stdout/stderr
-    old_stdout = sys.stdout
-    old_stderr = sys.stderr
+    # Save original file descriptors
+    stdout_fd = sys.stdout.fileno()
+    stderr_fd = sys.stderr.fileno()
+
+    # Duplicate original file descriptors
+    stdout_dup = os.dup(stdout_fd)
+    stderr_dup = os.dup(stderr_fd)
+
+    # Open /dev/null for writing
+    devnull = os.open(os.devnull, os.O_RDWR)
+
     try:
-        # Redirect to null
-        sys.stdout = io.StringIO()
-        sys.stderr = io.StringIO()
+        # Redirect stdout/stderr to /dev/null at OS level
+        os.dup2(devnull, stdout_fd)
+        os.dup2(devnull, stderr_fd)
         yield
     finally:
-        # Restore original stdout/stderr
-        sys.stdout = old_stdout
-        sys.stderr = old_stderr
+        # Restore original file descriptors
+        os.dup2(stdout_dup, stdout_fd)
+        os.dup2(stderr_dup, stderr_fd)
+
+        # Close duplicates and devnull
+        os.close(stdout_dup)
+        os.close(stderr_dup)
+        os.close(devnull)
 
 
 # Configure tokenizers parallelism based on process context

@@ -1127,11 +1127,14 @@ async def _process_query(
                     except json.JSONDecodeError:
                         arguments = {}
 
-                    # Show tool usage
-                    args_display = ", ".join(
-                        f"{k}={repr(v)[:30]}" for k, v in arguments.items()
-                    )
-                    console.print(f"[dim]{function_name}({args_display})[/dim]")
+                    # Show tool usage (show progress dot for list_files to reduce noise)
+                    if function_name == "list_files":
+                        console.print(".", end="", style="dim")
+                    else:
+                        args_display = ", ".join(
+                            f"{k}={repr(v)[:30]}" for k, v in arguments.items()
+                        )
+                        console.print(f"[dim]{function_name}({args_display})[/dim]")
 
                     # Execute tool
                     result = await _execute_tool(
