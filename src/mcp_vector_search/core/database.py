@@ -367,7 +367,7 @@ class ChromaVectorDatabase(VectorDatabase):
                 metadatas.append(metadata)
 
                 # Use chunk ID
-                ids.append(chunk.id)
+                ids.append(chunk.chunk_id or chunk.id)
 
             # Add to collection
             self._collection.add(
@@ -616,7 +616,7 @@ class PooledChromaVectorDatabase(VectorDatabase):
                         chunk, metrics
                     )
                     metadatas.append(metadata)
-                    ids.append(chunk.id)
+                    ids.append(chunk.chunk_id or chunk.id)
 
                 # Add to collection
                 conn.collection.add(documents=documents, metadatas=metadatas, ids=ids)
