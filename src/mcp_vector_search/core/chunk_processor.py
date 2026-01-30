@@ -14,6 +14,44 @@ from .exceptions import ParsingError
 from .models import CodeChunk
 
 
+def _deduplicate_chunks(chunks: list[CodeChunk]) -> list[CodeChunk]:
+    """Remove duplicate chunks based on their unique ID.
+
+    Some parsers (especially tree-sitter on minified files) may extract the same
+    code region multiple times during AST traversal. This function ensures each
+    unique chunk appears only once.
+
+    Uses chunk_id (which includes content hash) to properly handle minified files
+    where multiple functions on the same line would have the same file:line:line ID.
+
+    Args:
+        chunks: List of chunks that may contain duplicates
+
+    Returns:
+        List of unique chunks (preserving order of first occurrence)
+    """
+    if not chunks:
+        return chunks
+
+    seen_ids: set[str] = set()
+    unique_chunks: list[CodeChunk] = []
+
+    for chunk in chunks:
+        # Use chunk_id (includes content hash) for proper deduplication
+        chunk_key = chunk.chunk_id or chunk.id
+        if chunk_key not in seen_ids:
+            seen_ids.add(chunk_key)
+            unique_chunks.append(chunk)
+
+    removed_count = len(chunks) - len(unique_chunks)
+    if removed_count > 0:
+        logger.debug(
+            f"Removed {removed_count} duplicate chunks (kept {len(unique_chunks)})"
+        )
+
+    return unique_chunks
+
+
 def _parse_file_standalone(
     args: tuple[Path, str | None],
 ) -> tuple[Path, list[CodeChunk], Exception | None]:
@@ -59,6 +97,9 @@ def _parse_file_standalone(
 
         # Filter out empty chunks
         valid_chunks = [chunk for chunk in chunks if chunk.content.strip()]
+
+        # Deduplicate chunks (some parsers may extract same region multiple times)
+        valid_chunks = _deduplicate_chunks(valid_chunks)
 
         # Apply subproject information if available
         if subproject_info_json:
@@ -135,6 +176,9 @@ class ChunkProcessor:
 
             # Filter out empty chunks
             valid_chunks = [chunk for chunk in chunks if chunk.content.strip()]
+
+            # Deduplicate chunks (some parsers may extract same region multiple times)
+            valid_chunks = _deduplicate_chunks(valid_chunks)
 
             # Assign subproject information for monorepos
             subproject = self.monorepo_detector.get_subproject_for_file(file_path)
