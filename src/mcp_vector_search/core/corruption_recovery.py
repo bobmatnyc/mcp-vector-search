@@ -334,7 +334,7 @@ class CorruptionRecovery:
                 total_size = sum(
                     f.stat().st_size
                     for f in self.persist_directory.rglob("*")
-                    if f.is_file()
+                    if not f.is_symlink() and f.is_file()
                 )
                 logger.info(
                     f"Clearing corrupted index ({total_size / 1024 / 1024:.2f} MB)..."

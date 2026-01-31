@@ -861,6 +861,10 @@ def _find_analyzable_files(
     }
 
     for file_path in base_path.rglob("*"):
+        # Skip symlinks to prevent traversing outside project
+        if file_path.is_symlink():
+            continue
+
         # Skip directories
         if file_path.is_dir():
             continue

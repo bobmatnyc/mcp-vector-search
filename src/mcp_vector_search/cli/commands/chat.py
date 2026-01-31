@@ -937,6 +937,10 @@ async def _tool_analyze_code(focus: str, project_root: Path, config: Any) -> str
             parser = parser_registry.get_parser(file_ext)
             if parser:
                 for file_path in project_root.rglob(f"*{file_ext}"):
+                    # Skip symlinks to prevent traversing outside project
+                    if file_path.is_symlink():
+                        continue
+
                     should_skip = any(
                         ignore in str(file_path) for ignore in config.ignore_patterns
                     )

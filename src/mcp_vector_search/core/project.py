@@ -325,6 +325,10 @@ class ProjectManager:
         files = []
 
         for path in self.project_root.rglob("*"):
+            # Skip symlinks to prevent traversing outside project
+            if path.is_symlink():
+                continue
+
             if not path.is_file():
                 continue
 

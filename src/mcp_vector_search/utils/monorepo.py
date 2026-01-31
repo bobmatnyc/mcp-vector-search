@@ -231,6 +231,10 @@ class MonorepoDetector:
 
         # Only search up to 3 levels deep
         for package_json in self.project_root.rglob("package.json"):
+            # Skip symlinks to prevent traversing outside project
+            if package_json.is_symlink():
+                continue
+
             # Skip root package.json
             if package_json.parent == self.project_root:
                 continue

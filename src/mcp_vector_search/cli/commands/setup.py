@@ -232,6 +232,10 @@ def scan_project_file_extensions(
         project_manager = ProjectManager(project_root)
 
         for path in project_root.rglob("*"):
+            # Skip symlinks to prevent traversing outside project
+            if path.is_symlink():
+                continue
+
             # Check timeout
             if time.time() - start_time > timeout:
                 logger.debug(

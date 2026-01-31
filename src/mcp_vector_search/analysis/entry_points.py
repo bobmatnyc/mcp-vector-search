@@ -164,8 +164,8 @@ class EntryPointDetector:
         """
         all_entry_points: list[EntryPoint] = []
 
-        # Find all Python files
-        python_files = list(root_path.rglob("*.py"))
+        # Find all Python files (excluding symlinks to prevent traversing outside project)
+        python_files = [p for p in root_path.rglob("*.py") if not p.is_symlink()]
 
         for file_path in python_files:
             try:
