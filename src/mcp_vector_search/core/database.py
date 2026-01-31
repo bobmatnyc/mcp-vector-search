@@ -214,6 +214,15 @@ class ChromaVectorDatabase(VectorDatabase):
                     self._collection, self.embedding_function
                 )
 
+                # LAYER 4: HNSW index health check (internal graph corruption)
+                # This catches internal HNSW graph corruption that manifests during
+                # DELETE operations but not during file-level validation
+                if not await self._check_hnsw_health():
+                    logger.warning(
+                        "HNSW index internal corruption detected, triggering automatic rebuild..."
+                    )
+                    await self._handle_hnsw_corruption_recovery()
+
                 logger.debug(f"ChromaDB initialized at {self.persist_directory}")
 
             except BaseException as init_error:
@@ -299,6 +308,116 @@ class ChromaVectorDatabase(VectorDatabase):
                 f"Please run 'mcp-vector-search reset index' to clear the database. "
                 f"Error: {retry_error}"
             ) from retry_error
+
+    async def _check_hnsw_health(self) -> bool:
+        """Check if HNSW index is healthy by attempting a test query.
+
+        This detects internal HNSW graph corruption that doesn't show up during
+        file-level validation but causes failures during operations.
+
+        Returns:
+            True if HNSW index is healthy, False if corruption detected
+        """
+        if not self._collection:
+            return False
+
+        try:
+            # Get collection count to check if empty
+            count = self._collection.count()
+
+            # If collection is empty, HNSW index doesn't exist yet - that's healthy
+            if count == 0:
+                logger.debug("Collection is empty, HNSW health check skipped")
+                return True
+
+            # Attempt a lightweight test query to validate HNSW index
+            # Use include=[] to minimize overhead - we just need to test the index
+            self._collection.query(
+                query_texts=["test"],
+                n_results=min(1, count),  # Don't request more than available
+                include=[],  # Don't need actual results, just testing index
+            )
+
+            logger.debug("HNSW health check passed")
+            return True
+
+        except Exception as e:
+            error_str = str(e).lower()
+
+            # Check for HNSW-specific error patterns
+            hnsw_error_patterns = [
+                "hnsw",
+                "segment reader",
+                "error loading",
+                "error constructing",
+                "index",
+            ]
+
+            if any(pattern in error_str for pattern in hnsw_error_patterns):
+                logger.warning(
+                    f"HNSW index corruption detected during health check: {e}"
+                )
+                return False
+
+            # Check for other corruption patterns
+            if self._corruption_recovery.is_corruption_error(e):
+                logger.warning(f"Index corruption detected during health check: {e}")
+                return False
+
+            # Some other error - log but don't treat as corruption
+            logger.warning(f"HNSW health check encountered unexpected error: {e}")
+            # Return True to avoid false positives - let the actual operation fail
+            # if there's a real problem
+            return True
+
+    async def _handle_hnsw_corruption_recovery(self) -> None:
+        """Handle HNSW corruption recovery and reinitialize.
+
+        Raises:
+            DatabaseError: If recovery fails
+        """
+        logger.info("Attempting automatic recovery from HNSW index corruption...")
+
+        # Close current connection
+        if self._client:
+            self._client = None
+            self._collection = None
+
+        # Run corruption recovery
+        await self._corruption_recovery.recover()
+
+        # Reinitialize ChromaDB after recovery
+        try:
+            import chromadb
+
+            logger.info("Reinitializing ChromaDB after HNSW corruption recovery...")
+            self._client = chromadb.PersistentClient(
+                path=str(self.persist_directory),
+                settings=chromadb.Settings(
+                    anonymized_telemetry=False,
+                    allow_reset=True,
+                ),
+            )
+
+            # Configure SQLite timeout
+            self._collection_manager.configure_sqlite_timeout(self.persist_directory)
+
+            # Create or get collection
+            self._collection = self._collection_manager.get_or_create_collection(
+                self._client, self.embedding_function
+            )
+
+            logger.info(
+                "ChromaDB successfully reinitialized after HNSW corruption recovery"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to recover from HNSW corruption: {e}")
+            raise DatabaseError(
+                f"Failed to recover from HNSW index corruption. "
+                f"Please run 'mcp-vector-search reset index' to clear the database. "
+                f"Error: {e}"
+            ) from e
 
     async def remove_file_chunks(self, file_path: str) -> int:
         """Remove all chunks for a specific file.
@@ -578,8 +697,22 @@ class PooledChromaVectorDatabase(VectorDatabase):
         self._corruption_recovery = CorruptionRecovery(persist_directory)
 
     async def initialize(self) -> None:
-        """Initialize the connection pool."""
+        """Initialize the connection pool with HNSW health check."""
+        # Check for corruption before initializing pool
+        if await self._corruption_recovery.detect_corruption():
+            logger.info("Corruption detected, initiating automatic recovery...")
+            await self._corruption_recovery.recover()
+
         await self._pool.initialize()
+
+        # Perform HNSW health check after initialization
+        if not await self._check_hnsw_health():
+            logger.warning(
+                "HNSW index internal corruption detected in pooled database, "
+                "triggering automatic rebuild..."
+            )
+            await self._handle_hnsw_corruption_recovery()
+
         logger.debug(f"Pooled ChromaDB initialized at {self.persist_directory}")
 
     async def close(self) -> None:
@@ -791,6 +924,99 @@ class PooledChromaVectorDatabase(VectorDatabase):
         # Reinitialize the pool
         await self._pool.initialize()
         logger.info("Index recovered. Please re-index your codebase.")
+
+    async def _check_hnsw_health(self) -> bool:
+        """Check if HNSW index is healthy by attempting a test query.
+
+        This detects internal HNSW graph corruption that doesn't show up during
+        file-level validation but causes failures during operations.
+
+        Returns:
+            True if HNSW index is healthy, False if corruption detected
+        """
+        try:
+            async with self._pool.get_connection() as conn:
+                # Get collection count to check if empty
+                count = conn.collection.count()
+
+                # If collection is empty, HNSW index doesn't exist yet - that's healthy
+                if count == 0:
+                    logger.debug("Collection is empty, HNSW health check skipped")
+                    return True
+
+                # Attempt a lightweight test query to validate HNSW index
+                # Use include=[] to minimize overhead - we just need to test the index
+                conn.collection.query(
+                    query_texts=["test"],
+                    n_results=min(1, count),  # Don't request more than available
+                    include=[],  # Don't need actual results, just testing index
+                )
+
+                logger.debug("HNSW health check passed")
+                return True
+
+        except Exception as e:
+            error_str = str(e).lower()
+
+            # Check for HNSW-specific error patterns
+            hnsw_error_patterns = [
+                "hnsw",
+                "segment reader",
+                "error loading",
+                "error constructing",
+                "index",
+            ]
+
+            if any(pattern in error_str for pattern in hnsw_error_patterns):
+                logger.warning(
+                    f"HNSW index corruption detected during health check: {e}"
+                )
+                return False
+
+            # Check for other corruption patterns
+            if self._corruption_recovery.is_corruption_error(e):
+                logger.warning(f"Index corruption detected during health check: {e}")
+                return False
+
+            # Some other error - log but don't treat as corruption
+            logger.warning(f"HNSW health check encountered unexpected error: {e}")
+            # Return True to avoid false positives - let the actual operation fail
+            # if there's a real problem
+            return True
+
+    async def _handle_hnsw_corruption_recovery(self) -> None:
+        """Handle HNSW corruption recovery and reinitialize pool.
+
+        Raises:
+            DatabaseError: If recovery fails
+        """
+        logger.info(
+            "Attempting automatic recovery from HNSW index corruption (pooled)..."
+        )
+
+        # Close the pool first
+        await self._pool.close()
+
+        # Run corruption recovery
+        await self._corruption_recovery.recover()
+
+        # Reinitialize the pool after recovery
+        try:
+            logger.info(
+                "Reinitializing connection pool after HNSW corruption recovery..."
+            )
+            await self._pool.initialize()
+            logger.info(
+                "Connection pool successfully reinitialized after HNSW corruption recovery"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to recover from HNSW corruption: {e}")
+            raise DatabaseError(
+                f"Failed to recover from HNSW index corruption. "
+                f"Please run 'mcp-vector-search reset index' to clear the database. "
+                f"Error: {e}"
+            ) from e
 
     async def __aenter__(self):
         """Async context manager entry."""

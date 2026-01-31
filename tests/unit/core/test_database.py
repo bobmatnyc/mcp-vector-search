@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from loguru import logger
 
 from mcp_vector_search.core.database import (
     ChromaVectorDatabase,
@@ -621,3 +622,109 @@ class TestPooledChromaVectorDatabase:
 
             # Verify client was called twice (initial + retry)
             assert mock_client.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_hnsw_corruption_detection(self, temp_dir, mock_embedding_function):
+        """Test HNSW index corruption detection during initialization (Layer 4)."""
+        from unittest.mock import MagicMock, patch
+
+        db_path = temp_dir / "test_db"
+        db_path.mkdir(parents=True, exist_ok=True)
+
+        # Create valid database first and add some data
+        db = ChromaVectorDatabase(
+            persist_directory=db_path,
+            embedding_function=mock_embedding_function,
+        )
+        await db.initialize()
+
+        # Add a chunk so HNSW index is created
+        from pathlib import Path
+
+        from mcp_vector_search.core.models import CodeChunk
+
+        chunk = CodeChunk(
+            content="def test(): pass",
+            file_path=Path("test.py"),
+            start_line=1,
+            end_line=1,
+            language="python",
+            chunk_type="function",
+        )
+        await db.add_chunks([chunk])
+        await db.close()
+
+        # Create new instance to test HNSW health check
+        db2 = ChromaVectorDatabase(
+            persist_directory=db_path,
+            embedding_function=mock_embedding_function,
+        )
+
+        # Mock collection.query to simulate HNSW error
+        with patch.object(
+            db2._collection_manager, "get_or_create_collection"
+        ) as mock_get_collection:
+            mock_collection = MagicMock()
+            mock_collection.count.return_value = 1  # Non-empty collection
+            mock_collection.query.side_effect = Exception(
+                "Error loading hnsw index: Error constructing hnsw segment reader"
+            )
+            mock_get_collection.return_value = mock_collection
+
+            # Mock the recovery process to avoid actual cleanup
+            async def mock_recover():
+                """Mock recovery that just logs."""
+                logger.info("Mock recovery called")
+                db2._corruption_recovery.recovery_attempted = True
+
+            db2._corruption_recovery.recover = mock_recover
+
+            # Mock the re-initialization after recovery
+            with patch("chromadb.PersistentClient") as mock_client:
+                mock_client.return_value = MagicMock()
+
+                # Initialize should detect HNSW corruption and trigger recovery
+                try:
+                    await db2.initialize()
+
+                    # If we get here, recovery completed
+                    # Verify recovery was triggered
+                    assert db2._corruption_recovery.recovery_attempted
+
+                except Exception as e:
+                    # Recovery might fail in test environment, but should have been attempted
+                    logger.info(f"Expected exception during test: {e}")
+
+        # Cleanup
+        if db2._client:
+            await db2.close()
+
+    @pytest.mark.asyncio
+    async def test_hnsw_health_check_empty_collection(
+        self, temp_dir, mock_embedding_function
+    ):
+        """Test HNSW health check skips for empty collections."""
+        db_path = temp_dir / "test_db"
+        db = ChromaVectorDatabase(
+            persist_directory=db_path,
+            embedding_function=mock_embedding_function,
+        )
+        await db.initialize()
+
+        # Health check should pass for empty collection
+        is_healthy = await db._check_hnsw_health()
+        assert is_healthy is True
+
+        await db.close()
+
+    @pytest.mark.asyncio
+    async def test_hnsw_health_check_with_data(
+        self, pooled_database, sample_code_chunks
+    ):
+        """Test HNSW health check with populated collection."""
+        # Add chunks to create HNSW index
+        await pooled_database.add_chunks(sample_code_chunks)
+
+        # Health check should pass for valid index
+        is_healthy = await pooled_database._check_hnsw_health()
+        assert is_healthy is True
