@@ -9,6 +9,52 @@ from loguru import logger
 from ..config.defaults import get_model_dimensions
 
 
+def _count_in_subprocess(
+    persist_directory: str, collection_name: str, result_queue: multiprocessing.Queue
+) -> None:
+    """Standalone subprocess function to safely call collection.count().
+
+    This MUST be a module-level function (not a method) so it can be pickled
+    by multiprocessing. Opens its own ChromaDB client in the subprocess to
+    avoid pickling the collection object.
+
+    This runs in a separate process to isolate potential bus errors.
+    If the count operation crashes (bus error), the parent process
+    can detect it and handle gracefully.
+
+    Args:
+        persist_directory: Path to ChromaDB persist directory
+        collection_name: Name of the collection to count
+        result_queue: Queue to return the count result
+    """
+    try:
+        # Disable signal handling in subprocess to allow clean termination
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+        # Import ChromaDB in subprocess (fresh instance)
+        import chromadb
+
+        # Create a new client pointing to the same database
+        client = chromadb.PersistentClient(
+            path=persist_directory,
+            settings=chromadb.Settings(
+                anonymized_telemetry=False,
+                allow_reset=True,
+            ),
+        )
+
+        # Get the collection by name
+        collection = client.get_collection(collection_name)
+
+        # Attempt the dangerous count operation
+        count = collection.count()
+        result_queue.put(("success", count))
+
+    except Exception as e:
+        # Catch Python exceptions
+        result_queue.put(("error", str(e)))
+
+
 class DimensionChecker:
     """Checks embedding dimension compatibility for index migrations.
 
@@ -17,43 +63,66 @@ class DimensionChecker:
     """
 
     @staticmethod
-    def _safe_count_subprocess(
-        collection: Any, result_queue: multiprocessing.Queue
-    ) -> None:
-        """Subprocess worker to safely call collection.count().
-
-        This runs in a separate process to isolate potential bus errors.
-        If the count operation crashes (bus error), the parent process
-        can detect it and handle gracefully.
-
-        Args:
-            collection: ChromaDB collection instance
-            result_queue: Queue to return the count result
-        """
-        try:
-            # Disable signal handling in subprocess to allow clean termination
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
-
-            # Attempt the dangerous count operation
-            count = collection.count()
-            result_queue.put(("success", count))
-
-        except Exception as e:
-            # Catch Python exceptions
-            result_queue.put(("error", str(e)))
-
-    @staticmethod
     async def _safe_collection_count(
         collection: Any, timeout: float = 5.0
     ) -> int | None:
         """Safely get collection count with subprocess isolation.
+
+        DEPRECATED: This method signature is kept for backward compatibility
+        but now delegates to _safe_collection_count_by_path.
+
+        The collection object cannot be pickled for subprocess communication,
+        so this extracts the persist_directory and collection name from the
+        collection object and delegates to the path-based method.
+
+        Args:
+            collection: ChromaDB collection instance
+            timeout: Timeout in seconds for count operation
+
+        Returns:
+            Collection count, or None if operation failed/timed out
+        """
+        try:
+            # Extract persist directory and collection name from collection
+            # ChromaDB collection objects have _client attribute with _settings
+            if hasattr(collection, "_client") and hasattr(
+                collection._client, "_settings"
+            ):
+                persist_dir = str(collection._client._settings.persist_directory)
+                collection_name = collection.name
+
+                # Delegate to path-based method
+                return await DimensionChecker._safe_collection_count_by_path(
+                    persist_dir, collection_name, timeout
+                )
+            else:
+                # For non-ChromaDB collections (tests, mocks), we can't use
+                # subprocess isolation since we can't reconstruct the collection.
+                # Log at debug level and return None to indicate we can't safely count.
+                logger.debug(
+                    "Collection object doesn't have _client._settings attribute "
+                    "(likely a mock/test object). Cannot use subprocess isolation. "
+                    "Returning None to indicate unsafe to count."
+                )
+                return None
+
+        except Exception as e:
+            logger.debug(f"Error in safe collection count: {e}")
+            return None
+
+    @staticmethod
+    async def _safe_collection_count_by_path(
+        persist_directory: str, collection_name: str, timeout: float = 5.0
+    ) -> int | None:
+        """Safely get collection count with subprocess isolation using database path.
 
         Uses multiprocessing to isolate the count operation. If ChromaDB's
         Rust backend encounters corrupted HNSW files and triggers a bus error,
         the subprocess dies but the main process survives.
 
         Args:
-            collection: ChromaDB collection instance
+            persist_directory: Path to ChromaDB persist directory
+            collection_name: Name of the collection
             timeout: Timeout in seconds for count operation
 
         Returns:
@@ -65,9 +134,10 @@ class DimensionChecker:
             result_queue = ctx.Queue()
 
             # Create subprocess for isolated count operation
+            # Pass database path and collection name (both picklable)
             process = ctx.Process(
-                target=DimensionChecker._safe_count_subprocess,
-                args=(collection, result_queue),
+                target=_count_in_subprocess,
+                args=(persist_directory, collection_name, result_queue),
             )
 
             # Start process

@@ -315,6 +315,9 @@ class ChromaVectorDatabase(VectorDatabase):
         This detects internal HNSW graph corruption that doesn't show up during
         file-level validation but causes failures during operations.
 
+        Uses subprocess isolation to prevent segmentation faults from crashing
+        the main process when HNSW index is corrupted.
+
         Returns:
             True if HNSW index is healthy, False if corruption detected
         """
@@ -322,8 +325,25 @@ class ChromaVectorDatabase(VectorDatabase):
             return False
 
         try:
-            # Get collection count to check if empty
-            count = self._collection.count()
+            # SAFETY: Use subprocess-isolated count to prevent SIGSEGV crashes
+            # When HNSW index is corrupted (e.g., 1.1TB link_lists.bin file),
+            # ChromaDB's Rust backend can crash with bus error/segfault.
+            # Subprocess isolation allows the main process to survive and trigger recovery.
+            #
+            # Pass database path and collection name (picklable) instead of
+            # collection object (not picklable due to builtins.Bindings)
+            count = await self._dimension_checker._safe_collection_count_by_path(
+                persist_directory=str(self.persist_directory),
+                collection_name=self.collection_name,
+                timeout=5.0,
+            )
+
+            # If count failed (None), this indicates corruption or crash
+            if count is None:
+                logger.warning(
+                    "HNSW health check: collection count failed (likely index corruption)"
+                )
+                return False
 
             # If collection is empty, HNSW index doesn't exist yet - that's healthy
             if count == 0:
@@ -695,6 +715,7 @@ class PooledChromaVectorDatabase(VectorDatabase):
         self._query_builder = QueryBuilder()
         self._search_handler = SearchHandler()
         self._corruption_recovery = CorruptionRecovery(persist_directory)
+        self._dimension_checker = DimensionChecker()
 
     async def initialize(self) -> None:
         """Initialize the connection pool with HNSW health check."""
@@ -931,29 +952,49 @@ class PooledChromaVectorDatabase(VectorDatabase):
         This detects internal HNSW graph corruption that doesn't show up during
         file-level validation but causes failures during operations.
 
+        Uses subprocess isolation to prevent segmentation faults from crashing
+        the main process when HNSW index is corrupted.
+
         Returns:
             True if HNSW index is healthy, False if corruption detected
         """
         try:
+            # SAFETY: Use subprocess-isolated count to prevent SIGSEGV crashes
+            # When HNSW index is corrupted (e.g., 1.1TB link_lists.bin file),
+            # ChromaDB's Rust backend can crash with bus error/segfault.
+            # Subprocess isolation allows the main process to survive and trigger recovery.
+            #
+            # Pass database path and collection name (picklable) instead of
+            # collection object (not picklable due to builtins.Bindings)
+            count = await self._dimension_checker._safe_collection_count_by_path(
+                persist_directory=str(self.persist_directory),
+                collection_name=self.collection_name,
+                timeout=5.0,
+            )
+
+            # If count failed (None), this indicates corruption or crash
+            if count is None:
+                logger.warning(
+                    "HNSW health check: collection count failed (likely index corruption)"
+                )
+                return False
+
+            # If collection is empty, HNSW index doesn't exist yet - that's healthy
+            if count == 0:
+                logger.debug("Collection is empty, HNSW health check skipped")
+                return True
+
+            # Attempt a lightweight test query to validate HNSW index
+            # Use include=[] to minimize overhead - we just need to test the index
             async with self._pool.get_connection() as conn:
-                # Get collection count to check if empty
-                count = conn.collection.count()
-
-                # If collection is empty, HNSW index doesn't exist yet - that's healthy
-                if count == 0:
-                    logger.debug("Collection is empty, HNSW health check skipped")
-                    return True
-
-                # Attempt a lightweight test query to validate HNSW index
-                # Use include=[] to minimize overhead - we just need to test the index
                 conn.collection.query(
                     query_texts=["test"],
                     n_results=min(1, count),  # Don't request more than available
                     include=[],  # Don't need actual results, just testing index
                 )
 
-                logger.debug("HNSW health check passed")
-                return True
+            logger.debug("HNSW health check passed")
+            return True
 
         except Exception as e:
             error_str = str(e).lower()
