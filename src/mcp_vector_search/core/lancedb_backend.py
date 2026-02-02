@@ -57,7 +57,11 @@ class LanceVectorDatabase:
             embedding_function: Function to generate embeddings
             collection_name: Name of the table (equivalent to ChromaDB collection)
         """
-        self.persist_directory = persist_directory
+        self.persist_directory = (
+            Path(persist_directory)
+            if isinstance(persist_directory, str)
+            else persist_directory
+        )
         self.embedding_function = embedding_function
         self.collection_name = collection_name
         self._db = None
