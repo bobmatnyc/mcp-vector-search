@@ -287,7 +287,12 @@ def _parse_config_value(key: str, value: str):
             raise ConfigurationError(f"Invalid integer value for {key}: {value}") from e
 
     # List values
-    if key in ["file_extensions", "languages", "force_include_patterns"]:
+    if key in [
+        "file_extensions",
+        "languages",
+        "force_include_patterns",
+        "force_include_paths",
+    ]:
         if value.startswith("[") and value.endswith("]"):
             # JSON-style list
             import json
@@ -328,6 +333,7 @@ def _get_default_value(key: str):
         "skip_dotfiles": True,
         "respect_gitignore": True,
         "force_include_patterns": [],
+        "force_include_paths": [],
         "auto_reindex_on_upgrade": True,
     }
 
@@ -352,6 +358,11 @@ def _show_available_keys() -> None:
         (
             "force_include_patterns",
             "Glob patterns to force-include even if gitignored",
+            "list",
+        ),
+        (
+            "force_include_paths",
+            "Specific directories/files to force-include even if gitignored",
             "list",
         ),
         ("auto_reindex_on_upgrade", "Auto-reindex on version upgrade", "boolean"),

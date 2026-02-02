@@ -476,7 +476,7 @@ class ProjectManager:
         Returns:
             True if path should be ignored
         """
-        # Load config if needed (for force_include_patterns)
+        # Load config if needed (for force_include_patterns and force_include_paths)
         try:
             config = self._config or (
                 self.load_config() if self.is_initialized() else None
@@ -484,7 +484,46 @@ class ProjectManager:
         except Exception:
             config = None
 
-        # FIRST: Check force_include_patterns - they override gitignore
+        # FIRST: Check force_include_paths - they override everything (gitignore, patterns)
+        if config and config.force_include_paths:
+            try:
+                relative_path = path.relative_to(self.project_root)
+                relative_path_str = str(relative_path).replace("\\", "/")
+
+                # Check if path is within any force_include_path
+                for include_path in config.force_include_paths:
+                    # Normalize include_path (remove trailing slash for comparison)
+                    include_path_normalized = include_path.rstrip("/")
+
+                    # Check if this exact path or a parent matches
+                    if relative_path_str == include_path_normalized:
+                        logger.debug(
+                            f"Force-including {relative_path} (matched path: {include_path})"
+                        )
+                        return False  # Don't ignore
+
+                    # Check if path starts with include_path (i.e., it's inside the directory)
+                    if relative_path_str.startswith(include_path_normalized + "/"):
+                        logger.debug(
+                            f"Force-including {relative_path} (inside force_include_path: {include_path})"
+                        )
+                        return False  # Don't ignore
+
+                    # For directories, check if force_include_path is inside this directory
+                    # E.g., if checking "repos/" and force_include_path is "repos/subdir/",
+                    # we need to allow traversal into "repos/"
+                    if is_directory and include_path_normalized.startswith(
+                        relative_path_str + "/"
+                    ):
+                        logger.debug(
+                            f"Not ignoring directory {relative_path} (contains force_include_path: {include_path})"
+                        )
+                        return False  # Don't ignore
+            except ValueError:
+                # Path is not relative to project root
+                pass
+
+        # SECOND: Check force_include_patterns - they override gitignore
         if config and config.force_include_patterns:
             try:
                 relative_path = path.relative_to(self.project_root)

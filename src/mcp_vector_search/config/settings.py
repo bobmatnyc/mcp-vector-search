@@ -55,6 +55,10 @@ class ProjectConfig(BaseSettings):
         default_factory=list,
         description="Glob patterns to force-include even if gitignored (e.g., ['repos/**/*.java'])",
     )
+    force_include_paths: list[str] = Field(
+        default_factory=list,
+        description="Specific directories/files to force-include even if gitignored (e.g., ['repos/', 'vendor/internal/'])",
+    )
     openrouter_api_key: str | None = Field(
         default=None,
         description="OpenRouter API key for chat command (optional, can also use env var)",
