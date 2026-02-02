@@ -343,6 +343,51 @@ class BatchEmbeddingProcessor:
             batch_size = int(os.environ.get("MCP_VECTOR_SEARCH_BATCH_SIZE", "128"))
         self.batch_size = batch_size
 
+    async def embed_batches_parallel(
+        self, texts: list[str], batch_size: int = 32, max_concurrent: int = 2
+    ) -> list[list[float]]:
+        """Generate embeddings in parallel batches for improved throughput.
+
+        This method splits the input texts into batches and processes them
+        concurrently using asyncio.to_thread() to avoid blocking the event loop.
+
+        Args:
+            texts: List of text content to embed
+            batch_size: Size of each batch (default: 32)
+            max_concurrent: Maximum number of concurrent batches (default: 2)
+
+        Returns:
+            List of embeddings corresponding to input texts
+
+        Note:
+            This method is most effective when:
+            - Processing large numbers of texts (100+)
+            - Using GPU for embeddings (parallel batches maximize GPU utilization)
+            - Balancing batch size with max_concurrent to avoid OOM
+        """
+        import asyncio
+
+        if not texts:
+            return []
+
+        # Split texts into batches
+        batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
+
+        # Semaphore to limit concurrent batch processing
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def process_batch(batch: list[str]) -> list[list[float]]:
+            """Process a single batch in thread pool."""
+            async with semaphore:
+                # Run embedding generation in thread pool to avoid blocking
+                return await asyncio.to_thread(self.embedding_function, batch)
+
+        # Process all batches concurrently
+        results = await asyncio.gather(*[process_batch(b) for b in batches])
+
+        # Flatten results from all batches
+        return [emb for batch_result in results for emb in batch_result]
+
     async def process_batch(self, contents: list[str]) -> list[list[float]]:
         """Process a batch of content for embeddings.
 

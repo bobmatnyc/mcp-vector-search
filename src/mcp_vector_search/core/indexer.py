@@ -398,14 +398,22 @@ class SemanticIndexer:
         success_flags: list[bool] = []
 
         # Filter files that should be indexed and delete old chunks
+        # Parallelized deletion for better performance on large batches
         files_to_parse = []
+        delete_tasks = []
+
         for file_path in file_paths:
             if not self.file_discovery.should_index_file(file_path):
                 success_flags.append(True)  # Skipped file is not an error
                 continue
-            # Delete old chunks before parsing
-            await self.database.delete_by_file(file_path)
+            # Schedule deletion task (non-blocking)
+            delete_task = asyncio.create_task(self.database.delete_by_file(file_path))
+            delete_tasks.append(delete_task)
             files_to_parse.append(file_path)
+
+        # Wait for all deletions to complete
+        if delete_tasks:
+            await asyncio.gather(*delete_tasks, return_exceptions=True)
 
         if not files_to_parse:
             return success_flags

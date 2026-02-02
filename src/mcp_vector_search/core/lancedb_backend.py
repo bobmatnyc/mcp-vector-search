@@ -118,13 +118,17 @@ class LanceVectorDatabase:
         logger.debug("LanceDB connections closed")
 
     async def add_chunks(
-        self, chunks: list[CodeChunk], metrics: dict[str, Any] | None = None
+        self,
+        chunks: list[CodeChunk],
+        metrics: dict[str, Any] | None = None,
+        embeddings: list[list[float]] | None = None,
     ) -> None:
         """Add code chunks to the database with optional structural metrics.
 
         Args:
             chunks: List of code chunks to add
             metrics: Optional dict mapping chunk IDs to ChunkMetrics.to_metadata() dicts
+            embeddings: Optional pre-computed embeddings (if None, will be generated)
 
         Raises:
             DatabaseNotInitializedError: If database not initialized
@@ -137,9 +141,14 @@ class LanceVectorDatabase:
             return
 
         try:
-            # Generate embeddings for all chunks
+            # Generate embeddings only if not provided
             contents = [chunk.content for chunk in chunks]
-            embeddings = self.embedding_function(contents)
+            if embeddings is None:
+                # Run embedding generation in thread pool to avoid blocking event loop
+                # This allows other async operations to proceed during CPU-intensive embedding
+                import asyncio
+
+                embeddings = await asyncio.to_thread(self.embedding_function, contents)
 
             # Convert chunks to LanceDB records
             records = []
