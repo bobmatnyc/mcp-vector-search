@@ -1,8 +1,9 @@
 """Metadata conversion between CodeChunk and ChromaDB formats."""
 
-import json
 from pathlib import Path
 from typing import Any
+
+import orjson
 
 from .models import CodeChunk
 
@@ -40,13 +41,13 @@ class MetadataConverter:
             # Hierarchy fields (convert lists to JSON strings for ChromaDB)
             "chunk_id": chunk.chunk_id or "",
             "parent_chunk_id": chunk.parent_chunk_id or "",
-            "child_chunk_ids": json.dumps(chunk.child_chunk_ids or []),
+            "child_chunk_ids": orjson.dumps(chunk.child_chunk_ids or []).decode(),
             "chunk_depth": chunk.chunk_depth,
             # Additional metadata (convert lists/dicts to JSON strings)
-            "decorators": json.dumps(chunk.decorators or []),
-            "parameters": json.dumps(chunk.parameters or []),
+            "decorators": orjson.dumps(chunk.decorators or []).decode(),
+            "parameters": orjson.dumps(chunk.parameters or []).decode(),
             "return_type": chunk.return_type or "",
-            "type_annotations": json.dumps(chunk.type_annotations or {}),
+            "type_annotations": orjson.dumps(chunk.type_annotations or {}).decode(),
             # Monorepo support
             "subproject_name": chunk.subproject_name or "",
             "subproject_path": chunk.subproject_path or "",
@@ -77,19 +78,19 @@ class MetadataConverter:
         # Parse JSON strings back to lists/dicts
         child_chunk_ids = metadata.get("child_chunk_ids", "[]")
         if isinstance(child_chunk_ids, str):
-            child_chunk_ids = json.loads(child_chunk_ids)
+            child_chunk_ids = orjson.loads(child_chunk_ids)
 
         decorators = metadata.get("decorators", "[]")
         if isinstance(decorators, str):
-            decorators = json.loads(decorators)
+            decorators = orjson.loads(decorators)
 
         parameters = metadata.get("parameters", "[]")
         if isinstance(parameters, str):
-            parameters = json.loads(parameters)
+            parameters = orjson.loads(parameters)
 
         type_annotations = metadata.get("type_annotations", "{}")
         if isinstance(type_annotations, str):
-            type_annotations = json.loads(type_annotations)
+            type_annotations = orjson.loads(type_annotations)
 
         return CodeChunk(
             content=content,

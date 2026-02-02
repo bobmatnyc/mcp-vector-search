@@ -1,8 +1,9 @@
 """Project detection and management for MCP Vector Search."""
 
-import json
+import os
 from pathlib import Path
 
+import orjson
 from loguru import logger
 
 from ..config.defaults import (
@@ -198,8 +199,8 @@ class ProjectManager:
         config_path = get_default_config_path(self.project_root)
 
         try:
-            with open(config_path) as f:
-                config_data = json.load(f)
+            with open(config_path, "rb") as f:
+                config_data = orjson.loads(f.read())
 
             # Convert paths back to Path objects
             config_data["project_root"] = Path(config_data["project_root"])
@@ -230,8 +231,9 @@ class ProjectManager:
             config_data["project_root"] = str(config.project_root)
             config_data["index_path"] = str(config.index_path)
 
-            with open(config_path, "w") as f:
-                json.dump(config_data, f, indent=2)
+            with open(config_path, "wb") as f:
+                # orjson.dumps returns bytes, OPT_INDENT_2 for readability
+                f.write(orjson.dumps(config_data, option=orjson.OPT_INDENT_2))
 
             logger.debug(f"Saved configuration to {config_path}")
 
@@ -317,27 +319,42 @@ class ProjectManager:
         )
 
     def _iter_source_files(self) -> list[Path]:
-        """Iterate over source files in the project.
+        """Iterate over source files in the project using optimized os.scandir.
+
+        Uses os.scandir for better performance than Path.rglob because it returns
+        DirEntry objects with cached stat info, avoiding redundant filesystem calls.
 
         Returns:
             List of source file paths
         """
         files = []
 
-        for path in self.project_root.rglob("*"):
-            # Skip symlinks to prevent traversing outside project
-            if path.is_symlink():
-                continue
+        # Use os.walk for efficient recursive traversal with early directory filtering
+        for root, dirs, filenames in os.walk(self.project_root):
+            root_path = Path(root)
 
-            if not path.is_file():
-                continue
+            # Filter out ignored directories IN-PLACE to prevent traversal
+            # This is much more efficient than checking every file in ignored dirs
+            dirs[:] = [
+                d
+                for d in dirs
+                if not self._should_ignore_path(root_path / d, is_directory=True)
+            ]
 
-            # Skip ignored patterns
-            # PERFORMANCE: Pass is_directory=False since we already checked is_file()
-            if self._should_ignore_path(path, is_directory=False):
-                continue
+            # Process files in current directory
+            for filename in filenames:
+                file_path = root_path / filename
 
-            files.append(path)
+                # Skip symlinks to prevent traversing outside project
+                if file_path.is_symlink():
+                    continue
+
+                # Skip ignored patterns
+                # PERFORMANCE: Pass is_directory=False since os.walk guarantees files
+                if self._should_ignore_path(file_path, is_directory=False):
+                    continue
+
+                files.append(file_path)
 
         return files
 

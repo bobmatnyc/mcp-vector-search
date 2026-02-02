@@ -1,5 +1,7 @@
 """Database abstraction and ChromaDB implementation for MCP Vector Search."""
 
+import hashlib
+import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -172,6 +174,13 @@ class ChromaVectorDatabase(VectorDatabase):
         self._search_handler = SearchHandler()
         self._statistics_collector = StatisticsCollector(persist_directory)
         self._dimension_checker = DimensionChecker()
+
+        # LRU cache for search results
+        # Configurable via environment variable, default to 100 entries
+        cache_size = int(os.environ.get("MCP_VECTOR_SEARCH_CACHE_SIZE", "100"))
+        self._search_cache: dict[str, list[SearchResult]] = {}
+        self._search_cache_order: list[str] = []  # For LRU eviction
+        self._search_cache_max_size = cache_size
 
     async def initialize(self) -> None:
         """Initialize ChromaDB client and collection with corruption recovery."""
@@ -461,6 +470,9 @@ class ChromaVectorDatabase(VectorDatabase):
             # Delete the chunks
             self._collection.delete(ids=results["ids"])
 
+            # Invalidate search cache since database changed
+            self._invalidate_search_cache()
+
             removed_count = len(results["ids"])
             logger.debug(f"Removed {removed_count} chunks for file: {file_path}")
             return removed_count
@@ -515,6 +527,9 @@ class ChromaVectorDatabase(VectorDatabase):
                 ids=ids,
             )
 
+            # Invalidate search cache since database changed
+            self._invalidate_search_cache()
+
             logger.debug(f"Added {len(chunks)} chunks to database")
 
         except Exception as e:
@@ -528,9 +543,22 @@ class ChromaVectorDatabase(VectorDatabase):
         filters: dict[str, Any] | None = None,
         similarity_threshold: float = 0.7,
     ) -> list[SearchResult]:
-        """Search for similar code chunks."""
+        """Search for similar code chunks with LRU caching."""
         if not self._collection:
             raise DatabaseNotInitializedError("Database not initialized")
+
+        # Generate cache key from query parameters
+        cache_key = self._generate_search_cache_key(
+            query, limit, filters, similarity_threshold
+        )
+
+        # Check cache
+        if cache_key in self._search_cache:
+            # Move to end for LRU
+            self._search_cache_order.remove(cache_key)
+            self._search_cache_order.append(cache_key)
+            logger.debug(f"Search cache hit for query: {query[:50]}...")
+            return self._search_cache[cache_key]
 
         # Build where clause
         where_clause = self._query_builder.build_where_clause(filters)
@@ -540,10 +568,68 @@ class ChromaVectorDatabase(VectorDatabase):
             self._collection, query, limit, where_clause
         )
 
-        # Process and return results
-        return self._search_handler.process_results(
+        # Process results
+        processed_results = self._search_handler.process_results(
             results, query, similarity_threshold
         )
+
+        # Cache results with LRU eviction
+        self._add_to_search_cache(cache_key, processed_results)
+
+        return processed_results
+
+    def _generate_search_cache_key(
+        self,
+        query: str,
+        limit: int,
+        filters: dict[str, Any] | None,
+        similarity_threshold: float,
+    ) -> str:
+        """Generate cache key for search parameters.
+
+        Args:
+            query: Search query
+            limit: Result limit
+            filters: Search filters
+            similarity_threshold: Similarity threshold
+
+        Returns:
+            Cache key string
+        """
+        # Create deterministic hash of search parameters
+        import orjson
+
+        params = {
+            "query": query,
+            "limit": limit,
+            "filters": filters or {},
+            "threshold": similarity_threshold,
+        }
+        # orjson.dumps is deterministic for dicts (sorted keys)
+        params_bytes = orjson.dumps(params, option=orjson.OPT_SORT_KEYS)
+        return hashlib.sha256(params_bytes).hexdigest()[:16]
+
+    def _add_to_search_cache(self, cache_key: str, results: list[SearchResult]) -> None:
+        """Add search results to cache with LRU eviction.
+
+        Args:
+            cache_key: Cache key
+            results: Search results to cache
+        """
+        # If cache is full, evict least recently used
+        if len(self._search_cache) >= self._search_cache_max_size:
+            lru_key = self._search_cache_order.pop(0)
+            del self._search_cache[lru_key]
+
+        # Add to cache
+        self._search_cache[cache_key] = results
+        self._search_cache_order.append(cache_key)
+
+    def _invalidate_search_cache(self) -> None:
+        """Invalidate search cache when database is modified."""
+        self._search_cache.clear()
+        self._search_cache_order.clear()
+        logger.debug("Search cache invalidated")
 
     async def delete_by_file(self, file_path: Path) -> int:
         """Delete all chunks for a specific file."""
@@ -560,6 +646,10 @@ class ChromaVectorDatabase(VectorDatabase):
             if results["ids"]:
                 self._collection.delete(ids=results["ids"])
                 count = len(results["ids"])
+
+                # Invalidate search cache since database changed
+                self._invalidate_search_cache()
+
                 logger.debug(f"Deleted {count} chunks for {file_path}")
                 return count
 
@@ -717,6 +807,13 @@ class PooledChromaVectorDatabase(VectorDatabase):
         self._corruption_recovery = CorruptionRecovery(persist_directory)
         self._dimension_checker = DimensionChecker()
 
+        # LRU cache for search results
+        # Configurable via environment variable, default to 100 entries
+        cache_size = int(os.environ.get("MCP_VECTOR_SEARCH_CACHE_SIZE", "100"))
+        self._search_cache: dict[str, list[SearchResult]] = {}
+        self._search_cache_order: list[str] = []  # For LRU eviction
+        self._search_cache_max_size = cache_size
+
     async def initialize(self) -> None:
         """Initialize the connection pool with HNSW health check."""
         # Check for corruption before initializing pool
@@ -774,6 +871,10 @@ class PooledChromaVectorDatabase(VectorDatabase):
 
                 # Add to collection
                 conn.collection.add(documents=documents, metadatas=metadatas, ids=ids)
+
+                # Invalidate search cache since database changed
+                self._invalidate_search_cache()
+
                 logger.debug(f"Added {len(chunks)} chunks to database")
 
         except Exception as e:
@@ -787,10 +888,23 @@ class PooledChromaVectorDatabase(VectorDatabase):
         filters: dict[str, Any] | None = None,
         similarity_threshold: float = 0.7,
     ) -> list[SearchResult]:
-        """Search for similar code chunks using pooled connection."""
+        """Search for similar code chunks using pooled connection with LRU caching."""
         # Ensure pool is initialized
         if not self._pool._initialized:
             await self._pool.initialize()
+
+        # Generate cache key from query parameters
+        cache_key = self._generate_search_cache_key(
+            query, limit, filters, similarity_threshold
+        )
+
+        # Check cache
+        if cache_key in self._search_cache:
+            # Move to end for LRU
+            self._search_cache_order.remove(cache_key)
+            self._search_cache_order.append(cache_key)
+            logger.debug(f"Search cache hit for query: {query[:50]}...")
+            return self._search_cache[cache_key]
 
         async with self._pool.get_connection() as conn:
             # Build where clause
@@ -801,10 +915,68 @@ class PooledChromaVectorDatabase(VectorDatabase):
                 conn.collection, query, limit, where_clause
             )
 
-            # Process and return results
-            return self._search_handler.process_results(
+            # Process results
+            processed_results = self._search_handler.process_results(
                 results, query, similarity_threshold
             )
+
+            # Cache results with LRU eviction
+            self._add_to_search_cache(cache_key, processed_results)
+
+            return processed_results
+
+    def _generate_search_cache_key(
+        self,
+        query: str,
+        limit: int,
+        filters: dict[str, Any] | None,
+        similarity_threshold: float,
+    ) -> str:
+        """Generate cache key for search parameters.
+
+        Args:
+            query: Search query
+            limit: Result limit
+            filters: Search filters
+            similarity_threshold: Similarity threshold
+
+        Returns:
+            Cache key string
+        """
+        # Create deterministic hash of search parameters
+        import orjson
+
+        params = {
+            "query": query,
+            "limit": limit,
+            "filters": filters or {},
+            "threshold": similarity_threshold,
+        }
+        # orjson.dumps is deterministic for dicts (sorted keys)
+        params_bytes = orjson.dumps(params, option=orjson.OPT_SORT_KEYS)
+        return hashlib.sha256(params_bytes).hexdigest()[:16]
+
+    def _add_to_search_cache(self, cache_key: str, results: list[SearchResult]) -> None:
+        """Add search results to cache with LRU eviction.
+
+        Args:
+            cache_key: Cache key
+            results: Search results to cache
+        """
+        # If cache is full, evict least recently used
+        if len(self._search_cache) >= self._search_cache_max_size:
+            lru_key = self._search_cache_order.pop(0)
+            del self._search_cache[lru_key]
+
+        # Add to cache
+        self._search_cache[cache_key] = results
+        self._search_cache_order.append(cache_key)
+
+    def _invalidate_search_cache(self) -> None:
+        """Invalidate search cache when database is modified."""
+        self._search_cache.clear()
+        self._search_cache_order.clear()
+        logger.debug("Search cache invalidated")
 
     async def delete_by_file(self, file_path: Path) -> int:
         """Delete all chunks for a specific file using pooled connection."""
@@ -820,6 +992,9 @@ class PooledChromaVectorDatabase(VectorDatabase):
 
                 # Delete the chunks
                 conn.collection.delete(ids=results["ids"])
+
+                # Invalidate search cache since database changed
+                self._invalidate_search_cache()
 
                 deleted_count = len(results["ids"])
                 logger.debug(f"Deleted {deleted_count} chunks for file: {file_path}")
@@ -848,6 +1023,9 @@ class PooledChromaVectorDatabase(VectorDatabase):
 
                 # Delete the chunks
                 conn.collection.delete(ids=results["ids"])
+
+                # Invalidate search cache since database changed
+                self._invalidate_search_cache()
 
                 return len(results["ids"])
 

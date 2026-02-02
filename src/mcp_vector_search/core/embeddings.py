@@ -2,13 +2,14 @@
 
 import contextlib
 import hashlib
-import json
 import logging
 import multiprocessing
 import os
 import sys
 import warnings
 from pathlib import Path
+
+import orjson
 
 # Suppress verbose transformers/sentence-transformers output at module level
 # These messages ("The following layers were not sharded...", progress bars) are noise
@@ -129,9 +130,9 @@ class EmbeddingCache:
         cache_file = self.cache_dir / f"{cache_key}.json"
         if cache_file.exists():
             try:
-                async with aiofiles.open(cache_file) as f:
-                    content_str = await f.read()
-                    embedding = json.loads(content_str)
+                async with aiofiles.open(cache_file, "rb") as f:
+                    content_bytes = await f.read()
+                    embedding = orjson.loads(content_bytes)
 
                     # Add to memory cache with LRU management
                     self._add_to_memory_cache(cache_key, embedding)
@@ -153,8 +154,8 @@ class EmbeddingCache:
         # Store in disk cache
         cache_file = self.cache_dir / f"{cache_key}.json"
         try:
-            async with aiofiles.open(cache_file, "w") as f:
-                await f.write(json.dumps(embedding))
+            async with aiofiles.open(cache_file, "wb") as f:
+                await f.write(orjson.dumps(embedding))
         except Exception as e:
             logger.warning(f"Failed to cache embedding: {e}")
 
@@ -325,17 +326,21 @@ class BatchEmbeddingProcessor:
         self,
         embedding_function: CodeBERTEmbeddingFunction,
         cache: EmbeddingCache | None = None,
-        batch_size: int = 128,  # Increased from 32 to 128 for better throughput on modern hardware
+        batch_size: int | None = None,
     ) -> None:
         """Initialize batch embedding processor.
 
         Args:
             embedding_function: Function to generate embeddings
             cache: Optional embedding cache
-            batch_size: Size of batches for processing (default: 128 for modern hardware)
+            batch_size: Size of batches for processing (default: from env MCP_VECTOR_SEARCH_BATCH_SIZE or 128)
         """
         self.embedding_function = embedding_function
         self.cache = cache
+        # Allow batch size override via environment variable for GPU tuning
+        # Default to 128 for better throughput on modern hardware (GPU/CPU)
+        if batch_size is None:
+            batch_size = int(os.environ.get("MCP_VECTOR_SEARCH_BATCH_SIZE", "128"))
         self.batch_size = batch_size
 
     async def process_batch(self, contents: list[str]) -> list[list[float]]:

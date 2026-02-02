@@ -1,11 +1,11 @@
 """Chunk parsing and processing for semantic indexing."""
 
 import asyncio
-import json
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
+import orjson
 from loguru import logger
 
 from ..parsers.registry import ParserRegistry, get_parser_registry
@@ -103,7 +103,7 @@ def _parse_file_standalone(
 
         # Apply subproject information if available
         if subproject_info_json:
-            subproject_info = json.loads(subproject_info_json)
+            subproject_info = orjson.loads(subproject_info_json)
             for chunk in valid_chunks:
                 chunk.subproject_name = subproject_info.get("name")
                 chunk.subproject_path = subproject_info.get("relative_path")
@@ -211,7 +211,7 @@ class ChunkProcessor:
             subproject = self.monorepo_detector.get_subproject_for_file(file_path)
             subproject_info_json = None
             if subproject:
-                subproject_info_json = json.dumps(
+                subproject_info_json = orjson.dumps(
                     {
                         "name": subproject.name,
                         "relative_path": subproject.relative_path,

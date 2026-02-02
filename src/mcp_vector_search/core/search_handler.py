@@ -1,9 +1,9 @@
 """Search operations handler for ChromaDB vector database."""
 
-import json
 from pathlib import Path
 from typing import Any
 
+import orjson
 from loguru import logger
 
 from .exceptions import SearchError
@@ -134,8 +134,8 @@ class SearchHandler:
         code_smells = []
         if "code_smells" in metadata:
             try:
-                code_smells = json.loads(metadata["code_smells"])
-            except (json.JSONDecodeError, TypeError):
+                code_smells = orjson.loads(metadata["code_smells"])
+            except (orjson.JSONDecodeError, TypeError):
                 code_smells = []
 
         # Calculate quality score from metrics (0-100 scale)
