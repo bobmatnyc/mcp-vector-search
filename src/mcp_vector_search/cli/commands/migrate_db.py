@@ -58,7 +58,7 @@ def lancedb_to_chromadb(
     2. Creates a new ChromaDB database with the same data
     3. Preserves all metadata and relationships
 
-    After migration, unset MCP_VECTOR_SEARCH_BACKEND or set it to 'chromadb'.
+    After migration, set MCP_VECTOR_SEARCH_BACKEND=chromadb to use ChromaDB.
 
     Example:
         mcp-vector-search migrate-db lancedb-to-chromadb /path/to/project
@@ -282,10 +282,9 @@ async def _migrate_lancedb_to_chromadb(project_path: Path, force: bool) -> None:
             console.print("[green]✓[/green] Migration verified successfully")
 
         console.print("\n[bold green]Migration completed successfully![/bold green]")
-        console.print("\nTo use the ChromaDB backend, unset the environment variable:")
-        console.print("[cyan]unset MCP_VECTOR_SEARCH_BACKEND[/cyan]")
-        console.print("or set it to 'chromadb':")
+        console.print("\nTo use the ChromaDB backend, set the environment variable:")
         console.print("[cyan]export MCP_VECTOR_SEARCH_BACKEND=chromadb[/cyan]")
+        console.print("\n(LanceDB is the default in v2.x)")
 
     except Exception as e:
         logger.error(f"Migration failed: {e}")

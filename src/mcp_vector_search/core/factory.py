@@ -80,7 +80,7 @@ class ComponentFactory:
         """
         # Get backend from parameter, environment, or default to chromadb
         if backend is None:
-            backend = os.environ.get("MCP_VECTOR_SEARCH_BACKEND", "chromadb")
+            backend = os.environ.get("MCP_VECTOR_SEARCH_BACKEND", "lancedb")
 
         if backend == "lancedb":
             # LanceDB backend (no pooling support yet)
@@ -329,7 +329,7 @@ def create_database(
     """
     # Get backend from parameter, environment, or default to chromadb
     if backend is None:
-        backend = os.environ.get("MCP_VECTOR_SEARCH_BACKEND", "chromadb")
+        backend = os.environ.get("MCP_VECTOR_SEARCH_BACKEND", "lancedb")
 
     # Convert persist_directory to string
     persist_dir_str = str(persist_directory)

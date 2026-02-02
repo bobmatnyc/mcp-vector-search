@@ -1,6 +1,6 @@
 # LanceDB Backend for MCP Vector Search
 
-This document explains how to use the LanceDB backend as an alternative to ChromaDB.
+**LanceDB is the default backend in v2.x.** This document explains the LanceDB backend and how to switch to ChromaDB if needed.
 
 ## Overview
 
@@ -22,25 +22,33 @@ pip install -U mcp-vector-search
 
 This will install `lancedb>=0.6.0` along with other dependencies.
 
-## Using LanceDB Backend
+## Using LanceDB Backend (Default)
 
-### Option 1: Environment Variable (Recommended)
-
-Set the backend via environment variable before running any commands:
+LanceDB is the default backend in v2.x. Just run commands normally:
 
 ```bash
-export MCP_VECTOR_SEARCH_BACKEND=lancedb
-
-# Now all commands use LanceDB
+# LanceDB is used by default
 mcp-vector-search index
 mcp-vector-search search "your query"
 mcp-vector-search status
 ```
 
+## Using ChromaDB Backend (Legacy)
+
+To use ChromaDB instead, set the environment variable:
+
+```bash
+export MCP_VECTOR_SEARCH_BACKEND=chromadb
+
+# Now all commands use ChromaDB
+mcp-vector-search index
+mcp-vector-search search "your query"
+```
+
 Add to your shell profile (`.bashrc`, `.zshrc`) for persistence:
 
 ```bash
-echo 'export MCP_VECTOR_SEARCH_BACKEND=lancedb' >> ~/.zshrc
+echo 'export MCP_VECTOR_SEARCH_BACKEND=chromadb' >> ~/.zshrc
 ```
 
 ### Option 2: Programmatic (Python API)
