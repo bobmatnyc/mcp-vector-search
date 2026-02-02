@@ -359,62 +359,95 @@ class LanceVectorDatabase:
         """
         if self._table is None:
             return IndexStats(
+                total_files=0,
                 total_chunks=0,
-                indexed_files=0,
-                total_size_bytes=0,
                 languages={},
-                chunk_types={},
-                backend="lancedb",
+                file_types={},
+                index_size_mb=0.0,
+                last_updated="N/A",
+                embedding_model="unknown",
+                database_size_bytes=0,
             )
 
         try:
             total_chunks = self._table.count_rows()
 
             if skip_stats or total_chunks == 0:
+                # Calculate database size even for empty DB
+                db_size_bytes = self._get_database_size()
+                db_size_mb = db_size_bytes / (1024 * 1024)
+
                 return IndexStats(
+                    total_files=0,
                     total_chunks=total_chunks,
-                    indexed_files=0,
-                    total_size_bytes=0,
                     languages={},
-                    chunk_types={},
-                    backend="lancedb",
+                    file_types={},
+                    index_size_mb=db_size_mb,
+                    last_updated="N/A" if total_chunks == 0 else "unknown",
+                    embedding_model="unknown",
+                    database_size_bytes=db_size_bytes,
                 )
 
-            # Get detailed statistics
+            # Get detailed statistics using pandas
             df = self._table.to_pandas()
 
             # Count unique files
-            indexed_files = df["file_path"].nunique()
+            total_files = df["file_path"].nunique()
 
             # Language distribution
             language_counts = df["language"].value_counts().to_dict()
 
-            # Chunk type distribution
-            chunk_type_counts = df["chunk_type"].value_counts().to_dict()
+            # File type distribution (extract extensions)
+            file_types: dict[str, int] = {}
+            for file_path in df["file_path"].unique():
+                ext = Path(file_path).suffix or "no_extension"
+                file_types[ext] = file_types.get(ext, 0) + 1
 
-            # Calculate storage size (approximate)
-            total_size_bytes = len(df) * df.memory_usage(deep=True).sum()
+            # Calculate storage size
+            db_size_bytes = self._get_database_size()
+            index_size_mb = db_size_bytes / (1024 * 1024)
 
             return IndexStats(
+                total_files=total_files,
                 total_chunks=total_chunks,
-                indexed_files=indexed_files,
-                total_size_bytes=total_size_bytes,
                 languages=language_counts,
-                chunk_types=chunk_type_counts,
-                backend="lancedb",
+                file_types=file_types,
+                index_size_mb=index_size_mb,
+                last_updated="unknown",  # LanceDB doesn't track modification time
+                embedding_model="unknown",  # Would need to be passed in or stored
+                database_size_bytes=db_size_bytes,
             )
 
         except Exception as e:
             logger.error(f"Failed to get LanceDB stats: {e}")
             # Return minimal stats on error
             return IndexStats(
+                total_files=0,
                 total_chunks=0,
-                indexed_files=0,
-                total_size_bytes=0,
                 languages={},
-                chunk_types={},
-                backend="lancedb",
+                file_types={},
+                index_size_mb=0.0,
+                last_updated="error",
+                embedding_model="unknown",
+                database_size_bytes=0,
             )
+
+    def _get_database_size(self) -> int:
+        """Get total database directory size in bytes.
+
+        Returns:
+            Total size of all files in database directory (bytes)
+        """
+        total_size = 0
+        try:
+            # LanceDB stores data in multiple files in the persist directory
+            for file_path in self.persist_directory.rglob("*"):
+                if file_path.is_file():
+                    total_size += file_path.stat().st_size
+        except Exception as e:
+            logger.warning(f"Failed to calculate database size: {e}")
+            return 0
+        return total_size
 
     async def reset(self) -> None:
         """Reset the database (delete all data).
