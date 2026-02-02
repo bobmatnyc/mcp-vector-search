@@ -7,9 +7,9 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
-from ..core.database import ChromaVectorDatabase
 from ..core.embeddings import create_embedding_function
 from ..core.exceptions import ProjectNotFoundError
+from ..core.factory import create_database
 from ..core.models import SearchResult
 from ..core.project import ProjectManager
 from ..core.search import SemanticSearchEngine
@@ -26,7 +26,7 @@ class InteractiveSearchSession:
         self.project_root = project_root
         self.project_manager = ProjectManager(project_root)
         self.search_engine: SemanticSearchEngine | None = None
-        self.database: ChromaVectorDatabase | None = None
+        self.database = None
         self.last_results: list[SearchResult] = []
         self.search_history: list[str] = []
 
@@ -41,7 +41,7 @@ class InteractiveSearchSession:
 
         # Setup database and search engine
         embedding_function, _ = create_embedding_function(config.embedding_model)
-        self.database = ChromaVectorDatabase(
+        self.database = create_database(
             persist_directory=config.index_path,
             embedding_function=embedding_function,
         )

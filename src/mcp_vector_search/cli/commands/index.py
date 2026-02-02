@@ -12,9 +12,9 @@ import typer
 from loguru import logger
 
 from ...config.defaults import get_default_cache_path
-from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
+from ...core.factory import create_database
 from ...core.indexer import SemanticIndexer
 from ...core.project import ProjectManager
 from ..output import (
@@ -347,7 +347,7 @@ async def run_indexing(
     )
 
     # Setup database
-    database = ChromaVectorDatabase(
+    database = create_database(
         persist_directory=config.index_path,
         embedding_function=embedding_function,
     )
@@ -730,7 +730,7 @@ async def _reindex_entire_project(project_root: Path) -> None:
     )
 
     # Setup database
-    database = ChromaVectorDatabase(
+    database = create_database(
         persist_directory=config.index_path,
         embedding_function=embedding_function,
     )
@@ -786,7 +786,7 @@ async def _reindex_single_file(project_root: Path, file_path: Path) -> None:
         ),
     )
 
-    database = ChromaVectorDatabase(
+    database = create_database(
         persist_directory=config.index_path,
         embedding_function=embedding_function,
     )
@@ -849,7 +849,7 @@ async def _clean_index(project_root: Path) -> None:
 
     # Setup database
     embedding_function, _ = create_embedding_function(config.embedding_model)
-    database = ChromaVectorDatabase(
+    database = create_database(
         persist_directory=config.index_path,
         embedding_function=embedding_function,
     )
@@ -1306,7 +1306,7 @@ async def _compute_relationships_sync(project_root: Path) -> None:
 
     # Setup database
     embedding_function, _ = create_embedding_function(config.embedding_model)
-    database = ChromaVectorDatabase(
+    database = create_database(
         persist_directory=config.index_path,
         embedding_function=embedding_function,
     )

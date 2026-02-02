@@ -1222,8 +1222,8 @@ async def run_dead_code_analysis(
     """
     from ...analysis.dead_code import Confidence, DeadCodeAnalyzer
     from ...analysis.dead_code_formatters import get_formatter
-    from ...core.database import ChromaVectorDatabase
     from ...core.embeddings import create_embedding_function
+    from ...core.factory import create_database
 
     try:
         # Check if project is initialized
@@ -1254,7 +1254,7 @@ async def run_dead_code_analysis(
         db_path = Path(config.index_path)
         embedding_function, _ = create_embedding_function(config.embedding_model)
 
-        async with ChromaVectorDatabase(
+        async with create_database(
             persist_directory=db_path,
             embedding_function=embedding_function,
         ) as db:

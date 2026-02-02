@@ -13,9 +13,9 @@ from rich.table import Table
 
 from ... import __version__
 from ...analysis.storage.metrics_store import MetricsStore, MetricsStoreError
-from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
+from ...core.factory import create_database
 from ...core.indexer import SemanticIndexer
 from ...core.project import ProjectManager
 from ..output import (
@@ -212,7 +212,7 @@ async def show_status(
 
         # Get indexing statistics from database (fast, no filesystem scan)
         embedding_function, _ = create_embedding_function(config.embedding_model)
-        database = ChromaVectorDatabase(
+        database = create_database(
             persist_directory=config.index_path,
             embedding_function=embedding_function,
         )
@@ -484,7 +484,7 @@ async def perform_health_check(project_root: Path, config) -> dict[str, Any]:
 
         # Check database
         try:
-            database = ChromaVectorDatabase(
+            database = create_database(
                 persist_directory=config.index_path,
                 embedding_function=embedding_function,
             )

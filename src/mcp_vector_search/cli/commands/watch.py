@@ -8,9 +8,9 @@ from pathlib import Path
 import typer
 from loguru import logger
 
-from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
+from ...core.factory import create_database
 from ...core.indexer import SemanticIndexer
 from ...core.project import ProjectManager
 from ...core.watcher import FileWatcher
@@ -109,7 +109,7 @@ async def _watch_async(project_root: Path, config_path: Path | None) -> None:
     # Setup database and indexer
     try:
         embedding_function, _ = create_embedding_function(config.embedding_model)
-        database = ChromaVectorDatabase(
+        database = create_database(
             persist_directory=config.index_path,
             embedding_function=embedding_function,
         )

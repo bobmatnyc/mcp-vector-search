@@ -13,8 +13,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function
+from ...core.factory import create_database
 from ...core.indexer import SemanticIndexer
 from ...core.project import ProjectManager
 
@@ -151,7 +151,7 @@ class BackgroundIndexer:
             )
 
             # Setup database
-            database = ChromaVectorDatabase(
+            database = create_database(
                 persist_directory=config.index_path,
                 embedding_function=embedding_function,
             )
@@ -289,7 +289,7 @@ class BackgroundIndexer:
             )
 
             # Setup database
-            database = ChromaVectorDatabase(
+            database = create_database(
                 persist_directory=config.index_path,
                 embedding_function=embedding_function,
             )

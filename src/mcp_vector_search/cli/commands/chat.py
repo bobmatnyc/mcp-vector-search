@@ -11,9 +11,9 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 
-from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function, suppress_stdout_stderr
 from ...core.exceptions import ProjectNotFoundError
+from ...core.factory import create_database
 from ...core.llm_client import LLMClient
 from ...core.project import ProjectManager
 from ...core.search import SemanticSearchEngine
@@ -444,7 +444,7 @@ async def run_single_query(
     # Initialize search engine (suppress verbose model loading output)
     with suppress_stdout_stderr():
         embedding_function, _ = create_embedding_function(config.embedding_model)
-        database = ChromaVectorDatabase(
+        database = create_database(
             persist_directory=config.index_path,
             embedding_function=embedding_function,
         )
@@ -523,7 +523,7 @@ async def run_chat_repl(
     # Initialize search components (suppress verbose model loading output)
     with suppress_stdout_stderr():
         embedding_function, _ = create_embedding_function(config.embedding_model)
-        database = ChromaVectorDatabase(
+        database = create_database(
             persist_directory=config.index_path,
             embedding_function=embedding_function,
         )

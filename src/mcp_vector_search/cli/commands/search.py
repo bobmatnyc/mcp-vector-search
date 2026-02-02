@@ -8,9 +8,9 @@ from pathlib import Path
 import typer
 from loguru import logger
 
-from ...core.database import ChromaVectorDatabase
 from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
+from ...core.factory import create_database
 from ...core.indexer import SemanticIndexer
 from ...core.project import ProjectManager
 from ...core.search import SemanticSearchEngine
@@ -388,7 +388,7 @@ async def run_search(
 
     # Setup database and search engine
     embedding_function, _ = create_embedding_function(config.embedding_model)
-    database = ChromaVectorDatabase(
+    database = create_database(
         persist_directory=config.index_path,
         embedding_function=embedding_function,
     )
@@ -732,7 +732,7 @@ async def run_similar_search(
     config = project_manager.load_config()
 
     embedding_function, _ = create_embedding_function(config.embedding_model)
-    database = ChromaVectorDatabase(
+    database = create_database(
         persist_directory=config.index_path,
         embedding_function=embedding_function,
     )
@@ -841,7 +841,7 @@ async def run_context_search(
     config = project_manager.load_config()
 
     embedding_function, _ = create_embedding_function(config.embedding_model)
-    database = ChromaVectorDatabase(
+    database = create_database(
         persist_directory=config.index_path,
         embedding_function=embedding_function,
     )

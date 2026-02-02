@@ -284,8 +284,8 @@ async def check_health(
 
         # Initialize database
         from ...config.defaults import get_default_cache_path
-        from ...core.database import ChromaVectorDatabase
         from ...core.embeddings import create_embedding_function
+        from ...core.factory import create_database
 
         config = project_manager.load_config()
         db_path = Path(config.index_path)
@@ -299,7 +299,7 @@ async def check_health(
         )
 
         # Create database instance
-        db = ChromaVectorDatabase(
+        db = create_database(
             persist_directory=db_path,
             embedding_function=embedding_function,
         )

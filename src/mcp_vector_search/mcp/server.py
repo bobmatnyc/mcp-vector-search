@@ -16,9 +16,9 @@ from mcp.types import (
     TextContent,
 )
 
-from ..core.database import ChromaVectorDatabase
 from ..core.embeddings import create_embedding_function
 from ..core.exceptions import ProjectNotFoundError
+from ..core.factory import create_database
 from ..core.indexer import SemanticIndexer
 from ..core.project import ProjectManager
 from ..core.search import SemanticSearchEngine
@@ -66,7 +66,7 @@ class MCPVectorSearchServer:
         self.search_engine: SemanticSearchEngine | None = None
         self.file_watcher: FileWatcher | None = None
         self.indexer: SemanticIndexer | None = None
-        self.database: ChromaVectorDatabase | None = None
+        self.database = None
         self._initialized = False
 
         # Determine if file watching should be enabled
@@ -100,7 +100,7 @@ class MCPVectorSearchServer:
             )
 
             # Setup database
-            self.database = ChromaVectorDatabase(
+            self.database = create_database(
                 persist_directory=config.index_path,
                 embedding_function=embedding_function,
             )

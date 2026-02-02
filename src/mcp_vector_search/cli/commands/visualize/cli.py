@@ -14,8 +14,8 @@ from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
 
-from ....core.database import ChromaVectorDatabase
 from ....core.embeddings import create_embedding_function
+from ....core.factory import create_database
 from ....core.project import ProjectManager
 
 # Import from refactored modules (same directory)
@@ -104,7 +104,7 @@ async def _export_chunks(
 
         # Get database
         embedding_function, _ = create_embedding_function(config.embedding_model)
-        database = ChromaVectorDatabase(
+        database = create_database(
             persist_directory=config.index_path,
             embedding_function=embedding_function,
         )

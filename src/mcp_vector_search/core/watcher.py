@@ -11,7 +11,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from ..config.settings import ProjectConfig
-from .database import ChromaVectorDatabase
+from .database import VectorDatabase
 from .indexer import SemanticIndexer
 
 
@@ -127,7 +127,7 @@ class FileWatcher:
         project_root: Path,
         config: ProjectConfig,
         indexer: SemanticIndexer,
-        database: ChromaVectorDatabase,
+        database: VectorDatabase,
     ):
         """Initialize file watcher.
 
@@ -285,7 +285,7 @@ class WatcherManager:
         project_root: Path,
         config: ProjectConfig,
         indexer: SemanticIndexer,
-        database: ChromaVectorDatabase,
+        database: VectorDatabase,
     ) -> FileWatcher:
         """Start a file watcher for a project."""
         project_key = str(project_root)

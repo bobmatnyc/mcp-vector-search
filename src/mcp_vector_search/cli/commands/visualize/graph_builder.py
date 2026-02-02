@@ -12,7 +12,6 @@ from loguru import logger
 from rich.console import Console
 
 from ....analysis.trends import TrendTracker
-from ....core.database import ChromaVectorDatabase
 from ....core.directory_index import DirectoryIndex
 from ....core.project import ProjectManager
 from .state_manager import VisualizationState
