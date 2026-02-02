@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-02-02
+
+### Added
+- **Force-Include Patterns** - Selective override of gitignore rules
+  - New `force_include_patterns` configuration option
+  - Glob pattern support with `**` for recursive matching (e.g., `repos/**/*.java`)
+  - Force-include patterns override `.gitignore` rules, enabling selective indexing of gitignored directories
+  - Use case: Index specific file types (e.g., `.java`, `.kt`) in gitignored directories (e.g., `repos/`)
+  - CLI command: `mcp-vector-search config set force_include_patterns '["repos/**/*.java"]'`
+  - Documentation: Added configuration examples and use cases to README
+
 ## [1.2.9] - 2026-01-28
 
 ### Fixed

@@ -358,6 +358,114 @@ class ProjectManager:
 
         return files
 
+    def _pattern_could_match_inside_dir(self, dir_path: str, pattern: str) -> bool:
+        """Check if a glob pattern could potentially match files inside a directory.
+
+        Args:
+            dir_path: Directory path (e.g., "repos" or "repos/subdir")
+            pattern: Glob pattern (e.g., "repos/**/*.java")
+
+        Returns:
+            True if pattern could match files/subdirectories inside dir_path
+        """
+        # Normalize
+        dir_path = dir_path.replace("\\", "/")
+        pattern = pattern.replace("\\", "/")
+
+        # If pattern starts with the directory path, it could match inside
+        # E.g., "repos/**/*.java" could match files in "repos/" or "repos/subdir/"
+        if pattern.startswith(dir_path + "/"):
+            return True
+
+        # If pattern has ** and the dir_path is a prefix/subdirectory of the pattern's base
+        # E.g., pattern "repos/**/*.java" should allow traversing into "repos/subdir/"
+        # Check if dir_path is within the pattern's scope
+        pattern_parts = pattern.split("/")
+        dir_parts = dir_path.split("/")
+
+        # Find ** in pattern
+        if "**" in pattern_parts:
+            doublestar_idx = pattern_parts.index("**")
+            pattern_prefix_parts = pattern_parts[:doublestar_idx]
+
+            # Check if dir_path starts with pattern prefix
+            # E.g., pattern "repos/**/*.java" has prefix ["repos"]
+            # dir_path "repos/subdir" starts with "repos", so we should traverse
+            if len(dir_parts) >= len(pattern_prefix_parts):
+                if dir_parts[: len(pattern_prefix_parts)] == pattern_prefix_parts:
+                    return True
+
+        # If pattern starts with **/
+        # E.g., "**/*.java" could match files in any directory
+        if pattern.startswith("**/"):
+            return True
+
+        return False
+
+    def _matches_glob_pattern(self, path_str: str, pattern: str) -> bool:
+        """Check if a path matches a glob pattern with ** support.
+
+        Args:
+            path_str: Path string with forward slashes
+            pattern: Glob pattern (supports ** for recursive matching)
+
+        Returns:
+            True if path matches pattern
+        """
+        import fnmatch
+        import re
+
+        # Normalize separators
+        path_str = path_str.replace("\\", "/")
+        pattern = pattern.replace("\\", "/")
+
+        # Handle ** patterns with regex
+        # ** matches zero or more path segments
+        if "**" in pattern:
+            # Replace **/ with optional directory pattern
+            # repos/**/*.java should match:
+            #   - repos/test.java (zero directories)
+            #   - repos/subdir/test.java (one directory)
+            #   - repos/a/b/c/test.java (multiple directories)
+
+            regex_pattern = re.escape(pattern)
+
+            # Handle **/ pattern (matches zero or more directories)
+            regex_pattern = regex_pattern.replace(r"\*\*/", "(.*/)?")
+
+            # Handle /** pattern (at end, matches anything)
+            regex_pattern = regex_pattern.replace(r"/\*\*", "/.*")
+
+            # Handle standalone ** (matches everything)
+            regex_pattern = regex_pattern.replace(r"\*\*", ".*")
+
+            # Handle single * (matches anything except /)
+            regex_pattern = regex_pattern.replace(r"\*", "[^/]*")
+
+            # Handle ? (matches one char except /)
+            regex_pattern = regex_pattern.replace(r"\?", "[^/]")
+
+            regex_pattern = f"^{regex_pattern}$"
+
+            try:
+                if re.match(regex_pattern, path_str):
+                    return True
+            except re.error:
+                pass
+
+        # Try fnmatch for simple patterns
+        if fnmatch.fnmatch(path_str, pattern):
+            return True
+
+        # Try matching any suffix (similar to gitignore behavior)
+        path_parts = path_str.split("/")
+        for i in range(len(path_parts)):
+            subpath = "/".join(path_parts[i:])
+            if fnmatch.fnmatch(subpath, pattern):
+                return True
+
+        return False
+
     def _should_ignore_path(self, path: Path, is_directory: bool | None = None) -> bool:
         """Check if a path should be ignored.
 
@@ -368,12 +476,55 @@ class ProjectManager:
         Returns:
             True if path should be ignored
         """
-        # First check gitignore rules if available
+        # Load config if needed (for force_include_patterns)
+        try:
+            config = self._config or (
+                self.load_config() if self.is_initialized() else None
+            )
+        except Exception:
+            config = None
+
+        # FIRST: Check force_include_patterns - they override gitignore
+        if config and config.force_include_patterns:
+            try:
+                relative_path = path.relative_to(self.project_root)
+                relative_path_str = str(relative_path).replace("\\", "/")
+
+                # Check if path matches any force_include pattern
+                for pattern in config.force_include_patterns:
+                    if self._matches_glob_pattern(relative_path_str, pattern):
+                        logger.debug(
+                            f"Force-including {relative_path} (matched pattern: {pattern})"
+                        )
+                        return False  # Don't ignore this file
+
+                    # CRITICAL: For directories, check if pattern could match files inside
+                    # E.g., if pattern is "repos/**/*.java" and path is "repos/",
+                    # we need to traverse into "repos/" to check files inside
+                    if is_directory:
+                        # Add trailing slash and /* to check if files inside could match
+                        dir_pattern_prefix = relative_path_str + "/"
+                        if pattern.startswith(
+                            dir_pattern_prefix
+                        ) or self._pattern_could_match_inside_dir(
+                            relative_path_str, pattern
+                        ):
+                            logger.debug(
+                                f"Not ignoring directory {relative_path} (could contain force-included files matching: {pattern})"
+                            )
+                            return False  # Don't ignore this directory
+            except ValueError:
+                # Path is not relative to project root
+                pass
+
+        # Check gitignore rules if available and respect_gitignore is enabled
         # PERFORMANCE: Pass is_directory hint to avoid redundant stat() calls
-        if self.gitignore_parser and self.gitignore_parser.is_ignored(
-            path, is_directory=is_directory
-        ):
-            return True
+        respect_gitignore = config.respect_gitignore if config else True
+        if respect_gitignore:
+            if self.gitignore_parser and self.gitignore_parser.is_ignored(
+                path, is_directory=is_directory
+            ):
+                return True
 
         # Check if any parent directory is in ignore patterns
         for part in path.parts:

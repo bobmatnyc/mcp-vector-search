@@ -287,7 +287,7 @@ def _parse_config_value(key: str, value: str):
             raise ConfigurationError(f"Invalid integer value for {key}: {value}") from e
 
     # List values
-    if key in ["file_extensions", "languages"]:
+    if key in ["file_extensions", "languages", "force_include_patterns"]:
         if value.startswith("[") and value.endswith("]"):
             # JSON-style list
             import json
@@ -327,6 +327,7 @@ def _get_default_value(key: str):
         "max_cache_size": 1000,
         "skip_dotfiles": True,
         "respect_gitignore": True,
+        "force_include_patterns": [],
         "auto_reindex_on_upgrade": True,
     }
 
@@ -348,6 +349,11 @@ def _show_available_keys() -> None:
         ("max_cache_size", "Maximum cache size", "integer"),
         ("skip_dotfiles", "Skip dotfiles/directories (except whitelisted)", "boolean"),
         ("respect_gitignore", "Respect .gitignore patterns", "boolean"),
+        (
+            "force_include_patterns",
+            "Glob patterns to force-include even if gitignored",
+            "list",
+        ),
         ("auto_reindex_on_upgrade", "Auto-reindex on version upgrade", "boolean"),
     ]
 

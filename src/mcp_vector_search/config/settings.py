@@ -51,6 +51,10 @@ class ProjectConfig(BaseSettings):
         default=True,
         description="Respect .gitignore patterns when indexing files",
     )
+    force_include_patterns: list[str] = Field(
+        default_factory=list,
+        description="Glob patterns to force-include even if gitignored (e.g., ['repos/**/*.java'])",
+    )
     openrouter_api_key: str | None = Field(
         default=None,
         description="OpenRouter API key for chat command (optional, can also use env var)",

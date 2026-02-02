@@ -482,6 +482,33 @@ Projects are configured via `.mcp-vector-search/config.json`:
 - Controls whether `.gitignore` patterns are respected during indexing
 - When `false`: Files in `.gitignore` are indexed (subject to `skip_dotfiles` if enabled)
 
+**`force_include_patterns`** (default: `[]`)
+- Glob patterns to force-include files/directories even if they are gitignored
+- Patterns support `**` for recursive matching (e.g., `repos/**/*.java` matches all Java files in `repos/` and subdirectories)
+- Force-include patterns override `.gitignore` rules, allowing selective indexing of gitignored directories
+- Example use case: Index specific file types in a gitignored `repos/` directory
+
+**Example: Force-include Java files from gitignored directory**
+```bash
+# Set force_include_patterns via JSON list
+mcp-vector-search config set force_include_patterns '["repos/**/*.java", "repos/**/*.kt"]'
+
+# Or add patterns one at a time (requires custom CLI command)
+# This allows .gitignore to exclude repos/ from git, but mcp-vector-search still indexes Java/Kotlin files
+```
+
+**Example config.json with force_include_patterns:**
+```json
+{
+  "respect_gitignore": true,
+  "force_include_patterns": [
+    "repos/**/*.java",
+    "repos/**/*.kt",
+    "vendor/internal/**/*.go"
+  ]
+}
+```
+
 #### Configuration Use Cases
 
 **Default Behavior** (Recommended for most projects):
@@ -510,6 +537,19 @@ mcp-vector-search config set respect_gitignore true
 # Useful when you want to index files in .gitignore but skip hidden config files
 mcp-vector-search config set skip_dotfiles true
 mcp-vector-search config set respect_gitignore false
+```
+
+**Selective Gitignore Override with Force-Include Patterns**:
+```bash
+# Index specific file types from gitignored directories
+# Example: .gitignore excludes repos/, but you want to index Java/Kotlin files
+mcp-vector-search config set respect_gitignore true
+mcp-vector-search config set force_include_patterns '["repos/**/*.java", "repos/**/*.kt"]'
+
+# This allows:
+# - .gitignore to exclude repos/ from git (keeps your repo clean)
+# - mcp-vector-search to index Java/Kotlin files in repos/ (semantic search)
+# - Other files in repos/ (e.g., .class, .jar) remain excluded
 ```
 
 ## 🏗️ Architecture
