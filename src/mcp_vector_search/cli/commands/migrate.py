@@ -8,12 +8,18 @@ from rich.table import Table
 
 from ...migrations import MigrationRunner
 from ...migrations.v1_2_2_codexembed import CodeXEmbedMigration
+from .migrate_db import app as migrate_db_app
 
 console = Console()
 migrate_app = typer.Typer(
     name="migrate",
     help="🔄 Database migration operations",
     rich_markup_mode="rich",
+)
+
+# Add backend migration subcommand
+migrate_app.add_typer(
+    migrate_db_app, name="db", help="🔄 Migrate between database backends"
 )
 
 

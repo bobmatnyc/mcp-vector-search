@@ -1,6 +1,7 @@
 """Component factory for creating commonly used objects."""
 
 import functools
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,7 @@ from .auto_indexer import AutoIndexer
 from .database import ChromaVectorDatabase, PooledChromaVectorDatabase, VectorDatabase
 from .embeddings import CodeBERTEmbeddingFunction, create_embedding_function
 from .indexer import SemanticIndexer
+from .lancedb_backend import LanceVectorDatabase
 from .project import ProjectManager
 from .search import SemanticSearchEngine
 
@@ -61,30 +63,57 @@ class ComponentFactory:
         config: ProjectConfig,
         embedding_function: CodeBERTEmbeddingFunction,
         use_pooling: bool = True,  # Enable pooling by default for 13.6% performance boost
+        backend: str | None = None,  # "chromadb" or "lancedb"
         **pool_kwargs,
     ) -> VectorDatabase:
-        """Create vector database."""
-        if use_pooling:
-            # Set default pool parameters if not provided
-            pool_defaults = {
-                "max_connections": 10,
-                "min_connections": 2,
-                "max_idle_time": 300.0,
-            }
-            pool_defaults.update(pool_kwargs)
+        """Create vector database.
 
-            return PooledChromaVectorDatabase(
+        Args:
+            config: Project configuration
+            embedding_function: Embedding function
+            use_pooling: Whether to use connection pooling (ChromaDB only)
+            backend: Database backend ("chromadb" or "lancedb", defaults to env var or "chromadb")
+            **pool_kwargs: Additional pool configuration for ChromaDB
+
+        Returns:
+            Vector database instance
+        """
+        # Get backend from parameter, environment, or default to chromadb
+        if backend is None:
+            backend = os.environ.get("MCP_VECTOR_SEARCH_BACKEND", "chromadb")
+
+        if backend == "lancedb":
+            # LanceDB backend (no pooling support yet)
+            logger.info("Using LanceDB backend")
+            return LanceVectorDatabase(
                 persist_directory=config.index_path,
                 embedding_function=embedding_function,
                 collection_name="code_search",
-                **pool_defaults,
             )
         else:
-            return ChromaVectorDatabase(
-                persist_directory=config.index_path,
-                embedding_function=embedding_function,
-                collection_name="code_search",
-            )
+            # ChromaDB backend (default)
+            logger.debug(f"Using ChromaDB backend with pooling={use_pooling}")
+            if use_pooling:
+                # Set default pool parameters if not provided
+                pool_defaults = {
+                    "max_connections": 10,
+                    "min_connections": 2,
+                    "max_idle_time": 300.0,
+                }
+                pool_defaults.update(pool_kwargs)
+
+                return PooledChromaVectorDatabase(
+                    persist_directory=config.index_path,
+                    embedding_function=embedding_function,
+                    collection_name="code_search",
+                    **pool_defaults,
+                )
+            else:
+                return ChromaVectorDatabase(
+                    persist_directory=config.index_path,
+                    embedding_function=embedding_function,
+                    collection_name="code_search",
+                )
 
     @staticmethod
     def create_indexer(
