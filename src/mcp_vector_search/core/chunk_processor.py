@@ -2,6 +2,7 @@
 
 import asyncio
 import multiprocessing
+import os
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -12,6 +13,61 @@ from ..parsers.registry import ParserRegistry, get_parser_registry
 from ..utils.monorepo import MonorepoDetector
 from .exceptions import ParsingError
 from .models import CodeChunk
+
+
+def _detect_optimal_workers() -> int:
+    """Detect optimal worker count based on CPU architecture.
+
+    Returns:
+        Optimal number of worker processes:
+        - Apple Silicon (16+ cores): 14 workers (leave 2 for system)
+        - Apple Silicon (10-15 cores): 10 workers (leave headroom)
+        - Apple Silicon (<10 cores): cores - 1
+        - Other architectures: 75% of CPU cores
+
+    Environment Variables:
+        MCP_VECTOR_SEARCH_MAX_WORKERS: Override auto-detection
+    """
+    env_workers = os.environ.get("MCP_VECTOR_SEARCH_MAX_WORKERS")
+    if env_workers:
+        return int(env_workers)
+
+    cpu_count = multiprocessing.cpu_count()
+
+    try:
+        import platform
+
+        # Check if Apple Silicon (ARM64 on macOS)
+        if platform.processor() == "arm" and platform.system() == "Darwin":
+            # M4 Max: 12 perf + 4 efficiency = 16 cores
+            # Use 14 workers (leave 2 for system + background tasks)
+            if cpu_count >= 16:
+                workers = min(14, cpu_count - 2)
+                logger.debug(
+                    f"Apple Silicon detected ({cpu_count} cores): using {workers} workers (M4 Max/Ultra optimized)"
+                )
+                return workers
+            elif cpu_count >= 10:
+                workers = min(10, cpu_count - 2)
+                logger.debug(
+                    f"Apple Silicon detected ({cpu_count} cores): using {workers} workers"
+                )
+                return workers
+            else:
+                workers = max(4, cpu_count - 1)
+                logger.debug(
+                    f"Apple Silicon detected ({cpu_count} cores): using {workers} workers"
+                )
+                return workers
+    except Exception as e:
+        logger.debug(
+            f"CPU architecture detection failed: {e}, using default worker calculation"
+        )
+
+    # Default: 75% of cores
+    workers = max(1, cpu_count * 3 // 4)
+    logger.debug(f"Using {workers} workers ({cpu_count} CPU cores detected)")
+    return workers
 
 
 def _deduplicate_chunks(chunks: list[CodeChunk]) -> list[CodeChunk]:
@@ -148,12 +204,9 @@ class ChunkProcessor:
         # Configure multiprocessing for parallel parsing
         self.use_multiprocessing = use_multiprocessing
         if use_multiprocessing:
-            # Use 75% of CPU cores for parsing (no artificial cap for full CPU utilization)
-            cpu_count = multiprocessing.cpu_count()
-            self.max_workers = max_workers or max(1, int(cpu_count * 0.75))
-            logger.debug(
-                f"Multiprocessing enabled with {self.max_workers} workers (CPU count: {cpu_count})"
-            )
+            # Auto-detect optimal workers based on CPU architecture
+            self.max_workers = max_workers or _detect_optimal_workers()
+            logger.debug(f"Multiprocessing enabled with {self.max_workers} workers")
         else:
             self.max_workers = 1
             logger.debug("Multiprocessing disabled (single-threaded mode)")

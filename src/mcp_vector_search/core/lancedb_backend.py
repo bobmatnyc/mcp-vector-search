@@ -9,6 +9,7 @@ LanceDB provides:
 """
 
 import hashlib
+import os
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,58 @@ from .exceptions import (
     DocumentAdditionError,
 )
 from .models import CodeChunk, IndexStats, SearchResult
+
+
+def _detect_optimal_write_buffer_size() -> int:
+    """Detect optimal write buffer size based on available RAM.
+
+    Returns:
+        Optimal buffer size for batch writes:
+        - 10000 for 64GB+ RAM (M4 Max/Ultra, high-end workstations)
+        - 5000 for 32GB RAM (M4 Pro, mid-tier systems)
+        - 2000 for 16GB RAM (M4 base, standard systems)
+        - 1000 for <16GB RAM or detection failure (safe default)
+
+    Environment Variables:
+        MCP_VECTOR_SEARCH_WRITE_BUFFER_SIZE: Override auto-detection
+    """
+    env_size = os.environ.get("MCP_VECTOR_SEARCH_WRITE_BUFFER_SIZE")
+    if env_size:
+        return int(env_size)
+
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0:
+            total_ram_gb = int(result.stdout.strip()) / (1024**3)
+
+            if total_ram_gb >= 64:
+                logger.debug(
+                    f"Detected {total_ram_gb:.1f}GB RAM: using write buffer size 10000"
+                )
+                return 10000  # 64GB+ RAM
+            elif total_ram_gb >= 32:
+                logger.debug(
+                    f"Detected {total_ram_gb:.1f}GB RAM: using write buffer size 5000"
+                )
+                return 5000  # 32GB RAM
+            elif total_ram_gb >= 16:
+                logger.debug(
+                    f"Detected {total_ram_gb:.1f}GB RAM: using write buffer size 2000"
+                )
+                return 2000  # 16GB RAM
+            else:
+                logger.debug(
+                    f"Detected {total_ram_gb:.1f}GB RAM: using write buffer size 1000"
+                )
+                return 1000  # <16GB RAM
+    except Exception as e:
+        logger.debug(f"RAM detection failed: {e}, using default write buffer size 1000")
+
+    return 1000  # Safe default
 
 
 class LanceVectorDatabase:
@@ -76,10 +129,9 @@ class LanceVectorDatabase:
         self._search_cache_max_size = cache_size
 
         # Write buffer for batching database inserts (2-4x speedup)
+        # Auto-detect optimal buffer size based on available RAM
         self._write_buffer: list[dict] = []
-        self._write_buffer_size = int(
-            os.environ.get("MCP_VECTOR_SEARCH_WRITE_BUFFER_SIZE", "1000")
-        )
+        self._write_buffer_size = _detect_optimal_write_buffer_size()
 
     async def initialize(self) -> None:
         """Initialize LanceDB database and table.

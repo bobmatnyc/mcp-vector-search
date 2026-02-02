@@ -92,14 +92,42 @@ from ..config.defaults import get_model_dimensions, is_code_specific_model
 from .exceptions import EmbeddingError
 
 
+def _detect_device() -> str:
+    """Detect optimal compute device (MPS > CUDA > CPU).
+
+    Returns:
+        Device string: "mps", "cuda", or "cpu"
+    """
+    import torch
+
+    # Check for Apple Silicon MPS first (highest priority for M4 Max)
+    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        logger.info("Using Apple Silicon MPS backend for GPU acceleration")
+        return "mps"
+
+    # Check for NVIDIA CUDA
+    if torch.cuda.is_available():
+        logger.info("Using CUDA backend for GPU acceleration")
+        return "cuda"
+
+    logger.info("Using CPU backend")
+    return "cpu"
+
+
 def _detect_optimal_batch_size() -> int:
-    """Detect optimal batch size based on GPU availability and VRAM.
+    """Detect optimal batch size based on device and memory.
 
     Returns:
         Optimal batch size for embedding generation:
-        - 512 for GPUs with 8GB+ VRAM (RTX 3070+, A100, etc.)
-        - 256 for GPUs with 4-8GB VRAM (RTX 3060, etc.)
-        - 128 for GPUs with <4GB VRAM or CPU fallback
+        - MPS (Apple Silicon):
+          - 512 for M4 Max/Ultra with 64GB+ RAM
+          - 384 for M4 Pro with 32GB+ RAM
+          - 256 for M4 with 16GB+ RAM
+        - CUDA (NVIDIA):
+          - 512 for GPUs with 8GB+ VRAM (RTX 3070+, A100, etc.)
+          - 256 for GPUs with 4-8GB VRAM (RTX 3060, etc.)
+          - 128 for GPUs with <4GB VRAM
+        - CPU: 128
 
     Environment Variables:
         MCP_VECTOR_SEARCH_BATCH_SIZE: Override auto-detection
@@ -116,7 +144,44 @@ def _detect_optimal_batch_size() -> int:
                 f"Invalid MCP_VECTOR_SEARCH_BATCH_SIZE value: {env_batch_size}, using auto-detection"
             )
 
-    # Auto-detect based on GPU
+    # Check for Apple Silicon with unified memory
+    if torch.backends.mps.is_available():
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["sysctl", "-n", "hw.memsize"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            total_ram_gb = int(result.stdout.strip()) / (1024**3)
+
+            if total_ram_gb >= 64:
+                batch_size = 512
+                logger.info(
+                    f"Apple Silicon detected ({total_ram_gb:.1f}GB RAM): using batch size {batch_size} (M4 Max/Ultra optimized)"
+                )
+                return batch_size
+            elif total_ram_gb >= 32:
+                batch_size = 384
+                logger.info(
+                    f"Apple Silicon detected ({total_ram_gb:.1f}GB RAM): using batch size {batch_size} (M4 Pro optimized)"
+                )
+                return batch_size
+            else:
+                batch_size = 256
+                logger.info(
+                    f"Apple Silicon detected ({total_ram_gb:.1f}GB RAM): using batch size {batch_size}"
+                )
+                return batch_size
+        except Exception as e:
+            logger.warning(
+                f"Apple Silicon RAM detection failed: {e}, using default batch size 256"
+            )
+            return 256
+
+    # Auto-detect based on CUDA GPU
     if torch.cuda.is_available():
         try:
             # Get GPU memory in GB
@@ -285,10 +350,8 @@ class CodeBERTEmbeddingFunction:
             timeout: Timeout in seconds for embedding generation (default: 300s)
         """
         try:
-            # Auto-detect CUDA availability for GPU acceleration
-            import torch
-
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            # Auto-detect optimal device (MPS > CUDA > CPU)
+            device = _detect_device()
 
             # Detect model dimensions and log info
             try:
@@ -319,8 +382,33 @@ class CodeBERTEmbeddingFunction:
             # Get actual dimensions from loaded model
             actual_dims = self.model.get_sentence_embedding_dimension()
 
-            # Log GPU/CPU usage and model details
-            if device == "cuda":
+            # Log device usage and model details
+            if device == "mps":
+                import subprocess
+
+                try:
+                    # Get Apple Silicon chip info
+                    result = subprocess.run(
+                        ["sysctl", "-n", "machdep.cpu.brand_string"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    chip_name = (
+                        result.stdout.strip()
+                        if result.returncode == 0
+                        else "Apple Silicon"
+                    )
+                except Exception:
+                    chip_name = "Apple Silicon"
+
+                logger.info(
+                    f"Loaded {model_type} embedding model: {model_name} "
+                    f"on MPS ({chip_name}) with {actual_dims} dimensions (timeout: {timeout}s)"
+                )
+            elif device == "cuda":
+                import torch
+
                 gpu_name = torch.cuda.get_device_name(0)
                 logger.info(
                     f"Loaded {model_type} embedding model: {model_name} "

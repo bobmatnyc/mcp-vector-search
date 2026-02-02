@@ -25,6 +25,46 @@ from .search_handler import SearchHandler
 from .statistics_collector import StatisticsCollector
 
 
+def _detect_optimal_cache_size() -> int:
+    """Detect optimal cache size based on available RAM.
+
+    Returns:
+        Optimal cache size for embedding/search results:
+        - 10000 for 64GB+ RAM (M4 Max/Ultra, high-end workstations)
+        - 5000 for 32GB RAM (M4 Pro, mid-tier systems)
+        - 1000 for 16GB RAM (M4 base, standard systems)
+        - 100 for <16GB RAM or detection failure (safe default)
+
+    Environment Variables:
+        MCP_VECTOR_SEARCH_CACHE_SIZE: Override auto-detection
+    """
+    env_size = os.environ.get("MCP_VECTOR_SEARCH_CACHE_SIZE")
+    if env_size:
+        return int(env_size)
+
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0:
+            total_ram_gb = int(result.stdout.strip()) / (1024**3)
+
+            if total_ram_gb >= 64:
+                return 10000  # 64GB+ RAM
+            elif total_ram_gb >= 32:
+                return 5000  # 32GB RAM
+            elif total_ram_gb >= 16:
+                return 1000  # 16GB RAM
+            else:
+                return 100  # <16GB RAM
+    except Exception:
+        pass
+
+    return 100  # Safe default
+
+
 @runtime_checkable
 class EmbeddingFunction(Protocol):
     """Protocol for embedding functions."""
@@ -176,8 +216,8 @@ class ChromaVectorDatabase(VectorDatabase):
         self._dimension_checker = DimensionChecker()
 
         # LRU cache for search results
-        # Configurable via environment variable, default to 100 entries
-        cache_size = int(os.environ.get("MCP_VECTOR_SEARCH_CACHE_SIZE", "100"))
+        # Auto-detect optimal cache size based on available RAM
+        cache_size = _detect_optimal_cache_size()
         self._search_cache: dict[str, list[SearchResult]] = {}
         self._search_cache_order: list[str] = []  # For LRU eviction
         self._search_cache_max_size = cache_size
@@ -808,8 +848,8 @@ class PooledChromaVectorDatabase(VectorDatabase):
         self._dimension_checker = DimensionChecker()
 
         # LRU cache for search results
-        # Configurable via environment variable, default to 100 entries
-        cache_size = int(os.environ.get("MCP_VECTOR_SEARCH_CACHE_SIZE", "100"))
+        # Auto-detect optimal cache size based on available RAM
+        cache_size = _detect_optimal_cache_size()
         self._search_cache: dict[str, list[SearchResult]] = {}
         self._search_cache_order: list[str] = []  # For LRU eviction
         self._search_cache_max_size = cache_size
