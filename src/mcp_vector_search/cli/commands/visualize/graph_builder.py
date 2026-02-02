@@ -234,7 +234,7 @@ def detect_cycles(chunks: list, caller_map: dict) -> list[list[str]]:
 
 async def build_graph_data(
     chunks: list,
-    database: ChromaVectorDatabase,
+    database: Any,  # VectorDatabase (ChromaDB or LanceDB)
     project_manager: ProjectManager,
     code_only: bool = False,
 ) -> dict[str, Any]:
