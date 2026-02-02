@@ -80,22 +80,25 @@ def reset_index(
 
             if not Confirm.ask("\nDo you want to proceed?", default=False):
                 console.print("[yellow]Reset cancelled[/yellow]")
-                raise typer.Exit(0)
+                return  # Exit cleanly without raising
 
         # Get the database directory from config
         config = project_manager.load_config()
         db_path = Path(config.index_path)
 
-        # Check if index exists (look for chroma.sqlite3 or collection directories)
-        has_index = (db_path / "chroma.sqlite3").exists()
+        # Check if index exists (look for chroma.sqlite3, lancedb/, or collection directories)
+        has_chromadb = (db_path / "chroma.sqlite3").exists()
+        has_lancedb = (db_path / "lancedb").exists()
+        has_index = has_chromadb or has_lancedb
 
         if not has_index:
             print_warning("No index found. Nothing to reset.")
-            raise typer.Exit(0)
+            return  # Exit cleanly without raising
 
         # Files/dirs to remove (index data)
         index_files = [
             "chroma.sqlite3",
+            "lancedb",  # LanceDB directory
             "cache",
             "indexing_errors.log",
             "index_metadata.json",
@@ -139,7 +142,7 @@ def reset_index(
                 if not force:
                     if not Confirm.ask("Continue without backup?", default=False):
                         console.print("[yellow]Reset cancelled[/yellow]")
-                        raise typer.Exit(0)
+                        return  # Exit cleanly without raising
 
         # Clear the index files
         console.print("[cyan]Clearing index...[/cyan]")
@@ -179,6 +182,9 @@ def reset_index(
     except (DatabaseError, IndexCorruptionError) as e:
         print_error(f"Reset failed: {e}")
         raise typer.Exit(1)
+    except (SystemExit, typer.Exit):
+        # Let exit signals pass through
+        raise
     except Exception as e:
         logger.error(f"Unexpected error during reset: {e}")
         print_error(f"Unexpected error: {e}")
@@ -225,19 +231,19 @@ def reset_all(
 
         if not Confirm.ask("\nAre you absolutely sure?", default=False):
             console.print("[yellow]Reset cancelled[/yellow]")
-            raise typer.Exit(0)
+            return  # Exit cleanly without raising
 
         # Double confirmation for destructive action
         if not Confirm.ask("Type 'yes' to confirm complete reset", default=False):
             console.print("[yellow]Reset cancelled[/yellow]")
-            raise typer.Exit(0)
+            return  # Exit cleanly without raising
 
     # Remove entire .mcp_vector_search directory
     mcp_dir = root / ".mcp_vector_search"
 
     if not mcp_dir.exists():
         print_warning("No MCP Vector Search data found. Nothing to reset.")
-        raise typer.Exit(0)
+        return  # Exit cleanly without raising
 
     console.print("[cyan]Removing all MCP Vector Search data...[/cyan]")
     try:
