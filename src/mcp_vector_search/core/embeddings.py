@@ -92,6 +92,64 @@ from ..config.defaults import get_model_dimensions, is_code_specific_model
 from .exceptions import EmbeddingError
 
 
+def _detect_optimal_batch_size() -> int:
+    """Detect optimal batch size based on GPU availability and VRAM.
+
+    Returns:
+        Optimal batch size for embedding generation:
+        - 512 for GPUs with 8GB+ VRAM (RTX 3070+, A100, etc.)
+        - 256 for GPUs with 4-8GB VRAM (RTX 3060, etc.)
+        - 128 for GPUs with <4GB VRAM or CPU fallback
+
+    Environment Variables:
+        MCP_VECTOR_SEARCH_BATCH_SIZE: Override auto-detection
+    """
+    import torch
+
+    # Check environment override first
+    env_batch_size = os.environ.get("MCP_VECTOR_SEARCH_BATCH_SIZE")
+    if env_batch_size:
+        try:
+            return int(env_batch_size)
+        except ValueError:
+            logger.warning(
+                f"Invalid MCP_VECTOR_SEARCH_BATCH_SIZE value: {env_batch_size}, using auto-detection"
+            )
+
+    # Auto-detect based on GPU
+    if torch.cuda.is_available():
+        try:
+            # Get GPU memory in GB
+            gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            gpu_name = torch.cuda.get_device_name(0)
+
+            # Choose batch size based on VRAM
+            if gpu_memory_gb >= 8:
+                batch_size = 512
+                logger.info(
+                    f"GPU detected ({gpu_name}, {gpu_memory_gb:.1f}GB VRAM): using batch size {batch_size}"
+                )
+                return batch_size
+            elif gpu_memory_gb >= 4:
+                batch_size = 256
+                logger.info(
+                    f"GPU detected ({gpu_name}, {gpu_memory_gb:.1f}GB VRAM): using batch size {batch_size}"
+                )
+                return batch_size
+            else:
+                batch_size = 128
+                logger.info(
+                    f"GPU detected ({gpu_name}, {gpu_memory_gb:.1f}GB VRAM): using batch size {batch_size}"
+                )
+                return batch_size
+        except Exception as e:
+            logger.warning(f"GPU detection failed: {e}, falling back to CPU batch size")
+
+    # CPU fallback
+    logger.info("No GPU detected: using CPU batch size 128")
+    return 128
+
+
 class EmbeddingCache:
     """LRU cache for embeddings with disk persistence."""
 
@@ -333,14 +391,13 @@ class BatchEmbeddingProcessor:
         Args:
             embedding_function: Function to generate embeddings
             cache: Optional embedding cache
-            batch_size: Size of batches for processing (default: from env MCP_VECTOR_SEARCH_BATCH_SIZE or 128)
+            batch_size: Size of batches for processing (default: auto-detected based on GPU)
         """
         self.embedding_function = embedding_function
         self.cache = cache
-        # Allow batch size override via environment variable for GPU tuning
-        # Default to 128 for better throughput on modern hardware (GPU/CPU)
+        # Use GPU-aware auto-detection if batch size not explicitly provided
         if batch_size is None:
-            batch_size = int(os.environ.get("MCP_VECTOR_SEARCH_BATCH_SIZE", "128"))
+            batch_size = _detect_optimal_batch_size()
         self.batch_size = batch_size
 
     async def embed_batches_parallel(

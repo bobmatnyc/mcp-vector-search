@@ -279,38 +279,24 @@ class SemanticIndexer:
 
         # Mark relationships for background computation (unless skipped)
         # Default behavior: skip blocking computation, mark for background processing
+        # OPTIMIZATION: Skip this expensive operation during normal indexing
+        # Relationships will be computed on-demand when visualization is requested
         if not skip_relationships and indexed_count > 0:
-            try:
-                logger.info("Marking relationships for background computation...")
-                # Get all chunks from database for relationship computation
-                all_chunks = await self.database.get_all_chunks()
-
-                if len(all_chunks) > 0:
-                    # Mark for background computation (non-blocking)
-                    await self.relationship_store.compute_and_store(
-                        all_chunks, self.database, background=True
-                    )
-                    logger.info("✓ Relationships marked for background computation")
-                    logger.info(
-                        "  Use 'mcp-vector-search index relationships' to compute now or wait for background task"
-                    )
-                else:
-                    logger.warning("No chunks found for relationship computation")
-            except Exception as e:
-                logger.warning(f"Failed to mark relationships: {e}")
-                logger.debug("Visualization will compute relationships on demand")
+            logger.info(
+                "Relationships will be computed on-demand during visualization (use 'mcp-vector-search index relationships' to pre-compute)"
+            )
 
         # Save trend snapshot after successful indexing
+        # OPTIMIZATION: Use stats-only computation to avoid expensive get_all_chunks()
         if indexed_count > 0:
             try:
                 logger.info("Saving metrics snapshot for trend tracking...")
-                # Get database stats
+                # Get database stats (fast, no full scan)
                 stats = await self.database.get_stats()
-                # Get all chunks for detailed metrics
-                all_chunks = await self.database.get_all_chunks()
-                # Compute metrics from stats and chunks
+                # Compute metrics from stats only (no chunk loading)
+                # Pass empty list for chunks - trend tracker will use stats-based computation
                 metrics = self.trend_tracker.compute_metrics_from_stats(
-                    stats.to_dict(), all_chunks
+                    stats.to_dict(), []
                 )
                 # Save snapshot (updates today's entry if exists)
                 self.trend_tracker.save_snapshot(metrics)
