@@ -10,6 +10,7 @@ LanceDB provides:
 
 import hashlib
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +47,7 @@ def _detect_optimal_write_buffer_size() -> int:
     try:
         import subprocess
 
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B607 - safe system call for RAM detection
             ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, check=False
         )
         if result.returncode == 0:
@@ -578,8 +579,255 @@ class LanceVectorDatabase:
             logger.error(f"Failed to reset LanceDB: {e}")
             raise DatabaseError(f"Failed to reset database: {e}") from e
 
+    def iter_chunks_batched(
+        self,
+        batch_size: int = 10000,
+        file_path: str | None = None,
+        language: str | None = None,
+    ) -> Any:  # Returns Iterator[List[CodeChunk]]
+        """Stream chunks from database in batches to avoid memory explosion.
+
+        This method provides two strategies:
+        1. **Optimal (with pylance)**: Uses to_lance() + scanner for true streaming
+        2. **Fallback (without pylance)**: Uses chunked Pandas iteration
+
+        The method automatically falls back to Pandas if pylance is not installed.
+
+        Args:
+            batch_size: Number of chunks per batch (default 10000)
+            file_path: Optional filter by file path
+            language: Optional filter by language
+
+        Yields:
+            List of CodeChunk objects per batch
+
+        Example:
+            >>> db = LanceVectorDatabase("/path/to/db")
+            >>> total = 0
+            >>> for batch in db.iter_chunks_batched(batch_size=1000):
+            ...     total += len(batch)
+            ...     print(f"Processed {total} chunks")
+        """
+        if self._table is None:
+            return
+
+        # Try optimal strategy first (requires pylance)
+        try:
+            yield from self._iter_chunks_lance_scanner(batch_size, file_path, language)
+            return
+        except Exception as e:
+            # Check if error is due to missing pylance
+            error_msg = str(e).lower()
+            if "pylance" in error_msg or "lance library" in error_msg:
+                logger.debug(
+                    "pylance not installed, falling back to chunked Pandas iteration"
+                )
+            else:
+                # Other error - log but try fallback anyway
+                logger.warning(f"Lance scanner failed: {e}, trying fallback")
+
+        # Fallback strategy (works without pylance)
+        yield from self._iter_chunks_pandas_chunked(batch_size, file_path, language)
+
+    def _iter_chunks_lance_scanner(
+        self,
+        batch_size: int,
+        file_path: str | None,
+        language: str | None,
+    ) -> Iterator[list[CodeChunk]]:
+        """Optimal batch iteration using Lance scanner (requires pylance)."""
+        # Build filter expression
+        filter_expr = None
+        if file_path:
+            filter_expr = f"file_path = '{file_path}'"
+        if language:
+            lang_filter = f"language = '{language}'"
+            filter_expr = (
+                f"{filter_expr} AND {lang_filter}" if filter_expr else lang_filter
+            )
+
+        # Get Lance dataset (requires pylance)
+        lance_dataset = self._table.to_lance()
+
+        # Create scanner with batch iteration
+        scanner = lance_dataset.scanner(
+            filter=filter_expr,
+            batch_size=batch_size,
+        )
+
+        # Iterate over Arrow batches
+        for batch in scanner.to_reader():
+            chunks = []
+            batch_dict = batch.to_pydict()
+            num_rows = len(batch_dict["content"])
+
+            for i in range(num_rows):
+                chunk = self._batch_dict_to_chunk(batch_dict, i, num_rows)
+                chunks.append(chunk)
+
+            yield chunks
+
+    def _iter_chunks_pandas_chunked(
+        self,
+        batch_size: int,
+        file_path: str | None,
+        language: str | None,
+    ) -> Iterator[list[CodeChunk]]:
+        """Fallback batch iteration using chunked Pandas DataFrames."""
+        # Load table to Pandas (this is the memory-intensive step)
+        df = self._table.to_pandas()
+
+        # Apply filters if provided
+        if file_path:
+            df = df[df["file_path"] == file_path]
+        if language:
+            df = df[df["language"] == language]
+
+        # Iterate in chunks
+        total_rows = len(df)
+        offset = 0
+
+        while offset < total_rows:
+            # Get batch slice
+            batch_df = df.iloc[offset : offset + batch_size]
+
+            chunks = []
+            for _, row in batch_df.iterrows():
+                chunk = self._row_to_chunk(row)
+                chunks.append(chunk)
+
+            yield chunks
+            offset += batch_size
+
+    def _batch_dict_to_chunk(
+        self, batch_dict: dict, i: int, num_rows: int
+    ) -> CodeChunk:
+        """Convert Arrow batch dictionary row to CodeChunk."""
+        imports_str = batch_dict["imports"][i]
+        imports = imports_str.split(",") if imports_str else []
+
+        child_ids_str = batch_dict["child_chunk_ids"][i]
+        child_chunk_ids = child_ids_str.split(",") if child_ids_str else []
+
+        decorators_str = batch_dict["decorators"][i]
+        decorators = decorators_str.split(",") if decorators_str else []
+
+        return CodeChunk(
+            content=batch_dict["content"][i],
+            file_path=Path(batch_dict["file_path"][i]),
+            start_line=batch_dict["start_line"][i],
+            end_line=batch_dict["end_line"][i],
+            language=batch_dict["language"][i],
+            chunk_type=batch_dict.get("chunk_type", ["code"] * num_rows)[i],
+            function_name=batch_dict.get("function_name", [None] * num_rows)[i] or None,
+            class_name=batch_dict.get("class_name", [None] * num_rows)[i] or None,
+            docstring=batch_dict.get("docstring", [None] * num_rows)[i] or None,
+            imports=imports,
+            complexity_score=batch_dict.get("complexity_score", [0.0] * num_rows)[i],
+            chunk_id=batch_dict.get("chunk_id", [None] * num_rows)[i],
+            parent_chunk_id=batch_dict.get("parent_chunk_id", [None] * num_rows)[i]
+            or None,
+            child_chunk_ids=child_chunk_ids,
+            chunk_depth=batch_dict.get("chunk_depth", [0] * num_rows)[i],
+            decorators=decorators,
+            return_type=batch_dict.get("return_type", [None] * num_rows)[i] or None,
+            subproject_name=batch_dict.get("subproject_name", [None] * num_rows)[i]
+            or None,
+            subproject_path=batch_dict.get("subproject_path", [None] * num_rows)[i]
+            or None,
+        )
+
+    def _row_to_chunk(self, row: Any) -> CodeChunk:
+        """Convert Pandas DataFrame row to CodeChunk."""
+        imports = row["imports"].split(",") if row["imports"] else []
+        child_chunk_ids = (
+            row["child_chunk_ids"].split(",") if row["child_chunk_ids"] else []
+        )
+        decorators = row["decorators"].split(",") if row["decorators"] else []
+
+        return CodeChunk(
+            content=row["content"],
+            file_path=Path(row["file_path"]),
+            start_line=row["start_line"],
+            end_line=row["end_line"],
+            language=row["language"],
+            chunk_type=row.get("chunk_type", "code"),
+            function_name=row.get("function_name") or None,
+            class_name=row.get("class_name") or None,
+            docstring=row.get("docstring") or None,
+            imports=imports,
+            complexity_score=row.get("complexity_score", 0.0),
+            chunk_id=row.get("chunk_id"),
+            parent_chunk_id=row.get("parent_chunk_id") or None,
+            child_chunk_ids=child_chunk_ids,
+            chunk_depth=row.get("chunk_depth", 0),
+            decorators=decorators,
+            return_type=row.get("return_type") or None,
+            subproject_name=row.get("subproject_name") or None,
+            subproject_path=row.get("subproject_path") or None,
+        )
+
+    def get_chunk_count(
+        self, file_path: str | None = None, language: str | None = None
+    ) -> int:
+        """Get total chunk count without loading all data.
+
+        Args:
+            file_path: Optional filter by file path
+            language: Optional filter by language
+
+        Returns:
+            Total number of chunks matching the filter criteria
+        """
+        if self._table is None:
+            return 0
+
+        try:
+            # If no filters, use count_rows() for efficiency
+            if not file_path and not language:
+                return self._table.count_rows()
+
+            # With filters, try Lance scanner first
+            try:
+                filter_expr = None
+                if file_path:
+                    filter_expr = f"file_path = '{file_path}'"
+                if language:
+                    lang_filter = f"language = '{language}'"
+                    filter_expr = (
+                        f"{filter_expr} AND {lang_filter}"
+                        if filter_expr
+                        else lang_filter
+                    )
+
+                lance_dataset = self._table.to_lance()
+                scanner = lance_dataset.scanner(filter=filter_expr)
+                return scanner.count_rows()
+
+            except Exception as e:
+                # pylance not available, fall back to Pandas
+                error_msg = str(e).lower()
+                if "pylance" not in error_msg and "lance library" not in error_msg:
+                    # Other error - re-raise
+                    raise
+
+            # Fallback: Load and filter with Pandas
+            df = self._table.to_pandas()
+            if file_path:
+                df = df[df["file_path"] == file_path]
+            if language:
+                df = df[df["language"] == language]
+            return len(df)
+
+        except Exception as e:
+            logger.error(f"Failed to get chunk count: {e}")
+            return 0
+
     async def get_all_chunks(self) -> list[CodeChunk]:
         """Get all chunks from the database.
+
+        WARNING: This loads the entire table into memory. For large databases
+        (576K+ chunks), use iter_chunks_batched() instead to avoid OOM.
 
         Returns:
             List of all code chunks with metadata
@@ -588,39 +836,11 @@ class LanceVectorDatabase:
             return []
 
         try:
-            df = self._table.to_pandas()
-
+            # Use streaming iterator to collect all chunks
+            # This is more memory-efficient than to_pandas()
             chunks = []
-            for _, row in df.iterrows():
-                # Parse list fields (stored as comma-separated strings)
-                imports = row["imports"].split(",") if row["imports"] else []
-                child_chunk_ids = (
-                    row["child_chunk_ids"].split(",") if row["child_chunk_ids"] else []
-                )
-                decorators = row["decorators"].split(",") if row["decorators"] else []
-
-                chunk = CodeChunk(
-                    content=row["content"],
-                    file_path=Path(row["file_path"]),
-                    start_line=row["start_line"],
-                    end_line=row["end_line"],
-                    language=row["language"],
-                    chunk_type=row.get("chunk_type", "code"),
-                    function_name=row.get("function_name") or None,
-                    class_name=row.get("class_name") or None,
-                    docstring=row.get("docstring") or None,
-                    imports=imports,
-                    complexity_score=row.get("complexity_score", 0.0),
-                    chunk_id=row.get("chunk_id"),
-                    parent_chunk_id=row.get("parent_chunk_id") or None,
-                    child_chunk_ids=child_chunk_ids,
-                    chunk_depth=row.get("chunk_depth", 0),
-                    decorators=decorators,
-                    return_type=row.get("return_type") or None,
-                    subproject_name=row.get("subproject_name") or None,
-                    subproject_path=row.get("subproject_path") or None,
-                )
-                chunks.append(chunk)
+            for batch in self.iter_chunks_batched(batch_size=10000):
+                chunks.extend(batch)
 
             logger.debug(f"Retrieved {len(chunks)} chunks from LanceDB")
             return chunks

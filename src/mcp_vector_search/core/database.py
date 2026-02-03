@@ -45,7 +45,7 @@ def _detect_optimal_cache_size() -> int:
     try:
         import subprocess
 
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B607 - safe system call for RAM detection
             ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, check=False
         )
         if result.returncode == 0:
@@ -154,6 +154,54 @@ class VectorDatabase(ABC):
             List of all code chunks with metadata
         """
         ...
+
+    def iter_chunks_batched(
+        self,
+        batch_size: int = 10000,
+        file_path: str | None = None,
+        language: str | None = None,
+    ) -> Any:
+        """Stream chunks from database in batches to avoid memory explosion.
+
+        Optional method for databases that support memory-efficient iteration.
+        Default implementation raises NotImplementedError.
+
+        Args:
+            batch_size: Number of chunks per batch (default 10000)
+            file_path: Optional filter by file path
+            language: Optional filter by language
+
+        Yields:
+            List of CodeChunk objects per batch
+
+        Raises:
+            NotImplementedError: If database backend doesn't support batch iteration
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support batch iteration"
+        )
+
+    def get_chunk_count(
+        self, file_path: str | None = None, language: str | None = None
+    ) -> int:
+        """Get total chunk count without loading all data.
+
+        Optional method for databases that support efficient counting.
+        Default implementation raises NotImplementedError.
+
+        Args:
+            file_path: Optional filter by file path
+            language: Optional filter by language
+
+        Returns:
+            Total number of chunks matching the filter criteria
+
+        Raises:
+            NotImplementedError: If database backend doesn't support counting
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support chunk counting"
+        )
 
     @abstractmethod
     async def health_check(self) -> bool:
