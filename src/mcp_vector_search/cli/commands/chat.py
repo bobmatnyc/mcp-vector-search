@@ -927,6 +927,7 @@ async def _tool_analyze_code(focus: str, project_root: Path, config: Any) -> str
     try:
         from ...analysis import ProjectMetrics
         from ...analysis.interpretation import EnhancedJSONExporter
+        from ...config.defaults import DEFAULT_IGNORE_PATTERNS
         from ...parsers.registry import ParserRegistry
 
         parser_registry = ParserRegistry()
@@ -942,7 +943,7 @@ async def _tool_analyze_code(focus: str, project_root: Path, config: Any) -> str
                         continue
 
                     should_skip = any(
-                        ignore in str(file_path) for ignore in config.ignore_patterns
+                        ignore in str(file_path) for ignore in DEFAULT_IGNORE_PATTERNS
                     )
                     if should_skip:
                         continue

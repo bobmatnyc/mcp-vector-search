@@ -61,6 +61,11 @@ class MCPVectorSearchServer:
                 project_root = Path.cwd()
                 logger.info(f"Using current directory as project root: {project_root}")
 
+        # Configure logging for MCP server - suppress verbose output
+        logger.remove()  # Remove default stderr handler
+        # Only show errors, minimal format
+        logger.add(sys.stderr, level="ERROR", format="{message}", colorize=False)
+
         self.project_root = project_root
         self.project_manager = ProjectManager(self.project_root)
         self.search_engine: SemanticSearchEngine | None = None
