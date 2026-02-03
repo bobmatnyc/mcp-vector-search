@@ -476,6 +476,23 @@ class ProjectManager:
         Returns:
             True if path should be ignored
         """
+        # FIRST: Check DEFAULT_IGNORE_PATTERNS (node_modules, __pycache__, etc.)
+        # These are ALWAYS ignored, even inside force_include_paths
+        # This prevents accidentally indexing node_modules with 250K+ files
+        for part in path.parts:
+            if part in DEFAULT_IGNORE_PATTERNS:
+                return True
+
+        # Check relative path from project root
+        try:
+            relative_path = path.relative_to(self.project_root)
+            for part in relative_path.parts:
+                if part in DEFAULT_IGNORE_PATTERNS:
+                    return True
+        except ValueError:
+            # Path is not relative to project root
+            return True
+
         # Load config if needed (for force_include_patterns and force_include_paths)
         try:
             config = self._config or (
@@ -484,7 +501,7 @@ class ProjectManager:
         except Exception:
             config = None
 
-        # FIRST: Check force_include_paths - they override everything (gitignore, patterns)
+        # SECOND: Check force_include_paths - they override gitignore (but not default ignores)
         if config and config.force_include_paths:
             try:
                 relative_path = path.relative_to(self.project_root)
@@ -565,19 +582,5 @@ class ProjectManager:
             ):
                 return True
 
-        # Check if any parent directory is in ignore patterns
-        for part in path.parts:
-            if part in DEFAULT_IGNORE_PATTERNS:
-                return True
-
-        # Check relative path from project root
-        try:
-            relative_path = path.relative_to(self.project_root)
-            for part in relative_path.parts:
-                if part in DEFAULT_IGNORE_PATTERNS:
-                    return True
-        except ValueError:
-            # Path is not relative to project root
-            return True
-
+        # DEFAULT_IGNORE_PATTERNS already checked at the top of this function
         return False
