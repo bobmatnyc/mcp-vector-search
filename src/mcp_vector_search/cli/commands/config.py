@@ -406,5 +406,214 @@ def list_embedding_models() -> None:
     )
 
 
+@config_app.command("set-api-key")
+def set_api_key(
+    provider: str = typer.Argument(
+        ...,
+        help="API provider (openrouter or openai)",
+    ),
+    api_key: str = typer.Argument(
+        ...,
+        help="API key to store",
+    ),
+) -> None:
+    """🔐 Save API key securely to config file.
+
+    Stores the API key in .mcp-vector-search/config.json with secure permissions (0600).
+    The key is encrypted at rest via OS file permissions.
+
+    Supported providers:
+    - openrouter: OpenRouter API key (for Claude models)
+    - openai: OpenAI API key (for GPT models)
+
+    Examples:
+        mcp-vector-search config set-api-key openrouter sk-or-v1-...
+        mcp-vector-search config set-api-key openai sk-proj-...
+    """
+    from ...core.config_utils import (
+        get_config_file_path,
+        save_openai_api_key,
+        save_openrouter_api_key,
+    )
+
+    # Validate provider
+    provider_lower = provider.lower()
+    if provider_lower not in ("openrouter", "openai"):
+        print_error(f"Invalid provider: {provider}. Must be 'openrouter' or 'openai'.")
+        raise typer.Exit(1)
+
+    # Get config directory
+    config_dir = Path.cwd() / ".mcp-vector-search"
+
+    try:
+        # Save API key using appropriate function
+        if provider_lower == "openrouter":
+            save_openrouter_api_key(api_key, config_dir)
+            provider_display = "OpenRouter"
+        else:
+            save_openai_api_key(api_key, config_dir)
+            provider_display = "OpenAI"
+
+        config_file = get_config_file_path(config_dir)
+        print_success(
+            f"{provider_display} API key saved to {config_file.relative_to(Path.cwd())}"
+        )
+
+    except ValueError as e:
+        print_error(str(e))
+        raise typer.Exit(1)
+    except Exception as e:
+        logger.error(f"Failed to save {provider} API key: {e}")
+        print_error(f"Failed to save API key: {e}")
+        raise typer.Exit(1)
+
+
+@config_app.command("get-api-key")
+def get_api_key(
+    provider: str = typer.Argument(
+        ...,
+        help="API provider (openrouter or openai)",
+    ),
+) -> None:
+    """🔑 Display stored API key (masked).
+
+    Shows the stored API key with masking for security. Only the first 10 and last 6
+    characters are visible (e.g., "sk-or-v1-a...456789").
+
+    Checks both environment variables and config file:
+    - Environment variable takes precedence
+    - Falls back to config file if env var not set
+
+    Examples:
+        mcp-vector-search config get-api-key openrouter
+        mcp-vector-search config get-api-key openai
+    """
+    from ...core.config_utils import (
+        get_openai_api_key,
+        get_openrouter_api_key,
+    )
+
+    # Validate provider
+    provider_lower = provider.lower()
+    if provider_lower not in ("openrouter", "openai"):
+        print_error(f"Invalid provider: {provider}. Must be 'openrouter' or 'openai'.")
+        raise typer.Exit(1)
+
+    # Get config directory
+    config_dir = Path.cwd() / ".mcp-vector-search"
+
+    try:
+        # Get API key using appropriate function
+        if provider_lower == "openrouter":
+            api_key = get_openrouter_api_key(config_dir)
+            provider_display = "OpenRouter"
+            env_var = "OPENROUTER_API_KEY"
+        else:
+            api_key = get_openai_api_key(config_dir)
+            provider_display = "OpenAI"
+            env_var = "OPENAI_API_KEY"
+
+        if not api_key:
+            print_info(
+                f"{provider_display} API key not set.\n\n"
+                f"Set it using:\n"
+                f"  mcp-vector-search config set-api-key {provider_lower} YOUR_KEY\n"
+                f"Or set {env_var} environment variable."
+            )
+            return
+
+        # Mask API key: show first 10 and last 6 chars
+        if len(api_key) <= 16:
+            masked_key = api_key[:4] + "..." + api_key[-4:]
+        else:
+            masked_key = api_key[:10] + "..." + api_key[-6:]
+
+        console.print(f"[cyan]{provider_display} API key:[/cyan] {masked_key}")
+
+        # Check source (env var vs config file)
+        import os
+
+        if os.environ.get(env_var):
+            console.print(f"[dim]Source: {env_var} environment variable[/dim]")
+        else:
+            console.print("[dim]Source: config file[/dim]")
+
+    except Exception as e:
+        logger.error(f"Failed to get {provider} API key: {e}")
+        print_error(f"Failed to get API key: {e}")
+        raise typer.Exit(1)
+
+
+@config_app.command("delete-api-key")
+def delete_api_key(
+    provider: str = typer.Argument(
+        ...,
+        help="API provider (openrouter or openai)",
+    ),
+    confirm: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompt",
+    ),
+) -> None:
+    """🗑️  Delete stored API key from config file.
+
+    Removes the API key from .mcp-vector-search/config.json.
+    Does not affect environment variables.
+
+    Examples:
+        mcp-vector-search config delete-api-key openrouter
+        mcp-vector-search config delete-api-key openai --yes
+    """
+    from ...core.config_utils import (
+        delete_openai_api_key,
+        delete_openrouter_api_key,
+        get_config_file_path,
+    )
+
+    # Validate provider
+    provider_lower = provider.lower()
+    if provider_lower not in ("openrouter", "openai"):
+        print_error(f"Invalid provider: {provider}. Must be 'openrouter' or 'openai'.")
+        raise typer.Exit(1)
+
+    # Get config directory
+    config_dir = Path.cwd() / ".mcp-vector-search"
+
+    try:
+        # Confirm deletion
+        if not confirm:
+            from ..output import confirm_action
+
+            provider_display = provider.capitalize()
+            if not confirm_action(
+                f"Delete {provider_display} API key from config file?", default=False
+            ):
+                print_info("Deletion cancelled")
+                raise typer.Exit(0)
+
+        # Delete API key using appropriate function
+        if provider_lower == "openrouter":
+            deleted = delete_openrouter_api_key(config_dir)
+            provider_display = "OpenRouter"
+        else:
+            deleted = delete_openai_api_key(config_dir)
+            provider_display = "OpenAI"
+
+        if deleted:
+            config_file = get_config_file_path(config_dir)
+            print_success(
+                f"{provider_display} API key deleted from {config_file.relative_to(Path.cwd())}"
+            )
+        else:
+            print_info(f"{provider_display} API key was not set in config file")
+
+    except Exception as e:
+        logger.error(f"Failed to delete {provider} API key: {e}")
+        print_error(f"Failed to delete API key: {e}")
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     config_app()
