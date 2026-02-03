@@ -6,9 +6,9 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> ⚠️ **Alpha Release (v0.12.7)**: This is an early-stage project under active development. Expect breaking changes and rough edges. Feedback and contributions are welcome!
+> ⚠️ **Production Release (v2.1.9)**: Stable and actively maintained. LanceDB is now the default backend for better performance and stability.
 
-A modern, fast, and intelligent code search tool that understands your codebase through semantic analysis and AST parsing. Built with Python, powered by ChromaDB, and designed for developer productivity.
+A modern, fast, and intelligent code search tool that understands your codebase through semantic analysis and AST parsing. Built with Python, powered by LanceDB (with ChromaDB support), and designed for developer productivity.
 
 ## ✨ Features
 
@@ -29,12 +29,13 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 - **Semi-Automatic Reindexing**: Multiple strategies without daemon processes
 
 ### 🔧 **Technical Features**
-- **Vector Database**: ChromaDB with connection pooling for 13.6% performance boost
-- **Embedding Models**: Configurable sentence transformers
+- **Vector Database**: LanceDB default (serverless, file-based) with ChromaDB support (legacy)
+- **Embedding Models**: Configurable sentence transformers with GPU acceleration
 - **Smart Reindexing**: Search-triggered, Git hooks, scheduled tasks, and manual options
 - **Extensible Parsers**: Plugin architecture for new languages
 - **Configuration Management**: Project-specific settings
-- **Production Ready**: Connection pooling, auto-indexing, comprehensive error handling
+- **Production Ready**: Write buffering, auto-indexing, comprehensive error handling
+- **Performance**: Apple Silicon M4 Max optimizations (2-4x speedup with MPS)
 
 ## 🚀 Quick Start
 
@@ -419,18 +420,39 @@ mcp-vector-search config list-keys
 
 ## 🚀 Performance Features
 
-### Connection Pooling
-Automatic connection pooling provides **13.6% performance improvement** with zero configuration:
+### LanceDB Backend (Default in v2.1+)
+**LanceDB is now the default vector database** for better performance and stability:
 
-```python
-# Automatically enabled for high-throughput scenarios
-from mcp_vector_search.core.database import PooledChromaVectorDatabase
+- **Serverless Architecture**: No separate server process needed
+- **Better Scaling**: Superior performance for large codebases (>100k chunks)
+- **File-Based Storage**: Simple directory-based persistence
+- **Fewer Corruption Issues**: More stable than ChromaDB's HNSW indices
+- **Write Buffering**: 2-4x faster indexing with accumulated batch writes
 
-database = PooledChromaVectorDatabase(
-    max_connections=10,    # Pool size
-    min_connections=2,     # Warm connections
-    max_idle_time=300.0,   # 5 minutes
-)
+**To use ChromaDB** (legacy), set environment variable:
+```bash
+export MCP_VECTOR_SEARCH_BACKEND=chromadb
+```
+
+**Migrate existing ChromaDB database**:
+```bash
+mcp-vector-search migrate db chromadb-to-lancedb
+```
+
+See [docs/LANCEDB_BACKEND.md](docs/LANCEDB_BACKEND.md) for detailed documentation.
+
+### Apple Silicon M4 Max Optimizations
+**2-4x speedup on Apple Silicon** with automatic hardware detection:
+
+- **MPS Backend**: Metal Performance Shaders GPU acceleration for embeddings
+- **Intelligent Batch Sizing**: Auto-detects GPU memory (384-512 for M4 Max with 128GB RAM)
+- **Multi-Core Optimization**: Utilizes all 12 performance cores efficiently
+- **Zero Configuration**: Automatically enabled on Apple Silicon Macs
+
+Environment variables for tuning:
+```bash
+export MCP_VECTOR_SEARCH_MPS_BATCH_SIZE=512  # Override MPS batch size
+export MCP_VECTOR_SEARCH_BATCH_SIZE=128      # Override all backends
 ```
 
 ### Semi-Automatic Reindexing
@@ -558,7 +580,7 @@ mcp-vector-search config set force_include_patterns '["repos/**/*.java", "repos/
 
 - **Parser Registry**: Extensible system for language-specific parsing
 - **Semantic Indexer**: Efficient code chunking and embedding generation
-- **Vector Database**: ChromaDB integration for similarity search
+- **Vector Database**: LanceDB (default) or ChromaDB for similarity search
 - **File Watcher**: Real-time monitoring and incremental updates
 - **CLI Interface**: Rich, user-friendly command-line experience
 
@@ -682,29 +704,24 @@ Please [open an issue](https://github.com/bobmatnyc/mcp-vector-search/issues) or
 
 ## 🔮 Roadmap
 
-### v0.0.x: Alpha (Current) 🔄
+### v2.x: Production (Current) ✅
 - [x] Core CLI interface
-- [x] Python/JS/TS parsing
-- [x] ChromaDB integration
-- [x] File watching
-- [x] Basic search functionality
-- [ ] Real-world testing and feedback
-- [ ] Bug fixes and stability improvements
-- [ ] Performance optimizations
+- [x] Multi-language parsing (8+ languages)
+- [x] LanceDB default backend (ChromaDB legacy support)
+- [x] Apple Silicon M4 Max optimizations
+- [x] File watching and auto-reindexing
+- [x] MCP server implementation
+- [x] Advanced search modes (semantic, contextual, similar code)
+- [x] Code analysis tools (complexity, dead code detection)
+- [x] Interactive D3.js visualization
+- [x] Production-ready performance (write buffering, GPU acceleration)
 
-### v0.1.x: Beta 🔮
-- [ ] Advanced search modes (contextual, similar code)
-- [ ] Additional language support (Java, Go, Rust)
-- [ ] Configuration improvements
-- [ ] Comprehensive testing suite
-- [ ] Documentation improvements
-
-### v1.0.x: Stable 🔮
-- [ ] MCP server implementation
+### v2.x+: Enhancements 🔮
+- [ ] Hybrid search (vector + keyword)
+- [ ] Additional language support (more languages)
 - [ ] IDE extensions (VS Code, JetBrains)
-- [ ] Git integration
 - [ ] Team collaboration features
-- [ ] Production-ready performance
+- [ ] Advanced code refactoring suggestions
 
 ## 🛠️ Development
 

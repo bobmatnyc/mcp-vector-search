@@ -1,8 +1,10 @@
 # Connection Pooling Implementation
 
+> **Note**: This document describes ChromaDB connection pooling, which is still available for ChromaDB users. **LanceDB is now the default backend (v2.1+)** and uses a serverless architecture that doesn't require connection pooling. See [LanceDB Backend Documentation](../LANCEDB_BACKEND.md) for the recommended approach.
+
 ## Overview
 
-Connection pooling has been successfully implemented for the MCP Vector Search system, providing significant performance improvements by reusing database connections instead of creating new ones for each operation.
+Connection pooling has been successfully implemented for ChromaDB in the MCP Vector Search system, providing significant performance improvements by reusing database connections instead of creating new ones for each operation.
 
 ## Performance Results
 
@@ -10,7 +12,7 @@ Connection pooling has been successfully implemented for the MCP Vector Search s
 
 **Sequential Search Performance:**
 - Regular Database: 7.03ms average
-- Pooled Database: 6.07ms average  
+- Pooled Database: 6.07ms average
 - **Improvement: 13.6%**
 
 **Concurrent Search Performance:**

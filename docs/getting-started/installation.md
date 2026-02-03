@@ -19,8 +19,9 @@ Complete guide to installing and setting up mcp-vector-search in your project.
 ### Dependencies
 
 All dependencies are automatically installed:
-- **ChromaDB**: Vector database
-- **Sentence Transformers**: Embeddings
+- **LanceDB**: Vector database (default in v2.1+)
+- **ChromaDB**: Vector database (legacy support)
+- **Sentence Transformers**: Embeddings with GPU acceleration
 - **Tree-sitter**: Code parsing
 - **Rich**: Terminal output
 - **Typer**: CLI framework

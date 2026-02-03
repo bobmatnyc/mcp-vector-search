@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.9] - 2026-02-03
+
+### Fixed
+- **force_include_paths Pattern Matching** - Improved default ignore pattern handling
+  - `DEFAULT_IGNORE_PATTERNS` now properly blocks `force_include_paths` in `FileDiscovery`
+  - Ensures force-included paths respect sensible defaults (node_modules, .git, etc.)
+  - Prevents accidental indexing of large dependency directories
+
+## [2.1.8] - 2026-02-02
+
+### Changed
+- Version bump for package maintenance
+
+## [2.1.6] - 2026-02-02
+
+### Added
+- **LanceDB Default Backend** - Switched default vector database from ChromaDB to LanceDB
+  - LanceDB now the recommended backend (set via `MCP_VECTOR_SEARCH_BACKEND=lancedb` or use default)
+  - Better performance for large codebases (>100k chunks)
+  - Simpler serverless architecture with file-based storage
+  - ChromaDB still supported via `MCP_VECTOR_SEARCH_BACKEND=chromadb` environment variable
+  - Migration command: `mcp-vector-search migrate db chromadb-to-lancedb`
+
+### Performance
+- **Apple Silicon M4 Max Optimizations** - 2-4x speedup on Apple Silicon
+  - MPS (Metal Performance Shaders) backend support for PyTorch embeddings
+  - GPU-aware batch size auto-detection (384-512 for Apple Silicon with high RAM)
+  - Optimized for M4's 12 performance cores and 128GB unified memory
+  - Environment variable: `MCP_VECTOR_SEARCH_MPS_BATCH_SIZE` for MPS-specific tuning
+- **Write Buffering for LanceDB** - Faster bulk indexing
+  - Accumulates records across batches before database writes
+  - Reduces disk I/O and index update overhead
+  - Configurable buffer size (default: 1000 chunks)
+  - Expected 2-4x indexing speedup for large codebases
+
+### Fixed
+- **Reset Command Error Handling** - Better LanceDB support
+  - Improved error handling for database resets
+  - Properly handles both ChromaDB and LanceDB backends
+
 ## [2.1.2] - 2026-02-02
 
 ### Added
