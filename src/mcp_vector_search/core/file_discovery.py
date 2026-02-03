@@ -348,7 +348,43 @@ class FileDiscovery:
             relative_path = file_path.relative_to(self.project_root)
             relative_path_str = str(relative_path).replace("\\", "/")
 
-            # 0. Check force_include_paths FIRST - they override everything
+            # 0. Check force_include_patterns FIRST - they can override everything (even DEFAULT_IGNORE_PATTERNS)
+            # This allows explicitly including files like vendor/**/*.kt even though vendor is in default ignores
+            if self.config and self.config.force_include_patterns:
+                for pattern in self.config.force_include_patterns:
+                    if self._matches_glob_pattern(relative_path_str, pattern):
+                        logger.debug(
+                            f"Force-including {relative_path} (matched pattern: {pattern})"
+                        )
+                        self._ignore_path_cache[cache_key] = False
+                        return False  # Don't ignore this file
+
+                    # For directories, check if pattern could match files inside
+                    if is_directory:
+                        if self._pattern_could_match_inside_dir(
+                            relative_path_str, pattern
+                        ):
+                            logger.debug(
+                                f"Not ignoring directory {relative_path} (could contain force-included files matching: {pattern})"
+                            )
+                            self._ignore_path_cache[cache_key] = False
+                            return False  # Don't ignore this directory
+
+            # 1. Check DEFAULT_IGNORE_PATTERNS SECOND - these block force_include_paths but not force_include_patterns
+            # This prevents accidentally indexing node_modules via force_include_paths while allowing explicit patterns
+            # PERFORMANCE: Combine part and parent checks to avoid duplicate iteration
+            # Supports both exact matches and wildcard patterns (e.g., ".*" for all dotfiles)
+            for part in relative_path.parts:
+                for pattern in self._ignore_patterns:
+                    # Use fnmatch for wildcard support (*, ?, [seq], [!seq])
+                    if fnmatch.fnmatch(part, pattern):
+                        logger.debug(
+                            f"Path ignored by pattern '{pattern}' matching '{part}': {file_path}"
+                        )
+                        self._ignore_path_cache[cache_key] = True
+                        return True
+
+            # 2. Check force_include_paths THIRD - they override gitignore only (not default ignores)
             if self.config and self.config.force_include_paths:
                 for include_path in self.config.force_include_paths:
                     # Normalize include_path (remove trailing slash for comparison)
@@ -382,28 +418,7 @@ class FileDiscovery:
                         self._ignore_path_cache[cache_key] = False
                         return False  # Don't ignore
 
-            # 0b. Check force_include_patterns SECOND - they also override gitignore
-            if self.config and self.config.force_include_patterns:
-                for pattern in self.config.force_include_patterns:
-                    if self._matches_glob_pattern(relative_path_str, pattern):
-                        logger.debug(
-                            f"Force-including {relative_path} (matched pattern: {pattern})"
-                        )
-                        self._ignore_path_cache[cache_key] = False
-                        return False  # Don't ignore this file
-
-                    # For directories, check if pattern could match files inside
-                    if is_directory:
-                        if self._pattern_could_match_inside_dir(
-                            relative_path_str, pattern
-                        ):
-                            logger.debug(
-                                f"Not ignoring directory {relative_path} (could contain force-included files matching: {pattern})"
-                            )
-                            self._ignore_path_cache[cache_key] = False
-                            return False  # Don't ignore this directory
-
-            # 1. Check dotfile filtering (ENABLED BY DEFAULT)
+            # 3. Check dotfile filtering (ENABLED BY DEFAULT)
             # Skip dotfiles unless config explicitly disables it
             skip_dotfiles = self.config.skip_dotfiles if self.config else True
             if skip_dotfiles:
@@ -416,7 +431,7 @@ class FileDiscovery:
                         self._ignore_path_cache[cache_key] = True
                         return True
 
-            # 2. Check gitignore rules if available and enabled
+            # 4. Check gitignore rules if available and enabled
             # PERFORMANCE: Pass is_directory hint to avoid redundant stat() calls
             if self.config and self.config.respect_gitignore:
                 if self.gitignore_parser and self.gitignore_parser.is_ignored(
@@ -425,19 +440,6 @@ class FileDiscovery:
                     logger.debug(f"Path ignored by .gitignore: {file_path}")
                     self._ignore_path_cache[cache_key] = True
                     return True
-
-            # 3. Check each part of the path against default ignore patterns
-            # PERFORMANCE: Combine part and parent checks to avoid duplicate iteration
-            # Supports both exact matches and wildcard patterns (e.g., ".*" for all dotfiles)
-            for part in relative_path.parts:
-                for pattern in self._ignore_patterns:
-                    # Use fnmatch for wildcard support (*, ?, [seq], [!seq])
-                    if fnmatch.fnmatch(part, pattern):
-                        logger.debug(
-                            f"Path ignored by pattern '{pattern}' matching '{part}': {file_path}"
-                        )
-                        self._ignore_path_cache[cache_key] = True
-                        return True
 
             # Cache negative result
             self._ignore_path_cache[cache_key] = False

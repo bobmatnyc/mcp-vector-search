@@ -476,9 +476,51 @@ class ProjectManager:
         Returns:
             True if path should be ignored
         """
-        # FIRST: Check DEFAULT_IGNORE_PATTERNS (node_modules, __pycache__, etc.)
-        # These are ALWAYS ignored, even inside force_include_paths
-        # This prevents accidentally indexing node_modules with 250K+ files
+        # Load config if needed (for force_include_patterns and force_include_paths)
+        try:
+            config = self._config or (
+                self.load_config() if self.is_initialized() else None
+            )
+        except Exception:
+            config = None
+
+        # FIRST: Check force_include_patterns - they can override EVERYTHING (even DEFAULT_IGNORE_PATTERNS)
+        # This allows explicitly including files like vendor/**/*.kt even though vendor is in default ignores
+        if config and config.force_include_patterns:
+            try:
+                relative_path = path.relative_to(self.project_root)
+                relative_path_str = str(relative_path).replace("\\", "/")
+
+                # Check if path matches any force_include pattern
+                for pattern in config.force_include_patterns:
+                    if self._matches_glob_pattern(relative_path_str, pattern):
+                        logger.debug(
+                            f"Force-including {relative_path} (matched pattern: {pattern})"
+                        )
+                        return False  # Don't ignore this file
+
+                    # CRITICAL: For directories, check if pattern could match files inside
+                    # E.g., if pattern is "repos/**/*.java" and path is "repos/",
+                    # we need to traverse into "repos/" to check files inside
+                    if is_directory:
+                        # Add trailing slash and /* to check if files inside could match
+                        dir_pattern_prefix = relative_path_str + "/"
+                        if pattern.startswith(
+                            dir_pattern_prefix
+                        ) or self._pattern_could_match_inside_dir(
+                            relative_path_str, pattern
+                        ):
+                            logger.debug(
+                                f"Not ignoring directory {relative_path} (could contain force-included files matching: {pattern})"
+                            )
+                            return False  # Don't ignore this directory
+            except ValueError:
+                # Path is not relative to project root
+                pass
+
+        # SECOND: Check DEFAULT_IGNORE_PATTERNS (node_modules, __pycache__, etc.)
+        # These block force_include_paths but not force_include_patterns
+        # This prevents accidentally indexing node_modules with force_include_paths
         for part in path.parts:
             if part in DEFAULT_IGNORE_PATTERNS:
                 return True
@@ -493,15 +535,7 @@ class ProjectManager:
             # Path is not relative to project root
             return True
 
-        # Load config if needed (for force_include_patterns and force_include_paths)
-        try:
-            config = self._config or (
-                self.load_config() if self.is_initialized() else None
-            )
-        except Exception:
-            config = None
-
-        # SECOND: Check force_include_paths - they override gitignore (but not default ignores)
+        # THIRD: Check force_include_paths - they override gitignore (but not default ignores)
         if config and config.force_include_paths:
             try:
                 relative_path = path.relative_to(self.project_root)
@@ -540,40 +574,7 @@ class ProjectManager:
                 # Path is not relative to project root
                 pass
 
-        # SECOND: Check force_include_patterns - they override gitignore
-        if config and config.force_include_patterns:
-            try:
-                relative_path = path.relative_to(self.project_root)
-                relative_path_str = str(relative_path).replace("\\", "/")
-
-                # Check if path matches any force_include pattern
-                for pattern in config.force_include_patterns:
-                    if self._matches_glob_pattern(relative_path_str, pattern):
-                        logger.debug(
-                            f"Force-including {relative_path} (matched pattern: {pattern})"
-                        )
-                        return False  # Don't ignore this file
-
-                    # CRITICAL: For directories, check if pattern could match files inside
-                    # E.g., if pattern is "repos/**/*.java" and path is "repos/",
-                    # we need to traverse into "repos/" to check files inside
-                    if is_directory:
-                        # Add trailing slash and /* to check if files inside could match
-                        dir_pattern_prefix = relative_path_str + "/"
-                        if pattern.startswith(
-                            dir_pattern_prefix
-                        ) or self._pattern_could_match_inside_dir(
-                            relative_path_str, pattern
-                        ):
-                            logger.debug(
-                                f"Not ignoring directory {relative_path} (could contain force-included files matching: {pattern})"
-                            )
-                            return False  # Don't ignore this directory
-            except ValueError:
-                # Path is not relative to project root
-                pass
-
-        # Check gitignore rules if available and respect_gitignore is enabled
+        # FOURTH: Check gitignore rules if available and respect_gitignore is enabled
         # PERFORMANCE: Pass is_directory hint to avoid redundant stat() calls
         respect_gitignore = config.respect_gitignore if config else True
         if respect_gitignore:
