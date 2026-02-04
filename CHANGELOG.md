@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.4] - 2026-02-04
+
+### Fixed
+- Increase setup command auto-detect timeout from 2s to 5s to prevent missing languages in large projects (e.g., Rust with large target/ directories)
+- Add verbose diagnostic output showing detected extensions count or timeout message during setup
+
 ## [2.2.3] - 2026-02-04
 
 ### Fixed

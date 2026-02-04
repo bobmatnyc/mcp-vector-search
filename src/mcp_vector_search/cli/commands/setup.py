@@ -207,7 +207,7 @@ def register_with_claude_cli(
 
 def scan_project_file_extensions(
     project_root: Path,
-    timeout: float = 2.0,
+    timeout: float = 5.0,
 ) -> list[str] | None:
     """Scan project for unique file extensions with timeout.
 
@@ -952,7 +952,7 @@ async def _run_smart_setup(
     detected_extensions = None
     if not already_initialized or force:
         print_info("   Scanning file types...")
-        detected_extensions = scan_project_file_extensions(project_root, timeout=2.0)
+        detected_extensions = scan_project_file_extensions(project_root, timeout=5.0)
 
         if detected_extensions:
             file_types_str = ", ".join(detected_extensions[:10])
@@ -961,8 +961,11 @@ async def _run_smart_setup(
             print_success(f"   ✅ Detected {len(detected_extensions)} file type(s)")
             if verbose:
                 print_info(f"      Extensions: {file_types_str}")
+                print_info(f"      Detected {len(detected_extensions)} file extensions")
         else:
             print_info("   ⏱️  Scan timed out, using defaults")
+            if verbose:
+                print_info("      Extension scan timed out, using defaults")
 
     # Detect installed MCP platforms
     print_info("   Detecting MCP platforms...")
