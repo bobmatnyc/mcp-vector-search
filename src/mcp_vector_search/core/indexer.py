@@ -1,8 +1,13 @@
-"""Semantic indexer for MCP Vector Search."""
+"""Semantic indexer for MCP Vector Search with two-phase architecture.
+
+Phase 1: Parse and chunk files, store to chunks.lance (fast, durable)
+Phase 2: Embed chunks, store to vectors.lance (resumable, incremental)
+"""
 
 import asyncio
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +19,7 @@ from ..config.settings import ProjectConfig
 from ..parsers.registry import get_parser_registry
 from ..utils.monorepo import MonorepoDetector
 from .chunk_processor import ChunkProcessor
+from .chunks_backend import ChunksBackend, compute_file_hash
 from .database import VectorDatabase
 from .directory_index import DirectoryIndex
 from .exceptions import ParsingError
@@ -22,6 +28,7 @@ from .index_metadata import IndexMetadata
 from .metrics_collector import IndexerMetricsCollector
 from .models import CodeChunk, IndexStats
 from .relationships import RelationshipStore
+from .vectors_backend import VectorsBackend
 
 
 def cleanup_stale_locks(project_dir: Path) -> None:
@@ -169,6 +176,12 @@ class SemanticIndexer:
         # Initialize trend tracker for historical metrics
         self.trend_tracker = TrendTracker(project_root)
 
+        # Initialize two-phase backends
+        # Both use same db_path directory for LanceDB
+        index_path = project_root / ".mcp-vector-search" / "lance"
+        self.chunks_backend = ChunksBackend(index_path)
+        self.vectors_backend = VectorsBackend(index_path)
+
     def apply_auto_optimizations(self) -> tuple[Any, Any] | None:
         """Apply automatic optimizations based on codebase profile.
 
@@ -232,23 +245,344 @@ class SemanticIndexer:
             logger.warning(f"Auto-optimization failed, using defaults: {e}")
             return None
 
+    async def _run_auto_migrations(self) -> None:
+        """Check and run pending database migrations automatically.
+
+        This method is called during indexer initialization to ensure
+        the database schema is up-to-date before indexing begins.
+
+        Only runs migrations that are needed (check_needed() returns True).
+        Logs warnings if migrations fail but doesn't stop indexing.
+        """
+        try:
+            from ..migrations import MigrationRunner
+            from ..migrations.v2_3_0_two_phase import TwoPhaseArchitectureMigration
+
+            # Create migration runner
+            runner = MigrationRunner(self.project_root)
+
+            # Register migrations that might be needed
+            runner.register_migrations([TwoPhaseArchitectureMigration()])
+
+            # Get pending migrations
+            pending = runner.get_pending_migrations()
+
+            if not pending:
+                logger.debug("No pending migrations, schema is up-to-date")
+                return
+
+            logger.info(
+                f"Found {len(pending)} pending migration(s), running automatically..."
+            )
+
+            # Run pending migrations
+            for migration in pending:
+                logger.info(
+                    f"Running migration: {migration.name} (v{migration.version})"
+                )
+
+                result = runner.run_migration(migration, dry_run=False, force=False)
+
+                if result.status.value == "success":
+                    logger.info(f"✓ Migration {migration.name} completed successfully")
+                    if result.metadata:
+                        for key, value in result.metadata.items():
+                            logger.debug(f"  {key}: {value}")
+                elif result.status.value == "skipped":
+                    logger.debug(
+                        f"⊘ Migration {migration.name} skipped: {result.message}"
+                    )
+                elif result.status.value == "failed":
+                    logger.warning(
+                        f"✗ Migration {migration.name} failed: {result.message}\n"
+                        "  Continuing with indexing, but you may encounter issues.\n"
+                        "  Run 'mcp-vector-search migrate' to fix manually."
+                    )
+
+        except Exception as e:
+            logger.warning(
+                f"Auto-migration check failed: {e}\n"
+                "  Continuing with indexing, but you may encounter schema issues.\n"
+                "  Run 'mcp-vector-search migrate' to fix manually."
+            )
+
+    async def _phase1_chunk_files(
+        self, files: list[Path], force: bool = False
+    ) -> tuple[int, int]:
+        """Phase 1: Parse and chunk files, store to chunks.lance.
+
+        This phase is fast and durable - no expensive embedding generation.
+        Incremental updates are supported via file_hash change detection.
+
+        Args:
+            files: Files to process
+            force: If True, re-chunk even if unchanged
+
+        Returns:
+            Tuple of (files_processed, chunks_created)
+        """
+        files_processed = 0
+        chunks_created = 0
+
+        logger.info(f"Phase 1: Chunking {len(files)} files...")
+
+        for file_path in files:
+            try:
+                # Compute current file hash
+                file_hash = compute_file_hash(file_path)
+                rel_path = str(file_path.relative_to(self.project_root))
+
+                # Check if file changed (skip if unchanged and not forcing)
+                if not force:
+                    file_changed = await self.chunks_backend.file_changed(
+                        rel_path, file_hash
+                    )
+                    if not file_changed:
+                        logger.debug(f"Skipping unchanged file: {rel_path}")
+                        continue
+
+                # Delete old chunks for this file (if any)
+                deleted = await self.chunks_backend.delete_file_chunks(rel_path)
+                if deleted > 0:
+                    logger.debug(f"Deleted {deleted} old chunks for {rel_path}")
+
+                # Parse and chunk
+                chunks = await self.chunk_processor.parse_file(file_path)
+
+                if not chunks:
+                    logger.debug(f"No chunks extracted from {file_path}")
+                    continue
+
+                # Build hierarchical relationships
+                chunks_with_hierarchy = self.chunk_processor.build_chunk_hierarchy(
+                    chunks
+                )
+
+                # Convert CodeChunk objects to dicts for storage
+                chunk_dicts = []
+                for chunk in chunks_with_hierarchy:
+                    chunk_dict = {
+                        "chunk_id": chunk.chunk_id,
+                        "file_path": rel_path,
+                        "content": chunk.content,
+                        "language": chunk.language,
+                        "start_line": chunk.start_line,
+                        "end_line": chunk.end_line,
+                        "start_char": 0,  # Not tracked in CodeChunk
+                        "end_char": 0,  # Not tracked in CodeChunk
+                        "chunk_type": chunk.chunk_type,
+                        "name": chunk.function_name
+                        or chunk.class_name
+                        or "",  # Primary name
+                        "parent_name": "",  # Could derive from parent_chunk_id if needed
+                        "hierarchy_path": self._build_hierarchy_path(
+                            chunk
+                        ),  # e.g., "MyClass.my_method"
+                        "docstring": chunk.docstring or "",
+                        "signature": "",  # Not directly in CodeChunk, could build from params
+                        "complexity": int(chunk.complexity_score),
+                        "token_count": len(chunk.content.split()),  # Rough estimate
+                    }
+                    chunk_dicts.append(chunk_dict)
+
+                # Store chunks (without embeddings) to chunks.lance
+                if chunk_dicts:
+                    count = await self.chunks_backend.add_chunks(chunk_dicts, file_hash)
+                    chunks_created += count
+                    files_processed += 1
+                    logger.debug(f"Chunked {count} chunks from {rel_path}")
+
+            except Exception as e:
+                logger.error(f"Failed to chunk file {file_path}: {e}")
+                continue
+
+        logger.info(
+            f"Phase 1 complete: {files_processed} files processed, {chunks_created} chunks created"
+        )
+        return files_processed, chunks_created
+
+    def _build_hierarchy_path(self, chunk: CodeChunk) -> str:
+        """Build dotted hierarchy path (e.g., MyClass.my_method)."""
+        parts = []
+        if chunk.class_name:
+            parts.append(chunk.class_name)
+        if chunk.function_name:
+            parts.append(chunk.function_name)
+        return ".".join(parts) if parts else ""
+
+    async def _phase2_embed_chunks(
+        self, batch_size: int = 1000, checkpoint_interval: int = 10000
+    ) -> tuple[int, int]:
+        """Phase 2: Embed pending chunks, store to vectors.lance.
+
+        This phase is resumable - can restart after crashes. Only embeds
+        chunks that are in "pending" status in chunks.lance.
+
+        Args:
+            batch_size: Chunks per embedding batch
+            checkpoint_interval: Chunks between checkpoint logs
+
+        Returns:
+            Tuple of (chunks_embedded, batches_processed)
+        """
+        chunks_embedded = 0
+        batches_processed = 0
+        batch_id = int(datetime.now().timestamp())
+
+        logger.info("Phase 2: Embedding pending chunks...")
+
+        while True:
+            # Get pending chunks from chunks.lance
+            pending = await self.chunks_backend.get_pending_chunks(batch_size)
+            if not pending:
+                logger.info("No more pending chunks to embed")
+                break
+
+            # Mark as processing (for crash recovery)
+            chunk_ids = [c["chunk_id"] for c in pending]
+            await self.chunks_backend.mark_chunks_processing(chunk_ids, batch_id)
+
+            try:
+                # Generate embeddings using database's embedding function
+                # For two-phase architecture, we need direct access to embedding generation
+                # ChromaDB wraps embedding function, we need to extract it
+
+                contents = [c["content"] for c in pending]
+
+                # Generate embeddings in batch
+                # Try multiple ways to access embedding function
+                vectors = None
+
+                # Method 1: Check for _embedding_function (ChromaDB)
+                if hasattr(self.database, "_embedding_function"):
+                    vectors = self.database._embedding_function(contents)
+                # Method 2: Check for _collection and its embedding function
+                elif hasattr(self.database, "_collection") and hasattr(
+                    self.database._collection, "_embedding_function"
+                ):
+                    vectors = self.database._collection._embedding_function(contents)
+                # Method 3: Use database's add_chunks which handles embedding internally
+                # This is a fallback but defeats the purpose of two-phase architecture
+                # We'll need to refactor database to expose embedding publicly
+                else:
+                    logger.warning(
+                        "Cannot access embedding function directly, "
+                        "falling back to database.add_chunks()"
+                    )
+                    # Convert chunk dicts back to CodeChunk objects for database.add_chunks
+                    temp_chunks = []
+                    for chunk in pending:
+                        code_chunk = CodeChunk(
+                            content=chunk["content"],
+                            file_path=Path(chunk["file_path"]),
+                            start_line=chunk["start_line"],
+                            end_line=chunk["end_line"],
+                            language=chunk["language"],
+                            chunk_type=chunk["chunk_type"],
+                            chunk_id=chunk["chunk_id"],
+                        )
+                        if chunk["name"]:
+                            # Assign name to appropriate field based on chunk_type
+                            if chunk["chunk_type"] == "class":
+                                code_chunk.class_name = chunk["name"]
+                            elif chunk["chunk_type"] in ("function", "method"):
+                                code_chunk.function_name = chunk["name"]
+                        temp_chunks.append(code_chunk)
+
+                    # Use database to add chunks (which will generate embeddings)
+                    await self.database.add_chunks(temp_chunks)
+
+                    # Mark as complete - embeddings were generated via database
+                    await self.chunks_backend.mark_chunks_complete(chunk_ids)
+                    chunks_embedded += len(pending)
+                    batches_processed += 1
+
+                    # Skip vector storage since database already stored them
+                    continue
+
+                if vectors is None:
+                    raise ValueError("Failed to generate embeddings")
+
+                # Add to vectors table with embeddings
+                chunks_with_vectors = []
+                for chunk, vec in zip(pending, vectors, strict=True):
+                    chunk_with_vec = {
+                        "chunk_id": chunk["chunk_id"],
+                        "vector": vec,
+                        "file_path": chunk["file_path"],
+                        "content": chunk["content"],
+                        "language": chunk["language"],
+                        "start_line": chunk["start_line"],
+                        "end_line": chunk["end_line"],
+                        "chunk_type": chunk["chunk_type"],
+                        "name": chunk["name"],
+                        "hierarchy_path": chunk["hierarchy_path"],
+                    }
+                    chunks_with_vectors.append(chunk_with_vec)
+
+                # Store vectors to vectors.lance
+                await self.vectors_backend.add_vectors(chunks_with_vectors)
+
+                # Mark as complete in chunks.lance
+                await self.chunks_backend.mark_chunks_complete(chunk_ids)
+
+                chunks_embedded += len(pending)
+                batches_processed += 1
+
+                # Checkpoint logging
+                if chunks_embedded % checkpoint_interval == 0:
+                    logger.info(f"Checkpoint: {chunks_embedded} chunks embedded")
+
+            except Exception as e:
+                logger.error(f"Embedding batch failed: {e}")
+                # Mark chunks as error in chunks.lance
+                error_msg = f"{type(e).__name__}: {str(e)}"
+                await self.chunks_backend.mark_chunks_error(chunk_ids, error_msg)
+                # Continue with next batch instead of crashing
+                continue
+
+        logger.info(
+            f"Phase 2 complete: {chunks_embedded} chunks embedded in {batches_processed} batches"
+        )
+        return chunks_embedded, batches_processed
+
     async def index_project(
         self,
         force_reindex: bool = False,
         show_progress: bool = True,
         skip_relationships: bool = False,
+        phase: str = "all",
     ) -> int:
-        """Index all files in the project.
+        """Index all files in the project using two-phase architecture.
 
         Args:
             force_reindex: Whether to reindex existing files
             show_progress: Whether to show progress information
             skip_relationships: Skip computing relationships for visualization (faster, but visualize will be slower)
+            phase: Which phase to run - "all", "chunk", or "embed"
+                - "all": Run both phases (default, backward compatible)
+                - "chunk": Only Phase 1 (parse and chunk, no embedding)
+                - "embed": Only Phase 2 (embed pending chunks)
 
         Returns:
-            Number of files indexed
+            Number of files indexed (for backward compatibility)
+
+        Note:
+            Two-phase architecture enables:
+            - Fast Phase 1 for durable chunk storage
+            - Resumable Phase 2 for embedding (can restart after crash)
+            - Incremental updates (skip unchanged files)
         """
-        logger.info(f"Starting indexing of project: {self.project_root}")
+        logger.info(
+            f"Starting indexing of project: {self.project_root} (phase: {phase})"
+        )
+
+        # Initialize backends
+        await self.chunks_backend.initialize()
+        await self.vectors_backend.initialize()
+
+        # Check and run pending migrations automatically
+        await self._run_auto_migrations()
 
         # Apply auto-optimizations before indexing
         if self.auto_optimize:
@@ -257,80 +591,92 @@ class SemanticIndexer:
         # Clean up stale lock files from previous interrupted indexing runs
         cleanup_stale_locks(self.project_root)
 
-        # Find all indexable files
-        all_files = self.file_discovery.find_indexable_files()
+        # Track indexed count for backward compatibility
+        indexed_count = 0
+        chunks_created = 0
+        chunks_embedded = 0
 
-        if not all_files:
-            logger.warning("No indexable files found")
-            return 0
+        # Phase 1: Chunk files (if requested)
+        if phase in ("all", "chunk"):
+            # Find all indexable files
+            all_files = self.file_discovery.find_indexable_files()
 
-        # Load existing metadata for incremental indexing
-        metadata_dict = self.metadata.load()
+            if not all_files:
+                logger.warning("No indexable files found")
+                if phase == "chunk":
+                    return 0
+            else:
+                # Filter files that need indexing
+                files_to_index = all_files
+                if not force_reindex:
+                    # Use chunks_backend for change detection instead of metadata
+                    filtered_files = []
+                    for f in all_files:
+                        try:
+                            file_hash = compute_file_hash(f)
+                            rel_path = str(f.relative_to(self.project_root))
+                            if await self.chunks_backend.file_changed(
+                                rel_path, file_hash
+                            ):
+                                filtered_files.append(f)
+                        except Exception as e:
+                            logger.warning(
+                                f"Error checking file {f}: {e}, will re-index"
+                            )
+                            filtered_files.append(f)
+                    files_to_index = filtered_files
+                    logger.info(
+                        f"Incremental index: {len(files_to_index)} of {len(all_files)} files need updating"
+                    )
+                else:
+                    logger.info(
+                        f"Force reindex: processing all {len(files_to_index)} files"
+                    )
 
-        # Filter files that need indexing
-        if force_reindex:
-            files_to_index = all_files
-            logger.info(f"Force reindex: processing all {len(files_to_index)} files")
-        else:
-            files_to_index = [
-                f for f in all_files if self.metadata.needs_reindexing(f, metadata_dict)
-            ]
-            logger.info(
-                f"Incremental index: {len(files_to_index)} of {len(all_files)} files need updating"
+                if files_to_index:
+                    # Run Phase 1
+                    indexed_count, chunks_created = await self._phase1_chunk_files(
+                        files_to_index, force=force_reindex
+                    )
+
+                    # Update metadata for backward compatibility
+                    if indexed_count > 0:
+                        metadata_dict = self.metadata.load()
+                        for file_path in files_to_index:
+                            try:
+                                metadata_dict[str(file_path)] = os.path.getmtime(
+                                    file_path
+                                )
+                            except OSError:
+                                pass  # File might have been deleted during indexing
+                        self.metadata.save(metadata_dict)
+                else:
+                    logger.info("All files are up to date")
+                    if phase == "chunk":
+                        return 0
+
+        # Phase 2: Embed chunks (if requested)
+        if phase in ("all", "embed"):
+            # Run Phase 2 on pending chunks
+            chunks_embedded, _ = await self._phase2_embed_chunks(
+                batch_size=self.batch_size
             )
 
-        if not files_to_index:
-            logger.info("All files are up to date")
-            return 0
+        # Log summary
+        if phase == "all":
+            logger.info(
+                f"Two-phase indexing complete: {indexed_count} files, "
+                f"{chunks_created} chunks created, {chunks_embedded} chunks embedded"
+            )
+        elif phase == "chunk":
+            logger.info(
+                f"Phase 1 complete: {indexed_count} files, {chunks_created} chunks created"
+            )
+        elif phase == "embed":
+            logger.info(f"Phase 2 complete: {chunks_embedded} chunks embedded")
 
-        # Index files in parallel batches
-        indexed_count = 0
-        failed_count = 0
-
-        # Heartbeat logging to detect stuck indexing
-
-        heartbeat_interval = 60  # Log every 60 seconds
-        last_heartbeat = time.time()
-
-        # Process files in batches for better memory management
-        for i in range(0, len(files_to_index), self.batch_size):
-            batch = files_to_index[i : i + self.batch_size]
-
-            # Heartbeat logging
-            now = time.time()
-            if now - last_heartbeat >= heartbeat_interval:
-                percentage = ((i + len(batch)) / len(files_to_index)) * 100
-                logger.info(
-                    f"Indexing heartbeat: {i + len(batch)}/{len(files_to_index)} files "
-                    f"({percentage:.1f}%), {indexed_count} indexed, {failed_count} failed"
-                )
-                last_heartbeat = now
-
-            if show_progress:
-                logger.info(
-                    f"Processing batch {i // self.batch_size + 1}/{(len(files_to_index) + self.batch_size - 1) // self.batch_size} ({len(batch)} files)"
-                )
-
-            # Process batch in parallel
-            batch_results = await self._process_file_batch(batch, force_reindex)
-
-            # Count results
-            for success in batch_results:
-                if success:
-                    indexed_count += 1
-                else:
-                    failed_count += 1
-
-        # Update metadata for successfully indexed files
+        # Update directory index (only if files were indexed)
         if indexed_count > 0:
-            for file_path in files_to_index:
-                try:
-                    metadata_dict[str(file_path)] = os.path.getmtime(file_path)
-                except OSError:
-                    pass  # File might have been deleted during indexing
-
-            self.metadata.save(metadata_dict)
-
             # Rebuild directory index from successfully indexed files
             try:
                 logger.debug("Rebuilding directory index...")
@@ -363,10 +709,6 @@ class SemanticIndexer:
                 import traceback
 
                 logger.debug(traceback.format_exc())
-
-        logger.info(
-            f"Indexing complete: {indexed_count} files indexed, {failed_count} failed"
-        )
 
         # Mark relationships for background computation (unless skipped)
         # Default behavior: skip blocking computation, mark for background processing
@@ -760,6 +1102,70 @@ class SemanticIndexer:
     def _build_chunk_hierarchy(self, chunks: list[CodeChunk]) -> list[CodeChunk]:
         """Build chunk hierarchy (backward compatibility)."""
         return self.chunk_processor.build_chunk_hierarchy(chunks)
+
+    async def get_two_phase_status(self) -> dict[str, Any]:
+        """Get indexing status for both phases.
+
+        Returns:
+            Dictionary with status for Phase 1 (chunks) and Phase 2 (vectors):
+            {
+                "phase1": {
+                    "total_chunks": 1000,
+                    "files_indexed": 50,
+                    "languages": {"python": 30, "javascript": 20}
+                },
+                "phase2": {
+                    "pending": 500,
+                    "processing": 0,
+                    "complete": 500,
+                    "error": 0
+                },
+                "vectors": {
+                    "total": 500,
+                    "files": 25
+                },
+                "ready_for_search": True
+            }
+        """
+        try:
+            # Initialize backends if needed
+            if self.chunks_backend._db is None:
+                await self.chunks_backend.initialize()
+            if self.vectors_backend._db is None:
+                await self.vectors_backend.initialize()
+
+            # Get stats from both backends
+            chunks_stats = await self.chunks_backend.get_stats()
+            vectors_stats = await self.vectors_backend.get_stats()
+
+            return {
+                "phase1": {
+                    "total_chunks": chunks_stats.get("total", 0),
+                    "files_indexed": chunks_stats.get("files", 0),
+                    "languages": chunks_stats.get("languages", {}),
+                },
+                "phase2": {
+                    "pending": chunks_stats.get("pending", 0),
+                    "processing": chunks_stats.get("processing", 0),
+                    "complete": chunks_stats.get("complete", 0),
+                    "error": chunks_stats.get("error", 0),
+                },
+                "vectors": {
+                    "total": vectors_stats.get("total", 0),
+                    "files": vectors_stats.get("files", 0),
+                    "chunk_types": vectors_stats.get("chunk_types", {}),
+                },
+                "ready_for_search": chunks_stats.get("complete", 0) > 0,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get two-phase status: {e}")
+            return {
+                "phase1": {"total_chunks": 0, "files_indexed": 0, "languages": {}},
+                "phase2": {"pending": 0, "processing": 0, "complete": 0, "error": 0},
+                "vectors": {"total": 0, "files": 0, "chunk_types": {}},
+                "ready_for_search": False,
+                "error": str(e),
+            }
 
     async def get_indexing_stats(self, db_stats: IndexStats | None = None) -> dict:
         """Get statistics about the indexing process.

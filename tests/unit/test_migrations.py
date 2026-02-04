@@ -4,6 +4,9 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import lancedb
+import pyarrow as pa
+
 from mcp_vector_search.migrations import (
     Migration,
     MigrationContext,
@@ -12,6 +15,7 @@ from mcp_vector_search.migrations import (
     MigrationRunner,
     MigrationStatus,
 )
+from mcp_vector_search.migrations.v2_3_0_two_phase import TwoPhaseArchitectureMigration
 
 
 class TestMigration(Migration):
@@ -324,3 +328,359 @@ class TestMigrationResult:
         assert restored.migration_id == result.migration_id
         assert restored.status == result.status
         assert restored.metadata == result.metadata
+
+
+class TestTwoPhaseArchitectureMigration:
+    """Tests for two-phase architecture migration."""
+
+    def test_check_needed_no_old_table(self, tmp_path: Path):
+        """Should not need migration if no old table exists."""
+        db_path = tmp_path / "lance"
+        db_path.mkdir(parents=True)
+
+        # Create fresh LanceDB (no tables)
+        lancedb.connect(str(db_path))
+
+        migration = TwoPhaseArchitectureMigration()
+        context = MigrationContext(
+            project_root=tmp_path,
+            index_path=db_path,
+            config={},
+        )
+
+        assert not migration.check_needed(context)
+
+    def test_check_needed_new_tables_exist(self, tmp_path: Path):
+        """Should not need migration if new tables already exist."""
+        db_path = tmp_path / "lance"
+        db_path.mkdir(parents=True)
+
+        # Create LanceDB with new tables
+        db = lancedb.connect(str(db_path))
+
+        # Create chunks table
+        chunks_data = [
+            {
+                "chunk_id": "test1",
+                "file_path": "test.py",
+                "file_hash": "abc123",
+                "content": "def test(): pass",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "start_char": 0,
+                "end_char": 20,
+                "chunk_type": "function",
+                "name": "test",
+                "parent_name": "",
+                "hierarchy_path": "test",
+                "docstring": "",
+                "signature": "",
+                "complexity": 1,
+                "token_count": 5,
+                "embedding_status": "pending",
+                "embedding_batch_id": 0,
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-01-01T00:00:00",
+                "error_message": "",
+            }
+        ]
+        from mcp_vector_search.core.chunks_backend import CHUNKS_SCHEMA
+
+        db.create_table("chunks", chunks_data, schema=CHUNKS_SCHEMA)
+
+        # Create vectors table
+        vectors_data = [
+            {
+                "chunk_id": "test1",
+                "vector": [0.1] * 384,
+                "file_path": "test.py",
+                "content": "def test(): pass",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "chunk_type": "function",
+                "name": "test",
+                "hierarchy_path": "test",
+                "embedded_at": "2024-01-01T00:00:00",
+                "model_version": "all-MiniLM-L6-v2",
+            }
+        ]
+        from mcp_vector_search.core.vectors_backend import VECTORS_SCHEMA
+
+        db.create_table("vectors", vectors_data, schema=VECTORS_SCHEMA)
+
+        migration = TwoPhaseArchitectureMigration()
+        context = MigrationContext(
+            project_root=tmp_path,
+            index_path=db_path,
+            config={},
+        )
+
+        assert not migration.check_needed(context)
+
+    def test_check_needed_old_table_exists(self, tmp_path: Path):
+        """Should need migration if old table exists without new tables."""
+        db_path = tmp_path / "lance"
+        db_path.mkdir(parents=True)
+
+        # Create LanceDB with old code_chunks table
+        db = lancedb.connect(str(db_path))
+
+        # Create old schema table
+        old_data = [
+            {
+                "chunk_id": "test1",
+                "content": "def test(): pass",
+                "vector": [0.1] * 384,
+                "file_path": "test.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "chunk_type": "function",
+                "function_name": "test",
+                "class_name": "",
+                "docstring": "",
+                "complexity_score": 1,
+            }
+        ]
+
+        # Create schema for old table
+        old_schema = pa.schema(
+            [
+                pa.field("chunk_id", pa.string()),
+                pa.field("content", pa.string()),
+                pa.field("vector", pa.list_(pa.float32(), 384)),
+                pa.field("file_path", pa.string()),
+                pa.field("language", pa.string()),
+                pa.field("start_line", pa.int32()),
+                pa.field("end_line", pa.int32()),
+                pa.field("chunk_type", pa.string()),
+                pa.field("function_name", pa.string()),
+                pa.field("class_name", pa.string()),
+                pa.field("docstring", pa.string()),
+                pa.field("complexity_score", pa.int32()),
+            ]
+        )
+
+        db.create_table("code_chunks", old_data, schema=old_schema)
+
+        migration = TwoPhaseArchitectureMigration()
+        context = MigrationContext(
+            project_root=tmp_path,
+            index_path=db_path,
+            config={},
+        )
+
+        assert migration.check_needed(context)
+
+    def test_execute_migration(self, tmp_path: Path):
+        """Should successfully migrate from old to new schema."""
+        db_path = tmp_path / "lance"
+        db_path.mkdir(parents=True)
+
+        # Create LanceDB with old code_search table
+        db = lancedb.connect(str(db_path))
+
+        # Create old schema table with test data
+        old_data = [
+            {
+                "chunk_id": "test1",
+                "content": "def foo(): pass",
+                "vector": [0.1] * 384,
+                "file_path": "test.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "start_char": 0,
+                "end_char": 20,
+                "chunk_type": "function",
+                "function_name": "foo",
+                "class_name": "",
+                "docstring": "Test function",
+                "complexity_score": 1,
+                "hierarchy_path": "foo",
+            },
+            {
+                "chunk_id": "test2",
+                "content": "class Bar: pass",
+                "vector": [0.2] * 384,
+                "file_path": "test.py",
+                "language": "python",
+                "start_line": 3,
+                "end_line": 3,
+                "start_char": 0,
+                "end_char": 15,
+                "chunk_type": "class",
+                "function_name": "",
+                "class_name": "Bar",
+                "docstring": "",
+                "complexity_score": 1,
+                "hierarchy_path": "Bar",
+            },
+        ]
+
+        # Create schema for old table
+        old_schema = pa.schema(
+            [
+                pa.field("chunk_id", pa.string()),
+                pa.field("content", pa.string()),
+                pa.field("vector", pa.list_(pa.float32(), 384)),
+                pa.field("file_path", pa.string()),
+                pa.field("language", pa.string()),
+                pa.field("start_line", pa.int32()),
+                pa.field("end_line", pa.int32()),
+                pa.field("start_char", pa.int32()),
+                pa.field("end_char", pa.int32()),
+                pa.field("chunk_type", pa.string()),
+                pa.field("function_name", pa.string()),
+                pa.field("class_name", pa.string()),
+                pa.field("docstring", pa.string()),
+                pa.field("complexity_score", pa.int32()),
+                pa.field("hierarchy_path", pa.string()),
+            ]
+        )
+
+        db.create_table("code_search", old_data, schema=old_schema)
+
+        # Run migration
+        migration = TwoPhaseArchitectureMigration()
+        context = MigrationContext(
+            project_root=tmp_path,
+            index_path=db_path,
+            config={},
+        )
+
+        result = migration.execute(context)
+
+        # Verify migration succeeded
+        assert result.status == MigrationStatus.SUCCESS
+        assert result.metadata["chunks_migrated"] == 2
+        assert result.metadata["vectors_migrated"] == 2
+
+        # Verify new tables exist
+        tables_response = db.list_tables()
+        if hasattr(tables_response, "tables"):
+            table_names = tables_response.tables
+        else:
+            table_names = tables_response
+
+        assert "chunks" in table_names
+        assert "vectors" in table_names
+
+        # Verify data migrated correctly
+        chunks_table = db.open_table("chunks")
+        chunks_df = chunks_table.to_pandas()
+        assert len(chunks_df) == 2
+        assert "test1" in chunks_df["chunk_id"].values
+        assert "test2" in chunks_df["chunk_id"].values
+        assert (
+            chunks_df[chunks_df["chunk_id"] == "test1"]["embedding_status"].iloc[0]
+            == "complete"
+        )
+
+        vectors_table = db.open_table("vectors")
+        vectors_df = vectors_table.to_pandas()
+        assert len(vectors_df) == 2
+        assert "test1" in vectors_df["chunk_id"].values
+        assert (
+            len(vectors_df[vectors_df["chunk_id"] == "test1"]["vector"].iloc[0]) == 384
+        )
+
+    def test_execute_dry_run(self, tmp_path: Path):
+        """Should return success without making changes in dry run mode."""
+        db_path = tmp_path / "lance"
+        db_path.mkdir(parents=True)
+
+        migration = TwoPhaseArchitectureMigration()
+        context = MigrationContext(
+            project_root=tmp_path,
+            index_path=db_path,
+            config={},
+            dry_run=True,
+        )
+
+        result = migration.execute(context)
+
+        assert result.status == MigrationStatus.SUCCESS
+        assert "DRY RUN" in result.message
+
+    def test_rollback(self, tmp_path: Path):
+        """Should drop new tables on rollback."""
+        db_path = tmp_path / "lance"
+        db_path.mkdir(parents=True)
+
+        db = lancedb.connect(str(db_path))
+
+        # Create new tables
+        chunks_data = [
+            {
+                "chunk_id": "test",
+                "file_path": "test.py",
+                "file_hash": "",
+                "content": "",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "start_char": 0,
+                "end_char": 0,
+                "chunk_type": "code",
+                "name": "",
+                "parent_name": "",
+                "hierarchy_path": "",
+                "docstring": "",
+                "signature": "",
+                "complexity": 0,
+                "token_count": 0,
+                "embedding_status": "pending",
+                "embedding_batch_id": 0,
+                "created_at": "",
+                "updated_at": "",
+                "error_message": "",
+            }
+        ]
+        from mcp_vector_search.core.chunks_backend import CHUNKS_SCHEMA
+
+        db.create_table("chunks", chunks_data, schema=CHUNKS_SCHEMA)
+
+        vectors_data = [
+            {
+                "chunk_id": "test",
+                "vector": [0.1] * 384,
+                "file_path": "test.py",
+                "content": "",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "chunk_type": "code",
+                "name": "",
+                "hierarchy_path": "",
+                "embedded_at": "",
+                "model_version": "test",
+            }
+        ]
+        from mcp_vector_search.core.vectors_backend import VECTORS_SCHEMA
+
+        db.create_table("vectors", vectors_data, schema=VECTORS_SCHEMA)
+
+        # Run rollback
+        migration = TwoPhaseArchitectureMigration()
+        context = MigrationContext(
+            project_root=tmp_path,
+            index_path=db_path,
+            config={},
+        )
+
+        success = migration.rollback(context)
+
+        assert success
+
+        # Verify tables were dropped
+        tables_response = db.list_tables()
+        if hasattr(tables_response, "tables"):
+            table_names = tables_response.tables
+        else:
+            table_names = tables_response
+
+        assert "chunks" not in table_names
+        assert "vectors" not in table_names

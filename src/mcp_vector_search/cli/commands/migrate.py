@@ -8,6 +8,7 @@ from rich.table import Table
 
 from ...migrations import MigrationRunner
 from ...migrations.v1_2_2_codexembed import CodeXEmbedMigration
+from ...migrations.v2_3_0_two_phase import TwoPhaseArchitectureMigration
 from .migrate_db import app as migrate_db_app
 
 console = Console()
@@ -34,6 +35,7 @@ def _get_runner(project_root: Path | None = None) -> MigrationRunner:
     runner.register_migrations(
         [
             CodeXEmbedMigration(),
+            TwoPhaseArchitectureMigration(),
             # Add new migrations here as they are created
         ]
     )

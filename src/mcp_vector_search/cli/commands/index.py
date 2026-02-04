@@ -105,6 +105,12 @@ def main(
         help="Automatically optimize indexing settings based on codebase profile (default: enabled)",
         rich_help_panel="⚡ Performance",
     ),
+    phase: str = typer.Option(
+        "all",
+        "--phase",
+        help="Which indexing phase to run: all (default), chunk, or embed",
+        rich_help_panel="📊 Indexing Options",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -156,6 +162,11 @@ def main(
             _spawn_background_indexer(project_root, force, extensions)
             return
 
+        # Validate phase parameter
+        if phase not in ("all", "chunk", "embed"):
+            print_error(f"Invalid phase: {phase}. Must be 'all', 'chunk', or 'embed'")
+            raise typer.Exit(1)
+
         # Run async indexing
         asyncio.run(
             run_indexing(
@@ -169,6 +180,7 @@ def main(
                 debug=debug,
                 skip_relationships=skip_relationships,
                 auto_optimize=auto_optimize,
+                phase=phase,
             )
         )
 
@@ -319,6 +331,7 @@ async def run_indexing(
     debug: bool = False,
     skip_relationships: bool = False,
     auto_optimize: bool = True,
+    phase: str = "all",
 ) -> None:
     """Run the indexing process."""
     # Load project configuration
@@ -376,7 +389,7 @@ async def run_indexing(
                 await _run_watch_mode(indexer, show_progress)
             else:
                 await _run_batch_indexing(
-                    indexer, force_reindex, show_progress, skip_relationships
+                    indexer, force_reindex, show_progress, skip_relationships, phase
                 )
 
     except Exception as e:
@@ -389,6 +402,7 @@ async def _run_batch_indexing(
     force_reindex: bool,
     show_progress: bool,
     skip_relationships: bool = False,
+    phase: str = "all",
 ) -> None:
     """Run batch indexing of all files."""
     if show_progress:
@@ -581,6 +595,7 @@ async def _run_batch_indexing(
             force_reindex=force_reindex,
             show_progress=show_progress,
             skip_relationships=skip_relationships,
+            phase=phase,
         )
 
     # Show statistics
@@ -1364,6 +1379,247 @@ async def _compute_relationships_sync(project_root: Path) -> None:
             f"in {rel_stats['computation_time']:.1f}s"
         )
         print_success("Relationships ready for visualization")
+
+
+@index_app.command("chunk")
+def chunk_cmd(
+    ctx: typer.Context,
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Re-chunk all files even if unchanged",
+    ),
+) -> None:
+    """📦 Phase 1: Parse and chunk files (no embedding).
+
+    Runs the first phase of indexing which parses code files and stores chunks
+    without generating embeddings. This is fast and durable storage.
+
+    Examples:
+        mcp-vector-search index chunk           # Chunk new/changed files
+        mcp-vector-search index chunk --force   # Re-chunk all files
+    """
+    try:
+        project_root = ctx.obj.get("project_root") or Path.cwd()
+
+        print_info("Starting Phase 1 (chunking)...")
+        start = asyncio.get_event_loop().time()
+
+        # Run indexing with phase="chunk"
+        asyncio.run(
+            run_indexing(
+                project_root=project_root,
+                force_reindex=force,
+                phase="chunk",
+            )
+        )
+
+        elapsed = asyncio.get_event_loop().time() - start
+        print_success(f"Phase 1 complete in {elapsed:.1f}s")
+
+    except Exception as e:
+        logger.error(f"Chunking failed: {e}")
+        print_error(f"Chunking failed: {e}")
+        raise typer.Exit(1)
+
+
+@index_app.command("embed")
+def embed_cmd(
+    ctx: typer.Context,
+    batch_size: int = typer.Option(
+        1000,
+        "--batch-size",
+        "-b",
+        help="Chunks per embedding batch",
+        min=100,
+        max=10000,
+    ),
+) -> None:
+    """🧠 Phase 2: Embed pending chunks.
+
+    Runs the second phase of indexing which generates embeddings for chunks
+    that are in "pending" status. This operation is resumable - you can restart
+    after crashes or interruptions.
+
+    Examples:
+        mcp-vector-search index embed                    # Embed pending chunks
+        mcp-vector-search index embed --batch-size 500   # Custom batch size
+    """
+    try:
+        project_root = ctx.obj.get("project_root") or Path.cwd()
+
+        print_info("Starting Phase 2 (embedding pending chunks)...")
+        start = asyncio.get_event_loop().time()
+
+        # Run indexing with phase="embed"
+        asyncio.run(
+            run_indexing(
+                project_root=project_root,
+                batch_size=batch_size,
+                phase="embed",
+            )
+        )
+
+        elapsed = asyncio.get_event_loop().time() - start
+        print_success(f"Phase 2 complete in {elapsed:.1f}s")
+
+    except Exception as e:
+        logger.error(f"Embedding failed: {e}")
+        print_error(f"Embedding failed: {e}")
+        raise typer.Exit(1)
+
+
+@index_app.command("phases")
+def phases_status_cmd(
+    ctx: typer.Context,
+) -> None:
+    """📊 Show indexing status for both phases.
+
+    Displays detailed status for Phase 1 (chunks) and Phase 2 (embeddings),
+    including pending/complete counts and readiness for search.
+
+    Examples:
+        mcp-vector-search index phases
+    """
+    try:
+        project_root = ctx.obj.get("project_root") or Path.cwd()
+        asyncio.run(_show_two_phase_status(project_root))
+
+    except Exception as e:
+        logger.error(f"Status check failed: {e}")
+        print_error(f"Status check failed: {e}")
+        raise typer.Exit(1)
+
+
+async def _show_two_phase_status(project_root: Path) -> None:
+    """Show two-phase indexing status.
+
+    Args:
+        project_root: Project root directory
+    """
+    from rich.table import Table
+
+    from ..output import console
+
+    # Load project configuration
+    project_manager = ProjectManager(project_root)
+
+    if not project_manager.is_initialized():
+        print_warning("Project not initialized. Run 'mcp-vector-search init' first.")
+        raise typer.Exit(1)
+
+    config = project_manager.load_config()
+
+    # Setup database and indexer to access two-phase status
+    embedding_function, _ = create_embedding_function(config.embedding_model)
+    database = create_database(
+        persist_directory=config.index_path,
+        embedding_function=embedding_function,
+    )
+
+    indexer = SemanticIndexer(
+        database=database,
+        project_root=project_root,
+        config=config,
+    )
+
+    # Get two-phase status
+    status = await indexer.get_two_phase_status()
+
+    console.print("\n[bold blue]📊 Two-Phase Index Status[/bold blue]\n")
+
+    # Phase 1 table
+    phase1_table = Table(title="Phase 1: Chunks (Parsing)", show_header=True)
+    phase1_table.add_column("Metric", style="cyan", width=20)
+    phase1_table.add_column("Value", style="green")
+
+    phase1 = status.get("phase1", {})
+    phase1_table.add_row("Total chunks", f"{phase1.get('total_chunks', 0):,}")
+    phase1_table.add_row("Files indexed", f"{phase1.get('files_indexed', 0):,}")
+
+    languages = phase1.get("languages", {})
+    if languages:
+        lang_str = ", ".join(
+            [
+                f"{k}: {v}"
+                for k, v in sorted(languages.items(), key=lambda x: x[1], reverse=True)[
+                    :5
+                ]
+            ]
+        )
+        phase1_table.add_row("Top languages", lang_str)
+
+    console.print(phase1_table)
+    console.print()
+
+    # Phase 2 table
+    phase2_table = Table(title="Phase 2: Embeddings", show_header=True)
+    phase2_table.add_column("Status", style="cyan", width=20)
+    phase2_table.add_column("Count", style="green")
+
+    phase2 = status.get("phase2", {})
+    complete = phase2.get("complete", 0)
+    pending = phase2.get("pending", 0)
+    processing = phase2.get("processing", 0)
+    error = phase2.get("error", 0)
+
+    phase2_table.add_row("✓ Complete", f"{complete:,}")
+    phase2_table.add_row(
+        "⏳ Pending", f"[yellow]{pending:,}[/yellow]" if pending > 0 else f"{pending:,}"
+    )
+    phase2_table.add_row("⚙️  Processing", f"{processing:,}")
+    phase2_table.add_row(
+        "❌ Error", f"[red]{error:,}[/red]" if error > 0 else f"{error:,}"
+    )
+
+    console.print(phase2_table)
+    console.print()
+
+    # Vectors table
+    vectors_table = Table(title="Vectors (Searchable)", show_header=True)
+    vectors_table.add_column("Metric", style="cyan", width=20)
+    vectors_table.add_column("Value", style="green")
+
+    vectors = status.get("vectors", {})
+    vectors_table.add_row("Total vectors", f"{vectors.get('total', 0):,}")
+    vectors_table.add_row("Files with vectors", f"{vectors.get('files', 0):,}")
+
+    chunk_types = vectors.get("chunk_types", {})
+    if chunk_types:
+        type_str = ", ".join(
+            [
+                f"{k}: {v}"
+                for k, v in sorted(
+                    chunk_types.items(), key=lambda x: x[1], reverse=True
+                )
+            ]
+        )
+        vectors_table.add_row("Chunk types", type_str)
+
+    console.print(vectors_table)
+    console.print()
+
+    # Readiness indicator
+    ready = status.get("ready_for_search", False)
+    if ready:
+        console.print("[green]✓ Ready for search[/green]")
+    else:
+        console.print(
+            "[yellow]⚠ Not ready for search (no embeddings completed)[/yellow]"
+        )
+        if pending > 0:
+            console.print(
+                f"[dim]  → Run 'mcp-vector-search index embed' to process {pending:,} pending chunks[/dim]"
+            )
+
+    # Next steps
+    if pending > 0:
+        console.print()
+        print_tip("Run [cyan]mcp-vector-search index embed[/cyan] to complete Phase 2")
+    elif error > 0:
+        console.print()
+        print_warning(f"{error:,} chunks have errors. Check logs for details.")
 
 
 if __name__ == "__main__":
