@@ -99,6 +99,12 @@ def main(
         help="Skip relationship computation during indexing (default: skip). Relationships are computed lazily by the visualizer when needed.",
         rich_help_panel="⚡ Performance",
     ),
+    auto_optimize: bool = typer.Option(
+        True,
+        "--auto-optimize/--no-auto-optimize",
+        help="Automatically optimize indexing settings based on codebase profile (default: enabled)",
+        rich_help_panel="⚡ Performance",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -162,6 +168,7 @@ def main(
                 show_progress=True,
                 debug=debug,
                 skip_relationships=skip_relationships,
+                auto_optimize=auto_optimize,
             )
         )
 
@@ -311,6 +318,7 @@ async def run_indexing(
     show_progress: bool = True,
     debug: bool = False,
     skip_relationships: bool = False,
+    auto_optimize: bool = True,
 ) -> None:
     """Run the indexing process."""
     # Load project configuration
@@ -358,6 +366,8 @@ async def run_indexing(
         project_root=project_root,
         config=config,
         debug=debug,
+        batch_size=batch_size,
+        auto_optimize=auto_optimize,
     )
 
     try:

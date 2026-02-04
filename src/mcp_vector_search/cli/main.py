@@ -125,6 +125,7 @@ from .commands.init import init_app  # noqa: E402
 from .commands.install import install_app  # noqa: E402
 from .commands.mcp import mcp_app  # noqa: E402
 from .commands.migrate import migrate_app  # noqa: E402
+from .commands.profile import profile_app  # noqa: E402
 from .commands.reset import reset_app  # noqa: E402
 from .commands.search import search_app, search_main  # noqa: E402, F401
 from .commands.setup import setup_app  # noqa: E402
@@ -173,6 +174,9 @@ app.add_typer(
 
 # 8. INDEX - Index codebase
 app.add_typer(index_app, name="index", help="📇 Index codebase for semantic search")
+
+# 8.5. PROFILE - Profile codebase
+app.add_typer(profile_app, name="profile", help="📊 Profile codebase characteristics")
 
 # 9. MCP - MCP server operations (RESERVED for server ops only!)
 app.add_typer(mcp_app, name="mcp", help="🔌 MCP server operations")

@@ -166,6 +166,10 @@ def _parse_file_standalone(
 
         return (file_path, valid_chunks, None)
 
+    except FileNotFoundError:
+        # File was deleted during indexing - this is not an error
+        logger.warning(f"Skipping deleted file: {file_path}")
+        return (file_path, [], None)
     except Exception as e:
         # Return error instead of raising to avoid process crashes
         logger.error(f"Failed to parse file {file_path} in worker process: {e}")
@@ -242,6 +246,10 @@ class ChunkProcessor:
 
             return valid_chunks
 
+        except FileNotFoundError:
+            # File was deleted during indexing - return empty list instead of raising
+            logger.warning(f"Skipping deleted file: {file_path}")
+            return []
         except Exception as e:
             logger.error(f"Failed to parse file {file_path}: {e}")
             raise ParsingError(f"Failed to parse file {file_path}: {e}") from e

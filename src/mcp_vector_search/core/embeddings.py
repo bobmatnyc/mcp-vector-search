@@ -149,7 +149,7 @@ def _detect_optimal_batch_size() -> int:
         try:
             import subprocess
 
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B607 - safe read-only sysctl
                 ["sysctl", "-n", "hw.memsize"],
                 capture_output=True,
                 text=True,
@@ -388,7 +388,7 @@ class CodeBERTEmbeddingFunction:
 
                 try:
                     # Get Apple Silicon chip info
-                    result = subprocess.run(
+                    result = subprocess.run(  # nosec B607 - safe read-only sysctl
                         ["sysctl", "-n", "machdep.cpu.brand_string"],
                         capture_output=True,
                         text=True,
@@ -534,14 +534,19 @@ class BatchEmbeddingProcessor:
         return [emb for batch_result in results for emb in batch_result]
 
     async def process_batch(self, contents: list[str]) -> list[list[float]]:
-        """Process a batch of content for embeddings.
+        """Process a batch of content for embeddings with parallel generation.
 
         Args:
             contents: List of text content to embed
 
         Returns:
             List of embeddings
+
+        Environment Variables:
+            MCP_VECTOR_SEARCH_PARALLEL_EMBEDDINGS: Enable parallel embedding (default: true)
         """
+        import time
+
         if not contents:
             return []
 
@@ -567,14 +572,45 @@ class BatchEmbeddingProcessor:
 
         # Generate embeddings for uncached content
         if uncached_contents:
+            start_time = time.perf_counter()
             logger.debug(f"Generating {len(uncached_contents)} new embeddings")
 
             try:
-                new_embeddings = []
-                for i in range(0, len(uncached_contents), self.batch_size):
-                    batch = uncached_contents[i : i + self.batch_size]
-                    batch_embeddings = self.embedding_function(batch)
-                    new_embeddings.extend(batch_embeddings)
+                # Check if parallel embeddings are enabled (default: true)
+                use_parallel = os.environ.get(
+                    "MCP_VECTOR_SEARCH_PARALLEL_EMBEDDINGS", "true"
+                ).lower() in ("true", "1", "yes")
+
+                if use_parallel and len(uncached_contents) >= 32:
+                    # Use parallel embedding for large batches (32+ items)
+                    try:
+                        logger.debug(
+                            f"Using parallel embedding generation for {len(uncached_contents)} items"
+                        )
+                        new_embeddings = await self.embed_batches_parallel(
+                            uncached_contents,
+                            batch_size=self.batch_size,
+                            max_concurrent=2,
+                        )
+                    except Exception as parallel_error:
+                        # Graceful fallback to sequential if parallel fails
+                        logger.warning(
+                            f"Parallel embedding failed ({parallel_error}), falling back to sequential"
+                        )
+                        new_embeddings = await self._sequential_embed(uncached_contents)
+                else:
+                    # Use sequential for small batches or when parallel is disabled
+                    new_embeddings = await self._sequential_embed(uncached_contents)
+
+                # Calculate performance metrics
+                elapsed_time = time.perf_counter() - start_time
+                throughput = (
+                    len(uncached_contents) / elapsed_time if elapsed_time > 0 else 0
+                )
+                logger.info(
+                    f"Generated {len(uncached_contents)} embeddings in {elapsed_time:.2f}s "
+                    f"({throughput:.1f} chunks/sec)"
+                )
 
                 # Cache new embeddings and fill placeholders
                 for i, (content, embedding) in enumerate(
@@ -589,6 +625,25 @@ class BatchEmbeddingProcessor:
                 raise EmbeddingError(f"Failed to generate embeddings: {e}") from e
 
         return embeddings
+
+    async def _sequential_embed(self, contents: list[str]) -> list[list[float]]:
+        """Sequential embedding generation (fallback method).
+
+        Args:
+            contents: List of text content to embed
+
+        Returns:
+            List of embeddings
+        """
+        import asyncio
+
+        new_embeddings = []
+        for i in range(0, len(contents), self.batch_size):
+            batch = contents[i : i + self.batch_size]
+            # Run in thread pool to avoid blocking
+            batch_embeddings = await asyncio.to_thread(self.embedding_function, batch)
+            new_embeddings.extend(batch_embeddings)
+        return new_embeddings
 
     def get_stats(self) -> dict[str, any]:
         """Get processor statistics."""

@@ -68,10 +68,11 @@ class SemanticIndexer:
         file_extensions: list[str] | None = None,
         config: ProjectConfig | None = None,
         max_workers: int | None = None,
-        batch_size: int = 10,
+        batch_size: int | None = None,
         debug: bool = False,
         collectors: list[MetricCollector] | None = None,
         use_multiprocessing: bool = True,
+        auto_optimize: bool = True,
     ) -> None:
         """Initialize semantic indexer.
 
@@ -81,15 +82,38 @@ class SemanticIndexer:
             file_extensions: File extensions to index (deprecated, use config)
             config: Project configuration (preferred over file_extensions)
             max_workers: Maximum number of worker processes for parallel parsing (ignored if use_multiprocessing=False)
-            batch_size: Number of files to process in each batch
+            batch_size: Number of files to process in each batch (default: 32, override with MCP_VECTOR_SEARCH_BATCH_SIZE or auto-optimization)
             debug: Enable debug output for hierarchy building
             collectors: Metric collectors to run during indexing (defaults to all complexity collectors)
             use_multiprocessing: Enable multiprocess parallel parsing (default: True, disable for debugging)
+            auto_optimize: Enable automatic optimization based on codebase profile (default: True)
+
+        Environment Variables:
+            MCP_VECTOR_SEARCH_BATCH_SIZE: Override batch size (default: 32)
         """
         self.database = database
         self.project_root = project_root
         self.config = config
-        self.batch_size = batch_size
+        self.auto_optimize = auto_optimize
+        self._applied_optimizations: dict[str, Any] | None = None
+
+        # Set batch size with environment variable override
+        if batch_size is None:
+            # Check environment variable first
+            env_batch_size = os.environ.get("MCP_VECTOR_SEARCH_BATCH_SIZE")
+            if env_batch_size:
+                try:
+                    self.batch_size = int(env_batch_size)
+                    logger.info(f"Using batch size from environment: {self.batch_size}")
+                except ValueError:
+                    logger.warning(
+                        f"Invalid MCP_VECTOR_SEARCH_BATCH_SIZE value: {env_batch_size}, using default 32"
+                    )
+                    self.batch_size = 32
+            else:
+                self.batch_size = 32  # New default (increased from 10)
+        else:
+            self.batch_size = batch_size
 
         # Handle backward compatibility: use config.file_extensions or fallback to parameter
         if config is not None:
@@ -145,6 +169,69 @@ class SemanticIndexer:
         # Initialize trend tracker for historical metrics
         self.trend_tracker = TrendTracker(project_root)
 
+    def apply_auto_optimizations(self) -> tuple[Any, Any] | None:
+        """Apply automatic optimizations based on codebase profile.
+
+        Profiles the codebase and applies optimal settings for batch size,
+        file extensions, and other performance parameters.
+
+        Returns:
+            Tuple of (profile, preset) if optimizations applied, None otherwise
+        """
+        if not self.auto_optimize:
+            return None
+
+        from .codebase_profiler import CodebaseProfiler
+
+        try:
+            # Profile codebase (fast sampling)
+            profiler = CodebaseProfiler(self.project_root)
+            profile = profiler.profile()
+
+            # Get optimization preset
+            preset = profiler.get_optimization_preset(profile)
+
+            # Store previous batch size for comparison
+            previous_batch_size = self.batch_size
+
+            # Apply optimizations (only if not already overridden)
+            if os.environ.get("MCP_VECTOR_SEARCH_BATCH_SIZE") is None:
+                self.batch_size = preset.batch_size
+
+            # Apply file extension filtering (only for large/enterprise)
+            if preset.file_extensions and self.config:
+                # Merge preset extensions with user-configured extensions
+                original_extensions = set(self.config.file_extensions)
+                filtered_extensions = original_extensions & preset.file_extensions
+                if filtered_extensions:
+                    self.config.file_extensions = list(filtered_extensions)
+                    logger.info(
+                        f"Filtered to {len(filtered_extensions)} code extensions "
+                        f"(from {len(original_extensions)})"
+                    )
+
+            # Store applied optimizations for reporting
+            self._applied_optimizations = {
+                "profile": profile,
+                "preset": preset,
+                "previous_batch_size": previous_batch_size,
+            }
+
+            # Log profile and optimizations
+            logger.info(profiler.format_profile_summary(profile))
+            logger.info("")
+            logger.info(
+                profiler.format_optimization_summary(
+                    profile, preset, previous_batch_size
+                )
+            )
+
+            return profile, preset
+
+        except Exception as e:
+            logger.warning(f"Auto-optimization failed, using defaults: {e}")
+            return None
+
     async def index_project(
         self,
         force_reindex: bool = False,
@@ -162,6 +249,10 @@ class SemanticIndexer:
             Number of files indexed
         """
         logger.info(f"Starting indexing of project: {self.project_root}")
+
+        # Apply auto-optimizations before indexing
+        if self.auto_optimize:
+            self.apply_auto_optimizations()
 
         # Clean up stale lock files from previous interrupted indexing runs
         cleanup_stale_locks(self.project_root)
@@ -444,22 +535,35 @@ class SemanticIndexer:
                     all_metrics.update(chunk_metrics)
 
                 # Update metadata for successfully parsed file
-                metadata_dict[str(file_path)] = os.path.getmtime(file_path)
+                try:
+                    metadata_dict[str(file_path)] = os.path.getmtime(file_path)
+                except FileNotFoundError:
+                    logger.warning(
+                        f"Skipping metadata update for deleted file: {file_path}"
+                    )
                 success_flags.append(True)
             else:
                 # Empty file is not an error
-                metadata_dict[str(file_path)] = os.path.getmtime(file_path)
+                try:
+                    metadata_dict[str(file_path)] = os.path.getmtime(file_path)
+                except FileNotFoundError:
+                    logger.warning(
+                        f"Skipping metadata update for deleted file: {file_path}"
+                    )
                 success_flags.append(True)
 
         # Single database insertion for entire batch
         if all_chunks:
+            batch_start = time.perf_counter()
             logger.info(
                 f"Batch inserting {len(all_chunks)} chunks from {len(file_paths)} files"
             )
             try:
                 await self.database.add_chunks(all_chunks, metrics=all_metrics)
-                logger.debug(
-                    f"Successfully indexed {len(all_chunks)} chunks from {sum(success_flags)} files"
+                batch_elapsed = time.perf_counter() - batch_start
+                logger.info(
+                    f"Successfully indexed {len(all_chunks)} chunks from {sum(success_flags)} files "
+                    f"in {batch_elapsed:.2f}s"
                 )
             except Exception as e:
                 logger.error(f"Failed to insert batch of chunks: {e}")
@@ -798,12 +902,22 @@ class SemanticIndexer:
                         all_metrics.update(metrics)
 
                     # Update metadata for successfully parsed file
-                    metadata_dict[str(file_path)] = os.path.getmtime(file_path)
+                    try:
+                        metadata_dict[str(file_path)] = os.path.getmtime(file_path)
+                    except FileNotFoundError:
+                        logger.warning(
+                            f"Skipping metadata update for deleted file: {file_path}"
+                        )
                     file_results[file_path] = (len(chunks), True)
                     logger.debug(f"Prepared {len(chunks)} chunks from {file_path}")
                 else:
                     # Empty file is not an error
-                    metadata_dict[str(file_path)] = os.path.getmtime(file_path)
+                    try:
+                        metadata_dict[str(file_path)] = os.path.getmtime(file_path)
+                    except FileNotFoundError:
+                        logger.warning(
+                            f"Skipping metadata update for deleted file: {file_path}"
+                        )
                     file_results[file_path] = (0, True)
 
             # Single database insertion for entire batch
