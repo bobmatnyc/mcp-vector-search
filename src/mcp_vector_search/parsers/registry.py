@@ -6,11 +6,14 @@ from loguru import logger
 
 from .base import BaseParser, FallbackParser
 from .dart import DartParser
+from .go import GoParser
 from .html import HTMLParser
+from .java import JavaParser
 from .javascript import JavaScriptParser, TypeScriptParser
 from .php import PHPParser
 from .python import PythonParser
 from .ruby import RubyParser
+from .rust import RustParser
 from .text import TextParser
 
 
@@ -43,6 +46,18 @@ class ParserRegistry:
         # Register TypeScript parser
         typescript_parser = TypeScriptParser()
         self.register_parser("typescript", typescript_parser)
+
+        # Register Java parser
+        java_parser = JavaParser()
+        self.register_parser("java", java_parser)
+
+        # Register Go parser
+        go_parser = GoParser()
+        self.register_parser("go", go_parser)
+
+        # Register Rust parser
+        rust_parser = RustParser()
+        self.register_parser("rust", rust_parser)
 
         # Register Dart parser
         dart_parser = DartParser()

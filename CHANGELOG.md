@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.3] - 2026-02-04
+
+### Fixed
+- **Language Tagging Accuracy** - Added parsers for Java, Go, and Rust
+  - Added Java parser to fix `.java` files being tagged as "text" instead of "java"
+  - Added Go parser to fix `.go` files being tagged as "text" instead of "go"
+  - Added Rust parser to fix `.rs` files being tagged as "text" instead of "rust"
+  - Now supports 11 languages: dart, go, html, java, javascript, php, python, ruby, rust, text, typescript
+
 ## [2.1.9] - 2026-02-03
 
 ### Fixed
