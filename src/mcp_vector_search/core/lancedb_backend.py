@@ -203,15 +203,43 @@ class LanceVectorDatabase:
             # Keep buffer intact on error for retry
             raise
 
+    async def optimize(self) -> None:
+        """Optimize table by compacting fragments and cleaning up old versions.
+
+        This should be called periodically (e.g., after batch indexing) to:
+        - Merge small data fragments into larger files
+        - Remove old transaction files
+        - Improve query performance
+
+        Note: This is an expensive operation and should not be called after every add_chunks.
+        """
+        if self._table is None:
+            logger.debug("No table to optimize")
+            return
+
+        try:
+            from datetime import timedelta
+
+            # Optimize with immediate cleanup of old versions
+            # This compacts fragments and removes transaction files
+            self._table.optimize(cleanup_older_than=timedelta(seconds=0))
+            logger.info("LanceDB table optimized successfully")
+        except Exception as e:
+            # Non-fatal - optimization failure doesn't affect data integrity
+            logger.warning(f"Failed to optimize LanceDB table: {e}")
+
     async def close(self) -> None:
         """Close database connections.
 
-        Flushes any remaining buffered writes before closing.
+        Flushes any remaining buffered writes and optimizes table before closing.
         LanceDB doesn't require explicit closing, but we set references to None
         for consistency with ChromaDB interface.
         """
         # Flush any remaining buffered writes
         await self._flush_write_buffer()
+
+        # Optimize table to compact fragments and cleanup transaction files
+        await self.optimize()
 
         self._table = None
         self._db = None
@@ -296,9 +324,9 @@ class LanceVectorDatabase:
             # Add to write buffer instead of immediate insertion
             self._write_buffer.extend(records)
 
-            # Flush buffer if it reaches the configured size
-            if len(self._write_buffer) >= self._write_buffer_size:
-                await self._flush_write_buffer()
+            # Always flush to prevent transaction accumulation
+            # The buffer is for batching within a single add_chunks call, not across calls
+            await self._flush_write_buffer()
 
         except Exception as e:
             logger.error(f"Failed to add chunks to LanceDB: {e}")
