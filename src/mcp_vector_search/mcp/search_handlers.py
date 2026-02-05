@@ -45,10 +45,47 @@ class SearchHandlers:
                 isError=True,
             )
 
+        # Extension to language mapping
+        ext_to_lang = {
+            ".py": "python", ".pyw": "python",
+            ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+            ".ts": "typescript", ".tsx": "typescript",
+            ".jsx": "javascript",
+            ".java": "java",
+            ".go": "go",
+            ".rs": "rust",
+            ".rb": "ruby",
+            ".php": "php",
+            ".dart": "dart",
+            ".swift": "swift",
+            ".kt": "kotlin", ".kts": "kotlin",
+            ".scala": "scala",
+            ".c": "c", ".h": "c",
+            ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".hpp": "cpp",
+            ".cs": "csharp",
+            ".lua": "lua",
+            ".r": "r",
+            ".sql": "sql",
+            ".sh": "bash", ".bash": "bash",
+            ".yml": "yaml", ".yaml": "yaml",
+            ".json": "json",
+            ".xml": "xml",
+            ".html": "html", ".htm": "html",
+            ".css": "css",
+            ".scss": "scss",
+            ".md": "markdown",
+        }
+
         # Build filters
         filters = {}
         if file_extensions:
-            filters["file_extension"] = {"$in": file_extensions}
+            # Convert file extensions to language names
+            languages = [ext_to_lang.get(ext.lower(), ext.lower().lstrip(".")) for ext in file_extensions]
+            languages = list(set(languages))  # dedupe
+            if len(languages) == 1:
+                filters["language"] = languages[0]
+            else:
+                filters["language"] = languages
         if language:
             filters["language"] = language
         if function_name:
