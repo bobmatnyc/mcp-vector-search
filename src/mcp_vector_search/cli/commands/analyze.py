@@ -919,7 +919,7 @@ async def _analyze_file(
 
         # Count lines
         try:
-            with open(file_path, encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
                 file_metrics.total_lines = len(lines)
                 file_metrics.code_lines = sum(

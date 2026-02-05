@@ -40,7 +40,7 @@ class JavaScriptParser(BaseParser):
     async def parse_file(self, file_path: Path) -> list[CodeChunk]:
         """Parse a JavaScript/TypeScript file and extract code chunks."""
         try:
-            with open(file_path, encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
                 content = f.read()
             return await self.parse_content(content, file_path)
         except Exception as e:

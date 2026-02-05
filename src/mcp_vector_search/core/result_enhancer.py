@@ -49,7 +49,7 @@ class ResultEnhancer:
 
         # Read file asynchronously
         try:
-            async with aiofiles.open(file_path, encoding="utf-8") as f:
+            async with aiofiles.open(file_path, encoding="utf-8", errors="replace") as f:
                 content = await f.read()
                 lines = content.splitlines(keepends=True)
 
@@ -131,7 +131,7 @@ class ResultEnhancer:
         context_content = []
         for file_path in context_files:
             try:
-                async with aiofiles.open(file_path, encoding="utf-8") as f:
+                async with aiofiles.open(file_path, encoding="utf-8", errors="replace") as f:
                     content = await f.read()
                     context_content.append(content)
             except Exception as e:
