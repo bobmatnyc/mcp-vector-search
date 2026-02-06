@@ -273,6 +273,8 @@ class MCPVectorSearchServer:
                 )
             elif tool_name == "interpret_analysis":
                 return await self._analysis_handlers.handle_interpret_analysis(args)
+            elif tool_name == "save_report":
+                return await self._analysis_handlers.handle_save_report(args)
 
             else:
                 return CallToolResult(

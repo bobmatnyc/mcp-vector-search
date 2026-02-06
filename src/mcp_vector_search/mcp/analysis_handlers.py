@@ -1,6 +1,7 @@
 """Analysis operation handlers for MCP vector search server."""
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -417,6 +418,97 @@ class AnalysisHandlers:
                         text=f"Interpretation failed: {str(e)}",
                     )
                 ],
+                isError=True,
+            )
+
+    async def handle_save_report(self, args: dict[str, Any]) -> CallToolResult:
+        """Handle save_report tool call.
+
+        Args:
+            args: Tool call arguments containing content, report_type, output_path, filename_prefix
+
+        Returns:
+            CallToolResult with success message and file path or error
+        """
+        content = args.get("content", "")
+        report_type = args.get("report_type", "custom")
+        output_path = args.get("output_path")
+        filename_prefix = args.get("filename_prefix", "")
+
+        if not content:
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text="content parameter is required")
+                ],
+                isError=True,
+            )
+
+        try:
+            # Determine output directory and filename
+            if output_path:
+                output_path_obj = Path(output_path)
+                if not output_path_obj.is_absolute():
+                    output_path_obj = self.project_root / output_path_obj
+
+                # Check if it's a directory or file
+                if output_path_obj.suffix:
+                    # It's a file path
+                    output_dir = output_path_obj.parent
+                    output_file = output_path_obj
+                else:
+                    # It's a directory path
+                    output_dir = output_path_obj
+                    output_file = None
+            else:
+                # Default to reports/ directory in project root
+                output_dir = self.project_root / "reports"
+                output_file = None
+
+            # Create output directory if it doesn't exist
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate filename if not provided
+            if output_file is None:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                prefix = f"{filename_prefix}_" if filename_prefix else ""
+                filename = f"{prefix}{report_type}_{timestamp}.md"
+                output_file = output_dir / filename
+
+            # Prepare metadata header
+            timestamp_readable = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            metadata = f"""---
+generated: {timestamp_readable}
+project: {self.project_root}
+type: {report_type}
+---
+
+"""
+
+            # Combine metadata with content
+            full_content = metadata + content
+
+            # Write file
+            output_file.write_text(full_content, encoding="utf-8")
+
+            success_message = f"Report saved successfully to: {output_file}"
+            logger.info(success_message)
+
+            return CallToolResult(
+                content=[TextContent(type="text", text=success_message)]
+            )
+
+        except PermissionError as e:
+            error_msg = f"Permission denied writing to {output_file}: {str(e)}"
+            logger.error(error_msg)
+            return CallToolResult(
+                content=[TextContent(type="text", text=error_msg)],
+                isError=True,
+            )
+        except Exception as e:
+            error_msg = f"Failed to save report: {str(e)}"
+            logger.error(error_msg)
+            return CallToolResult(
+                content=[TextContent(type="text", text=error_msg)],
                 isError=True,
             )
 

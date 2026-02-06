@@ -21,6 +21,7 @@ def get_tool_schemas() -> list[Tool]:
         _get_complexity_hotspots_schema(),
         _get_circular_dependencies_schema(),
         _get_interpret_analysis_schema(),
+        _get_save_report_schema(),
     ]
 
 
@@ -306,5 +307,37 @@ def _get_interpret_analysis_schema() -> Tool:
                 },
             },
             "required": ["analysis_json"],
+        },
+    )
+
+
+def _get_save_report_schema() -> Tool:
+    """Get save_report tool schema."""
+    return Tool(
+        name="save_report",
+        description="Save analysis or search results as a markdown file for documentation",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "Markdown content to save",
+                },
+                "report_type": {
+                    "type": "string",
+                    "enum": ["analysis", "search", "smells", "hotspots", "custom"],
+                    "default": "custom",
+                    "description": "Type of report for filename generation",
+                },
+                "output_path": {
+                    "type": "string",
+                    "description": "Optional custom output path (file or directory)",
+                },
+                "filename_prefix": {
+                    "type": "string",
+                    "description": "Optional prefix for auto-generated filename",
+                },
+            },
+            "required": ["content"],
         },
     )

@@ -365,15 +365,15 @@ def save_preferred_llm_provider(provider: str, config_dir: Path) -> None:
     """Save preferred LLM provider to config file.
 
     Args:
-        provider: Provider name ('openai' or 'openrouter')
+        provider: Provider name ('openai', 'openrouter', or 'bedrock')
         config_dir: Config directory path
 
     Raises:
         ValueError: If provider is not valid
     """
-    if provider not in ("openai", "openrouter"):
+    if provider not in ("openai", "openrouter", "bedrock"):
         raise ValueError(
-            f"Invalid provider: {provider}. Must be 'openai' or 'openrouter'"
+            f"Invalid provider: {provider}. Must be 'openai', 'openrouter', or 'bedrock'"
         )
 
     manager = ConfigManager(config_dir)
@@ -392,3 +392,14 @@ def get_config_file_path(config_dir: Path | None = None) -> Path:
     if config_dir is None:
         config_dir = Path.cwd() / ".mcp-vector-search"
     return config_dir / CONFIG_FILENAME
+
+
+def is_bedrock_available() -> bool:
+    """Check if AWS Bedrock credentials are available.
+
+    Returns:
+        True if both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set
+    """
+    return bool(
+        os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY")
+    )

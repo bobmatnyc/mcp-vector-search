@@ -1,5 +1,6 @@
-"""LLM client for intelligent code search using OpenAI or OpenRouter API."""
+"""LLM client for intelligent code search using OpenAI, OpenRouter, or AWS Bedrock API."""
 
+import asyncio
 import json
 import os
 import re
@@ -12,7 +13,7 @@ from loguru import logger
 from .exceptions import SearchError
 
 # Type alias for provider
-LLMProvider = Literal["openai", "openrouter"]
+LLMProvider = Literal["openai", "openrouter", "bedrock"]
 
 # Type alias for intent
 IntentType = Literal["find", "answer", "analyze"]
@@ -21,7 +22,7 @@ IntentType = Literal["find", "answer", "analyze"]
 class LLMClient:
     """Client for LLM-powered intelligent search orchestration.
 
-    Supports both OpenAI and OpenRouter APIs:
+    Supports OpenAI, OpenRouter, and AWS Bedrock APIs:
     1. Generate multiple targeted search queries from natural language
     2. Analyze search results and select most relevant ones
     3. Provide contextual explanations for results
@@ -29,19 +30,21 @@ class LLMClient:
     Provider Selection Priority:
     1. Explicit provider parameter
     2. Preferred provider from config
-    3. Auto-detect: OpenAI if available, otherwise OpenRouter
+    3. Auto-detect: Bedrock (if AWS creds) → OpenAI → OpenRouter
     """
 
     # Default models for each provider (comparable performance/cost)
     DEFAULT_MODELS = {
         "openai": "gpt-4o-mini",  # Fast, cheap, comparable to claude-3-haiku
         "openrouter": "anthropic/claude-opus-4.5",  # Claude Opus 4.5 for chat REPL
+        "bedrock": "anthropic.claude-3-5-sonnet-20241022-v2:0",  # Claude 3.5 Sonnet v2
     }
 
     # Advanced "thinking" models for complex queries (--think flag)
     THINKING_MODELS = {
         "openai": "gpt-4o",  # More capable, better reasoning
         "openrouter": "anthropic/claude-opus-4.5",  # Claude Opus 4.5 for deep analysis
+        "bedrock": "anthropic.claude-opus-4-20250514-v1:0",  # Claude Opus 4
     }
 
     # API endpoints
@@ -68,15 +71,17 @@ class LLMClient:
             api_key: API key (deprecated, use provider-specific keys)
             model: Model to use (defaults based on provider)
             timeout: Request timeout in seconds
-            provider: Explicit provider ('openai' or 'openrouter')
+            provider: Explicit provider ('openai', 'openrouter', or 'bedrock')
             openai_api_key: OpenAI API key (or use OPENAI_API_KEY env var)
             openrouter_api_key: OpenRouter API key (or use OPENROUTER_API_KEY env var)
             think: Use advanced "thinking" model for complex queries
 
         Raises:
-            ValueError: If no API key is found for any provider
+            ValueError: If no API key/credentials found for any provider
         """
         self.think = think
+        self._bedrock_client = None  # Lazy initialization
+
         # Get API keys from environment or parameters
         self.openai_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
         self.openrouter_key = openrouter_api_key or os.environ.get("OPENROUTER_API_KEY")
@@ -99,16 +104,24 @@ class LLMClient:
                     "OpenRouter provider specified but OPENROUTER_API_KEY not found. "
                     "Please set OPENROUTER_API_KEY environment variable."
                 )
+            elif provider == "bedrock" and not self._bedrock_available:
+                raise ValueError(
+                    "Bedrock provider specified but AWS credentials not found. "
+                    "Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables."
+                )
         else:
-            # Auto-detect provider (prefer OpenAI if both are available)
-            if self.openai_key:
+            # Auto-detect provider (prefer Bedrock → OpenAI → OpenRouter)
+            if self._bedrock_available:
+                self.provider = "bedrock"
+            elif self.openai_key:
                 self.provider = "openai"
             elif self.openrouter_key:
                 self.provider = "openrouter"
             else:
                 raise ValueError(
-                    "No API key found. Please set OPENAI_API_KEY or OPENROUTER_API_KEY "
-                    "environment variable, or pass openai_api_key or openrouter_api_key parameter."
+                    "No API key or AWS credentials found. Please set AWS credentials "
+                    "(AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) for Bedrock, "
+                    "OPENAI_API_KEY for OpenAI, or OPENROUTER_API_KEY for OpenRouter."
                 )
 
         # Set API key and endpoint based on provider
@@ -122,7 +135,7 @@ class LLMClient:
                 else self.DEFAULT_MODELS["openai"]
             )
             self.model = model or os.environ.get("OPENAI_MODEL", default_model)
-        else:
+        elif self.provider == "openrouter":
             self.api_key = self.openrouter_key
             self.api_endpoint = self.API_ENDPOINTS["openrouter"]
             default_model = (
@@ -131,12 +144,59 @@ class LLMClient:
                 else self.DEFAULT_MODELS["openrouter"]
             )
             self.model = model or os.environ.get("OPENROUTER_MODEL", default_model)
+        else:  # bedrock
+            self.api_key = None  # Not used for Bedrock
+            self.api_endpoint = None  # Not used for Bedrock
+            default_model = (
+                self.THINKING_MODELS["bedrock"]
+                if think
+                else self.DEFAULT_MODELS["bedrock"]
+            )
+            self.model = model or os.environ.get("BEDROCK_MODEL", default_model)
 
         self.timeout = timeout
 
         logger.debug(
             f"Initialized LLM client with provider: {self.provider}, model: {self.model}"
         )
+
+    @property
+    def _bedrock_available(self) -> bool:
+        """Check if AWS Bedrock credentials are available."""
+        return bool(
+            os.environ.get("AWS_ACCESS_KEY_ID")
+            and os.environ.get("AWS_SECRET_ACCESS_KEY")
+        )
+
+    def _get_bedrock_client(self) -> Any:
+        """Get or create boto3 bedrock-runtime client (lazy initialization).
+
+        Returns:
+            boto3 bedrock-runtime client
+
+        Raises:
+            ImportError: If boto3 is not installed
+        """
+        if self._bedrock_client is None:
+            try:
+                import boto3
+            except ImportError as e:
+                raise ImportError(
+                    "boto3 is required for Bedrock support. Install with: pip install boto3"
+                ) from e
+
+            # Get AWS region from environment or use default
+            region = os.environ.get("AWS_REGION") or os.environ.get(
+                "AWS_DEFAULT_REGION", "us-east-1"
+            )
+
+            self._bedrock_client = boto3.client(
+                service_name="bedrock-runtime",
+                region_name=region,
+            )
+            logger.debug(f"Initialized Bedrock client in region: {region}")
+
+        return self._bedrock_client
 
     async def generate_search_queries(
         self, natural_language_query: str, limit: int = 3
@@ -276,7 +336,7 @@ Select the top {top_n} most relevant results:"""
             raise SearchError(f"LLM analysis failed: {e}") from e
 
     async def _chat_completion(self, messages: list[dict[str, str]]) -> dict[str, Any]:
-        """Make chat completion request to OpenAI or OpenRouter API.
+        """Make chat completion request to OpenAI, OpenRouter, or Bedrock API.
 
         Args:
             messages: List of message dictionaries with role and content
@@ -287,6 +347,10 @@ Select the top {top_n} most relevant results:"""
         Raises:
             SearchError: If API request fails
         """
+        # Route to Bedrock if that's the provider
+        if self.provider == "bedrock":
+            return await self._bedrock_chat_completion(messages)
+
         # Build headers based on provider
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -356,6 +420,101 @@ Select the top {top_n} most relevant results:"""
         except Exception as e:
             logger.error(f"{provider_name} API request failed: {e}")
             raise SearchError(f"LLM request failed: {e}") from e
+
+    async def _bedrock_chat_completion(
+        self, messages: list[dict[str, str]]
+    ) -> dict[str, Any]:
+        """Make chat completion request to AWS Bedrock using Converse API.
+
+        Args:
+            messages: List of message dictionaries with role and content
+
+        Returns:
+            API response dictionary in OpenAI format (for compatibility)
+
+        Raises:
+            SearchError: If Bedrock API request fails
+        """
+        try:
+            # Convert messages to Bedrock format
+            bedrock_messages = []
+            for msg in messages:
+                role = msg["role"]
+                # Bedrock uses "user" and "assistant" (no "system" in messages)
+                if role in ("user", "assistant"):
+                    bedrock_messages.append(
+                        {"role": role, "content": [{"text": msg["content"]}]}
+                    )
+
+            # Extract system message if present
+            system_messages = [msg for msg in messages if msg["role"] == "system"]
+            system_content = None
+            if system_messages:
+                system_content = [{"text": system_messages[0]["content"]}]
+
+            # Build Bedrock request
+            request_params = {
+                "modelId": self.model,
+                "messages": bedrock_messages,
+                "inferenceConfig": {
+                    "maxTokens": 4096,
+                    "temperature": 0.7,
+                },
+            }
+
+            # Add system message if present
+            if system_content:
+                request_params["system"] = system_content
+
+            # Run boto3 call in executor (boto3 is synchronous)
+            loop = asyncio.get_event_loop()
+            bedrock_client = self._get_bedrock_client()
+
+            response = await loop.run_in_executor(
+                None,
+                lambda: bedrock_client.converse(**request_params),
+            )
+
+            # Convert Bedrock response to OpenAI format for compatibility
+            content = response["output"]["message"]["content"][0]["text"]
+
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": content,
+                        },
+                        "finish_reason": response.get("stopReason", "stop"),
+                    }
+                ],
+                "usage": response.get("usage", {}),
+            }
+
+        except Exception as e:
+            logger.error(f"Bedrock API request failed: {e}")
+            error_msg = str(e)
+
+            # Parse common Bedrock errors
+            if "AccessDeniedException" in error_msg:
+                error_msg = (
+                    "AWS credentials invalid or insufficient permissions for Bedrock. "
+                    "Check AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."
+                )
+            elif "ValidationException" in error_msg:
+                error_msg = f"Invalid Bedrock request: {error_msg}"
+            elif "ThrottlingException" in error_msg:
+                error_msg = (
+                    "Bedrock API rate limit exceeded. Please wait and try again."
+                )
+            elif "ModelNotReadyException" in error_msg:
+                error_msg = f"Bedrock model {self.model} is not ready or not available in your region."
+            elif "ResourceNotFoundException" in error_msg:
+                error_msg = (
+                    f"Bedrock model {self.model} not found. Check model ID and region."
+                )
+
+            raise SearchError(f"Bedrock request failed: {error_msg}") from e
 
     def _format_results_for_analysis(self, search_results: dict[str, list[Any]]) -> str:
         """Format search results for LLM analysis.
@@ -556,6 +715,12 @@ Intent:"""
         Raises:
             SearchError: If API request fails
         """
+        # Route to Bedrock streaming if that's the provider
+        if self.provider == "bedrock":
+            async for chunk in self._bedrock_stream_chat_completion(messages):
+                yield chunk
+            return
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -640,6 +805,82 @@ Intent:"""
             logger.error(f"{provider_name} streaming request failed: {e}")
             raise SearchError(f"LLM streaming failed: {e}") from e
 
+    async def _bedrock_stream_chat_completion(
+        self, messages: list[dict[str, str]]
+    ) -> AsyncIterator[str]:
+        """Stream chat completion from AWS Bedrock using Converse Stream API.
+
+        Args:
+            messages: List of message dictionaries with role and content
+
+        Yields:
+            Text chunks from the streaming response
+
+        Raises:
+            SearchError: If Bedrock streaming request fails
+        """
+        try:
+            # Convert messages to Bedrock format
+            bedrock_messages = []
+            for msg in messages:
+                role = msg["role"]
+                if role in ("user", "assistant"):
+                    bedrock_messages.append(
+                        {"role": role, "content": [{"text": msg["content"]}]}
+                    )
+
+            # Extract system message if present
+            system_messages = [msg for msg in messages if msg["role"] == "system"]
+            system_content = None
+            if system_messages:
+                system_content = [{"text": system_messages[0]["content"]}]
+
+            # Build Bedrock request
+            request_params = {
+                "modelId": self.model,
+                "messages": bedrock_messages,
+                "inferenceConfig": {
+                    "maxTokens": 4096,
+                    "temperature": 0.7,
+                },
+            }
+
+            if system_content:
+                request_params["system"] = system_content
+
+            # Run streaming call in executor
+            loop = asyncio.get_event_loop()
+            bedrock_client = self._get_bedrock_client()
+
+            response = await loop.run_in_executor(
+                None,
+                lambda: bedrock_client.converse_stream(**request_params),
+            )
+
+            # Process streaming response
+            stream = response.get("stream")
+            if stream:
+                for event in stream:
+                    if "contentBlockDelta" in event:
+                        delta = event["contentBlockDelta"]["delta"]
+                        if "text" in delta:
+                            yield delta["text"]
+
+        except Exception as e:
+            logger.error(f"Bedrock streaming request failed: {e}")
+            error_msg = str(e)
+
+            if "AccessDeniedException" in error_msg:
+                error_msg = (
+                    "AWS credentials invalid or insufficient permissions for Bedrock."
+                )
+            elif "ThrottlingException" in error_msg:
+                error_msg = (
+                    "Bedrock API rate limit exceeded. Please wait and try again."
+                )
+
+            raise SearchError(f"Bedrock streaming failed: {error_msg}") from e
+
     async def generate_answer(
         self,
         query: str,
@@ -707,7 +948,18 @@ Guidelines:
 
         Raises:
             SearchError: If API request fails
+
+        Note:
+            Bedrock tool calling is not yet implemented. Falls back to regular chat.
         """
+        # TODO: Implement Bedrock tool calling when needed
+        # Bedrock uses a different tool format (toolConfig) than OpenAI
+        if self.provider == "bedrock":
+            logger.warning(
+                "Tool calling not yet implemented for Bedrock, falling back to regular chat"
+            )
+            return await self._chat_completion(messages)
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
