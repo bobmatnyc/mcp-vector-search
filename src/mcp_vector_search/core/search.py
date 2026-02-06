@@ -161,7 +161,9 @@ class SemanticSearchEngine:
         """
         try:
             # Read the reference file using async I/O
-            async with aiofiles.open(file_path, encoding="utf-8", errors="replace") as f:
+            async with aiofiles.open(
+                file_path, encoding="utf-8", errors="replace"
+            ) as f:
                 content = await f.read()
 
             # If function name is specified, try to extract just that function
