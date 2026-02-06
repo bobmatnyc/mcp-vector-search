@@ -5,6 +5,7 @@ from pathlib import Path
 from loguru import logger
 
 from .base import BaseParser, FallbackParser
+from .csharp import CSharpParser
 from .dart import DartParser
 from .go import GoParser
 from .html import HTMLParser
@@ -50,6 +51,10 @@ class ParserRegistry:
         # Register Java parser
         java_parser = JavaParser()
         self.register_parser("java", java_parser)
+
+        # Register C# parser
+        csharp_parser = CSharpParser()
+        self.register_parser("c_sharp", csharp_parser)
 
         # Register Go parser
         go_parser = GoParser()

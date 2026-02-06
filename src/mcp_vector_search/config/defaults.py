@@ -63,7 +63,7 @@ DEFAULT_FILE_EXTENSIONS = [
     ".h",
     ".hpp",
     ".hxx",
-    # C# - fallback parsing
+    # C# - Tree-Sitter fully supported
     ".cs",
     # Go - Tree-Sitter supported
     ".go",
