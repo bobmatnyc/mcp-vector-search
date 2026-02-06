@@ -94,6 +94,13 @@ path = "src/mcp_vector_search/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_vector_search"]
 
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "list/",
+    ".venv/",
+    "*.egg-info/",
+]
+
 # UV-specific configuration
 # Note: dev-dependencies moved to [dependency-groups] section above
 
