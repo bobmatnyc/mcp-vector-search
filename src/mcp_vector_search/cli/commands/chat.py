@@ -11,6 +11,7 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 
+from ...core.config_utils import is_bedrock_available
 from ...core.embeddings import create_embedding_function, suppress_stdout_stderr
 from ...core.exceptions import ProjectNotFoundError
 from ...core.factory import create_database
@@ -27,19 +28,28 @@ from ..output import (
 
 def show_api_key_help() -> None:
     """Display helpful error message when API key is missing."""
-    message = """[bold yellow]No LLM API Key Found[/bold yellow]
+    message = """[bold yellow]No LLM API Key or AWS Credentials Found[/bold yellow]
 
-The chat feature requires an API key for an LLM provider.
+The chat feature requires credentials for an LLM provider.
 
-[bold cyan]Set one of these environment variables:[/bold cyan]
+[bold cyan]Option 1: AWS Bedrock (recommended for AWS users)[/bold cyan]
+  [green]AWS_ACCESS_KEY_ID[/green]     - Your AWS access key
+  [green]AWS_SECRET_ACCESS_KEY[/green] - Your AWS secret key
+  [green]AWS_REGION[/green]            - AWS region [dim](optional, default: us-east-1)[/dim]
+
+[bold cyan]Option 2: Set one of these API keys:[/bold cyan]
   [green]OPENAI_API_KEY[/green]       - For OpenAI (GPT-4, etc.)
-  [green]OPENROUTER_API_KEY[/green]  - For OpenRouter (Claude, GPT, etc.) [dim](recommended)[/dim]
+  [green]OPENROUTER_API_KEY[/green]  - For OpenRouter (Claude, GPT, etc.)
 
 [bold cyan]Example:[/bold cyan]
+  [yellow]export AWS_ACCESS_KEY_ID="AKIA..."[/yellow]
+  [yellow]export AWS_SECRET_ACCESS_KEY="..."[/yellow]
+  [dim]or[/dim]
   [yellow]export OPENAI_API_KEY="sk-..."[/yellow]
   [yellow]export OPENROUTER_API_KEY="sk-or-..."[/yellow]
 
-[bold cyan]Get API keys at:[/bold cyan]
+[bold cyan]Get credentials/keys at:[/bold cyan]
+  AWS: [link=https://console.aws.amazon.com/iam/]https://console.aws.amazon.com/iam/[/link]
   OpenAI: [link=https://platform.openai.com/api-keys]https://platform.openai.com/api-keys[/link]
   OpenRouter: [link=https://openrouter.ai/keys]https://openrouter.ai/keys[/link]
 
@@ -311,9 +321,9 @@ def chat_main(
         rich_help_panel="LLM Options",
     ),
     provider: str | None = typer.Option(
-        "openrouter",
+        None,
         "--provider",
-        help="LLM provider: 'openai' or 'openrouter' (default: openrouter)",
+        help="LLM provider: 'bedrock', 'openai', or 'openrouter' (default: auto-detect)",
         rich_help_panel="LLM Options",
     ),
     timeout: float | None = typer.Option(
@@ -366,7 +376,7 @@ def chat_main(
                     project_root=project_root,
                     query=query,
                     model=model,
-                    provider=provider or "openrouter",
+                    provider=provider,
                     timeout=timeout or 60.0,
                 )
             )
@@ -376,7 +386,7 @@ def chat_main(
                 run_chat_repl(
                     project_root=project_root,
                     model=model,
-                    provider=provider or "openrouter",
+                    provider=provider,
                     timeout=timeout or 60.0,
                 )
             )
@@ -392,7 +402,7 @@ async def run_single_query(
     project_root: Path,
     query: str,
     model: str | None = None,
-    provider: str = "openrouter",
+    provider: str | None = None,
     timeout: float = 60.0,
 ) -> None:
     """Run a single query and exit.
@@ -415,6 +425,9 @@ async def run_single_query(
         show_api_key_help()
         raise typer.Exit(1)
     elif provider == "openrouter" and not openrouter_key:
+        show_api_key_help()
+        raise typer.Exit(1)
+    elif provider == "bedrock" and not is_bedrock_available():
         show_api_key_help()
         raise typer.Exit(1)
 
@@ -472,7 +485,7 @@ async def run_single_query(
 async def run_chat_repl(
     project_root: Path,
     model: str | None = None,
-    provider: str = "openrouter",
+    provider: str | None = None,
     timeout: float = 60.0,
 ) -> None:
     """Run the interactive chat REPL.
@@ -495,6 +508,9 @@ async def run_chat_repl(
         show_api_key_help()
         raise typer.Exit(1)
     elif provider == "openrouter" and not openrouter_key:
+        show_api_key_help()
+        raise typer.Exit(1)
+    elif provider == "bedrock" and not is_bedrock_available():
         show_api_key_help()
         raise typer.Exit(1)
 
