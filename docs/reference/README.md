@@ -51,7 +51,7 @@ Language support matrix and parser features.
 **[→ View Language Support](supported-languages.md)**
 
 Information provided:
-- Currently supported languages (Python, JavaScript, TypeScript, Dart, PHP, Ruby, HTML, Markdown)
+- Currently supported languages (Python, JavaScript, TypeScript, C#, Dart, PHP, Ruby, Java, Go, Rust, HTML, Markdown)
 - Parser features by language
 - Planned language support
 - Adding new languages

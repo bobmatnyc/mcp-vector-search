@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **C# Language Support** - Full Tree-sitter AST parsing for C# (.cs files)
+  - Extracts classes, interfaces, structs, enums, methods, constructors, and properties
+  - XML documentation comment extraction (`///`) as docstrings
+  - C# attribute extraction (`[HttpGet]`, `[Authorize]`, etc.) stored as decorators
+  - Cyclomatic complexity calculation for methods
+  - Parameter and return type extraction
+  - Regex fallback when Tree-sitter unavailable
+  - Now supports 11 languages: C#, Dart, Go, HTML, Java, JavaScript, PHP, Python, Ruby, Rust, TypeScript
+
 ## [2.2.4] - 2026-02-04
 
 ### Fixed

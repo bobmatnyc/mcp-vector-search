@@ -7,7 +7,7 @@
 
 - **Natural Language Queries**: Search using plain English descriptions
 - **Context-Aware**: Understands code structure and relationships
-- **Multi-Language Support**: Python, JavaScript, TypeScript with extensible architecture
+- **Multi-Language Support**: 11 languages (Python, JavaScript, TypeScript, C#, Java, Go, Rust, Dart, PHP, Ruby, HTML) with extensible architecture
 - **Similarity Scoring**: Ranked results with confidence scores
 - **Rich Output**: Syntax highlighting, file paths, line numbers
 

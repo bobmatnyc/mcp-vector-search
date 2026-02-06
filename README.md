@@ -15,7 +15,7 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 ### 🚀 **Core Capabilities**
 - **Semantic Search**: Find code by meaning, not just keywords
 - **AST-Aware Parsing**: Understands code structure (functions, classes, methods)
-- **Multi-Language Support**: 8 languages - Python, JavaScript, TypeScript, Dart/Flutter, PHP, Ruby, HTML, and Markdown/Text (with extensible architecture)
+- **Multi-Language Support**: 11 languages - Python, JavaScript, TypeScript, C#, Dart/Flutter, PHP, Ruby, Java, Go, Rust, HTML, and Markdown/Text (with extensible architecture)
 - **Real-time Indexing**: File watching with automatic index updates
 - **Automatic Version Tracking**: Smart reindexing on tool upgrades
 - **Local-First**: Complete privacy with on-device processing
