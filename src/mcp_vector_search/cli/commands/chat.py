@@ -1222,8 +1222,43 @@ async def _process_query(
             print_error(f"Error: {e}")
             return
 
-    # Max iterations reached
-    print_warning("Maximum tool iterations reached.")
+    # Max iterations reached - synthesize response from collected tool results
+    print_warning(
+        "Maximum tool iterations reached. Synthesizing response from collected data..."
+    )
+    console.print()  # Newline after dots
+
+    # Ask LLM to synthesize a response from the tool results collected so far
+    synthesis_prompt = {
+        "role": "user",
+        "content": (
+            "You've reached the maximum number of tool calls. Based on all the information "
+            "gathered from the tools above, please provide the best possible answer to the "
+            "original question. Summarize what you found and note if anything is incomplete."
+        ),
+    }
+    messages.append(synthesis_prompt)
+
+    try:
+        # Make final call without tools to force a text response
+        final_response = await llm_client.chat_with_tools(messages, tools=[])
+        final_choice = final_response.get("choices", [{}])[0]
+        final_message = final_choice.get("message", {})
+        final_content = final_message.get("content", "")
+
+        if final_content:
+            console.print("\n[bold cyan]Assistant:[/bold cyan]\n")
+            with Live(
+                "", console=console, auto_refresh=True, vertical_overflow="visible"
+            ) as live:
+                live.update(Markdown(final_content))
+            console.print()
+            session.add_message("assistant", final_content)
+        else:
+            print_error("Could not synthesize response from collected data.")
+    except Exception as e:
+        logger.error(f"Synthesis failed: {e}")
+        print_error(f"Failed to synthesize response: {e}")
 
 
 if __name__ == "__main__":
