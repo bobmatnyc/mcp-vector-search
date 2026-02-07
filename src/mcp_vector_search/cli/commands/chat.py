@@ -334,6 +334,13 @@ def chat_main(
         max=300.0,
         rich_help_panel="LLM Options",
     ),
+    verbose_tools: bool = typer.Option(
+        False,
+        "--verbose-tools",
+        "-v",
+        help="Show verbose tool call details (default: quiet progress dots)",
+        rich_help_panel="Output Options",
+    ),
 ) -> None:
     """Interactive chat REPL powered by Claude Opus 4.
 
@@ -378,6 +385,7 @@ def chat_main(
                     model=model,
                     provider=provider,
                     timeout=timeout or 60.0,
+                    verbose_tools=verbose_tools,
                 )
             )
         else:
@@ -388,6 +396,7 @@ def chat_main(
                     model=model,
                     provider=provider,
                     timeout=timeout or 60.0,
+                    verbose_tools=verbose_tools,
                 )
             )
     except (typer.Exit, SystemExit):
@@ -404,6 +413,7 @@ async def run_single_query(
     model: str | None = None,
     provider: str | None = None,
     timeout: float = 60.0,
+    verbose_tools: bool = False,
 ) -> None:
     """Run a single query and exit.
 
@@ -413,6 +423,7 @@ async def run_single_query(
         model: Model to use
         provider: LLM provider
         timeout: API timeout
+        verbose_tools: Show verbose tool call details
     """
     from ...core.config_utils import get_openai_api_key, get_openrouter_api_key
 
@@ -479,6 +490,7 @@ async def run_single_query(
         session=session,
         project_root=project_root,
         config=config,
+        verbose_tools=verbose_tools,
     )
 
 
@@ -487,12 +499,14 @@ async def run_chat_repl(
     model: str | None = None,
     provider: str | None = None,
     timeout: float = 60.0,
+    verbose_tools: bool = False,
 ) -> None:
     """Run the interactive chat REPL.
 
     Args:
         project_root: Project root directory
         model: Model to use
+        verbose_tools: Show verbose tool call details
         provider: LLM provider
         timeout: API timeout
     """
@@ -610,6 +624,7 @@ async def run_chat_repl(
                 session=session,
                 project_root=project_root,
                 config=config,
+                verbose_tools=verbose_tools,
             )
 
         except KeyboardInterrupt:
@@ -1102,6 +1117,7 @@ async def _process_query(
     session: EnhancedChatSession,
     project_root: Path,
     config: Any,
+    verbose_tools: bool = False,
 ) -> None:
     """Process a user query with tool use.
 
@@ -1113,6 +1129,7 @@ async def _process_query(
         session: Chat session
         project_root: Project root
         config: Project config
+        verbose_tools: Show verbose tool call details (default: quiet mode)
     """
     tools = _get_tools()
 
@@ -1148,14 +1165,15 @@ async def _process_query(
                     except json.JSONDecodeError:
                         arguments = {}
 
-                    # Show tool usage (show progress dot for list_files to reduce noise)
-                    if function_name == "list_files":
-                        console.print(".", end="", style="dim")
-                    else:
+                    # Show tool usage - quiet mode shows dots, verbose shows full calls
+                    if verbose_tools:
                         args_display = ", ".join(
                             f"{k}={repr(v)[:30]}" for k, v in arguments.items()
                         )
                         console.print(f"[dim]{function_name}({args_display})[/dim]")
+                    else:
+                        # Quiet mode: show progress dots
+                        console.print(".", end="", style="dim")
 
                     # Execute tool
                     result = await _execute_tool(
