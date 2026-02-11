@@ -22,6 +22,7 @@ from typing import Any
 from loguru import logger
 
 from .chunks_backend import ChunksBackend
+from .database import VectorDatabase
 from .llm_client import LLMClient
 
 
@@ -164,19 +165,22 @@ class WikiGenerator:
     def __init__(
         self,
         project_root: Path,
-        chunks_backend: ChunksBackend,
+        chunks_backend: ChunksBackend | None = None,
         llm_client: LLMClient | None = None,
+        vector_database: VectorDatabase | None = None,
     ):
         """Initialize wiki generator.
 
         Args:
             project_root: Project root directory
-            chunks_backend: Chunks backend for accessing indexed code
+            chunks_backend: Chunks backend for accessing indexed code (deprecated)
             llm_client: LLM client for semantic grouping (optional)
+            vector_database: Main vector database for accessing indexed chunks
         """
         self.project_root = project_root
         self.chunks_backend = chunks_backend
         self.llm_client = llm_client
+        self.vector_database = vector_database
         self.cache = WikiCache(project_root / ".mcp-vector-search" / "wiki_cache.json")
 
     async def generate(self, force: bool = False, use_llm: bool = True) -> WikiOntology:
@@ -306,19 +310,47 @@ class WikiGenerator:
         Returns:
             List of chunk dictionaries
         """
-        # Get pending chunks (in progress)
-        pending = await self.chunks_backend.get_pending_chunks(batch_size, offset)
-
-        # If no pending chunks, try to get all chunks via table query
-        if not pending and offset == 0:
+        # Try vector database first (main index)
+        if self.vector_database is not None and offset == 0:
             try:
-                if self.chunks_backend._table is not None:
-                    df = self.chunks_backend._table.to_pandas()
-                    return df.to_dict("records")
+                # Get all chunks from vector database
+                chunks = await self.vector_database.get_all_chunks()
+                if chunks:
+                    logger.debug(f"Retrieved {len(chunks)} chunks from vector database")
+                    # Convert CodeChunk objects to dictionaries
+                    chunk_dicts = []
+                    for chunk in chunks:
+                        chunk_dict = {
+                            "chunk_id": chunk.chunk_id,
+                            "file_path": str(chunk.file_path),
+                            "content": chunk.content,
+                            "function_name": chunk.function_name,
+                            "class_name": chunk.class_name,
+                            "language": chunk.language,
+                            "start_line": chunk.start_line,
+                            "end_line": chunk.end_line,
+                        }
+                        chunk_dicts.append(chunk_dict)
+                    return chunk_dicts
             except Exception as e:
-                logger.warning(f"Failed to get all chunks: {e}")
+                logger.warning(f"Failed to get chunks from vector database: {e}")
 
-        return pending
+        # Fallback to chunks_backend (two-phase indexing)
+        if self.chunks_backend is not None:
+            pending = await self.chunks_backend.get_pending_chunks(batch_size, offset)
+
+            # If no pending chunks, try to get all chunks via table query
+            if not pending and offset == 0:
+                try:
+                    if self.chunks_backend._table is not None:
+                        df = self.chunks_backend._table.to_pandas()
+                        return df.to_dict("records")
+                except Exception as e:
+                    logger.warning(f"Failed to get chunks from chunks_backend: {e}")
+
+            return pending
+
+        return []
 
     def _extract_concepts_from_chunk(self, chunk: dict[str, Any]) -> set[str]:
         """Extract concept names from a single chunk.

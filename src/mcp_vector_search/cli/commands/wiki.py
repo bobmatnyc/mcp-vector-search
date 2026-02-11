@@ -11,6 +11,8 @@ from loguru import logger
 from rich.console import Console
 
 from ...core.chunks_backend import ChunksBackend
+from ...core.embeddings import create_embedding_function
+from ...core.factory import create_database
 from ...core.llm_client import LLMClient
 from ...core.project import ProjectManager
 from ...core.wiki import WikiGenerator
@@ -175,7 +177,15 @@ async def run_wiki_generation(
     project_manager = ProjectManager(project_root)
     config = project_manager.load_config()
 
-    # Initialize chunks backend
+    # Initialize vector database (main index)
+    embedding_function, _ = create_embedding_function(config.embedding_model)
+    vector_database = create_database(
+        persist_directory=config.index_path,
+        embedding_function=embedding_function,
+    )
+    await vector_database.initialize()
+
+    # Initialize chunks backend (for two-phase indexing fallback)
     chunks_backend = ChunksBackend(config.index_path)
     await chunks_backend.initialize()
 
@@ -219,6 +229,7 @@ async def run_wiki_generation(
         project_root=project_root,
         chunks_backend=chunks_backend,
         llm_client=llm_client,
+        vector_database=vector_database,
     )
     generator.cache.ttl_hours = ttl
 
@@ -261,6 +272,7 @@ async def run_wiki_generation(
 
     # Cleanup
     await chunks_backend.close()
+    await vector_database.close()
 
 
 def generate_html_wiki(ontology, output_path: Path) -> None:
