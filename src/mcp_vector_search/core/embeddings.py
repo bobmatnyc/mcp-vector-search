@@ -464,6 +464,28 @@ class CodeBERTEmbeddingFunction:
         embeddings = self.model.encode(input, convert_to_numpy=True)
         return embeddings.tolist()
 
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """Embed multiple documents (ChromaDB compatibility).
+
+        Args:
+            texts: List of text documents to embed
+
+        Returns:
+            List of embedding vectors, one per document
+        """
+        return self.__call__(input=texts)
+
+    def embed_query(self, text: str) -> list[float]:
+        """Embed a single query text (ChromaDB compatibility).
+
+        Args:
+            text: Single text string to embed
+
+        Returns:
+            Embedding vector for the query text
+        """
+        return self.__call__(input=[text])[0]
+
 
 class BatchEmbeddingProcessor:
     """Batch processing for efficient embedding generation with caching."""
@@ -701,10 +723,9 @@ def create_embedding_function(
 
         # Suppress stdout to hide "BertModel LOAD REPORT" noise
         with suppress_stdout_stderr():
-            embedding_function = (
-                embedding_functions.SentenceTransformerEmbeddingFunction(
-                    model_name=actual_model
-                )
+            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name=actual_model,
+                trust_remote_code=True,  # Required for models with custom code (e.g., CodeXEmbed)
             )
 
         logger.debug(f"Created ChromaDB embedding function with model: {actual_model}")
