@@ -207,13 +207,29 @@ class VectorsBackend:
 
             # Create or append to table
             if self._table is None:
-                # Create table with first batch
-                self._table = self._db.create_table(
-                    self.TABLE_NAME, normalized_vectors, schema=VECTORS_SCHEMA
+                # Check if table exists (it might exist but self._table wasn't opened)
+                tables_response = self._db.list_tables()
+                table_names = (
+                    tables_response.tables
+                    if hasattr(tables_response, "tables")
+                    else tables_response
                 )
-                logger.debug(
-                    f"Created vectors table with {len(normalized_vectors)} vectors"
-                )
+
+                if self.TABLE_NAME in table_names:
+                    # Table exists, open it
+                    self._table = self._db.open_table(self.TABLE_NAME)
+                    self._table.add(normalized_vectors)
+                    logger.debug(
+                        f"Opened existing table and added {len(normalized_vectors)} vectors"
+                    )
+                else:
+                    # Create table with first batch
+                    self._table = self._db.create_table(
+                        self.TABLE_NAME, normalized_vectors, schema=VECTORS_SCHEMA
+                    )
+                    logger.debug(
+                        f"Created vectors table with {len(normalized_vectors)} vectors"
+                    )
             else:
                 # Append to existing table
                 self._table.add(normalized_vectors)

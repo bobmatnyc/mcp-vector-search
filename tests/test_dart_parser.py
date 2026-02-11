@@ -197,7 +197,10 @@ class MyApp extends StatelessWidget {
             function_chunks.append(chunk)
         if chunk.chunk_type == "mixin":
             mixin_chunks.append(chunk)
-        if chunk.chunk_type == "function" and "async" in chunk.content[:150]:
+        # Check for async functions by Future return type or async keyword
+        if chunk.chunk_type == "function" and (
+            "Future<" in chunk.content[:150] or "async" in chunk.content[:150]
+        ):
             async_chunks.append(chunk)
 
     # Verify key features

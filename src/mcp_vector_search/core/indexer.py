@@ -1171,30 +1171,33 @@ class SemanticIndexer:
         """Get statistics about the indexing process.
 
         Args:
-            db_stats: Optional pre-fetched database stats to avoid duplicate queries
+            db_stats: Optional pre-fetched database stats to avoid duplicate queries (deprecated)
 
         Returns:
             Dictionary with indexing statistics
 
         Note:
-            Uses database statistics only for performance on large projects.
-            Filesystem scanning would timeout on 100K+ file projects.
-            Pass db_stats parameter to avoid calling database.get_stats() twice.
+            In two-phase architecture, uses chunks_backend.get_stats() to retrieve
+            actual chunk counts from LanceDB. The old ChromaDB (database) is deprecated
+            and may be empty during migration.
         """
         try:
-            # Get database stats if not provided (fast, no filesystem scan)
-            if db_stats is None:
-                db_stats = await self.database.get_stats()
+            # Initialize chunks_backend if needed
+            if self.chunks_backend._db is None:
+                await self.chunks_backend.initialize()
 
-            # Use database stats for all file counts
-            # This avoids expensive filesystem scans on large projects
+            # Get stats from chunks_backend (Phase 1 storage)
+            chunks_stats = await self.chunks_backend.get_stats()
+
+            # Use chunks_backend stats for all file counts
+            # This queries the actual LanceDB storage where chunks are stored
             return {
-                "total_indexable_files": db_stats.total_files,
-                "indexed_files": db_stats.total_files,
-                "total_files": db_stats.total_files,  # For backward compatibility
-                "total_chunks": db_stats.total_chunks,
-                "languages": db_stats.languages,
-                "file_types": db_stats.file_types,  # Include file type distribution
+                "total_indexable_files": chunks_stats["files"],
+                "indexed_files": chunks_stats["files"],
+                "total_files": chunks_stats["files"],  # For backward compatibility
+                "total_chunks": chunks_stats["total"],
+                "languages": chunks_stats["languages"],
+                "file_types": {},  # Not tracked in chunks_backend yet
                 "file_extensions": list(self.file_discovery.file_extensions),
                 "ignore_patterns": list(self.file_discovery.get_ignore_patterns()),
                 "parser_info": self.parser_registry.get_parser_info(),

@@ -129,7 +129,15 @@ class ChunksBackend:
             self._db = lancedb.connect(str(self.db_path))
 
             # Check if table exists
-            if self.TABLE_NAME in self._db.list_tables():
+            # list_tables() returns a response object with .tables attribute or is iterable
+            tables_response = self._db.list_tables()
+            table_names = (
+                tables_response.tables
+                if hasattr(tables_response, "tables")
+                else tables_response
+            )
+
+            if self.TABLE_NAME in table_names:
                 self._table = self._db.open_table(self.TABLE_NAME)
                 logger.debug(f"Opened existing chunks table at {self.db_path}")
             else:
@@ -215,13 +223,29 @@ class ChunksBackend:
 
             # Create or append to table
             if self._table is None:
-                # Create table with first batch
-                self._table = self._db.create_table(
-                    self.TABLE_NAME, normalized_chunks, schema=CHUNKS_SCHEMA
+                # Check if table exists (it might exist but self._table wasn't opened)
+                tables_response = self._db.list_tables()
+                table_names = (
+                    tables_response.tables
+                    if hasattr(tables_response, "tables")
+                    else tables_response
                 )
-                logger.debug(
-                    f"Created chunks table with {len(normalized_chunks)} chunks"
-                )
+
+                if self.TABLE_NAME in table_names:
+                    # Table exists, open it
+                    self._table = self._db.open_table(self.TABLE_NAME)
+                    self._table.add(normalized_chunks)
+                    logger.debug(
+                        f"Opened existing table and added {len(normalized_chunks)} chunks"
+                    )
+                else:
+                    # Create table with first batch
+                    self._table = self._db.create_table(
+                        self.TABLE_NAME, normalized_chunks, schema=CHUNKS_SCHEMA
+                    )
+                    logger.debug(
+                        f"Created chunks table with {len(normalized_chunks)} chunks"
+                    )
             else:
                 # Append to existing table
                 self._table.add(normalized_chunks)

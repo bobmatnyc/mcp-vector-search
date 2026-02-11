@@ -17,6 +17,7 @@ from .query_processor import QueryProcessor
 from .result_enhancer import ResultEnhancer
 from .result_ranker import ResultRanker
 from .search_retry_handler import SearchRetryHandler
+from .vectors_backend import VectorsBackend
 
 
 class SemanticSearchEngine:
@@ -69,6 +70,12 @@ class SemanticSearchEngine:
         self._result_ranker = ResultRanker()
         self._query_analyzer = QueryAnalyzer(self._query_processor)
 
+        # Two-phase architecture: lazy detection of VectorsBackend
+        # We check at search time rather than init time because vectors.lance
+        # may not exist yet when SemanticSearchEngine is created
+        self._vectors_backend: VectorsBackend | None = None
+        self._vectors_backend_checked = False
+
     async def search(
         self,
         query: str,
@@ -108,14 +115,25 @@ class SemanticSearchEngine:
             # Preprocess query
             processed_query = self._query_processor.preprocess_query(query)
 
-            # Perform vector search with retry logic
-            results = await self._retry_handler.search_with_retry(
-                database=self.database,
-                query=processed_query,
-                limit=limit,
-                filters=filters,
-                threshold=threshold,
-            )
+            # Two-phase architecture: check for VectorsBackend on first search
+            if not self._vectors_backend_checked:
+                self._check_vectors_backend()
+                self._vectors_backend_checked = True
+
+            # Use VectorsBackend if available, otherwise fall back to ChromaDB
+            if self._vectors_backend:
+                results = await self._search_vectors_backend(
+                    processed_query, limit, filters, threshold
+                )
+            else:
+                # Legacy ChromaDB search
+                results = await self._retry_handler.search_with_retry(
+                    database=self.database,
+                    query=processed_query,
+                    limit=limit,
+                    filters=filters,
+                    threshold=threshold,
+                )
 
             # Post-process results
             enhanced_results = []
@@ -450,3 +468,112 @@ class SemanticSearchEngine:
     def _is_corruption_error(error: Exception) -> bool:
         """Detect corruption errors (backward compatibility)."""
         return SearchRetryHandler.is_corruption_error(error)
+
+    def _check_vectors_backend(self) -> None:
+        """Check if VectorsBackend is available for two-phase architecture.
+
+        This enables the search engine to automatically use the new LanceDB-based
+        vectors_backend when available, while falling back to ChromaDB for legacy support.
+
+        Called lazily on first search to ensure vectors.lance exists.
+        """
+        try:
+            # Detect index path from database persist_directory
+            if hasattr(self.database, "persist_directory"):
+                index_path = self.database.persist_directory
+
+                # Check if vectors.lance table exists (LanceDB format is a directory)
+                # Path: {index_path}/lance/vectors.lance/
+                vectors_path = index_path / "lance" / "vectors.lance"
+                if vectors_path.exists() and vectors_path.is_dir():
+                    # Instantiate VectorsBackend with index_path (it will find lance/ subdirectory)
+                    vectors_backend = VectorsBackend(index_path / "lance")
+                    self._vectors_backend = vectors_backend
+                    logger.debug(
+                        "Two-phase architecture detected: using VectorsBackend for search"
+                    )
+                else:
+                    logger.debug(
+                        f"VectorsBackend not found at {vectors_path}, using legacy ChromaDB search"
+                    )
+            else:
+                logger.debug("Database has no persist_directory, using legacy search")
+        except Exception as e:
+            logger.debug(f"VectorsBackend detection failed: {e}, using legacy search")
+            self._vectors_backend = None
+
+    async def _search_vectors_backend(
+        self,
+        query: str,
+        limit: int,
+        filters: dict[str, Any] | None,
+        threshold: float,
+    ) -> list[SearchResult]:
+        """Search using VectorsBackend (two-phase architecture).
+
+        Args:
+            query: Preprocessed search query
+            limit: Maximum number of results
+            filters: Optional metadata filters
+            threshold: Similarity threshold
+
+        Returns:
+            List of search results
+
+        Raises:
+            SearchError: If search fails
+        """
+        try:
+            # Initialize vectors_backend if needed
+            if self._vectors_backend._db is None:
+                await self._vectors_backend.initialize()
+
+            # Generate query embedding
+            # Extract embedding function from database (ChromaDB wrapper)
+            if hasattr(self.database, "_embedding_function"):
+                embedding_func = self.database._embedding_function
+            elif hasattr(self.database, "embedding_function"):
+                embedding_func = self.database.embedding_function
+            else:
+                raise SearchError(
+                    "Cannot access embedding function from database for vector search"
+                )
+
+            # Generate embedding
+            query_vector = embedding_func([query])[0]
+
+            # Search vectors backend
+            raw_results = await self._vectors_backend.search(
+                query_vector, limit=limit, filters=filters
+            )
+
+            # Convert to SearchResult format
+            search_results = []
+            for idx, result in enumerate(raw_results):
+                # Calculate similarity score from distance
+                # LanceDB returns _distance (lower is better), convert to similarity (higher is better)
+                distance = result.get("_distance", 1.0)
+                similarity = 1.0 / (1.0 + distance)  # Convert distance to similarity
+
+                # Apply threshold filter
+                if similarity < threshold:
+                    continue
+
+                search_result = SearchResult(
+                    file_path=Path(result["file_path"]),
+                    content=result["content"],
+                    start_line=result["start_line"],
+                    end_line=result["end_line"],
+                    language=result.get("language", "unknown"),
+                    similarity_score=similarity,
+                    rank=idx + 1,  # 1-based ranking
+                    chunk_type=result.get("chunk_type", "unknown"),
+                    function_name=result.get("name"),  # Map 'name' to 'function_name'
+                )
+                search_results.append(search_result)
+
+            return search_results
+
+        except Exception as e:
+            logger.error(f"VectorsBackend search failed: {e}")
+            raise SearchError(f"Vector search failed: {e}") from e

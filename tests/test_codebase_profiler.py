@@ -18,17 +18,16 @@ def temp_project():
     with tempfile.TemporaryDirectory() as tmpdir:
         project_root = Path(tmpdir)
 
-        # Create Python files
-        for i in range(5):
+        # Create Python files (7 out of 10 = 70% for PYTHON classification)
+        for i in range(7):
             (project_root / f"file{i}.py").write_text(f"# Python file {i}")
 
         # Create JavaScript files
-        for i in range(3):
+        for i in range(2):
             (project_root / f"file{i}.js").write_text(f"// JavaScript file {i}")
 
-        # Create documentation files
+        # Create documentation file
         (project_root / "README.md").write_text("# Project README")
-        (project_root / "CHANGELOG.md").write_text("# Changelog")
 
         yield project_root
 
@@ -40,9 +39,9 @@ def test_profile_small_codebase(temp_project):
 
     # Should detect as small (< 1000 files)
     assert profile.size_category == CodebaseSize.SMALL
-    assert profile.total_files == 10  # 5 py + 3 js + 2 md
+    assert profile.total_files == 10  # 7 py + 2 js + 1 md
 
-    # Should detect as Python-heavy (50% Python)
+    # Should detect as Python-heavy (70% Python > 60% threshold)
     assert profile.codebase_type == CodebaseType.PYTHON
 
     # Check language distribution

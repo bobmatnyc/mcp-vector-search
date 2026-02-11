@@ -92,8 +92,8 @@ class TestDatabaseMetricsSupport:
         assert len(chunks) == 1
 
         # Verify metrics are in ChromaDB metadata (fetch directly from collection)
-        results = db._collection.get(ids=[sample_chunk.id], include=["metadatas"])
-        assert results["ids"]
+        results = db._collection.get(ids=[sample_chunk.chunk_id], include=["metadatas"])
+        assert results["ids"], f"No chunks found with ID {sample_chunk.chunk_id}"
         metadata = results["metadatas"][0]
 
         # Check all metrics fields
@@ -132,7 +132,7 @@ class TestDatabaseMetricsSupport:
         assert chunks[0].content == sample_chunk.content
 
         # Verify no metrics fields in metadata (they won't be present)
-        results = db._collection.get(ids=[sample_chunk.id], include=["metadatas"])
+        results = db._collection.get(ids=[sample_chunk.chunk_id], include=["metadatas"])
         metadata = results["metadatas"][0]
 
         # Metrics fields should not be present
@@ -377,7 +377,7 @@ class TestDatabaseMetricsSupport:
 
         # Verify metrics in database
         for chunk in chunks:
-            results = db._collection.get(ids=[chunk.id], include=["metadatas"])
+            results = db._collection.get(ids=[chunk.chunk_id], include=["metadatas"])
             metadata = results["metadatas"][0]
             assert "cognitive_complexity" in metadata
             assert "complexity_grade" in metadata
