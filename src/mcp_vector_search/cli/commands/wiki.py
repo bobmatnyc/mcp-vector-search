@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 import typer
+from dotenv import load_dotenv
 from loguru import logger
 from rich.console import Console
 
@@ -15,6 +16,28 @@ from ...core.project import ProjectManager
 from ...core.wiki import WikiGenerator
 
 console = Console()
+
+
+def _load_env_files(project_root: Path) -> None:
+    """Load environment variables from .env and .env.local files.
+
+    Priority (later files override earlier):
+    1. .env (base config)
+    2. .env.local (local overrides, gitignored)
+
+    Args:
+        project_root: Project root directory to search for env files
+    """
+    env_files = [
+        project_root / ".env",
+        project_root / ".env.local",
+    ]
+
+    for env_file in env_files:
+        if env_file.exists():
+            load_dotenv(env_file, override=True)
+            logger.debug(f"Loaded environment from {env_file}")
+
 
 wiki_app = typer.Typer(
     help="📚 Generate wiki/ontology of codebase concepts",
@@ -145,6 +168,9 @@ async def run_wiki_generation(
         ttl: Cache TTL in hours
         no_llm: Skip LLM semantic grouping
     """
+    # Load environment variables from .env and .env.local
+    _load_env_files(project_root)
+
     # Load project config
     project_manager = ProjectManager(project_root)
     config = project_manager.load_config()
@@ -158,10 +184,30 @@ async def run_wiki_generation(
     if not no_llm:
         try:
             llm_client = LLMClient()
-            console.print("[dim]Using LLM for semantic grouping...[/dim]")
-        except ValueError as e:
-            console.print(f"[yellow]⚠️  {e}[/yellow]")
-            console.print("[yellow]Falling back to flat ontology (--no-llm)[/yellow]")
+            provider = llm_client.provider.capitalize()
+            model = llm_client.model
+            console.print(
+                f"[dim]Using {provider} ({model}) for semantic grouping...[/dim]"
+            )
+        except ValueError:
+            # Provide helpful error message with setup instructions
+            console.print(
+                "[yellow]⚠️  No LLM provider configured.[/yellow]\n"
+                "\n"
+                "[bold]To enable LLM semantic grouping, set one of:[/bold]\n"
+                "\n"
+                "  [cyan]AWS Bedrock (recommended):[/cyan]\n"
+                "    export AWS_ACCESS_KEY_ID=your-key\n"
+                "    export AWS_SECRET_ACCESS_KEY=your-secret\n"
+                "    export AWS_REGION=us-east-1\n"
+                "\n"
+                "  [cyan]OpenRouter:[/cyan]\n"
+                "    export OPENROUTER_API_KEY=your-key\n"
+                "\n"
+                "  [cyan]Or add to .env or .env.local in project root[/cyan]\n"
+                "\n"
+                "[dim]Falling back to flat ontology (--no-llm mode)[/dim]"
+            )
             no_llm = True
 
     # Update cache TTL if specified
