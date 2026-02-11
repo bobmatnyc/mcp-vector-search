@@ -132,6 +132,7 @@ from .commands.setup import setup_app  # noqa: E402
 from .commands.status import main as status_main  # noqa: E402
 from .commands.uninstall import uninstall_app  # noqa: E402
 from .commands.visualize import app as visualize_app  # noqa: E402
+from .commands.wiki import wiki_app  # noqa: E402
 
 # ============================================================================
 # MAIN COMMANDS - Clean hierarchy
@@ -198,6 +199,11 @@ app.add_typer(
 # 12. VISUALIZE - Code graph visualization
 app.add_typer(
     visualize_app, name="visualize", help="📊 Visualize code chunk relationships"
+)
+
+# 12.5. WIKI - Generate codebase wiki/ontology
+app.add_typer(
+    wiki_app, name="wiki", help="📚 Generate wiki/ontology of codebase concepts"
 )
 
 # 13. HELP - Enhanced help

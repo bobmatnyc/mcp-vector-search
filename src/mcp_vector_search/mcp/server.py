@@ -27,6 +27,7 @@ from .analysis_handlers import AnalysisHandlers
 from .project_handlers import ProjectHandlers
 from .search_handlers import SearchHandlers
 from .tool_schemas import get_tool_schemas
+from .wiki_handlers import WikiHandlers
 
 
 class MCPVectorSearchServer:
@@ -86,6 +87,7 @@ class MCPVectorSearchServer:
         self._search_handlers: SearchHandlers | None = None
         self._analysis_handlers: AnalysisHandlers | None = None
         self._project_handlers: ProjectHandlers | None = None
+        self._wiki_handlers: WikiHandlers | None = None
 
     async def initialize(self) -> None:
         """Initialize the search engine and database."""
@@ -126,6 +128,7 @@ class MCPVectorSearchServer:
             self._project_handlers = ProjectHandlers(
                 self.project_manager, self.search_engine, self.project_root
             )
+            self._wiki_handlers = WikiHandlers(self.project_root)
 
             # Setup indexer for file watching
             if self.enable_file_watching:
@@ -275,6 +278,10 @@ class MCPVectorSearchServer:
                 return await self._analysis_handlers.handle_interpret_analysis(args)
             elif tool_name == "save_report":
                 return await self._analysis_handlers.handle_save_report(args)
+
+            # Delegate to wiki handlers
+            elif tool_name == "wiki_generate":
+                return await self._wiki_handlers.handle_wiki_generate(args)
 
             else:
                 return CallToolResult(

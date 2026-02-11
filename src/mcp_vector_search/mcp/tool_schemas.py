@@ -22,6 +22,7 @@ def get_tool_schemas() -> list[Tool]:
         _get_circular_dependencies_schema(),
         _get_interpret_analysis_schema(),
         _get_save_report_schema(),
+        _get_wiki_generate_schema(),
     ]
 
 
@@ -339,5 +340,41 @@ def _get_save_report_schema() -> Tool:
                 },
             },
             "required": ["content"],
+        },
+    )
+
+
+def _get_wiki_generate_schema() -> Tool:
+    """Get wiki_generate tool schema."""
+    return Tool(
+        name="wiki_generate",
+        description="Generate codebase wiki/ontology showing hierarchical concept organization with LLM-powered semantic grouping",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "force": {
+                    "type": "boolean",
+                    "description": "Force regeneration, ignoring cache",
+                    "default": False,
+                },
+                "ttl_hours": {
+                    "type": "integer",
+                    "description": "Cache TTL in hours (default: 24)",
+                    "minimum": 1,
+                    "default": 24,
+                },
+                "no_llm": {
+                    "type": "boolean",
+                    "description": "Skip LLM semantic grouping (flat ontology only)",
+                    "default": False,
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["json", "summary"],
+                    "description": "Output format (json for full ontology, summary for overview)",
+                    "default": "summary",
+                },
+            },
+            "required": [],
         },
     )
