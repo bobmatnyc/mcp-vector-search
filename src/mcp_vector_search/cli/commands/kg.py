@@ -25,6 +25,11 @@ def build_kg(
     limit: int | None = typer.Option(
         None, help="Limit number of chunks to process (for testing)"
     ),
+    skip_documents: bool = typer.Option(
+        False,
+        "--skip-documents",
+        help="Skip expensive DOCUMENTS relationship extraction (faster build)",
+    ),
 ):
     """Build knowledge graph from indexed chunks.
 
@@ -35,6 +40,7 @@ def build_kg(
         mcp-vector-search kg build
         mcp-vector-search kg build --force
         mcp-vector-search kg build --limit 100  # Test with 100 chunks
+        mcp-vector-search kg build --skip-documents  # Faster build for large repos
     """
     project_root = project_root.resolve()
 
@@ -80,7 +86,7 @@ def build_kg(
             # Build graph
             builder = KGBuilder(kg, project_root)
             build_stats = await builder.build_from_database(
-                database, show_progress=True, limit=limit
+                database, show_progress=True, limit=limit, skip_documents=skip_documents
             )
 
             # Show results

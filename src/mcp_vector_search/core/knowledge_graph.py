@@ -721,6 +721,332 @@ class KnowledgeGraph:
             logger.error(f"Failed to add PART_OF relationship: {e}")
             raise
 
+    async def add_entities_batch(
+        self, entities: list[CodeEntity], batch_size: int = 500
+    ) -> int:
+        """Batch insert code entities using UNWIND.
+
+        This reduces N individual MERGE queries to N/batch_size queries,
+        dramatically improving performance for large-scale indexing.
+
+        Args:
+            entities: List of CodeEntity objects
+            batch_size: Number of entities per batch (default 500)
+
+        Returns:
+            Number of entities inserted
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        total = 0
+        for i in range(0, len(entities), batch_size):
+            batch = entities[i : i + batch_size]
+            params = [
+                {
+                    "id": e.id,
+                    "name": e.name,
+                    "entity_type": e.entity_type,
+                    "file_path": e.file_path or "",
+                    "commit_sha": e.commit_sha or "",
+                }
+                for e in batch
+            ]
+
+            try:
+                self.conn.execute(
+                    """
+                    UNWIND $batch AS e
+                    MERGE (n:CodeEntity {id: e.id})
+                    ON CREATE SET n.name = e.name,
+                                  n.entity_type = e.entity_type,
+                                  n.file_path = e.file_path,
+                                  n.commit_sha = e.commit_sha
+                    ON MATCH SET n.name = e.name,
+                                 n.entity_type = e.entity_type,
+                                 n.file_path = e.file_path,
+                                 n.commit_sha = e.commit_sha
+                """,
+                    {"batch": params},
+                )
+                total += len(batch)
+            except Exception as e:
+                logger.error(f"Batch insert failed for entities: {e}")
+                # Fallback to individual inserts for this batch
+                for entity in batch:
+                    try:
+                        await self.add_entity(entity)
+                        total += 1
+                    except Exception:
+                        pass
+
+        return total
+
+    async def add_doc_sections_batch(
+        self, docs: list[DocSection], batch_size: int = 500
+    ) -> int:
+        """Batch insert doc sections using UNWIND.
+
+        Args:
+            docs: List of DocSection objects
+            batch_size: Number of doc sections per batch (default 500)
+
+        Returns:
+            Number of doc sections inserted
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        total = 0
+        for i in range(0, len(docs), batch_size):
+            batch = docs[i : i + batch_size]
+            params = [
+                {
+                    "id": d.id,
+                    "name": d.name,
+                    "doc_type": d.doc_type,
+                    "file_path": d.file_path,
+                    "level": d.level,
+                    "line_start": d.line_start,
+                    "line_end": d.line_end,
+                    "commit_sha": d.commit_sha or "",
+                }
+                for d in batch
+            ]
+
+            try:
+                self.conn.execute(
+                    """
+                    UNWIND $batch AS d
+                    MERGE (n:DocSection {id: d.id})
+                    ON CREATE SET n.name = d.name,
+                                  n.doc_type = d.doc_type,
+                                  n.file_path = d.file_path,
+                                  n.level = d.level,
+                                  n.line_start = d.line_start,
+                                  n.line_end = d.line_end,
+                                  n.commit_sha = d.commit_sha
+                    ON MATCH SET n.name = d.name,
+                                 n.doc_type = d.doc_type,
+                                 n.file_path = d.file_path,
+                                 n.level = d.level,
+                                 n.line_start = d.line_start,
+                                 n.line_end = d.line_end,
+                                 n.commit_sha = d.commit_sha
+                """,
+                    {"batch": params},
+                )
+                total += len(batch)
+            except Exception as e:
+                logger.error(f"Batch insert failed for doc sections: {e}")
+                # Fallback to individual inserts
+                for doc in batch:
+                    try:
+                        await self.add_doc_section(doc)
+                        total += 1
+                    except Exception:
+                        pass
+
+        return total
+
+    async def add_relationships_batch(
+        self, relationships: list[CodeRelationship], batch_size: int = 500
+    ) -> int:
+        """Batch insert relationships using UNWIND.
+
+        Groups relationships by type and inserts each type in batches.
+
+        Args:
+            relationships: List of CodeRelationship objects
+            batch_size: Number of relationships per batch (default 500)
+
+        Returns:
+            Number of relationships inserted
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        # Group by relationship type
+        by_type: dict[str, list[CodeRelationship]] = {}
+        for rel in relationships:
+            rel_type = rel.relationship_type.upper()
+            if rel_type not in by_type:
+                by_type[rel_type] = []
+            by_type[rel_type].append(rel)
+
+        total = 0
+        for rel_type, rels in by_type.items():
+            total += await self._add_relationships_batch_by_type(
+                rels, rel_type, batch_size
+            )
+
+        return total
+
+    async def _add_relationships_batch_by_type(
+        self, relationships: list[CodeRelationship], rel_type: str, batch_size: int
+    ) -> int:
+        """Batch insert relationships of a specific type.
+
+        Args:
+            relationships: List of CodeRelationship objects
+            rel_type: Relationship type (CALLS, IMPORTS, etc.)
+            batch_size: Number of relationships per batch
+
+        Returns:
+            Number of relationships inserted
+        """
+        total = 0
+
+        # Determine node types based on relationship type
+        if rel_type in ["CALLS", "IMPORTS", "INHERITS", "CONTAINS"]:
+            # Code-to-code
+            source_label = "CodeEntity"
+            target_label = "CodeEntity"
+        elif rel_type == "FOLLOWS":
+            # Doc-to-doc
+            source_label = "DocSection"
+            target_label = "DocSection"
+        elif rel_type in ["REFERENCES", "DOCUMENTS"]:
+            # Doc-to-code
+            source_label = "DocSection"
+            target_label = "CodeEntity"
+        elif rel_type in ["HAS_TAG", "DEMONSTRATES"]:
+            # Doc-to-tag
+            source_label = "DocSection"
+            target_label = "Tag"
+        elif rel_type == "LINKS_TO":
+            # Doc-to-doc (explicit links)
+            source_label = "DocSection"
+            target_label = "DocSection"
+        else:
+            logger.warning(f"Unknown relationship type: {rel_type}")
+            return 0
+
+        for i in range(0, len(relationships), batch_size):
+            batch = relationships[i : i + batch_size]
+            params = [
+                {
+                    "source": r.source_id,
+                    "target": r.target_id,
+                    "weight": r.weight or 1.0,
+                    "commit_sha": r.commit_sha or "",
+                }
+                for r in batch
+            ]
+
+            query = f"""
+                UNWIND $batch AS r
+                MATCH (s:{source_label} {{id: r.source}})
+                MATCH (t:{target_label} {{id: r.target}})
+                MERGE (s)-[rel:{rel_type}]->(t)
+                ON CREATE SET rel.weight = r.weight, rel.commit_sha = r.commit_sha
+                ON MATCH SET rel.weight = r.weight, rel.commit_sha = r.commit_sha
+            """
+
+            try:
+                self.conn.execute(query, {"batch": params})
+                total += len(batch)
+            except Exception as e:
+                logger.error(
+                    f"Batch relationship insert failed for {rel_type} (batch size {len(batch)}): {e}"
+                )
+                # Fallback to individual inserts
+                for rel in batch:
+                    try:
+                        await self.add_relationship(rel)
+                        total += 1
+                    except Exception:
+                        pass
+
+        return total
+
+    async def add_tags_batch(self, tag_names: list[str], batch_size: int = 500) -> int:
+        """Batch insert tags using UNWIND.
+
+        Args:
+            tag_names: List of tag names
+            batch_size: Number of tags per batch (default 500)
+
+        Returns:
+            Number of tags inserted
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        # Remove duplicates
+        unique_tags = list(set(tag_names))
+
+        total = 0
+        for i in range(0, len(unique_tags), batch_size):
+            batch = unique_tags[i : i + batch_size]
+            params = [{"id": f"tag:{name}", "name": name} for name in batch]
+
+            try:
+                self.conn.execute(
+                    """
+                    UNWIND $batch AS t
+                    MERGE (n:Tag {id: t.id})
+                    ON CREATE SET n.name = t.name
+                    ON MATCH SET n.name = t.name
+                """,
+                    {"batch": params},
+                )
+                total += len(batch)
+            except Exception as e:
+                logger.error(f"Batch insert failed for tags: {e}")
+                # Fallback to individual inserts
+                for tag_name in batch:
+                    try:
+                        await self.add_tag(tag_name)
+                        total += 1
+                    except Exception:
+                        pass
+
+        return total
+
+    async def add_part_of_batch(
+        self, entity_ids: list[str], project_id: str, batch_size: int = 500
+    ) -> int:
+        """Batch create PART_OF relationships.
+
+        Args:
+            entity_ids: List of entity IDs
+            project_id: Project ID
+            batch_size: Number of relationships per batch (default 500)
+
+        Returns:
+            Number of relationships created
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        total = 0
+        for i in range(0, len(entity_ids), batch_size):
+            batch = entity_ids[i : i + batch_size]
+
+            try:
+                self.conn.execute(
+                    """
+                    UNWIND $batch AS eid
+                    MATCH (e:CodeEntity {id: eid})
+                    MATCH (p:Project {id: $project_id})
+                    MERGE (e)-[:PART_OF]->(p)
+                """,
+                    {"batch": batch, "project_id": project_id},
+                )
+                total += len(batch)
+            except Exception as e:
+                logger.error(f"Batch PART_OF failed: {e}")
+                # Fallback to individual inserts
+                for entity_id in batch:
+                    try:
+                        await self.add_part_of_relationship(entity_id, project_id)
+                        total += 1
+                    except Exception:
+                        pass
+
+        return total
+
     async def add_relationship(self, rel: CodeRelationship):
         """Add a relationship between entities.
 

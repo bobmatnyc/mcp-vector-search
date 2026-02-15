@@ -163,13 +163,17 @@ class KGBuilder:
         return False
 
     async def build_from_chunks(
-        self, chunks: list[CodeChunk], show_progress: bool = True
+        self,
+        chunks: list[CodeChunk],
+        show_progress: bool = True,
+        skip_documents: bool = False,
     ) -> dict[str, int]:
-        """Build graph from code chunks.
+        """Build graph from code chunks using batch inserts.
 
         Args:
             chunks: List of code chunks to process
             show_progress: Whether to show progress bar
+            skip_documents: Skip expensive DOCUMENTS relationship extraction (default False)
 
         Returns:
             Statistics dictionary with counts
@@ -213,76 +217,74 @@ class KGBuilder:
             "part_of": 0,
         }
 
-        total_chunks = len(code_chunks) + len(text_chunks)
+        # Phase 1: Collect all entities and relationships (no DB writes)
+        logger.info("Phase 1: Extracting entities and relationships from chunks...")
+        code_entities: list[CodeEntity] = []
+        doc_sections: list[DocSection] = []
+        tags: set[str] = set()
+        relationships: dict[str, list[CodeRelationship]] = {
+            "CALLS": [],
+            "IMPORTS": [],
+            "INHERITS": [],
+            "CONTAINS": [],
+            "REFERENCES": [],
+            "DOCUMENTS": [],
+            "FOLLOWS": [],
+            "HAS_TAG": [],
+            "DEMONSTRATES": [],
+            "LINKS_TO": [],
+        }
 
-        if show_progress:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[cyan]Building knowledge graph...[/cyan]"),
-                BarColumn(bar_width=40),
-                TaskProgressColumn(),
-                TextColumn(
-                    "[green]{task.fields[entities]} entities, "
-                    "{task.fields[relationships]} relationships"
-                ),
-                console=console,
-            ) as progress:
-                task = progress.add_task(
-                    "kg_build",
-                    total=total_chunks,
-                    entities=0,
-                    relationships=0,
-                )
+        # Extract from code chunks
+        for chunk in code_chunks:
+            entity, rels = self._extract_code_entity(chunk)
+            if entity:
+                code_entities.append(entity)
+                for rel_type, rel_list in rels.items():
+                    relationships[rel_type].extend(rel_list)
 
-                # Process code chunks
-                for chunk in code_chunks:
-                    await self._process_chunk(chunk, stats)
-                    progress.update(
-                        task,
-                        advance=1,
-                        entities=stats["entities"] + stats["doc_sections"],
-                        relationships=sum(stats.values())
-                        - stats["entities"]
-                        - stats["doc_sections"],
-                    )
+        # Extract from text chunks
+        for chunk in text_chunks:
+            docs, chunk_tags, rels = self._extract_doc_sections(chunk)
+            doc_sections.extend(docs)
+            tags.update(chunk_tags)
+            for rel_type, rel_list in rels.items():
+                relationships[rel_type].extend(rel_list)
 
-                # Process text chunks
-                for chunk in text_chunks:
-                    await self._process_text_chunk(chunk, stats)
-                    progress.update(
-                        task,
-                        advance=1,
-                        entities=stats["entities"] + stats["doc_sections"],
-                        relationships=sum(stats.values())
-                        - stats["entities"]
-                        - stats["doc_sections"],
-                    )
+        logger.info(
+            f"Extracted {len(code_entities)} entities, {len(doc_sections)} doc sections, "
+            f"{len(tags)} tags, {sum(len(r) for r in relationships.values())} relationships"
+        )
 
-                # Extract DOCUMENTS relationships after all entities are processed
-                if text_chunks and code_chunks:
-                    progress.update(
-                        task,
-                        description="[cyan]Extracting DOCUMENTS relationships...[/cyan]",
-                    )
-                    await self._extract_documents_relationships(text_chunks, stats)
-                    progress.update(
-                        task,
-                        entities=stats["entities"] + stats["doc_sections"],
-                        relationships=sum(stats.values())
-                        - stats["entities"]
-                        - stats["doc_sections"],
-                    )
-        else:
-            for chunk in code_chunks:
-                await self._process_chunk(chunk, stats)
+        # Phase 2: Batch insert entities
+        logger.info("Phase 2: Batch inserting entities...")
+        if code_entities:
+            stats["entities"] = await self.kg.add_entities_batch(code_entities)
+            logger.info(f"✓ Inserted {stats['entities']} code entities")
 
-            for chunk in text_chunks:
-                await self._process_text_chunk(chunk, stats)
+        if doc_sections:
+            stats["doc_sections"] = await self.kg.add_doc_sections_batch(doc_sections)
+            logger.info(f"✓ Inserted {stats['doc_sections']} doc sections")
 
-            # Extract DOCUMENTS relationships after all entities are processed
-            if text_chunks and code_chunks:
-                logger.info("Extracting DOCUMENTS relationships...")
-                await self._extract_documents_relationships(text_chunks, stats)
+        if tags:
+            stats["tags"] = await self.kg.add_tags_batch(list(tags))
+            logger.info(f"✓ Inserted {stats['tags']} tags")
+
+        # Phase 3: Batch insert relationships
+        logger.info("Phase 3: Batch inserting relationships...")
+        for rel_type, rels in relationships.items():
+            if rels:
+                count = await self.kg.add_relationships_batch(rels)
+                stats[rel_type.lower()] = count
+                if count > 0:
+                    logger.info(f"✓ Inserted {count} {rel_type} relationships")
+
+        # Phase 4: Extract DOCUMENTS relationships (optional, expensive)
+        if not skip_documents and text_chunks and code_chunks:
+            logger.info(
+                "Phase 4: Extracting DOCUMENTS relationships (this may take a while)..."
+            )
+            await self._extract_documents_relationships(text_chunks, stats)
 
         logger.info(
             f"✓ Knowledge graph built: {stats['entities']} code entities, "
@@ -292,8 +294,100 @@ class KGBuilder:
 
         return stats
 
+    def _extract_code_entity(
+        self, chunk: CodeChunk
+    ) -> tuple[CodeEntity | None, dict[str, list[CodeRelationship]]]:
+        """Extract entity and relationships from code chunk (no DB writes).
+
+        Args:
+            chunk: Code chunk to process
+
+        Returns:
+            Tuple of (entity, relationships_by_type)
+        """
+        chunk_id = chunk.chunk_id or chunk.id
+        name = chunk.function_name or chunk.class_name or "module"
+
+        # Skip generic entity names
+        if self._is_generic_entity(name):
+            logger.debug(f"Skipping generic entity: {name}")
+            return None, {}
+
+        entity = CodeEntity(
+            id=chunk_id,
+            name=name,
+            entity_type=chunk.chunk_type,
+            file_path=str(chunk.file_path),
+        )
+
+        # Track entity name mapping for relationship resolution
+        self._entity_map[name] = chunk_id
+
+        relationships: dict[str, list[CodeRelationship]] = {
+            "CALLS": [],
+            "IMPORTS": [],
+            "INHERITS": [],
+            "CONTAINS": [],
+        }
+
+        # Process function calls
+        if hasattr(chunk, "calls") and chunk.calls:
+            for called in chunk.calls:
+                target_id = self._resolve_entity(called)
+                if target_id:
+                    relationships["CALLS"].append(
+                        CodeRelationship(
+                            source_id=chunk_id,
+                            target_id=target_id,
+                            relationship_type="calls",
+                        )
+                    )
+
+        # Process inheritance
+        if hasattr(chunk, "inherits_from") and chunk.inherits_from:
+            for base in chunk.inherits_from:
+                target_id = self._resolve_entity(base)
+                if target_id:
+                    relationships["INHERITS"].append(
+                        CodeRelationship(
+                            source_id=chunk_id,
+                            target_id=target_id,
+                            relationship_type="inherits",
+                        )
+                    )
+
+        # Process imports (create module entities)
+        if hasattr(chunk, "imports") and chunk.imports:
+            for imp in chunk.imports:
+                module = imp.get("module", "") if isinstance(imp, dict) else str(imp)
+                if module:
+                    module_id = f"module:{module}"
+                    # Module entities will be added separately
+                    relationships["IMPORTS"].append(
+                        CodeRelationship(
+                            source_id=chunk_id,
+                            target_id=module_id,
+                            relationship_type="imports",
+                        )
+                    )
+
+        # Process parent-child (contains) relationships
+        if hasattr(chunk, "parent_chunk_id") and chunk.parent_chunk_id:
+            relationships["CONTAINS"].append(
+                CodeRelationship(
+                    source_id=chunk.parent_chunk_id,
+                    target_id=chunk_id,
+                    relationship_type="contains",
+                )
+            )
+
+        return entity, relationships
+
     async def _process_chunk(self, chunk: CodeChunk, stats: dict[str, int]):
         """Extract entities and relationships from a chunk.
+
+        DEPRECATED: Use _extract_code_entity for batch processing.
+        This method is kept for backwards compatibility.
 
         Args:
             chunk: Code chunk to process
@@ -411,8 +505,148 @@ class KGBuilder:
 
         return None
 
+    def _extract_doc_sections(
+        self, chunk: CodeChunk
+    ) -> tuple[list[DocSection], set[str], dict[str, list[CodeRelationship]]]:
+        """Extract doc sections, tags, and relationships from text chunk (no DB writes).
+
+        Args:
+            chunk: Text chunk to process
+
+        Returns:
+            Tuple of (doc_sections, tags, relationships_by_type)
+        """
+        doc_sections: list[DocSection] = []
+        tags: set[str] = set()
+        relationships: dict[str, list[CodeRelationship]] = {
+            "FOLLOWS": [],
+            "HAS_TAG": [],
+            "DEMONSTRATES": [],
+            "LINKS_TO": [],
+            "REFERENCES": [],
+        }
+
+        # Extract frontmatter metadata
+        frontmatter = self._extract_frontmatter(chunk.content)
+        tags_from_frontmatter = []
+        related_docs = []
+
+        if frontmatter:
+            tags_data = frontmatter.get("tags", [])
+            if isinstance(tags_data, list):
+                tags_from_frontmatter = tags_data
+            elif isinstance(tags_data, str):
+                tags_from_frontmatter = [tags_data]
+
+            related = frontmatter.get("related", [])
+            if isinstance(related, list):
+                related_docs = related
+            elif isinstance(related, str):
+                related_docs = [related]
+
+        # Extract code blocks for DEMONSTRATES relationships
+        code_blocks = self._extract_code_blocks(chunk.content)
+        languages = set()
+        for block in code_blocks:
+            lang = block["language"]
+            if lang and lang != "text":
+                languages.add(lang)
+
+        # Extract markdown headers
+        headers = self._extract_headers(chunk.content, chunk.start_line)
+
+        if not headers:
+            return doc_sections, tags, relationships
+
+        # Create doc sections and relationships
+        prev_section_id = None
+        for header in headers:
+            section_id = f"doc:{chunk.chunk_id}:{header['line']}"
+
+            doc_section = DocSection(
+                id=section_id,
+                name=header["title"],
+                file_path=str(chunk.file_path),
+                level=header["level"],
+                line_start=header["line"],
+                line_end=header.get("end_line", chunk.end_line),
+                doc_type="section",
+            )
+            doc_sections.append(doc_section)
+
+            # Add frontmatter tags
+            for tag in tags_from_frontmatter:
+                tags.add(tag)
+                relationships["HAS_TAG"].append(
+                    CodeRelationship(
+                        source_id=section_id,
+                        target_id=f"tag:{tag}",
+                        relationship_type="has_tag",
+                    )
+                )
+
+            # Add language tags for code blocks
+            for lang in languages:
+                tags.add(f"lang:{lang}")
+                relationships["DEMONSTRATES"].append(
+                    CodeRelationship(
+                        source_id=section_id,
+                        target_id=f"tag:lang:{lang}",
+                        relationship_type="demonstrates",
+                    )
+                )
+
+            # Add LINKS_TO relationships
+            for rel_doc in related_docs:
+                relationships["LINKS_TO"].append(
+                    CodeRelationship(
+                        source_id=section_id,
+                        target_id=f"doc:{rel_doc}",
+                        relationship_type="links_to",
+                    )
+                )
+
+            # Add FOLLOWS relationship
+            if prev_section_id:
+                relationships["FOLLOWS"].append(
+                    CodeRelationship(
+                        source_id=prev_section_id,
+                        target_id=section_id,
+                        relationship_type="follows",
+                    )
+                )
+
+            # Extract code references
+            section_content = self._extract_section_content(
+                chunk.content, header["line"] - chunk.start_line
+            )
+            code_refs = self._extract_code_refs(section_content)
+
+            # Use NLP-extracted code refs if available
+            if chunk.nlp_code_refs:
+                code_refs.extend(chunk.nlp_code_refs)
+
+            # Create REFERENCES relationships
+            for ref in code_refs:
+                target_id = self._resolve_entity(ref)
+                if target_id:
+                    relationships["REFERENCES"].append(
+                        CodeRelationship(
+                            source_id=section_id,
+                            target_id=target_id,
+                            relationship_type="references",
+                        )
+                    )
+
+            prev_section_id = section_id
+
+        return doc_sections, tags, relationships
+
     async def _process_text_chunk(self, chunk: CodeChunk, stats: dict[str, int]):
         """Extract documentation sections and references from text chunk.
+
+        DEPRECATED: Use _extract_doc_sections for batch processing.
+        This method is kept for backwards compatibility.
 
         Args:
             chunk: Text chunk to process
@@ -1171,7 +1405,11 @@ class KGBuilder:
         logger.info(f"✓ Created {authored_count} AUTHORED relationships")
 
     async def build_from_database(
-        self, database, show_progress: bool = True, limit: int | None = None
+        self,
+        database,
+        show_progress: bool = True,
+        limit: int | None = None,
+        skip_documents: bool = False,
     ) -> dict[str, int]:
         """Build graph from all chunks in database.
 
@@ -1179,6 +1417,7 @@ class KGBuilder:
             database: VectorDatabase instance
             show_progress: Whether to show progress bar
             limit: Optional limit on number of chunks to process (for testing)
+            skip_documents: Skip expensive DOCUMENTS relationship extraction (default False)
 
         Returns:
             Statistics dictionary
@@ -1220,7 +1459,9 @@ class KGBuilder:
         logger.info(f"Loaded {len(chunks)} chunks for processing")
 
         # Build graph from chunks
-        stats = await self.build_from_chunks(chunks, show_progress=show_progress)
+        stats = await self.build_from_chunks(
+            chunks, show_progress=show_progress, skip_documents=skip_documents
+        )
 
         # Extract work entities from git (if available)
         logger.info("Extracting work entities from git...")
@@ -1244,25 +1485,19 @@ class KGBuilder:
             if entity_files:
                 await self._extract_authorship_fast(entity_files, persons, stats)
 
-            # Add PART_OF relationships for all code entities
+            # Add PART_OF relationships for all code entities (batch)
             if project:
                 logger.info("Creating PART_OF relationships...")
-                part_of_count = 0
                 try:
                     result = self.kg.conn.execute("MATCH (e:CodeEntity) RETURN e.id")
                     entity_ids = []
                     while result.has_next():
                         entity_ids.append(result.get_next()[0])
 
-                    for entity_id in entity_ids:
-                        try:
-                            await self.kg.add_part_of_relationship(
-                                entity_id, project.id
-                            )
-                            part_of_count += 1
-                        except Exception:
-                            pass
-
+                    # Use batch insert for PART_OF
+                    part_of_count = await self.kg.add_part_of_batch(
+                        entity_ids, project.id
+                    )
                     stats["part_of"] = part_of_count
                     logger.info(f"✓ Created {part_of_count} PART_OF relationships")
                 except Exception as e:
