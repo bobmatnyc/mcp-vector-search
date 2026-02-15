@@ -61,6 +61,10 @@ class FunctionExtractor(NodeExtractorBase):
         # Extract return type
         return_type = MetadataExtractor.extract_return_type(node)
 
+        # Extract function calls within this function
+        source_code = node.text  # Already bytes from tree-sitter
+        calls = MetadataExtractor.extract_function_calls(node, source_code)
+
         chunk = self.base_parser._create_chunk(
             content=content,
             file_path=file_path,
@@ -74,6 +78,7 @@ class FunctionExtractor(NodeExtractorBase):
             decorators=decorators,
             parameters=parameters,
             return_type=return_type,
+            calls=calls,
             chunk_depth=2 if class_name else 1,
         )
         chunks.append(chunk)
@@ -113,6 +118,10 @@ class ClassExtractor(NodeExtractorBase):
         # Extract decorators
         decorators = MetadataExtractor.extract_decorators(node, lines)
 
+        # Extract base classes
+        source_code = node.text  # Already bytes from tree-sitter
+        inherits_from = MetadataExtractor.extract_class_bases(node, source_code)
+
         chunk = self.base_parser._create_chunk(
             content=content,
             file_path=file_path,
@@ -123,6 +132,7 @@ class ClassExtractor(NodeExtractorBase):
             docstring=docstring,
             complexity_score=complexity,
             decorators=decorators,
+            inherits_from=inherits_from,
             chunk_depth=1,
         )
         chunks.append(chunk)
@@ -154,12 +164,18 @@ class ModuleExtractor(NodeExtractorBase):
 
         if module_lines:
             content = "\n".join(module_lines)
+
+            # Extract structured import data
+            source_code = node.text  # Already bytes from tree-sitter
+            imports = MetadataExtractor.extract_imports(node, source_code)
+
             return self.base_parser._create_chunk(
                 content=content,
                 file_path=file_path,
                 start_line=1,
                 end_line=len(module_lines),
                 chunk_type="imports",
+                imports=imports,
             )
 
         return None

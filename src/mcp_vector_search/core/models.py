@@ -21,6 +21,8 @@ class CodeChunk:
     class_name: str | None = None
     docstring: str | None = None
     imports: list[str] = None
+    calls: list[str] = None  # Function/method calls within this chunk
+    inherits_from: list[str] = None  # Base classes (for class chunks)
 
     # Enhancement 1: Complexity scoring
     complexity_score: float = 0.0
@@ -45,6 +47,10 @@ class CodeChunk:
         """Initialize default values and generate chunk ID."""
         if self.imports is None:
             self.imports = []
+        if self.calls is None:
+            self.calls = []
+        if self.inherits_from is None:
+            self.inherits_from = []
         if self.child_chunk_ids is None:
             self.child_chunk_ids = []
         if self.decorators is None:
@@ -88,6 +94,8 @@ class CodeChunk:
             "class_name": self.class_name,
             "docstring": self.docstring,
             "imports": self.imports,
+            "calls": self.calls,
+            "inherits_from": self.inherits_from,
             "complexity_score": self.complexity_score,
             "chunk_id": self.chunk_id,
             "parent_chunk_id": self.parent_chunk_id,
@@ -115,6 +123,8 @@ class CodeChunk:
             class_name=data.get("class_name"),
             docstring=data.get("docstring"),
             imports=data.get("imports", []),
+            calls=data.get("calls", []),
+            inherits_from=data.get("inherits_from", []),
             complexity_score=data.get("complexity_score", 0.0),
             chunk_id=data.get("chunk_id"),
             parent_chunk_id=data.get("parent_chunk_id"),
