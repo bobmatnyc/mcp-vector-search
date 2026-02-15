@@ -43,6 +43,11 @@ class CodeChunk:
     subproject_name: str | None = None  # "ewtn-plus-foundation"
     subproject_path: str | None = None  # Relative path from root
 
+    # Enhancement 6: NLP-extracted entities (from docstrings/comments)
+    nlp_keywords: list[str] = None  # Keywords extracted via YAKE
+    nlp_code_refs: list[str] = None  # Backtick code references
+    nlp_technical_terms: list[str] = None  # CamelCase, ACRONYMS, snake_case
+
     def __post_init__(self) -> None:
         """Initialize default values and generate chunk ID."""
         if self.imports is None:
@@ -59,6 +64,12 @@ class CodeChunk:
             self.parameters = []
         if self.type_annotations is None:
             self.type_annotations = {}
+        if self.nlp_keywords is None:
+            self.nlp_keywords = []
+        if self.nlp_code_refs is None:
+            self.nlp_code_refs = []
+        if self.nlp_technical_terms is None:
+            self.nlp_technical_terms = []
 
         # Generate chunk ID if not provided
         if self.chunk_id is None:
@@ -107,6 +118,9 @@ class CodeChunk:
             "type_annotations": self.type_annotations,
             "subproject_name": self.subproject_name,
             "subproject_path": self.subproject_path,
+            "nlp_keywords": self.nlp_keywords,
+            "nlp_code_refs": self.nlp_code_refs,
+            "nlp_technical_terms": self.nlp_technical_terms,
         }
 
     @classmethod
@@ -136,6 +150,9 @@ class CodeChunk:
             type_annotations=data.get("type_annotations", {}),
             subproject_name=data.get("subproject_name"),
             subproject_path=data.get("subproject_path"),
+            nlp_keywords=data.get("nlp_keywords", []),
+            nlp_code_refs=data.get("nlp_code_refs", []),
+            nlp_technical_terms=data.get("nlp_technical_terms", []),
         )
 
 

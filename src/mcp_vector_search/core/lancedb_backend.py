@@ -317,6 +317,23 @@ class LanceVectorDatabase:
                     "return_type": chunk.return_type or "",
                     "subproject_name": chunk.subproject_name or "",
                     "subproject_path": chunk.subproject_path or "",
+                    # NLP-extracted entities
+                    "nlp_keywords": (
+                        ",".join(chunk.nlp_keywords)
+                        if hasattr(chunk, "nlp_keywords") and chunk.nlp_keywords
+                        else ""
+                    ),
+                    "nlp_code_refs": (
+                        ",".join(chunk.nlp_code_refs)
+                        if hasattr(chunk, "nlp_code_refs") and chunk.nlp_code_refs
+                        else ""
+                    ),
+                    "nlp_technical_terms": (
+                        ",".join(chunk.nlp_technical_terms)
+                        if hasattr(chunk, "nlp_technical_terms")
+                        and chunk.nlp_technical_terms
+                        else ""
+                    ),
                 }
 
                 # Add structural metrics if provided

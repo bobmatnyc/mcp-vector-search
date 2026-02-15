@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ..config.constants import DEFAULT_CHUNK_SIZE
 from ..core.models import CodeChunk
+from ..core.nlp_extractor import NLPExtractor
 from . import utils
 
 
@@ -18,6 +19,7 @@ class BaseParser(ABC):
             language: Programming language name
         """
         self.language = language
+        self._nlp_extractor = NLPExtractor(max_keywords=10)
 
     @abstractmethod
     async def parse_file(self, file_path: Path) -> list[CodeChunk]:
@@ -208,6 +210,17 @@ class BaseParser(ABC):
         Returns:
             CodeChunk instance
         """
+        # Extract NLP entities from docstring
+        nlp_keywords = []
+        nlp_code_refs = []
+        nlp_technical_terms = []
+
+        if docstring and len(docstring.strip()) > 10:
+            entities = self._nlp_extractor.extract(docstring)
+            nlp_keywords = entities.keywords
+            nlp_code_refs = entities.code_references
+            nlp_technical_terms = entities.technical_terms
+
         return CodeChunk(
             content=content.strip(),
             file_path=file_path,
@@ -228,6 +241,9 @@ class BaseParser(ABC):
             imports=imports or [],
             calls=calls or [],
             inherits_from=inherits_from or [],
+            nlp_keywords=nlp_keywords,
+            nlp_code_refs=nlp_code_refs,
+            nlp_technical_terms=nlp_technical_terms,
         )
 
     def _split_into_lines(self, content: str) -> list[str]:

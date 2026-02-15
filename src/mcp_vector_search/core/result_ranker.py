@@ -19,6 +19,10 @@ class ResultRanker:
     _PENALTY_TEST_FILE = -0.02
     _PENALTY_DEEP_PATH = -0.01
     _PENALTY_BOILERPLATE = -0.15
+    # NLP entity match boosts
+    _BOOST_NLP_KEYWORD = 0.02  # Per keyword match
+    _BOOST_NLP_CODE_REF = 0.03  # Per code reference match
+    _BOOST_NLP_TECHNICAL_TERM = 0.02  # Per technical term match
 
     def __init__(self) -> None:
         """Initialize result ranker."""
@@ -122,6 +126,9 @@ class ResultRanker:
                 )
                 score += boilerplate_penalty
 
+            # Factor 8: NLP entity matches (boost results with matching NLP-extracted terms)
+            score += self._calculate_nlp_boost(result, query_words)
+
             # Ensure score doesn't exceed 1.0
             result.similarity_score = min(1.0, score)
 
@@ -133,3 +140,69 @@ class ResultRanker:
             result.rank = i + 1
 
         return results
+
+    def _calculate_nlp_boost(
+        self, result: SearchResult, query_words: set[str]
+    ) -> float:
+        """Calculate boost based on NLP entity matches.
+
+        Args:
+            result: Search result to boost
+            query_words: Set of query words (lowercased)
+
+        Returns:
+            Boost score to add to similarity
+        """
+        boost = 0.0
+
+        # Check if result has NLP attributes (from metadata)
+        if not hasattr(result, "content"):
+            return boost
+
+        # Parse NLP fields from metadata (stored as comma-separated strings in LanceDB)
+        # These are passed through from the database as metadata attributes
+        nlp_keywords = []
+        nlp_code_refs = []
+        nlp_technical_terms = []
+
+        # Try to get from metadata dict if present
+        if hasattr(result, "__dict__"):
+            metadata = result.__dict__
+            if "nlp_keywords" in metadata and metadata["nlp_keywords"]:
+                nlp_keywords = (
+                    metadata["nlp_keywords"].split(",")
+                    if isinstance(metadata["nlp_keywords"], str)
+                    else metadata["nlp_keywords"]
+                )
+            if "nlp_code_refs" in metadata and metadata["nlp_code_refs"]:
+                nlp_code_refs = (
+                    metadata["nlp_code_refs"].split(",")
+                    if isinstance(metadata["nlp_code_refs"], str)
+                    else metadata["nlp_code_refs"]
+                )
+            if "nlp_technical_terms" in metadata and metadata["nlp_technical_terms"]:
+                nlp_technical_terms = (
+                    metadata["nlp_technical_terms"].split(",")
+                    if isinstance(metadata["nlp_technical_terms"], str)
+                    else metadata["nlp_technical_terms"]
+                )
+
+        # Boost for keyword matches
+        for keyword in nlp_keywords:
+            keyword_lower = keyword.lower()
+            if any(word in keyword_lower for word in query_words):
+                boost += self._BOOST_NLP_KEYWORD
+
+        # Boost for code reference matches (stronger signal)
+        for ref in nlp_code_refs:
+            ref_lower = ref.lower()
+            if any(word in ref_lower for word in query_words):
+                boost += self._BOOST_NLP_CODE_REF
+
+        # Boost for technical term matches
+        for term in nlp_technical_terms:
+            term_lower = term.lower()
+            if any(word in term_lower for word in query_words):
+                boost += self._BOOST_NLP_TECHNICAL_TERM
+
+        return boost
