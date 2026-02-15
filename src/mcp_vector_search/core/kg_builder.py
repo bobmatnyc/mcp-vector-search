@@ -133,12 +133,32 @@ class KGBuilder:
                         - stats["entities"]
                         - stats["doc_sections"],
                     )
+
+                # Extract DOCUMENTS relationships after all entities are processed
+                if text_chunks and code_chunks:
+                    progress.update(
+                        task,
+                        description="[cyan]Extracting DOCUMENTS relationships...[/cyan]",
+                    )
+                    await self._extract_documents_relationships(text_chunks, stats)
+                    progress.update(
+                        task,
+                        entities=stats["entities"] + stats["doc_sections"],
+                        relationships=sum(stats.values())
+                        - stats["entities"]
+                        - stats["doc_sections"],
+                    )
         else:
             for chunk in code_chunks:
                 await self._process_chunk(chunk, stats)
 
             for chunk in text_chunks:
                 await self._process_text_chunk(chunk, stats)
+
+            # Extract DOCUMENTS relationships after all entities are processed
+            if text_chunks and code_chunks:
+                logger.info("Extracting DOCUMENTS relationships...")
+                await self._extract_documents_relationships(text_chunks, stats)
 
         logger.info(
             f"✓ Knowledge graph built: {stats['entities']} code entities, "
@@ -538,6 +558,179 @@ class KGBuilder:
                 }
             )
         return blocks
+
+    def _compute_documents_score(
+        self,
+        doc_name: str,
+        doc_content: str,
+        doc_file_path: str,
+        entity_name: str,
+        entity_type: str,
+        entity_file_path: str,
+    ) -> float:
+        """Score doc-entity semantic relevance (0.0-1.0).
+
+        Scoring:
+        - 0.4: Entity name in doc title
+        - 0.2: Entity mentioned 2+ times in content
+        - 0.3: README.md in same directory as entity
+        - 0.1: Contextual keywords match entity type
+
+        Args:
+            doc_name: Documentation section title
+            doc_content: Documentation section content
+            doc_file_path: Documentation file path
+            entity_name: Code entity name
+            entity_type: Code entity type (function, class, module)
+            entity_file_path: Code entity file path
+
+        Returns:
+            Relevance score between 0.0 and 1.0
+        """
+        score = 0.0
+        entity_lower = entity_name.lower()
+        doc_name_lower = doc_name.lower()
+        doc_content_lower = doc_content.lower()
+
+        # Entity name in doc title (strong signal)
+        if entity_lower in doc_name_lower:
+            score += 0.4
+
+        # Multiple mentions in content
+        mentions = doc_content_lower.count(entity_lower)
+        if mentions >= 2:
+            score += 0.2
+        elif mentions == 1:
+            score += 0.1
+
+        # File proximity (README.md for module)
+        if self._is_readme_for_directory(doc_file_path, entity_file_path):
+            score += 0.3
+
+        # Contextual keywords
+        type_keywords = {
+            "function": ["function", "method", "returns", "parameters", "args"],
+            "method": ["function", "method", "returns", "parameters", "args"],
+            "class": ["class", "instance", "object", "inherits", "extends"],
+            "module": ["module", "package", "import", "library"],
+        }
+        keywords = type_keywords.get(entity_type, [])
+        if any(kw in doc_content_lower for kw in keywords):
+            score += 0.1
+
+        return min(score, 1.0)
+
+    def _is_readme_for_directory(self, doc_path: str, code_path: str) -> bool:
+        """Check if doc is README for code's directory.
+
+        Args:
+            doc_path: Documentation file path
+            code_path: Code file path
+
+        Returns:
+            True if doc is README in same or parent directory of code
+        """
+        doc_p = Path(doc_path)
+        code_p = Path(code_path)
+
+        # README.md in same or parent directory of code
+        if doc_p.name.lower() in ("readme.md", "readme.rst", "readme.txt"):
+            code_dir = code_p.parent
+            doc_dir = doc_p.parent
+            return doc_dir == code_dir or doc_dir == code_dir.parent
+
+        return False
+
+    async def _extract_documents_relationships(
+        self,
+        doc_chunks: list[CodeChunk],
+        stats: dict[str, int],
+    ) -> None:
+        """Create DOCUMENTS edges between doc sections and code entities.
+
+        Args:
+            doc_chunks: Text/documentation chunks
+            stats: Statistics dict to update
+        """
+        threshold = 0.5
+        documents_count = 0
+
+        # Get all code entity info from KG
+        entity_info = []
+        try:
+            result = self.kg.conn.execute(
+                "MATCH (e:CodeEntity) RETURN e.id, e.name, e.entity_type, e.file_path"
+            )
+            while result.has_next():
+                row = result.get_next()
+                entity_info.append((row[0], row[1], row[2], row[3]))
+        except Exception as e:
+            logger.debug(f"Failed to fetch code entities: {e}")
+            return
+
+        logger.info(
+            f"Matching {len(doc_chunks)} doc sections against {len(entity_info)} code entities..."
+        )
+
+        # Extract headers from doc chunks and create doc section IDs
+        doc_sections = []
+        for chunk in doc_chunks:
+            headers = self._extract_headers(chunk.content, chunk.start_line)
+            for header in headers:
+                section_id = f"doc:{chunk.chunk_id}:{header['line']}"
+                section_content = self._extract_section_content(
+                    chunk.content, header["line"] - chunk.start_line
+                )
+                doc_sections.append(
+                    {
+                        "id": section_id,
+                        "name": header["title"],
+                        "content": section_content,
+                        "file_path": str(chunk.file_path),
+                    }
+                )
+
+        # Match doc sections against code entities
+        for doc_section in doc_sections:
+            doc_id = doc_section["id"]
+            doc_name = doc_section["name"]
+            doc_content = doc_section["content"]
+            doc_file = doc_section["file_path"]
+
+            for entity_id, entity_name, entity_type, entity_file in entity_info:
+                # Skip if entity name is too short or generic
+                if len(entity_name) < 3 or entity_name in (
+                    "__init__",
+                    "main",
+                    "run",
+                    "test",
+                ):
+                    continue
+
+                score = self._compute_documents_score(
+                    doc_name,
+                    doc_content,
+                    doc_file,
+                    entity_name,
+                    entity_type,
+                    entity_file or "",
+                )
+
+                if score >= threshold:
+                    rel = CodeRelationship(
+                        source_id=doc_id,
+                        target_id=entity_id,
+                        relationship_type="documents",
+                        weight=score,
+                    )
+                    try:
+                        await self.kg.add_relationship(rel)
+                        documents_count += 1
+                    except Exception as e:
+                        logger.debug(f"Failed to add DOCUMENTS relationship: {e}")
+
+        stats["documents"] = documents_count
+        logger.info(f"✓ Created {documents_count} DOCUMENTS relationships")
 
     async def build_from_database(
         self, database, show_progress: bool = True, limit: int | None = None
