@@ -563,13 +563,54 @@ class KnowledgeGraph:
             logger.error(f"Failed to add relationship {rel_table}: {e}")
             raise
 
+    async def find_entity_by_name(self, name: str) -> str | None:
+        """Find entity ID by name (case-insensitive partial match).
+
+        Args:
+            name: Entity name or partial name
+
+        Returns:
+            Entity ID if found, None otherwise
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Try exact match first
+            result = self.conn.execute(
+                "MATCH (e:CodeEntity) WHERE e.name = $name RETURN e.id LIMIT 1",
+                {"name": name},
+            )
+            if result.has_next():
+                return result.get_next()[0]
+
+            # Try case-insensitive contains match
+            # Note: Kuzu doesn't have strlen/length for strings in ORDER BY,
+            # so we just return first match
+            result = self.conn.execute(
+                """
+                MATCH (e:CodeEntity)
+                WHERE lower(e.name) CONTAINS lower($name)
+                RETURN e.id
+                LIMIT 1
+            """,
+                {"name": name},
+            )
+            if result.has_next():
+                return result.get_next()[0]
+
+            return None
+        except Exception as e:
+            logger.error(f"Failed to find entity by name {name}: {e}")
+            return None
+
     async def find_related(
-        self, entity_id: str, max_hops: int = 2
+        self, entity_name_or_id: str, max_hops: int = 2
     ) -> list[dict[str, Any]]:
         """Find entities related within N hops.
 
         Args:
-            entity_id: Starting entity ID
+            entity_name_or_id: Starting entity name or ID
             max_hops: Maximum number of hops (default: 2)
 
         Returns:
@@ -577,6 +618,19 @@ class KnowledgeGraph:
         """
         if not self._initialized:
             await self.initialize()
+
+        # Resolve name to ID if needed
+        entity_id = entity_name_or_id
+        if not entity_name_or_id.startswith(
+            ("entity:", "module:", "class:", "function:")
+        ):
+            resolved = await self.find_entity_by_name(entity_name_or_id)
+            if resolved:
+                entity_id = resolved
+                logger.debug(f"Resolved '{entity_name_or_id}' to '{entity_id}'")
+            else:
+                logger.warning(f"Could not find entity matching '{entity_name_or_id}'")
+                return []
 
         try:
             result = self.conn.execute(
@@ -609,17 +663,32 @@ class KnowledgeGraph:
             logger.error(f"Failed to find related entities for {entity_id}: {e}")
             return []
 
-    async def get_call_graph(self, function_id: str) -> list[dict[str, Any]]:
+    async def get_call_graph(self, function_name_or_id: str) -> list[dict[str, Any]]:
         """Get functions called by or calling a function.
 
         Args:
-            function_id: Function entity ID
+            function_name_or_id: Function name or entity ID
 
         Returns:
             List of call relationships
         """
         if not self._initialized:
             await self.initialize()
+
+        # Resolve name to ID if needed
+        function_id = function_name_or_id
+        if not function_name_or_id.startswith(
+            ("entity:", "module:", "class:", "function:")
+        ):
+            resolved = await self.find_entity_by_name(function_name_or_id)
+            if resolved:
+                function_id = resolved
+                logger.debug(f"Resolved '{function_name_or_id}' to '{function_id}'")
+            else:
+                logger.warning(
+                    f"Could not find function matching '{function_name_or_id}'"
+                )
+                return []
 
         try:
             result = self.conn.execute(
@@ -643,17 +712,30 @@ class KnowledgeGraph:
             logger.error(f"Failed to get call graph for {function_id}: {e}")
             return []
 
-    async def get_inheritance_tree(self, class_id: str) -> list[dict[str, Any]]:
+    async def get_inheritance_tree(self, class_name_or_id: str) -> list[dict[str, Any]]:
         """Get class hierarchy (parents and children).
 
         Args:
-            class_id: Class entity ID
+            class_name_or_id: Class name or entity ID
 
         Returns:
             List of inheritance relationships
         """
         if not self._initialized:
             await self.initialize()
+
+        # Resolve name to ID if needed
+        class_id = class_name_or_id
+        if not class_name_or_id.startswith(
+            ("entity:", "module:", "class:", "function:")
+        ):
+            resolved = await self.find_entity_by_name(class_name_or_id)
+            if resolved:
+                class_id = resolved
+                logger.debug(f"Resolved '{class_name_or_id}' to '{class_id}'")
+            else:
+                logger.warning(f"Could not find class matching '{class_name_or_id}'")
+                return []
 
         try:
             result = self.conn.execute(
