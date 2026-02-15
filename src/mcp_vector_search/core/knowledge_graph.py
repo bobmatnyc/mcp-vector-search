@@ -910,6 +910,33 @@ class KnowledgeGraph:
         if not self._initialized:
             await self.initialize()
 
+        # Generic entity names that should require exact match
+        # This prevents queries like "search" from matching 1,260+ results
+        generic_names = {
+            "search",
+            "main",
+            "test",
+            "config",
+            "get",
+            "set",
+            "run",
+            "init",
+            "data",
+            "name",
+            "value",
+            "key",
+            "add",
+            "delete",
+            "update",
+            "create",
+            "read",
+            "write",
+            "load",
+            "save",
+            "process",
+            "handle",
+        }
+
         try:
             # Try exact match first
             result = self.conn.execute(
@@ -919,7 +946,14 @@ class KnowledgeGraph:
             if result.has_next():
                 return result.get_next()[0]
 
-            # Try case-insensitive contains match
+            # For generic names, require exact match (no partial matching)
+            if name.lower() in generic_names:
+                logger.debug(
+                    f"Generic name '{name}' requires exact match, no partial matches"
+                )
+                return None
+
+            # Try case-insensitive contains match for non-generic names
             # Note: Kuzu doesn't have strlen/length for strings in ORDER BY,
             # so we just return first match
             result = self.conn.execute(

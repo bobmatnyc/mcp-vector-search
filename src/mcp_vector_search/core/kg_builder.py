@@ -32,6 +32,90 @@ from .models import CodeChunk
 
 console = Console()
 
+# Generic entity names to exclude from KG (too common to be useful)
+GENERIC_ENTITY_NAMES = {
+    # Python builtins/common
+    "main",
+    "run",
+    "test",
+    "get",
+    "set",
+    "init",
+    "__init__",
+    "__main__",
+    "setup",
+    "config",
+    "name",
+    "value",
+    "data",
+    "result",
+    "results",
+    "item",
+    "items",
+    "key",
+    "keys",
+    "args",
+    "kwargs",
+    "self",
+    "cls",
+    # Single letters
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "i",
+    "j",
+    "k",
+    "n",
+    "x",
+    "y",
+    "z",
+    # Common short names
+    "id",
+    "db",
+    "fn",
+    "cb",
+    "err",
+    "msg",
+    "req",
+    "res",
+    "ctx",
+    "env",
+    # Common verbs (too generic)
+    "add",
+    "delete",
+    "remove",
+    "update",
+    "create",
+    "read",
+    "write",
+    "load",
+    "save",
+    "parse",
+    "process",
+    "handle",
+    "execute",
+    # Common nouns
+    "file",
+    "path",
+    "module",
+    "class",
+    "function",
+    "method",
+    "list",
+    "dict",
+    "string",
+    "int",
+    "bool",
+    "none",
+    # Test-related
+    "tests",
+    "fixture",
+    "mock",
+}
+
 
 class KGBuilder:
     """Build knowledge graph from code chunks.
@@ -51,6 +135,32 @@ class KGBuilder:
         self.kg = kg
         self.project_root = project_root
         self._entity_map: dict[str, str] = {}  # name -> chunk_id mapping
+
+    def _is_generic_entity(self, name: str) -> bool:
+        """Check if entity name is too generic to be useful.
+
+        Args:
+            name: Entity name to check
+
+        Returns:
+            True if entity should be filtered out, False otherwise
+        """
+        if not name:
+            return True
+
+        # Filter very short names (2 chars or less)
+        if len(name) <= 2:
+            return True
+
+        # Filter exact matches (case-insensitive)
+        if name.lower() in GENERIC_ENTITY_NAMES:
+            return True
+
+        # Filter names starting with single underscore (private/internal, but not dunder)
+        if name.startswith("_") and not name.startswith("__"):
+            return True
+
+        return False
 
     async def build_from_chunks(
         self, chunks: list[CodeChunk], show_progress: bool = True
@@ -192,6 +302,11 @@ class KGBuilder:
         # Create entity for this chunk
         chunk_id = chunk.chunk_id or chunk.id
         name = chunk.function_name or chunk.class_name or "module"
+
+        # Skip generic entity names
+        if self._is_generic_entity(name):
+            logger.debug(f"Skipping generic entity: {name}")
+            return
 
         entity = CodeEntity(
             id=chunk_id,
@@ -712,13 +827,8 @@ class KGBuilder:
             doc_file = doc_section["file_path"]
 
             for entity_id, entity_name, entity_type, entity_file in entity_info:
-                # Skip if entity name is too short or generic
-                if len(entity_name) < 3 or entity_name in (
-                    "__init__",
-                    "main",
-                    "run",
-                    "test",
-                ):
+                # Skip generic entity names using centralized filter
+                if self._is_generic_entity(entity_name):
                     continue
 
                 score = self._compute_documents_score(
