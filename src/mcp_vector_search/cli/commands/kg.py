@@ -22,6 +22,9 @@ def build_kg(
         ".", help="Project root directory", exists=True, file_okay=False
     ),
     force: bool = typer.Option(False, help="Force rebuild even if graph exists"),
+    limit: int | None = typer.Option(
+        None, help="Limit number of chunks to process (for testing)"
+    ),
 ):
     """Build knowledge graph from indexed chunks.
 
@@ -31,6 +34,7 @@ def build_kg(
     Example:
         mcp-vector-search kg build
         mcp-vector-search kg build --force
+        mcp-vector-search kg build --limit 100  # Test with 100 chunks
     """
     project_root = project_root.resolve()
 
@@ -72,7 +76,9 @@ def build_kg(
 
         # Build graph
         builder = KGBuilder(kg, project_root)
-        build_stats = await builder.build_from_database(database, show_progress=True)
+        build_stats = await builder.build_from_database(
+            database, show_progress=True, limit=limit
+        )
 
         # Show results
         table = Table(title="Knowledge Graph Statistics")

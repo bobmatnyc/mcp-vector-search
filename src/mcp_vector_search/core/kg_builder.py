@@ -79,13 +79,27 @@ class KGBuilder:
                 TextColumn("[cyan]Building knowledge graph...[/cyan]"),
                 BarColumn(bar_width=40),
                 TaskProgressColumn(),
+                TextColumn(
+                    "[green]{task.fields[entities]} entities, "
+                    "{task.fields[relationships]} relationships"
+                ),
                 console=console,
             ) as progress:
-                task = progress.add_task("kg_build", total=len(relevant_chunks))
+                task = progress.add_task(
+                    "kg_build",
+                    total=len(relevant_chunks),
+                    entities=0,
+                    relationships=0,
+                )
 
                 for chunk in relevant_chunks:
                     await self._process_chunk(chunk, stats)
-                    progress.update(task, advance=1)
+                    progress.update(
+                        task,
+                        advance=1,
+                        entities=stats["entities"],
+                        relationships=sum(stats.values()) - stats["entities"],
+                    )
         else:
             for chunk in relevant_chunks:
                 await self._process_chunk(chunk, stats)
@@ -212,20 +226,53 @@ class KGBuilder:
         return None
 
     async def build_from_database(
-        self, database, show_progress: bool = True
+        self, database, show_progress: bool = True, limit: int | None = None
     ) -> dict[str, int]:
         """Build graph from all chunks in database.
 
         Args:
             database: VectorDatabase instance
             show_progress: Whether to show progress bar
+            limit: Optional limit on number of chunks to process (for testing)
 
         Returns:
             Statistics dictionary
         """
-        # Get all chunks from database
-        logger.info("Loading chunks from database...")
-        chunks = await database.get_all_chunks()
+        # Get chunk count first for progress reporting
+        total_chunks = database.get_chunk_count()
+        logger.info(f"Database has {total_chunks} total chunks")
+
+        # Load chunks with progress reporting
+        if show_progress:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[cyan]Loading chunks from database...[/cyan]"),
+                BarColumn(bar_width=40),
+                TaskProgressColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("loading", total=total_chunks)
+
+                chunks = []
+                for batch in database.iter_chunks_batched(batch_size=5000):
+                    chunks.extend(batch)
+                    progress.update(task, advance=len(batch))
+
+                    # Apply limit if specified
+                    if limit and len(chunks) >= limit:
+                        chunks = chunks[:limit]
+                        progress.update(task, completed=total_chunks)
+                        break
+        else:
+            logger.info("Loading chunks from database...")
+            chunks = []
+            for batch in database.iter_chunks_batched(batch_size=5000):
+                chunks.extend(batch)
+                if limit and len(chunks) >= limit:
+                    chunks = chunks[:limit]
+                    break
+
+        logger.info(f"Loaded {len(chunks)} chunks for processing")
 
         # Build graph
         return await self.build_from_chunks(chunks, show_progress=show_progress)
