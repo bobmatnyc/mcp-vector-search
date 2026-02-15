@@ -11,6 +11,7 @@ from loguru import logger
 from .auto_indexer import AutoIndexer, SearchTriggeredIndexer
 from .database import VectorDatabase
 from .exceptions import RustPanicError, SearchError
+from .knowledge_graph import KnowledgeGraph
 from .models import SearchResult
 from .query_analyzer import QueryAnalyzer
 from .query_processor import QueryProcessor
@@ -38,6 +39,7 @@ class SemanticSearchEngine:
         similarity_threshold: float = 0.3,
         auto_indexer: AutoIndexer | None = None,
         enable_auto_reindex: bool = True,
+        enable_kg: bool = True,
     ) -> None:
         """Initialize semantic search engine.
 
@@ -47,12 +49,14 @@ class SemanticSearchEngine:
             similarity_threshold: Default similarity threshold
             auto_indexer: Optional auto-indexer for semi-automatic reindexing
             enable_auto_reindex: Whether to enable automatic reindexing
+            enable_kg: Whether to enable knowledge graph enhancement
         """
         self.database = database
         self.project_root = project_root
         self.similarity_threshold = similarity_threshold
         self.auto_indexer = auto_indexer
         self.enable_auto_reindex = enable_auto_reindex
+        self.enable_kg = enable_kg
 
         # Initialize search-triggered indexer if auto-indexer is provided
         self.search_triggered_indexer = None
@@ -75,6 +79,10 @@ class SemanticSearchEngine:
         # may not exist yet when SemanticSearchEngine is created
         self._vectors_backend: VectorsBackend | None = None
         self._vectors_backend_checked = False
+
+        # Knowledge graph (lazy initialization)
+        self._kg: KnowledgeGraph | None = None
+        self._kg_checked = False
 
     async def search(
         self,
@@ -120,6 +128,11 @@ class SemanticSearchEngine:
                 self._check_vectors_backend()
                 self._vectors_backend_checked = True
 
+            # Check for knowledge graph on first search
+            if not self._kg_checked:
+                await self._check_knowledge_graph()
+                self._kg_checked = True
+
             # Use VectorsBackend if available, otherwise fall back to ChromaDB
             if self._vectors_backend:
                 results = await self._search_vectors_backend(
@@ -134,6 +147,10 @@ class SemanticSearchEngine:
                     filters=filters,
                     threshold=threshold,
                 )
+
+            # Enhance with knowledge graph context if available
+            if self._kg and self.enable_kg:
+                results = await self._enhance_with_kg(results, query)
 
             # Post-process results
             enhanced_results = []
@@ -501,6 +518,79 @@ class SemanticSearchEngine:
         except Exception as e:
             logger.debug(f"VectorsBackend detection failed: {e}, using legacy search")
             self._vectors_backend = None
+
+    async def _check_knowledge_graph(self) -> None:
+        """Check if knowledge graph is available and initialize if needed.
+
+        This lazily initializes the KG on first search if it exists.
+        """
+        if not self.enable_kg:
+            return
+
+        try:
+            kg_path = self.project_root / ".mcp-vector-search" / "knowledge_graph"
+            if (kg_path / "code_kg").exists():
+                self._kg = KnowledgeGraph(kg_path)
+                await self._kg.initialize()
+                logger.debug("Knowledge graph loaded for search enhancement")
+            else:
+                logger.debug("Knowledge graph not found, skipping KG enhancement")
+        except Exception as e:
+            logger.debug(f"Knowledge graph initialization failed: {e}")
+            self._kg = None
+
+    async def _enhance_with_kg(
+        self, results: list[SearchResult], query: str
+    ) -> list[SearchResult]:
+        """Enhance results with knowledge graph context.
+
+        Boosts results that have related entities matching query terms.
+
+        Args:
+            results: Initial search results
+            query: Search query
+
+        Returns:
+            Enhanced and re-sorted results
+        """
+        if not self._kg:
+            return results
+
+        try:
+            # Extract query terms for matching
+            query_terms = set(query.lower().split())
+
+            for result in results:
+                # Find related entities (1 hop for performance)
+                chunk_id = getattr(result, "chunk_id", None)
+                if not chunk_id:
+                    continue
+
+                try:
+                    related = await self._kg.find_related(chunk_id, max_hops=1)
+
+                    # Boost if related entities match query terms
+                    for rel in related:
+                        rel_name = rel["name"].lower()
+                        if any(term in rel_name for term in query_terms):
+                            # Small boost for KG relationship match
+                            result.similarity_score = min(
+                                1.0, result.similarity_score + 0.02
+                            )
+                            logger.debug(
+                                f"KG boost: {result.file_path} related to {rel['name']}"
+                            )
+
+                except Exception as e:
+                    logger.debug(f"Failed to enhance result with KG: {e}")
+                    continue
+
+            # Re-sort by updated scores
+            return sorted(results, key=lambda r: r.similarity_score, reverse=True)
+
+        except Exception as e:
+            logger.warning(f"KG enhancement failed: {e}")
+            return results
 
     async def _search_vectors_backend(
         self,

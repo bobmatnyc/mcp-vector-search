@@ -134,6 +134,16 @@ from .commands.uninstall import uninstall_app  # noqa: E402
 from .commands.visualize import app as visualize_app  # noqa: E402
 from .commands.wiki import wiki_app  # noqa: E402
 
+# Try importing kg_app with error handling
+try:
+    from .commands.kg import kg_app  # noqa: E402
+
+    _kg_available = True
+except Exception as e:
+    logger.error(f"Failed to import kg command: {e}")
+    _kg_available = False
+    kg_app = None
+
 # ============================================================================
 # MAIN COMMANDS - Clean hierarchy
 # ============================================================================
@@ -205,6 +215,10 @@ app.add_typer(
 app.add_typer(
     wiki_app, name="wiki", help="📚 Generate wiki/ontology of codebase concepts"
 )
+
+# 12.6. KG - Knowledge graph operations
+if _kg_available and kg_app:
+    app.add_typer(kg_app, name="kg", help="📊 Knowledge graph operations")
 
 # 13. HELP - Enhanced help
 # (defined below inline)
