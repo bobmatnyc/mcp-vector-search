@@ -988,13 +988,120 @@ class KGBuilder:
 
         return project
 
-    async def _extract_authorship_from_blame(
+    async def _extract_authorship_fast(
         self,
         code_entities: list[tuple[str, str]],  # (entity_id, file_path)
         persons: dict[str, Person],
         stats: dict,
     ) -> None:
-        """Extract AUTHORED relationships from git blame.
+        """Extract AUTHORED relationships using git log (fast).
+
+        Uses git log --name-only instead of git blame per file.
+        Maps most recent commit author to each file.
+
+        Args:
+            code_entities: List of (entity_id, file_path) tuples
+            persons: Dictionary of person entities
+            stats: Statistics dictionary to update
+        """
+        authored_count = 0
+
+        # Build file -> entity mapping
+        file_to_entities: dict[str, list[str]] = {}
+        for entity_id, file_path in code_entities:
+            if not file_path:
+                continue
+            # Normalize to relative path
+            try:
+                rel_path = Path(file_path).relative_to(self.project_root)
+            except ValueError:
+                rel_path = Path(file_path)
+            rel_str = str(rel_path)
+
+            if rel_str not in file_to_entities:
+                file_to_entities[rel_str] = []
+            file_to_entities[rel_str].append(entity_id)
+
+        # Get file -> author mapping from git log (single command, very fast)
+        # Maps file path -> (person_id, timestamp, sha)
+        file_author_map: dict[str, tuple[str, str, str]] = {}
+
+        try:
+            # Get commits with files in one command
+            result = subprocess.run(
+                ["git", "log", "--format=%H|%an|%ae|%aI", "--name-only", "-n", "500"],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0:
+                logger.warning("git log failed")
+                return
+
+            current_commit = None
+            current_email = None
+            current_time = None
+
+            for line in result.stdout.split("\n"):
+                if "|" in line and line.count("|") == 3:
+                    # Commit line: sha|name|email|time
+                    parts = line.split("|")
+                    current_commit = parts[0]
+                    _ = parts[1]  # author name (unused, we use email)
+                    current_email = parts[2]
+                    current_time = parts[3]
+                elif line.strip() and current_email:
+                    # File line
+                    file_path = line.strip()
+                    if file_path not in file_author_map:
+                        # First (most recent) author for this file
+                        email_hash = self._hash_email(current_email)
+                        person_id = f"person:{email_hash}"
+                        file_author_map[file_path] = (
+                            person_id,
+                            current_time,
+                            current_commit,
+                        )
+
+            logger.info(f"Mapped {len(file_author_map)} files to authors from git log")
+
+        except subprocess.TimeoutExpired:
+            logger.warning("git log timed out")
+            return
+        except Exception as e:
+            logger.warning(f"git log failed: {e}")
+            return
+
+        # Create AUTHORED relationships
+        for file_path, entity_ids in file_to_entities.items():
+            if file_path in file_author_map:
+                person_id, timestamp, commit_sha = file_author_map[file_path]
+
+                if person_id in persons:
+                    for entity_id in entity_ids[:5]:  # Limit per file
+                        try:
+                            await self.kg.add_authored_relationship(
+                                person_id, entity_id, timestamp, commit_sha, 0
+                            )
+                            authored_count += 1
+                        except Exception:
+                            pass
+
+        stats["authored"] = authored_count
+        logger.info(f"✓ Created {authored_count} AUTHORED relationships")
+
+    async def _extract_authorship_from_blame_detailed(
+        self,
+        code_entities: list[tuple[str, str]],  # (entity_id, file_path)
+        persons: dict[str, Person],
+        stats: dict,
+    ) -> None:
+        """Extract AUTHORED relationships from git blame (detailed, per-line).
+
+        This is the slower, more accurate version that uses git blame per file.
+        Kept for reference - use _extract_authorship_fast for production.
 
         Args:
             code_entities: List of (entity_id, file_path) tuples
@@ -1135,7 +1242,7 @@ class KGBuilder:
                 logger.debug(f"Failed to fetch entity file paths: {e}")
 
             if entity_files:
-                await self._extract_authorship_from_blame(entity_files, persons, stats)
+                await self._extract_authorship_fast(entity_files, persons, stats)
 
             # Add PART_OF relationships for all code entities
             if project:
