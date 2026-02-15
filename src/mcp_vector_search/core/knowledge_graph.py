@@ -46,14 +46,20 @@ class DocSection:
 
 
 @dataclass
+class Tag:
+    """A tag node for topic clustering in the knowledge graph."""
+
+    id: str  # Unique identifier (tag:name)
+    name: str  # Tag name
+
+
+@dataclass
 class CodeRelationship:
     """An edge in the knowledge graph."""
 
     source_id: str  # Source entity ID
     target_id: str  # Target entity ID
-    relationship_type: (
-        str  # calls, imports, inherits, contains, references, documents, follows
-    )
+    relationship_type: str  # calls, imports, inherits, contains, references, documents, follows, has_tag, demonstrates, links_to
     commit_sha: str | None = None  # Git commit
     weight: float = 1.0  # Relationship strength
 
@@ -144,6 +150,21 @@ class KnowledgeGraph:
             # Table likely exists
             logger.debug(f"DocSection table creation: {e}")
 
+        # Create Tag node table
+        try:
+            self.conn.execute(
+                """
+                CREATE NODE TABLE IF NOT EXISTS Tag (
+                    id STRING PRIMARY KEY,
+                    name STRING
+                )
+            """
+            )
+            logger.debug("Created Tag node table")
+        except Exception as e:
+            # Table likely exists
+            logger.debug(f"Tag table creation: {e}")
+
         # Create relationship tables for code-to-code relationships
         code_relationship_types = ["CALLS", "IMPORTS", "INHERITS", "CONTAINS"]
         for rel_type in code_relationship_types:
@@ -209,6 +230,54 @@ class KnowledgeGraph:
             logger.debug("Created DOCUMENTS relationship table")
         except Exception as e:
             logger.debug(f"DOCUMENTS table creation: {e}")
+
+        # Create HAS_TAG relationship table (DocSection to Tag)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS HAS_TAG (
+                    FROM DocSection TO Tag,
+                    weight DOUBLE DEFAULT 1.0,
+                    commit_sha STRING,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created HAS_TAG relationship table")
+        except Exception as e:
+            logger.debug(f"HAS_TAG table creation: {e}")
+
+        # Create DEMONSTRATES relationship table (DocSection to Tag for languages)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS DEMONSTRATES (
+                    FROM DocSection TO Tag,
+                    weight DOUBLE DEFAULT 1.0,
+                    commit_sha STRING,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created DEMONSTRATES relationship table")
+        except Exception as e:
+            logger.debug(f"DEMONSTRATES table creation: {e}")
+
+        # Create LINKS_TO relationship table (DocSection to DocSection)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS LINKS_TO (
+                    FROM DocSection TO DocSection,
+                    weight DOUBLE DEFAULT 1.0,
+                    commit_sha STRING,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created LINKS_TO relationship table")
+        except Exception as e:
+            logger.debug(f"LINKS_TO table creation: {e}")
 
     async def add_entity(self, entity: CodeEntity):
         """Add or update a code entity.
@@ -287,6 +356,34 @@ class KnowledgeGraph:
             )
         except Exception as e:
             logger.error(f"Failed to add doc section {doc.id}: {e}")
+            raise
+
+    async def add_tag(self, tag_name: str):
+        """Add or update a tag.
+
+        Args:
+            tag_name: Tag name to add/update
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        tag_id = f"tag:{tag_name}"
+
+        try:
+            # Use MERGE to avoid duplicates
+            self.conn.execute(
+                """
+                MERGE (t:Tag {id: $id})
+                ON MATCH SET t.name = $name
+                ON CREATE SET t.name = $name
+            """,
+                {
+                    "id": tag_id,
+                    "name": tag_name,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add tag {tag_name}: {e}")
             raise
 
     async def add_relationship(self, rel: CodeRelationship):
@@ -387,6 +484,70 @@ class KnowledgeGraph:
                     f"""
                     MATCH (d:DocSection {{id: $source}}), (e:CodeEntity {{id: $target}})
                     MERGE (d)-[r:{rel_table}]->(e)
+                    ON MATCH SET r.weight = $weight, r.commit_sha = $commit_sha
+                    ON CREATE SET r.weight = $weight, r.commit_sha = $commit_sha
+                """,
+                    {
+                        "source": rel.source_id,
+                        "target": rel.target_id,
+                        "weight": rel.weight,
+                        "commit_sha": rel.commit_sha or "",
+                    },
+                )
+
+            elif rel_table in ["HAS_TAG", "DEMONSTRATES"]:
+                # Doc-to-tag relationship
+                source_exists = self.conn.execute(
+                    "MATCH (d:DocSection {id: $id}) RETURN d", {"id": rel.source_id}
+                )
+                target_exists = self.conn.execute(
+                    "MATCH (t:Tag {id: $id}) RETURN t", {"id": rel.target_id}
+                )
+
+                if not source_exists.has_next() or not target_exists.has_next():
+                    logger.warning(
+                        f"Skipping relationship {rel_table}: "
+                        f"source or target does not exist"
+                    )
+                    return
+
+                # Create relationship
+                self.conn.execute(
+                    f"""
+                    MATCH (d:DocSection {{id: $source}}), (t:Tag {{id: $target}})
+                    MERGE (d)-[r:{rel_table}]->(t)
+                    ON MATCH SET r.weight = $weight, r.commit_sha = $commit_sha
+                    ON CREATE SET r.weight = $weight, r.commit_sha = $commit_sha
+                """,
+                    {
+                        "source": rel.source_id,
+                        "target": rel.target_id,
+                        "weight": rel.weight,
+                        "commit_sha": rel.commit_sha or "",
+                    },
+                )
+
+            elif rel_table == "LINKS_TO":
+                # Doc-to-doc relationship (explicit links)
+                source_exists = self.conn.execute(
+                    "MATCH (d:DocSection {id: $id}) RETURN d", {"id": rel.source_id}
+                )
+                target_exists = self.conn.execute(
+                    "MATCH (d:DocSection {id: $id}) RETURN d", {"id": rel.target_id}
+                )
+
+                if not source_exists.has_next() or not target_exists.has_next():
+                    logger.warning(
+                        f"Skipping relationship {rel_table}: "
+                        f"source or target does not exist"
+                    )
+                    return
+
+                # Create relationship
+                self.conn.execute(
+                    f"""
+                    MATCH (a:DocSection {{id: $source}}), (b:DocSection {{id: $target}})
+                    MERGE (a)-[r:{rel_table}]->(b)
                     ON MATCH SET r.weight = $weight, r.commit_sha = $commit_sha
                     ON CREATE SET r.weight = $weight, r.commit_sha = $commit_sha
                 """,
@@ -596,6 +757,10 @@ class KnowledgeGraph:
             )
             doc_count = doc_result.get_next()[0] if doc_result.has_next() else 0
 
+            # Count tags
+            tag_result = self.conn.execute("MATCH (t:Tag) RETURN count(t) AS count")
+            tag_count = tag_result.get_next()[0] if tag_result.has_next() else 0
+
             # Count relationships by type
             rel_counts = {}
             for rel_type in [
@@ -606,6 +771,9 @@ class KnowledgeGraph:
                 "REFERENCES",
                 "DOCUMENTS",
                 "FOLLOWS",
+                "HAS_TAG",
+                "DEMONSTRATES",
+                "LINKS_TO",
             ]:
                 try:
                     rel_result = self.conn.execute(
@@ -618,9 +786,10 @@ class KnowledgeGraph:
                     rel_counts[rel_type.lower()] = 0
 
             return {
-                "total_entities": entity_count + doc_count,
+                "total_entities": entity_count + doc_count + tag_count,
                 "code_entities": entity_count,
                 "doc_sections": doc_count,
+                "tags": tag_count,
                 "relationships": rel_counts,
                 "database_path": str(self.db_path / "code_kg"),
             }
@@ -630,6 +799,7 @@ class KnowledgeGraph:
                 "total_entities": 0,
                 "code_entities": 0,
                 "doc_sections": 0,
+                "tags": 0,
                 "relationships": {},
                 "error": str(e),
             }

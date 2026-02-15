@@ -52,6 +52,7 @@ dependencies = [
     "boto3>=1.35.0",
     "yake>=0.4.8",
     "kuzu>=0.7.0",
+    "pyyaml>=6.0",
 ]
 
 [dependency-groups]

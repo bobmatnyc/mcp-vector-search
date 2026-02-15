@@ -7,6 +7,7 @@ and populates the Kuzu knowledge graph.
 import re
 from pathlib import Path
 
+import yaml
 from loguru import logger
 from rich.console import Console
 from rich.progress import (
@@ -75,6 +76,7 @@ class KGBuilder:
         stats = {
             "entities": 0,
             "doc_sections": 0,
+            "tags": 0,
             "calls": 0,
             "imports": 0,
             "inherits": 0,
@@ -82,6 +84,9 @@ class KGBuilder:
             "references": 0,
             "documents": 0,
             "follows": 0,
+            "has_tag": 0,
+            "demonstrates": 0,
+            "links_to": 0,
         }
 
         total_chunks = len(code_chunks) + len(text_chunks)
@@ -264,6 +269,38 @@ class KGBuilder:
             chunk: Text chunk to process
             stats: Statistics dictionary to update
         """
+        # Extract frontmatter metadata
+        frontmatter = self._extract_frontmatter(chunk.content)
+        tags_from_frontmatter = []
+        related_docs = []
+
+        if frontmatter:
+            # Extract tags for HAS_TAG relationships
+            tags = frontmatter.get("tags", [])
+            if isinstance(tags, list):
+                tags_from_frontmatter = tags
+            elif isinstance(tags, str):
+                tags_from_frontmatter = [tags]
+
+            # Extract related docs for LINKS_TO relationships
+            related = frontmatter.get("related", [])
+            if isinstance(related, list):
+                related_docs = related
+            elif isinstance(related, str):
+                related_docs = [related]
+
+        # Extract code blocks for DEMONSTRATES relationships
+        code_blocks = self._extract_code_blocks(chunk.content)
+        languages = set()
+        for block in code_blocks:
+            lang = block["language"]
+            if lang and lang != "text":
+                languages.add(lang)
+
+        # Track unique tags for accurate counting
+        seen_tags = set()
+        seen_langs = set()
+
         # Extract markdown headers from content
         headers = self._extract_headers(chunk.content, chunk.start_line)
 
@@ -289,6 +326,49 @@ class KGBuilder:
             try:
                 await self.kg.add_doc_section(doc_section)
                 stats["doc_sections"] += 1
+
+                # Create HAS_TAG relationships for frontmatter tags
+                for tag in tags_from_frontmatter:
+                    # Add tag entity (only count once per unique tag)
+                    await self.kg.add_tag(tag)
+                    if tag not in seen_tags:
+                        stats["tags"] += 1
+                        seen_tags.add(tag)
+
+                    # Create HAS_TAG relationship
+                    rel = CodeRelationship(
+                        source_id=section_id,
+                        target_id=f"tag:{tag}",
+                        relationship_type="has_tag",
+                    )
+                    await self.kg.add_relationship(rel)
+                    stats["has_tag"] += 1
+
+                # Create DEMONSTRATES relationships for code blocks
+                for lang in languages:
+                    # Add language as a tag (only count once per unique language)
+                    await self.kg.add_tag(f"lang:{lang}")
+                    if lang not in seen_langs:
+                        stats["tags"] += 1
+                        seen_langs.add(lang)
+
+                    rel = CodeRelationship(
+                        source_id=section_id,
+                        target_id=f"tag:lang:{lang}",
+                        relationship_type="demonstrates",
+                    )
+                    await self.kg.add_relationship(rel)
+                    stats["demonstrates"] += 1
+
+                # Create LINKS_TO relationships for related docs
+                for rel_doc in related_docs:
+                    rel = CodeRelationship(
+                        source_id=section_id,
+                        target_id=f"doc:{rel_doc}",
+                        relationship_type="links_to",
+                    )
+                    await self.kg.add_relationship(rel)
+                    stats["links_to"] += 1
 
                 # Create FOLLOWS relationship (reading order)
                 if prev_section_id:
@@ -404,6 +484,60 @@ class KGBuilder:
                 filtered_refs.append(ref)
 
         return list(set(filtered_refs))  # Remove duplicates
+
+    def _extract_frontmatter(self, content: str) -> dict | None:
+        """Extract YAML frontmatter from markdown content.
+
+        Frontmatter format:
+        ---
+        title: "Document Title"
+        tags: [api, rest]
+        related: [other-doc.md]
+        category: guides
+        ---
+
+        Args:
+            content: Markdown content
+
+        Returns:
+            Dictionary of frontmatter data or None if no frontmatter
+        """
+        if not content.startswith("---"):
+            return None
+
+        # Find closing ---
+        end_match = re.search(r"\n---\n", content[3:])
+        if not end_match:
+            return None
+
+        frontmatter_str = content[3 : end_match.start() + 3]
+        try:
+            return yaml.safe_load(frontmatter_str)
+        except yaml.YAMLError as e:
+            logger.debug(f"Failed to parse frontmatter: {e}")
+            return None
+
+    def _extract_code_blocks(self, content: str) -> list[dict]:
+        """Extract fenced code blocks with language info.
+
+        Args:
+            content: Markdown content
+
+        Returns:
+            List of dicts with language, content, and start position
+            Example: [{'language': 'python', 'content': '...', 'start': 10}, ...]
+        """
+        blocks = []
+        pattern = r"```(\w*)\n(.*?)```"
+        for match in re.finditer(pattern, content, re.DOTALL):
+            blocks.append(
+                {
+                    "language": match.group(1) or "text",
+                    "content": match.group(2),
+                    "start": match.start(),
+                }
+            )
+        return blocks
 
     async def build_from_database(
         self, database, show_progress: bool = True, limit: int | None = None
