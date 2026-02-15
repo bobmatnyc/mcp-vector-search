@@ -811,6 +811,10 @@ class SemanticIndexer:
         Returns:
             List of success flags for each file
         """
+        # Initialize backends if not already initialized
+        if self.chunks_backend._db is None:
+            await self.chunks_backend.initialize()
+
         all_chunks: list[CodeChunk] = []
         all_metrics: dict[str, Any] = {}
         file_to_chunks_map: dict[str, tuple[int, int]] = {}
@@ -894,14 +898,56 @@ class SemanticIndexer:
                     )
                 success_flags.append(True)
 
-        # Single database insertion for entire batch
+        # Single database insertion for entire batch using two-phase architecture
         if all_chunks:
             batch_start = time.perf_counter()
             logger.info(
                 f"Batch inserting {len(all_chunks)} chunks from {len(file_paths)} files"
             )
             try:
+                # Phase 1: Store chunks to chunks.lance (fast, durable)
+                # Group chunks by file for proper file_hash tracking
+                for file_path_str, (start_idx, end_idx) in file_to_chunks_map.items():
+                    file_path = Path(file_path_str)
+                    file_chunks = all_chunks[start_idx:end_idx]
+
+                    # Compute file hash for change detection
+                    file_hash = compute_file_hash(file_path)
+                    rel_path = str(file_path.relative_to(self.project_root))
+
+                    # Delete old chunks for this file (already done in line 829, but ensure consistency)
+                    await self.chunks_backend.delete_file_chunks(rel_path)
+
+                    # Convert CodeChunk objects to dicts for storage
+                    chunk_dicts = []
+                    for chunk in file_chunks:
+                        chunk_dict = {
+                            "chunk_id": chunk.chunk_id,
+                            "file_path": rel_path,
+                            "content": chunk.content,
+                            "language": chunk.language,
+                            "start_line": chunk.start_line,
+                            "end_line": chunk.end_line,
+                            "start_char": 0,
+                            "end_char": 0,
+                            "chunk_type": chunk.chunk_type,
+                            "name": chunk.function_name or chunk.class_name or "",
+                            "parent_name": "",
+                            "hierarchy_path": self._build_hierarchy_path(chunk),
+                            "docstring": chunk.docstring or "",
+                            "signature": "",
+                            "complexity": int(chunk.complexity_score),
+                            "token_count": len(chunk.content.split()),
+                        }
+                        chunk_dicts.append(chunk_dict)
+
+                    # Store to chunks.lance
+                    if chunk_dicts:
+                        await self.chunks_backend.add_chunks(chunk_dicts, file_hash)
+
+                # Phase 2: Generate embeddings and store to code_search.lance
                 await self.database.add_chunks(all_chunks, metrics=all_metrics)
+
                 batch_elapsed = time.perf_counter() - batch_start
                 logger.info(
                     f"Successfully indexed {len(all_chunks)} chunks from {sum(success_flags)} files "
@@ -949,6 +995,10 @@ class SemanticIndexer:
         Returns:
             True if file was successfully indexed
         """
+        # Initialize backends if not already initialized
+        if self.chunks_backend._db is None:
+            await self.chunks_backend.initialize()
+
         try:
             # Check if file should be indexed
             if not self.file_discovery.should_index_file(file_path):
@@ -983,7 +1033,41 @@ class SemanticIndexer:
                 chunks_with_hierarchy, file_path
             )
 
-            # Add chunks to database with metrics
+            # Phase 1: Store chunks to chunks.lance (fast, durable)
+            file_hash = compute_file_hash(file_path)
+            rel_path = str(file_path.relative_to(self.project_root))
+
+            # Delete old chunks for this file (already done in line 959, but ensure consistency)
+            await self.chunks_backend.delete_file_chunks(rel_path)
+
+            # Convert CodeChunk objects to dicts for storage
+            chunk_dicts = []
+            for chunk in chunks_with_hierarchy:
+                chunk_dict = {
+                    "chunk_id": chunk.chunk_id,
+                    "file_path": rel_path,
+                    "content": chunk.content,
+                    "language": chunk.language,
+                    "start_line": chunk.start_line,
+                    "end_line": chunk.end_line,
+                    "start_char": 0,
+                    "end_char": 0,
+                    "chunk_type": chunk.chunk_type,
+                    "name": chunk.function_name or chunk.class_name or "",
+                    "parent_name": "",
+                    "hierarchy_path": self._build_hierarchy_path(chunk),
+                    "docstring": chunk.docstring or "",
+                    "signature": "",
+                    "complexity": int(chunk.complexity_score),
+                    "token_count": len(chunk.content.split()),
+                }
+                chunk_dicts.append(chunk_dict)
+
+            # Store to chunks.lance
+            if chunk_dicts:
+                await self.chunks_backend.add_chunks(chunk_dicts, file_hash)
+
+            # Phase 2: Generate embeddings and add chunks to database with metrics
             await self.database.add_chunks(chunks_with_hierarchy, metrics=chunk_metrics)
 
             # Update metadata after successful indexing
@@ -1264,6 +1348,12 @@ class SemanticIndexer:
         Yields:
             Tuple of (file_path, chunks_added, success) for each processed file
         """
+        # Initialize backends if not already initialized
+        if self.chunks_backend._db is None:
+            await self.chunks_backend.initialize()
+        if self.vectors_backend._db is None:
+            await self.vectors_backend.initialize()
+
         # Write version header to error log at start of indexing run
         self.metadata.write_indexing_run_header()
 
@@ -1329,13 +1419,59 @@ class SemanticIndexer:
                         )
                     file_results[file_path] = (0, True)
 
-            # Single database insertion for entire batch
+            # Single database insertion for entire batch using two-phase architecture
             if all_chunks:
                 logger.info(
                     f"Batch inserting {len(all_chunks)} chunks from {len(batch)} files"
                 )
                 try:
+                    # Phase 1: Store chunks to chunks.lance (fast, durable)
+                    # Group chunks by file for proper file_hash tracking
+                    for file_path_str, (
+                        start_idx,
+                        end_idx,
+                    ) in file_to_chunks_map.items():
+                        file_path = Path(file_path_str)
+                        file_chunks = all_chunks[start_idx:end_idx]
+
+                        # Compute file hash for change detection
+                        file_hash = compute_file_hash(file_path)
+                        rel_path = str(file_path.relative_to(self.project_root))
+
+                        # Delete old chunks for this file
+                        await self.chunks_backend.delete_file_chunks(rel_path)
+
+                        # Convert CodeChunk objects to dicts for storage
+                        chunk_dicts = []
+                        for chunk in file_chunks:
+                            chunk_dict = {
+                                "chunk_id": chunk.chunk_id,
+                                "file_path": rel_path,
+                                "content": chunk.content,
+                                "language": chunk.language,
+                                "start_line": chunk.start_line,
+                                "end_line": chunk.end_line,
+                                "start_char": 0,
+                                "end_char": 0,
+                                "chunk_type": chunk.chunk_type,
+                                "name": chunk.function_name or chunk.class_name or "",
+                                "parent_name": "",
+                                "hierarchy_path": self._build_hierarchy_path(chunk),
+                                "docstring": chunk.docstring or "",
+                                "signature": "",
+                                "complexity": int(chunk.complexity_score),
+                                "token_count": len(chunk.content.split()),
+                            }
+                            chunk_dicts.append(chunk_dict)
+
+                        # Store to chunks.lance
+                        if chunk_dicts:
+                            await self.chunks_backend.add_chunks(chunk_dicts, file_hash)
+
+                    # Phase 2: Generate embeddings and store to code_search.lance
+                    # This enables search functionality
                     await self.database.add_chunks(all_chunks, metrics=all_metrics)
+
                     logger.debug(
                         f"Successfully indexed {len(all_chunks)} chunks from batch"
                     )
