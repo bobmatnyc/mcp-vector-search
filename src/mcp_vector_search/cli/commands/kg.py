@@ -91,6 +91,8 @@ def build_kg(
             table.add_row("Code Entities", str(build_stats["entities"]))
             table.add_row("Doc Sections", str(build_stats.get("doc_sections", 0)))
             table.add_row("Tags", str(build_stats.get("tags", 0)))
+            table.add_row("Persons", str(build_stats.get("persons", 0)))
+            table.add_row("Projects", str(build_stats.get("projects", 0)))
             table.add_row("Calls", str(build_stats["calls"]))
             table.add_row("Imports", str(build_stats["imports"]))
             table.add_row("Inherits", str(build_stats["inherits"]))
@@ -101,6 +103,9 @@ def build_kg(
             table.add_row("Has Tag", str(build_stats.get("has_tag", 0)))
             table.add_row("Demonstrates", str(build_stats.get("demonstrates", 0)))
             table.add_row("Links To", str(build_stats.get("links_to", 0)))
+            table.add_row("Authored", str(build_stats.get("authored", 0)))
+            table.add_row("Modified", str(build_stats.get("modified", 0)))
+            table.add_row("Part Of", str(build_stats.get("part_of", 0)))
 
             console.print(table)
             console.print("[green]✓[/green] Knowledge graph built successfully!")
@@ -206,6 +211,10 @@ def kg_stats(
             table.add_row("  Doc Sections", str(stats["doc_sections"]))
         if "tags" in stats:
             table.add_row("  Tags", str(stats["tags"]))
+        if "persons" in stats:
+            table.add_row("  Persons", str(stats["persons"]))
+        if "projects" in stats:
+            table.add_row("  Projects", str(stats["projects"]))
         table.add_row("Database Path", stats["database_path"])
 
         # Add relationship counts

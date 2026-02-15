@@ -4,7 +4,9 @@ This module extracts entities and relationships from code chunks
 and populates the Kuzu knowledge graph.
 """
 
+import hashlib
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -18,7 +20,14 @@ from rich.progress import (
     TextColumn,
 )
 
-from .knowledge_graph import CodeEntity, CodeRelationship, DocSection, KnowledgeGraph
+from .knowledge_graph import (
+    CodeEntity,
+    CodeRelationship,
+    DocSection,
+    KnowledgeGraph,
+    Person,
+    Project,
+)
 from .models import CodeChunk
 
 console = Console()
@@ -87,6 +96,11 @@ class KGBuilder:
             "has_tag": 0,
             "demonstrates": 0,
             "links_to": 0,
+            "persons": 0,
+            "projects": 0,
+            "authored": 0,
+            "modified": 0,
+            "part_of": 0,
         }
 
         total_chunks = len(code_chunks) + len(text_chunks)
@@ -732,6 +746,213 @@ class KGBuilder:
         stats["documents"] = documents_count
         logger.info(f"✓ Created {documents_count} DOCUMENTS relationships")
 
+    def _hash_email(self, email: str) -> str:
+        """Hash email for privacy.
+
+        Args:
+            email: Email address to hash
+
+        Returns:
+            First 16 characters of SHA256 hash
+        """
+        return hashlib.sha256(email.lower().encode()).hexdigest()[:16]
+
+    async def _extract_git_authors(self, stats: dict) -> dict[str, Person]:
+        """Extract Person entities from git log.
+
+        Args:
+            stats: Statistics dictionary to update
+
+        Returns:
+            Dictionary mapping person_id to Person
+        """
+        persons = {}
+
+        try:
+            # Get all commits with author info
+            result = subprocess.run(
+                ["git", "log", "--format=%H|%an|%ae|%aI", "--all"],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            )
+
+            for line in result.stdout.strip().split("\n"):
+                if not line:
+                    continue
+                parts = line.split("|")
+                if len(parts) < 4:
+                    continue
+
+                commit_sha, name, email, timestamp = parts[:4]
+                email_hash = self._hash_email(email)
+                person_id = f"person:{email_hash}"
+
+                if person_id not in persons:
+                    persons[person_id] = Person(
+                        id=person_id,
+                        name=name,
+                        email_hash=email_hash,
+                        commits_count=1,
+                        first_commit=timestamp,
+                        last_commit=timestamp,
+                    )
+                else:
+                    persons[person_id].commits_count += 1
+                    if timestamp > persons[person_id].last_commit:
+                        persons[person_id].last_commit = timestamp
+                    if timestamp < persons[person_id].first_commit:
+                        persons[person_id].first_commit = timestamp
+
+            # Add persons to KG
+            for person in persons.values():
+                await self.kg.add_person(person)
+
+            stats["persons"] = len(persons)
+            logger.info(f"✓ Extracted {len(persons)} person entities from git")
+
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Git log failed: {e}")
+        except subprocess.TimeoutExpired:
+            logger.warning("Git log timed out after 30 seconds")
+        except FileNotFoundError:
+            logger.debug("Git not found, skipping git author extraction")
+        except Exception as e:
+            logger.debug(f"Failed to extract git authors: {e}")
+
+        return persons
+
+    async def _extract_project_info(self, stats: dict) -> Project | None:
+        """Extract Project entity from repo metadata.
+
+        Args:
+            stats: Statistics dictionary to update
+
+        Returns:
+            Project entity or None if extraction fails
+        """
+        project_name = self.project_root.name
+        description = ""
+        repo_url = ""
+
+        # Try to get repo URL
+        try:
+            result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                repo_url = result.stdout.strip()
+        except Exception:
+            pass
+
+        # Try to get description from pyproject.toml
+        pyproject = self.project_root / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                import tomllib
+
+                with open(pyproject, "rb") as f:
+                    data = tomllib.load(f)
+                if "project" in data:
+                    project_name = data["project"].get("name", project_name)
+                    description = data["project"].get("description", "")
+            except Exception as e:
+                logger.debug(f"Failed to parse pyproject.toml: {e}")
+
+        project = Project(
+            id=f"project:{project_name}",
+            name=project_name,
+            description=description,
+            repo_url=repo_url,
+        )
+
+        await self.kg.add_project(project)
+        stats["projects"] = 1
+        logger.info(f"✓ Extracted project: {project_name}")
+
+        return project
+
+    async def _extract_authorship_from_blame(
+        self,
+        code_entities: list[tuple[str, str]],  # (entity_id, file_path)
+        persons: dict[str, Person],
+        stats: dict,
+    ) -> None:
+        """Extract AUTHORED relationships from git blame.
+
+        Args:
+            code_entities: List of (entity_id, file_path) tuples
+            persons: Dictionary of person entities
+            stats: Statistics dictionary to update
+        """
+        authored_count = 0
+
+        # Group entities by file
+        entities_by_file: dict[str, list[str]] = {}
+        for entity_id, file_path in code_entities:
+            if file_path not in entities_by_file:
+                entities_by_file[file_path] = []
+            entities_by_file[file_path].append(entity_id)
+
+        logger.info(
+            f"Extracting authorship from {min(100, len(entities_by_file))} files..."
+        )
+
+        # Process each file (limit to avoid timeout)
+        for file_path, entity_ids in list(entities_by_file.items())[:100]:
+            try:
+                result = subprocess.run(
+                    ["git", "blame", "-e", "--line-porcelain", file_path],
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode != 0:
+                    continue
+
+                # Parse blame output for author info
+                current_email = None
+                current_time = None
+
+                for line in result.stdout.split("\n"):
+                    if line.startswith("author-mail "):
+                        current_email = line[12:].strip("<>")
+                    elif line.startswith("author-time "):
+                        timestamp = int(line[12:])
+                        from datetime import datetime
+
+                        current_time = datetime.fromtimestamp(timestamp).isoformat()
+
+                # Create AUTHORED for first entity in file (simplified)
+                if current_email and entity_ids:
+                    email_hash = self._hash_email(current_email)
+                    person_id = f"person:{email_hash}"
+
+                    if person_id in persons:
+                        for entity_id in entity_ids[:5]:  # Limit entities per file
+                            try:
+                                await self.kg.add_authored_relationship(
+                                    person_id, entity_id, current_time or "", "", 0
+                                )
+                                authored_count += 1
+                            except Exception as e:
+                                logger.debug(f"Failed to add AUTHORED: {e}")
+
+            except subprocess.TimeoutExpired:
+                logger.debug(f"Git blame timed out for {file_path}")
+            except Exception as e:
+                logger.debug(f"Blame failed for {file_path}: {e}")
+
+        stats["authored"] = authored_count
+        logger.info(f"✓ Created {authored_count} AUTHORED relationships")
+
     async def build_from_database(
         self, database, show_progress: bool = True, limit: int | None = None
     ) -> dict[str, int]:
@@ -781,5 +1002,53 @@ class KGBuilder:
 
         logger.info(f"Loaded {len(chunks)} chunks for processing")
 
-        # Build graph
-        return await self.build_from_chunks(chunks, show_progress=show_progress)
+        # Build graph from chunks
+        stats = await self.build_from_chunks(chunks, show_progress=show_progress)
+
+        # Extract work entities from git (if available)
+        logger.info("Extracting work entities from git...")
+        persons = await self._extract_git_authors(stats)
+        project = await self._extract_project_info(stats)
+
+        # Extract authorship relationships (simplified - first author per file)
+        if persons:
+            entity_files = []
+            try:
+                result = self.kg.conn.execute(
+                    "MATCH (e:CodeEntity) RETURN e.id, e.file_path"
+                )
+                while result.has_next():
+                    row = result.get_next()
+                    if row[1]:  # Has file path
+                        entity_files.append((row[0], row[1]))
+            except Exception as e:
+                logger.debug(f"Failed to fetch entity file paths: {e}")
+
+            if entity_files:
+                await self._extract_authorship_from_blame(entity_files, persons, stats)
+
+            # Add PART_OF relationships for all code entities
+            if project:
+                logger.info("Creating PART_OF relationships...")
+                part_of_count = 0
+                try:
+                    result = self.kg.conn.execute("MATCH (e:CodeEntity) RETURN e.id")
+                    entity_ids = []
+                    while result.has_next():
+                        entity_ids.append(result.get_next()[0])
+
+                    for entity_id in entity_ids:
+                        try:
+                            await self.kg.add_part_of_relationship(
+                                entity_id, project.id
+                            )
+                            part_of_count += 1
+                        except Exception:
+                            pass
+
+                    stats["part_of"] = part_of_count
+                    logger.info(f"✓ Created {part_of_count} PART_OF relationships")
+                except Exception as e:
+                    logger.debug(f"Failed to create PART_OF relationships: {e}")
+
+        return stats

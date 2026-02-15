@@ -54,6 +54,28 @@ class Tag:
 
 
 @dataclass
+class Person:
+    """A person node for authorship tracking in the knowledge graph."""
+
+    id: str  # Unique identifier (person:<email_hash>)
+    name: str  # Display name from git
+    email_hash: str  # SHA256 of email for privacy
+    commits_count: int = 0  # Total commits
+    first_commit: str | None = None  # ISO timestamp of first commit
+    last_commit: str | None = None  # ISO timestamp of last commit
+
+
+@dataclass
+class Project:
+    """A project node representing the codebase in the knowledge graph."""
+
+    id: str  # Unique identifier (project:<name>)
+    name: str  # Project name
+    description: str = ""  # Project description
+    repo_url: str = ""  # Git repository URL
+
+
+@dataclass
 class CodeRelationship:
     """An edge in the knowledge graph."""
 
@@ -279,6 +301,88 @@ class KnowledgeGraph:
         except Exception as e:
             logger.debug(f"LINKS_TO table creation: {e}")
 
+        # Create Person node table
+        try:
+            self.conn.execute(
+                """
+                CREATE NODE TABLE IF NOT EXISTS Person (
+                    id STRING PRIMARY KEY,
+                    name STRING,
+                    email_hash STRING,
+                    commits_count INT64 DEFAULT 0,
+                    first_commit STRING,
+                    last_commit STRING
+                )
+            """
+            )
+            logger.debug("Created Person node table")
+        except Exception as e:
+            logger.debug(f"Person table creation: {e}")
+
+        # Create Project node table
+        try:
+            self.conn.execute(
+                """
+                CREATE NODE TABLE IF NOT EXISTS Project (
+                    id STRING PRIMARY KEY,
+                    name STRING,
+                    description STRING,
+                    repo_url STRING
+                )
+            """
+            )
+            logger.debug("Created Project node table")
+        except Exception as e:
+            logger.debug(f"Project table creation: {e}")
+
+        # Create AUTHORED relationship (Person -> CodeEntity)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS AUTHORED (
+                    FROM Person TO CodeEntity,
+                    timestamp STRING,
+                    commit_sha STRING,
+                    lines_authored INT64 DEFAULT 0,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created AUTHORED relationship table")
+        except Exception as e:
+            logger.debug(f"AUTHORED table creation: {e}")
+
+        # Create MODIFIED relationship (Person -> CodeEntity)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS MODIFIED (
+                    FROM Person TO CodeEntity,
+                    timestamp STRING,
+                    commit_sha STRING,
+                    lines_changed INT64 DEFAULT 0,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created MODIFIED relationship table")
+        except Exception as e:
+            logger.debug(f"MODIFIED table creation: {e}")
+
+        # Create PART_OF relationship (CodeEntity -> Project)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS PART_OF (
+                    FROM CodeEntity TO Project,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created PART_OF relationship table")
+        except Exception as e:
+            logger.debug(f"PART_OF table creation: {e}")
+
     async def add_entity(self, entity: CodeEntity):
         """Add or update a code entity.
 
@@ -384,6 +488,237 @@ class KnowledgeGraph:
             )
         except Exception as e:
             logger.error(f"Failed to add tag {tag_name}: {e}")
+            raise
+
+    async def add_person(self, person: Person):
+        """Add or update a person.
+
+        Args:
+            person: Person to add/update
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Use MERGE to avoid duplicates
+            self.conn.execute(
+                """
+                MERGE (p:Person {id: $id})
+                ON MATCH SET p.name = $name,
+                             p.email_hash = $email_hash,
+                             p.commits_count = $commits_count,
+                             p.first_commit = $first_commit,
+                             p.last_commit = $last_commit
+                ON CREATE SET p.name = $name,
+                              p.email_hash = $email_hash,
+                              p.commits_count = $commits_count,
+                              p.first_commit = $first_commit,
+                              p.last_commit = $last_commit
+            """,
+                {
+                    "id": person.id,
+                    "name": person.name,
+                    "email_hash": person.email_hash,
+                    "commits_count": person.commits_count,
+                    "first_commit": person.first_commit or "",
+                    "last_commit": person.last_commit or "",
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add person {person.id}: {e}")
+            raise
+
+    async def add_project(self, project: Project):
+        """Add or update a project.
+
+        Args:
+            project: Project to add/update
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Use MERGE to avoid duplicates
+            self.conn.execute(
+                """
+                MERGE (p:Project {id: $id})
+                ON MATCH SET p.name = $name,
+                             p.description = $description,
+                             p.repo_url = $repo_url
+                ON CREATE SET p.name = $name,
+                              p.description = $description,
+                              p.repo_url = $repo_url
+            """,
+                {
+                    "id": project.id,
+                    "name": project.name,
+                    "description": project.description,
+                    "repo_url": project.repo_url,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add project {project.id}: {e}")
+            raise
+
+    async def add_authored_relationship(
+        self,
+        person_id: str,
+        entity_id: str,
+        timestamp: str,
+        commit_sha: str,
+        lines: int,
+    ):
+        """Add an AUTHORED relationship between a person and code entity.
+
+        Args:
+            person_id: Person ID
+            entity_id: Code entity ID
+            timestamp: ISO timestamp
+            commit_sha: Git commit SHA
+            lines: Number of lines authored
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Check if both nodes exist
+            person_exists = self.conn.execute(
+                "MATCH (p:Person {id: $id}) RETURN p", {"id": person_id}
+            )
+            entity_exists = self.conn.execute(
+                "MATCH (e:CodeEntity {id: $id}) RETURN e", {"id": entity_id}
+            )
+
+            if not person_exists.has_next() or not entity_exists.has_next():
+                logger.warning(
+                    f"Skipping AUTHORED: person or entity does not exist "
+                    f"(person={person_id}, entity={entity_id})"
+                )
+                return
+
+            # Create relationship
+            self.conn.execute(
+                """
+                MATCH (p:Person {id: $person_id}), (e:CodeEntity {id: $entity_id})
+                MERGE (p)-[r:AUTHORED]->(e)
+                ON MATCH SET r.timestamp = $timestamp,
+                             r.commit_sha = $commit_sha,
+                             r.lines_authored = $lines
+                ON CREATE SET r.timestamp = $timestamp,
+                              r.commit_sha = $commit_sha,
+                              r.lines_authored = $lines
+            """,
+                {
+                    "person_id": person_id,
+                    "entity_id": entity_id,
+                    "timestamp": timestamp,
+                    "commit_sha": commit_sha,
+                    "lines": lines,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add AUTHORED relationship: {e}")
+            raise
+
+    async def add_modified_relationship(
+        self,
+        person_id: str,
+        entity_id: str,
+        timestamp: str,
+        commit_sha: str,
+        lines: int,
+    ):
+        """Add a MODIFIED relationship between a person and code entity.
+
+        Args:
+            person_id: Person ID
+            entity_id: Code entity ID
+            timestamp: ISO timestamp
+            commit_sha: Git commit SHA
+            lines: Number of lines changed
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Check if both nodes exist
+            person_exists = self.conn.execute(
+                "MATCH (p:Person {id: $id}) RETURN p", {"id": person_id}
+            )
+            entity_exists = self.conn.execute(
+                "MATCH (e:CodeEntity {id: $id}) RETURN e", {"id": entity_id}
+            )
+
+            if not person_exists.has_next() or not entity_exists.has_next():
+                logger.warning(
+                    f"Skipping MODIFIED: person or entity does not exist "
+                    f"(person={person_id}, entity={entity_id})"
+                )
+                return
+
+            # Create relationship
+            self.conn.execute(
+                """
+                MATCH (p:Person {id: $person_id}), (e:CodeEntity {id: $entity_id})
+                MERGE (p)-[r:MODIFIED]->(e)
+                ON MATCH SET r.timestamp = $timestamp,
+                             r.commit_sha = $commit_sha,
+                             r.lines_changed = $lines
+                ON CREATE SET r.timestamp = $timestamp,
+                              r.commit_sha = $commit_sha,
+                              r.lines_changed = $lines
+            """,
+                {
+                    "person_id": person_id,
+                    "entity_id": entity_id,
+                    "timestamp": timestamp,
+                    "commit_sha": commit_sha,
+                    "lines": lines,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add MODIFIED relationship: {e}")
+            raise
+
+    async def add_part_of_relationship(self, entity_id: str, project_id: str):
+        """Add a PART_OF relationship between a code entity and project.
+
+        Args:
+            entity_id: Code entity ID
+            project_id: Project ID
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Check if both nodes exist
+            entity_exists = self.conn.execute(
+                "MATCH (e:CodeEntity {id: $id}) RETURN e", {"id": entity_id}
+            )
+            project_exists = self.conn.execute(
+                "MATCH (p:Project {id: $id}) RETURN p", {"id": project_id}
+            )
+
+            if not entity_exists.has_next() or not project_exists.has_next():
+                logger.warning(
+                    f"Skipping PART_OF: entity or project does not exist "
+                    f"(entity={entity_id}, project={project_id})"
+                )
+                return
+
+            # Create relationship
+            self.conn.execute(
+                """
+                MATCH (e:CodeEntity {id: $entity_id}), (p:Project {id: $project_id})
+                MERGE (e)-[r:PART_OF]->(p)
+            """,
+                {
+                    "entity_id": entity_id,
+                    "project_id": project_id,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add PART_OF relationship: {e}")
             raise
 
     async def add_relationship(self, rel: CodeRelationship):
@@ -843,6 +1178,22 @@ class KnowledgeGraph:
             tag_result = self.conn.execute("MATCH (t:Tag) RETURN count(t) AS count")
             tag_count = tag_result.get_next()[0] if tag_result.has_next() else 0
 
+            # Count persons
+            person_result = self.conn.execute(
+                "MATCH (p:Person) RETURN count(p) AS count"
+            )
+            person_count = (
+                person_result.get_next()[0] if person_result.has_next() else 0
+            )
+
+            # Count projects
+            project_result = self.conn.execute(
+                "MATCH (p:Project) RETURN count(p) AS count"
+            )
+            project_count = (
+                project_result.get_next()[0] if project_result.has_next() else 0
+            )
+
             # Count relationships by type
             rel_counts = {}
             for rel_type in [
@@ -856,6 +1207,9 @@ class KnowledgeGraph:
                 "HAS_TAG",
                 "DEMONSTRATES",
                 "LINKS_TO",
+                "AUTHORED",
+                "MODIFIED",
+                "PART_OF",
             ]:
                 try:
                     rel_result = self.conn.execute(
@@ -868,10 +1222,16 @@ class KnowledgeGraph:
                     rel_counts[rel_type.lower()] = 0
 
             return {
-                "total_entities": entity_count + doc_count + tag_count,
+                "total_entities": entity_count
+                + doc_count
+                + tag_count
+                + person_count
+                + project_count,
                 "code_entities": entity_count,
                 "doc_sections": doc_count,
                 "tags": tag_count,
+                "persons": person_count,
+                "projects": project_count,
                 "relationships": rel_counts,
                 "database_path": str(self.db_path / "code_kg"),
             }
@@ -882,6 +1242,8 @@ class KnowledgeGraph:
                 "code_entities": 0,
                 "doc_sections": 0,
                 "tags": 0,
+                "persons": 0,
+                "projects": 0,
                 "relationships": {},
                 "error": str(e),
             }
