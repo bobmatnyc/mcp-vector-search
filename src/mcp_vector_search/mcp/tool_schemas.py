@@ -23,6 +23,9 @@ def get_tool_schemas() -> list[Tool]:
         _get_interpret_analysis_schema(),
         _get_save_report_schema(),
         _get_wiki_generate_schema(),
+        _get_kg_build_schema(),
+        _get_kg_stats_schema(),
+        _get_kg_query_schema(),
     ]
 
 
@@ -376,5 +379,74 @@ def _get_wiki_generate_schema() -> Tool:
                 },
             },
             "required": [],
+        },
+    )
+
+
+def _get_kg_build_schema() -> Tool:
+    """Get kg_build tool schema."""
+    return Tool(
+        name="kg_build",
+        description="Build knowledge graph from indexed code chunks. Extracts entities (functions, classes, modules) and relationships (calls, imports, inheritance) for enhanced code navigation.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "force": {
+                    "type": "boolean",
+                    "description": "Force rebuild even if graph exists",
+                    "default": False,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Limit chunks to process (for testing)",
+                },
+            },
+            "required": [],
+        },
+    )
+
+
+def _get_kg_stats_schema() -> Tool:
+    """Get kg_stats tool schema."""
+    return Tool(
+        name="kg_stats",
+        description="Get knowledge graph statistics including entity and relationship counts",
+        inputSchema={"type": "object", "properties": {}, "required": []},
+    )
+
+
+def _get_kg_query_schema() -> Tool:
+    """Get kg_query tool schema."""
+    return Tool(
+        name="kg_query",
+        description="Query knowledge graph for entity relationships. Find what calls a function, what a class inherits from, or related code entities.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "entity": {
+                    "type": "string",
+                    "description": "Entity name to query (function, class, module)",
+                },
+                "relationship": {
+                    "type": "string",
+                    "enum": [
+                        "calls",
+                        "called_by",
+                        "imports",
+                        "imported_by",
+                        "inherits",
+                        "inherited_by",
+                        "contains",
+                        "contained_by",
+                    ],
+                    "description": "Relationship type to query",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results",
+                    "default": 20,
+                },
+            },
+            "required": ["entity"],
         },
     )

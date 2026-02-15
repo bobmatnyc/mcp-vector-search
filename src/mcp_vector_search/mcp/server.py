@@ -24,6 +24,7 @@ from ..core.project import ProjectManager
 from ..core.search import SemanticSearchEngine
 from ..core.watcher import FileWatcher
 from .analysis_handlers import AnalysisHandlers
+from .kg_handlers import KGHandlers
 from .project_handlers import ProjectHandlers
 from .search_handlers import SearchHandlers
 from .tool_schemas import get_tool_schemas
@@ -88,6 +89,7 @@ class MCPVectorSearchServer:
         self._analysis_handlers: AnalysisHandlers | None = None
         self._project_handlers: ProjectHandlers | None = None
         self._wiki_handlers: WikiHandlers | None = None
+        self._kg_handlers: KGHandlers | None = None
 
     async def initialize(self) -> None:
         """Initialize the search engine and database."""
@@ -129,6 +131,7 @@ class MCPVectorSearchServer:
                 self.project_manager, self.search_engine, self.project_root
             )
             self._wiki_handlers = WikiHandlers(self.project_root)
+            self._kg_handlers = KGHandlers(self.project_root)
 
             # Setup indexer for file watching
             if self.enable_file_watching:
@@ -282,6 +285,14 @@ class MCPVectorSearchServer:
             # Delegate to wiki handlers
             elif tool_name == "wiki_generate":
                 return await self._wiki_handlers.handle_wiki_generate(args)
+
+            # Delegate to KG handlers
+            elif tool_name == "kg_build":
+                return await self._kg_handlers.handle_kg_build(args)
+            elif tool_name == "kg_stats":
+                return await self._kg_handlers.handle_kg_stats(args)
+            elif tool_name == "kg_query":
+                return await self._kg_handlers.handle_kg_query(args)
 
             else:
                 return CallToolResult(
