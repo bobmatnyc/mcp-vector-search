@@ -179,6 +179,9 @@ class BaseParser(ABC):
         chunk_id: str | None = None,
         parent_chunk_id: str | None = None,
         chunk_depth: int = 0,
+        imports: list[dict] | None = None,
+        calls: list[str] | None = None,
+        inherits_from: list[str] | None = None,
     ) -> CodeChunk:
         """Create a code chunk with metadata.
 
@@ -198,6 +201,9 @@ class BaseParser(ABC):
             chunk_id: Unique chunk identifier
             parent_chunk_id: Parent chunk ID for hierarchical relationships
             chunk_depth: Nesting level in code hierarchy
+            imports: List of import statements (for module chunks)
+            calls: List of function/method calls (for function chunks)
+            inherits_from: List of base classes (for class chunks)
 
         Returns:
             CodeChunk instance
@@ -219,6 +225,9 @@ class BaseParser(ABC):
             chunk_id=chunk_id,
             parent_chunk_id=parent_chunk_id,
             chunk_depth=chunk_depth,
+            imports=imports or [],
+            calls=calls or [],
+            inherits_from=inherits_from or [],
         )
 
     def _split_into_lines(self, content: str) -> list[str]:

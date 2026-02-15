@@ -291,7 +291,19 @@ class LanceVectorDatabase:
                     "function_name": chunk.function_name or "",
                     "class_name": chunk.class_name or "",
                     "docstring": chunk.docstring or "",
-                    "imports": ",".join(chunk.imports) if chunk.imports else "",
+                    "imports": (
+                        orjson.dumps(chunk.imports).decode() if chunk.imports else "[]"
+                    ),
+                    "calls": (
+                        ",".join(chunk.calls)
+                        if hasattr(chunk, "calls") and chunk.calls
+                        else ""
+                    ),
+                    "inherits_from": (
+                        ",".join(chunk.inherits_from)
+                        if hasattr(chunk, "inherits_from") and chunk.inherits_from
+                        else ""
+                    ),
                     "complexity_score": chunk.complexity_score,
                     "chunk_id": chunk.chunk_id or chunk.id,
                     "parent_chunk_id": chunk.parent_chunk_id or "",
