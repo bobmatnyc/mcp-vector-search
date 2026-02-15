@@ -52,47 +52,50 @@ def build_kg(
         )
         database = components.database
 
-        # Check if index exists
-        if not await database.is_indexed():
-            console.print(
-                "[red]✗[/red] No index found. Run 'mcp-vector-search index' first."
+        # Use context manager to properly open database
+        async with database:
+            # Check if index exists (use chunk count instead of is_indexed)
+            chunk_count = database.get_chunk_count()
+            if chunk_count == 0:
+                console.print(
+                    "[red]✗[/red] No index found. Run 'mcp-vector-search index' first."
+                )
+                raise typer.Exit(1)
+
+            # Initialize knowledge graph
+            kg_path = project_root / ".mcp-vector-search" / "knowledge_graph"
+            kg = KnowledgeGraph(kg_path)
+            await kg.initialize()
+
+            # Check if graph already exists
+            stats = await kg.get_stats()
+            if stats["total_entities"] > 0 and not force:
+                console.print(
+                    f"[yellow]⚠[/yellow] Knowledge graph already exists "
+                    f"({stats['total_entities']} entities). "
+                    "Use --force to rebuild."
+                )
+                raise typer.Exit(0)
+
+            # Build graph
+            builder = KGBuilder(kg, project_root)
+            build_stats = await builder.build_from_database(
+                database, show_progress=True, limit=limit
             )
-            raise typer.Exit(1)
 
-        # Initialize knowledge graph
-        kg_path = project_root / ".mcp-vector-search" / "knowledge_graph"
-        kg = KnowledgeGraph(kg_path)
-        await kg.initialize()
+            # Show results
+            table = Table(title="Knowledge Graph Statistics")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Count", style="green", justify="right")
 
-        # Check if graph already exists
-        stats = await kg.get_stats()
-        if stats["total_entities"] > 0 and not force:
-            console.print(
-                f"[yellow]⚠[/yellow] Knowledge graph already exists "
-                f"({stats['total_entities']} entities). "
-                "Use --force to rebuild."
-            )
-            raise typer.Exit(0)
+            table.add_row("Entities", str(build_stats["entities"]))
+            table.add_row("Calls", str(build_stats["calls"]))
+            table.add_row("Imports", str(build_stats["imports"]))
+            table.add_row("Inherits", str(build_stats["inherits"]))
+            table.add_row("Contains", str(build_stats["contains"]))
 
-        # Build graph
-        builder = KGBuilder(kg, project_root)
-        build_stats = await builder.build_from_database(
-            database, show_progress=True, limit=limit
-        )
-
-        # Show results
-        table = Table(title="Knowledge Graph Statistics")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Count", style="green", justify="right")
-
-        table.add_row("Entities", str(build_stats["entities"]))
-        table.add_row("Calls", str(build_stats["calls"]))
-        table.add_row("Imports", str(build_stats["imports"]))
-        table.add_row("Inherits", str(build_stats["inherits"]))
-        table.add_row("Contains", str(build_stats["contains"]))
-
-        console.print(table)
-        console.print("[green]✓[/green] Knowledge graph built successfully!")
+            console.print(table)
+            console.print("[green]✓[/green] Knowledge graph built successfully!")
 
         # Close connections
         await kg.close()
