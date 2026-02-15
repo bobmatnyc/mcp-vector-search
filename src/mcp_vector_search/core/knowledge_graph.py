@@ -32,12 +32,28 @@ class CodeEntity:
 
 
 @dataclass
+class DocSection:
+    """A documentation section node in the knowledge graph."""
+
+    id: str  # Unique identifier (chunk_id)
+    name: str  # Section title (markdown header)
+    file_path: str  # Source file path
+    level: int  # Header level (1-6 for markdown)
+    line_start: int  # Starting line number
+    line_end: int  # Ending line number
+    doc_type: str = "section"  # section, topic
+    commit_sha: str | None = None  # Git commit for temporal tracking
+
+
+@dataclass
 class CodeRelationship:
     """An edge in the knowledge graph."""
 
     source_id: str  # Source entity ID
     target_id: str  # Target entity ID
-    relationship_type: str  # calls, imports, inherits, contains
+    relationship_type: (
+        str  # calls, imports, inherits, contains, references, documents, follows
+    )
     commit_sha: str | None = None  # Git commit
     weight: float = 1.0  # Relationship strength
 
@@ -86,7 +102,7 @@ class KnowledgeGraph:
         logger.info(f"✓ Knowledge graph initialized at {db_dir}")
 
     def _create_schema(self):
-        """Create Kuzu schema for code entities and relationships."""
+        """Create Kuzu schema for code entities, doc sections, and relationships."""
         # Create CodeEntity node table
         try:
             self.conn.execute(
@@ -106,9 +122,31 @@ class KnowledgeGraph:
             # Table likely exists
             logger.debug(f"CodeEntity table creation: {e}")
 
-        # Create relationship tables
-        relationship_types = ["CALLS", "IMPORTS", "INHERITS", "CONTAINS"]
-        for rel_type in relationship_types:
+        # Create DocSection node table
+        try:
+            self.conn.execute(
+                """
+                CREATE NODE TABLE IF NOT EXISTS DocSection (
+                    id STRING PRIMARY KEY,
+                    name STRING,
+                    doc_type STRING,
+                    file_path STRING,
+                    level INT64,
+                    line_start INT64,
+                    line_end INT64,
+                    commit_sha STRING,
+                    created_at TIMESTAMP DEFAULT current_timestamp()
+                )
+            """
+            )
+            logger.debug("Created DocSection node table")
+        except Exception as e:
+            # Table likely exists
+            logger.debug(f"DocSection table creation: {e}")
+
+        # Create relationship tables for code-to-code relationships
+        code_relationship_types = ["CALLS", "IMPORTS", "INHERITS", "CONTAINS"]
+        for rel_type in code_relationship_types:
             try:
                 self.conn.execute(
                     f"""
@@ -124,6 +162,53 @@ class KnowledgeGraph:
             except Exception as e:
                 # Table likely exists
                 logger.debug(f"{rel_type} table creation: {e}")
+
+        # Create relationship tables for doc-to-doc relationships
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS FOLLOWS (
+                    FROM DocSection TO DocSection,
+                    weight DOUBLE DEFAULT 1.0,
+                    commit_sha STRING,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created FOLLOWS relationship table")
+        except Exception as e:
+            logger.debug(f"FOLLOWS table creation: {e}")
+
+        # Create relationship tables for doc-to-code relationships
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS REFERENCES (
+                    FROM DocSection TO CodeEntity,
+                    weight DOUBLE DEFAULT 1.0,
+                    commit_sha STRING,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created REFERENCES relationship table")
+        except Exception as e:
+            logger.debug(f"REFERENCES table creation: {e}")
+
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS DOCUMENTS (
+                    FROM DocSection TO CodeEntity,
+                    weight DOUBLE DEFAULT 1.0,
+                    commit_sha STRING,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created DOCUMENTS relationship table")
+        except Exception as e:
+            logger.debug(f"DOCUMENTS table creation: {e}")
 
     async def add_entity(self, entity: CodeEntity):
         """Add or update a code entity.
@@ -160,6 +245,50 @@ class KnowledgeGraph:
             logger.error(f"Failed to add entity {entity.id}: {e}")
             raise
 
+    async def add_doc_section(self, doc: DocSection):
+        """Add or update a documentation section.
+
+        Args:
+            doc: DocSection to add/update
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Use MERGE to avoid duplicates
+            self.conn.execute(
+                """
+                MERGE (d:DocSection {id: $id})
+                ON MATCH SET d.name = $name,
+                             d.doc_type = $doc_type,
+                             d.file_path = $file_path,
+                             d.level = $level,
+                             d.line_start = $line_start,
+                             d.line_end = $line_end,
+                             d.commit_sha = $commit_sha
+                ON CREATE SET d.name = $name,
+                              d.doc_type = $doc_type,
+                              d.file_path = $file_path,
+                              d.level = $level,
+                              d.line_start = $line_start,
+                              d.line_end = $line_end,
+                              d.commit_sha = $commit_sha
+            """,
+                {
+                    "id": doc.id,
+                    "name": doc.name,
+                    "doc_type": doc.doc_type,
+                    "file_path": doc.file_path,
+                    "level": doc.level,
+                    "line_start": doc.line_start,
+                    "line_end": doc.line_end,
+                    "commit_sha": doc.commit_sha or "",
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add doc section {doc.id}: {e}")
+            raise
+
     async def add_relationship(self, rel: CodeRelationship):
         """Add a relationship between entities.
 
@@ -172,36 +301,103 @@ class KnowledgeGraph:
         rel_table = rel.relationship_type.upper()
 
         try:
-            # First ensure both nodes exist
-            source_exists = self.conn.execute(
-                "MATCH (e:CodeEntity {id: $id}) RETURN e", {"id": rel.source_id}
-            )
-            target_exists = self.conn.execute(
-                "MATCH (e:CodeEntity {id: $id}) RETURN e", {"id": rel.target_id}
-            )
-
-            if not source_exists.has_next() or not target_exists.has_next():
-                logger.warning(
-                    f"Skipping relationship {rel_table}: "
-                    f"source or target does not exist"
+            # Determine node types based on relationship type
+            if rel_table in ["CALLS", "IMPORTS", "INHERITS", "CONTAINS"]:
+                # Code-to-code relationship
+                source_exists = self.conn.execute(
+                    "MATCH (e:CodeEntity {id: $id}) RETURN e", {"id": rel.source_id}
                 )
-                return
+                target_exists = self.conn.execute(
+                    "MATCH (e:CodeEntity {id: $id}) RETURN e", {"id": rel.target_id}
+                )
 
-            # Create relationship
-            self.conn.execute(
-                f"""
-                MATCH (a:CodeEntity {{id: $source}}), (b:CodeEntity {{id: $target}})
-                MERGE (a)-[r:{rel_table}]->(b)
-                ON MATCH SET r.weight = $weight, r.commit_sha = $commit_sha
-                ON CREATE SET r.weight = $weight, r.commit_sha = $commit_sha
-            """,
-                {
-                    "source": rel.source_id,
-                    "target": rel.target_id,
-                    "weight": rel.weight,
-                    "commit_sha": rel.commit_sha or "",
-                },
-            )
+                if not source_exists.has_next() or not target_exists.has_next():
+                    logger.warning(
+                        f"Skipping relationship {rel_table}: "
+                        f"source or target does not exist"
+                    )
+                    return
+
+                # Create relationship
+                self.conn.execute(
+                    f"""
+                    MATCH (a:CodeEntity {{id: $source}}), (b:CodeEntity {{id: $target}})
+                    MERGE (a)-[r:{rel_table}]->(b)
+                    ON MATCH SET r.weight = $weight, r.commit_sha = $commit_sha
+                    ON CREATE SET r.weight = $weight, r.commit_sha = $commit_sha
+                """,
+                    {
+                        "source": rel.source_id,
+                        "target": rel.target_id,
+                        "weight": rel.weight,
+                        "commit_sha": rel.commit_sha or "",
+                    },
+                )
+
+            elif rel_table == "FOLLOWS":
+                # Doc-to-doc relationship
+                source_exists = self.conn.execute(
+                    "MATCH (d:DocSection {id: $id}) RETURN d", {"id": rel.source_id}
+                )
+                target_exists = self.conn.execute(
+                    "MATCH (d:DocSection {id: $id}) RETURN d", {"id": rel.target_id}
+                )
+
+                if not source_exists.has_next() or not target_exists.has_next():
+                    logger.warning(
+                        f"Skipping relationship {rel_table}: "
+                        f"source or target does not exist"
+                    )
+                    return
+
+                # Create relationship
+                self.conn.execute(
+                    f"""
+                    MATCH (a:DocSection {{id: $source}}), (b:DocSection {{id: $target}})
+                    MERGE (a)-[r:{rel_table}]->(b)
+                    ON MATCH SET r.weight = $weight, r.commit_sha = $commit_sha
+                    ON CREATE SET r.weight = $weight, r.commit_sha = $commit_sha
+                """,
+                    {
+                        "source": rel.source_id,
+                        "target": rel.target_id,
+                        "weight": rel.weight,
+                        "commit_sha": rel.commit_sha or "",
+                    },
+                )
+
+            elif rel_table in ["REFERENCES", "DOCUMENTS"]:
+                # Doc-to-code relationship
+                source_exists = self.conn.execute(
+                    "MATCH (d:DocSection {id: $id}) RETURN d", {"id": rel.source_id}
+                )
+                target_exists = self.conn.execute(
+                    "MATCH (e:CodeEntity {id: $id}) RETURN e", {"id": rel.target_id}
+                )
+
+                if not source_exists.has_next() or not target_exists.has_next():
+                    logger.warning(
+                        f"Skipping relationship {rel_table}: "
+                        f"source or target does not exist"
+                    )
+                    return
+
+                # Create relationship
+                self.conn.execute(
+                    f"""
+                    MATCH (d:DocSection {{id: $source}}), (e:CodeEntity {{id: $target}})
+                    MERGE (d)-[r:{rel_table}]->(e)
+                    ON MATCH SET r.weight = $weight, r.commit_sha = $commit_sha
+                    ON CREATE SET r.weight = $weight, r.commit_sha = $commit_sha
+                """,
+                    {
+                        "source": rel.source_id,
+                        "target": rel.target_id,
+                        "weight": rel.weight,
+                        "commit_sha": rel.commit_sha or "",
+                    },
+                )
+
         except Exception as e:
             logger.error(f"Failed to add relationship {rel_table}: {e}")
             raise
@@ -320,6 +516,62 @@ class KnowledgeGraph:
             logger.error(f"Failed to get inheritance tree for {class_id}: {e}")
             return []
 
+    async def get_doc_references(
+        self, entity_name: str, relationship: str = "references"
+    ) -> list[dict[str, Any]]:
+        """Get documentation that references or documents a code entity.
+
+        Args:
+            entity_name: Code entity name to search for
+            relationship: Relationship type ('references' or 'documents')
+
+        Returns:
+            List of documentation sections
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        rel_type = relationship.upper()
+        if rel_type not in ["REFERENCES", "DOCUMENTS"]:
+            logger.warning(f"Invalid relationship type: {relationship}")
+            return []
+
+        try:
+            # Search by entity name (not ID)
+            result = self.conn.execute(
+                f"""
+                MATCH (d:DocSection)-[:{rel_type}]->(e:CodeEntity)
+                WHERE e.name = $name
+                RETURN d.id AS id,
+                       d.name AS title,
+                       d.file_path AS file_path,
+                       d.line_start AS line_start,
+                       d.line_end AS line_end,
+                       d.level AS level
+                ORDER BY d.file_path, d.line_start
+            """,
+                {"name": entity_name},
+            )
+
+            docs = []
+            while result.has_next():
+                row = result.get_next()
+                docs.append(
+                    {
+                        "id": row[0],
+                        "title": row[1],
+                        "file_path": row[2],
+                        "line_start": row[3],
+                        "line_end": row[4],
+                        "level": row[5],
+                    }
+                )
+
+            return docs
+        except Exception as e:
+            logger.error(f"Failed to get doc references for {entity_name}: {e}")
+            return []
+
     async def get_stats(self) -> dict[str, Any]:
         """Get knowledge graph statistics.
 
@@ -330,7 +582,7 @@ class KnowledgeGraph:
             await self.initialize()
 
         try:
-            # Count entities
+            # Count code entities
             entity_result = self.conn.execute(
                 "MATCH (e:CodeEntity) RETURN count(e) AS count"
             )
@@ -338,9 +590,23 @@ class KnowledgeGraph:
                 entity_result.get_next()[0] if entity_result.has_next() else 0
             )
 
+            # Count doc sections
+            doc_result = self.conn.execute(
+                "MATCH (d:DocSection) RETURN count(d) AS count"
+            )
+            doc_count = doc_result.get_next()[0] if doc_result.has_next() else 0
+
             # Count relationships by type
             rel_counts = {}
-            for rel_type in ["CALLS", "IMPORTS", "INHERITS", "CONTAINS"]:
+            for rel_type in [
+                "CALLS",
+                "IMPORTS",
+                "INHERITS",
+                "CONTAINS",
+                "REFERENCES",
+                "DOCUMENTS",
+                "FOLLOWS",
+            ]:
                 try:
                     rel_result = self.conn.execute(
                         f"MATCH ()-[r:{rel_type}]->() RETURN count(r) AS count"
@@ -352,7 +618,9 @@ class KnowledgeGraph:
                     rel_counts[rel_type.lower()] = 0
 
             return {
-                "total_entities": entity_count,
+                "total_entities": entity_count + doc_count,
+                "code_entities": entity_count,
+                "doc_sections": doc_count,
                 "relationships": rel_counts,
                 "database_path": str(self.db_path / "code_kg"),
             }
@@ -360,6 +628,8 @@ class KnowledgeGraph:
             logger.error(f"Failed to get KG stats: {e}")
             return {
                 "total_entities": 0,
+                "code_entities": 0,
+                "doc_sections": 0,
                 "relationships": {},
                 "error": str(e),
             }

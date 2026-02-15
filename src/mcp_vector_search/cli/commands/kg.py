@@ -88,11 +88,15 @@ def build_kg(
             table.add_column("Metric", style="cyan")
             table.add_column("Count", style="green", justify="right")
 
-            table.add_row("Entities", str(build_stats["entities"]))
+            table.add_row("Code Entities", str(build_stats["entities"]))
+            table.add_row("Doc Sections", str(build_stats.get("doc_sections", 0)))
             table.add_row("Calls", str(build_stats["calls"]))
             table.add_row("Imports", str(build_stats["imports"]))
             table.add_row("Inherits", str(build_stats["inherits"]))
             table.add_row("Contains", str(build_stats["contains"]))
+            table.add_row("References", str(build_stats.get("references", 0)))
+            table.add_row("Documents", str(build_stats.get("documents", 0)))
+            table.add_row("Follows", str(build_stats.get("follows", 0)))
 
             console.print(table)
             console.print("[green]✓[/green] Knowledge graph built successfully!")
@@ -192,6 +196,10 @@ def kg_stats(
         table.add_column("Value", style="green")
 
         table.add_row("Total Entities", str(stats["total_entities"]))
+        if "code_entities" in stats:
+            table.add_row("  Code Entities", str(stats["code_entities"]))
+        if "doc_sections" in stats:
+            table.add_row("  Doc Sections", str(stats["doc_sections"]))
         table.add_row("Database Path", stats["database_path"])
 
         # Add relationship counts
