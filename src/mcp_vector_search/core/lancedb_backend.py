@@ -769,6 +769,14 @@ class LanceVectorDatabase:
         decorators_str = batch_dict["decorators"][i]
         decorators = decorators_str.split(",") if decorators_str else []
 
+        # Parse calls field (comma-separated string to list)
+        calls_str = batch_dict.get("calls", [""] * num_rows)[i]
+        calls = calls_str.split(",") if calls_str else []
+
+        # Parse inherits_from field (comma-separated string to list)
+        inherits_str = batch_dict.get("inherits_from", [""] * num_rows)[i]
+        inherits_from = inherits_str.split(",") if inherits_str else []
+
         return CodeChunk(
             content=batch_dict["content"][i],
             file_path=Path(batch_dict["file_path"][i]),
@@ -780,6 +788,8 @@ class LanceVectorDatabase:
             class_name=batch_dict.get("class_name", [None] * num_rows)[i] or None,
             docstring=batch_dict.get("docstring", [None] * num_rows)[i] or None,
             imports=imports,
+            calls=calls,
+            inherits_from=inherits_from,
             complexity_score=batch_dict.get("complexity_score", [0.0] * num_rows)[i],
             chunk_id=batch_dict.get("chunk_id", [None] * num_rows)[i],
             parent_chunk_id=batch_dict.get("parent_chunk_id", [None] * num_rows)[i]
@@ -802,6 +812,14 @@ class LanceVectorDatabase:
         )
         decorators = row["decorators"].split(",") if row["decorators"] else []
 
+        # Parse calls field (comma-separated string to list)
+        calls = row.get("calls", "").split(",") if row.get("calls") else []
+
+        # Parse inherits_from field (comma-separated string to list)
+        inherits_from = (
+            row.get("inherits_from", "").split(",") if row.get("inherits_from") else []
+        )
+
         return CodeChunk(
             content=row["content"],
             file_path=Path(row["file_path"]),
@@ -813,6 +831,8 @@ class LanceVectorDatabase:
             class_name=row.get("class_name") or None,
             docstring=row.get("docstring") or None,
             imports=imports,
+            calls=calls,
+            inherits_from=inherits_from,
             complexity_score=row.get("complexity_score", 0.0),
             chunk_id=row.get("chunk_id"),
             parent_chunk_id=row.get("parent_chunk_id") or None,
