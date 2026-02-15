@@ -8,7 +8,7 @@
 
 > ⚠️ **Production Release (v2.1.9)**: Stable and actively maintained. LanceDB is now the default backend for better performance and stability.
 
-A modern, fast, and intelligent code search tool that understands your codebase through semantic analysis and AST parsing. Built with Python, powered by LanceDB (with ChromaDB support), and designed for developer productivity.
+A modern, fast, and intelligent code search tool that understands your codebase through semantic analysis and AST parsing. Built with Python, powered by LanceDB, and designed for developer productivity.
 
 ## ✨ Features
 
@@ -29,7 +29,7 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 - **Semi-Automatic Reindexing**: Multiple strategies without daemon processes
 
 ### 🔧 **Technical Features**
-- **Vector Database**: LanceDB default (serverless, file-based) with ChromaDB support (legacy)
+- **Vector Database**: LanceDB (serverless, file-based)
 - **Embedding Models**: Configurable sentence transformers with GPU acceleration
 - **Smart Reindexing**: Search-triggered, Git hooks, scheduled tasks, and manual options
 - **Extensible Parsers**: Plugin architecture for new languages
@@ -580,7 +580,7 @@ mcp-vector-search config set force_include_patterns '["repos/**/*.java", "repos/
 
 - **Parser Registry**: Extensible system for language-specific parsing
 - **Semantic Indexer**: Efficient code chunking and embedding generation
-- **Vector Database**: LanceDB (default) or ChromaDB for similarity search
+- **Vector Database**: LanceDB for similarity search
 - **File Watcher**: Real-time monitoring and incremental updates
 - **CLI Interface**: Rich, user-friendly command-line experience
 
@@ -866,7 +866,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
-- [ChromaDB](https://github.com/chroma-core/chroma) for vector database
+- [LanceDB](https://lancedb.com/) for vector database
 - [Tree-sitter](https://tree-sitter.github.io/) for parsing infrastructure
 - [Sentence Transformers](https://www.sbert.net/) for embeddings
 - [Typer](https://typer.tiangolo.com/) for CLI framework
