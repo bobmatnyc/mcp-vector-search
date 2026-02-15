@@ -199,7 +199,7 @@ class MyApp extends StatelessWidget {
             mixin_chunks.append(chunk)
         # Check for async functions by Future return type or async keyword
         if chunk.chunk_type == "function" and (
-            "Future<" in chunk.content[:150] or "async" in chunk.content[:150]
+            "Future<" in chunk.content or "async" in chunk.content
         ):
             async_chunks.append(chunk)
 
@@ -351,6 +351,276 @@ class _LoginFormState extends State<LoginForm> {
     print("\n✅ Widget patterns test completed successfully!")
 
     return True
+
+
+@pytest.mark.asyncio
+async def test_dart_class_with_extends():
+    """Test that classes with extends are parsed correctly (core bug fix)."""
+    dart_content = """
+class User extends BaseModel {
+  final String name;
+  final int age;
+
+  User({required this.name, required this.age});
+}
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".dart", delete=False) as f:
+        f.write(dart_content)
+        test_file = Path(f.name)
+
+    parser = DartParser()
+    chunks = await parser.parse_file(test_file)
+    test_file.unlink()
+
+    class_chunks = [c for c in chunks if c.chunk_type == "class"]
+    assert len(class_chunks) >= 1, f"Should find User class, got chunks: {[c.chunk_type for c in chunks]}"
+    assert any("User" in (c.class_name or "") for c in class_chunks), "Should find class named User"
+
+
+@pytest.mark.asyncio
+async def test_dart_class_with_implements():
+    """Test classes with implements clause."""
+    dart_content = """
+class UserRepository implements Repository, Serializable {
+  final Database db;
+
+  UserRepository(this.db);
+
+  Future<User> findById(String id) async {
+    return await db.query(id);
+  }
+}
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".dart", delete=False) as f:
+        f.write(dart_content)
+        test_file = Path(f.name)
+
+    parser = DartParser()
+    chunks = await parser.parse_file(test_file)
+    test_file.unlink()
+
+    class_chunks = [c for c in chunks if c.chunk_type == "class"]
+    assert len(class_chunks) >= 1, f"Should find UserRepository class, got: {[c.chunk_type for c in chunks]}"
+
+
+@pytest.mark.asyncio
+async def test_dart_class_with_mixin():
+    """Test classes with 'with' (mixin) clause."""
+    dart_content = """
+class UserService with LoggerMixin, CacheMixin {
+  void doWork() {
+    logInfo('working');
+  }
+}
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".dart", delete=False) as f:
+        f.write(dart_content)
+        test_file = Path(f.name)
+
+    parser = DartParser()
+    chunks = await parser.parse_file(test_file)
+    test_file.unlink()
+
+    class_chunks = [c for c in chunks if c.chunk_type == "class"]
+    assert len(class_chunks) >= 1, f"Should find UserService class, got: {[c.chunk_type for c in chunks]}"
+
+
+@pytest.mark.asyncio
+async def test_dart_abstract_class():
+    """Test abstract class declarations."""
+    dart_content = """
+abstract class Repository {
+  Future<Entity> findById(String id);
+  Future<List<Entity>> findAll();
+  Future<void> save(Entity entity);
+}
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".dart", delete=False) as f:
+        f.write(dart_content)
+        test_file = Path(f.name)
+
+    parser = DartParser()
+    chunks = await parser.parse_file(test_file)
+    test_file.unlink()
+
+    class_chunks = [c for c in chunks if c.chunk_type == "class"]
+    assert len(class_chunks) >= 1, f"Should find abstract Repository class, got: {[c.chunk_type for c in chunks]}"
+
+
+@pytest.mark.asyncio
+async def test_dart_generic_class_with_extends():
+    """Test generic classes with extends clause."""
+    dart_content = """
+class Box<T> extends Container<T> {
+  final T value;
+
+  Box(this.value);
+
+  T getValue() => value;
+}
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".dart", delete=False) as f:
+        f.write(dart_content)
+        test_file = Path(f.name)
+
+    parser = DartParser()
+    chunks = await parser.parse_file(test_file)
+    test_file.unlink()
+
+    class_chunks = [c for c in chunks if c.chunk_type == "class"]
+    assert len(class_chunks) >= 1, f"Should find Box<T> class, got: {[c.chunk_type for c in chunks]}"
+
+
+@pytest.mark.asyncio
+async def test_dart_combined_clauses():
+    """Test class with extends, with, and implements combined."""
+    dart_content = """
+class AppWidget<T> extends BaseWidget<T> with AnimationMixin implements Disposable {
+  final T data;
+
+  AppWidget(this.data);
+
+  void dispose() {
+    // cleanup
+  }
+}
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".dart", delete=False) as f:
+        f.write(dart_content)
+        test_file = Path(f.name)
+
+    parser = DartParser()
+    chunks = await parser.parse_file(test_file)
+    test_file.unlink()
+
+    class_chunks = [c for c in chunks if c.chunk_type == "class"]
+    assert len(class_chunks) >= 1, f"Should find AppWidget class, got: {[c.chunk_type for c in chunks]}"
+
+
+@pytest.mark.asyncio
+async def test_dart_freezed_dataclass():
+    """Test freezed-style dataclass pattern."""
+    dart_content = """
+@freezed
+class User with _$User {
+  const factory User({
+    required String name,
+    required int age,
+    String? email,
+  }) = _User;
+
+  factory User.fromJson(Map<String, dynamic> json) => _$UserFromJson(json);
+}
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".dart", delete=False) as f:
+        f.write(dart_content)
+        test_file = Path(f.name)
+
+    parser = DartParser()
+    chunks = await parser.parse_file(test_file)
+    test_file.unlink()
+
+    class_chunks = [c for c in chunks if c.chunk_type == "class"]
+    assert len(class_chunks) >= 1, f"Should find freezed User class, got: {[c.chunk_type for c in chunks]}"
+
+
+@pytest.mark.asyncio
+async def test_dart_json_serializable_class():
+    """Test JsonSerializable-style class pattern."""
+    dart_content = """
+@JsonSerializable()
+class Address extends Equatable {
+  final String street;
+  final String city;
+  final String zipCode;
+
+  const Address({
+    required this.street,
+    required this.city,
+    required this.zipCode,
+  });
+
+  factory Address.fromJson(Map<String, dynamic> json) => _$AddressFromJson(json);
+
+  Map<String, dynamic> toJson() => _$AddressToJson(this);
+
+  @override
+  List<Object?> get props => [street, city, zipCode];
+}
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".dart", delete=False) as f:
+        f.write(dart_content)
+        test_file = Path(f.name)
+
+    parser = DartParser()
+    chunks = await parser.parse_file(test_file)
+    test_file.unlink()
+
+    class_chunks = [c for c in chunks if c.chunk_type == "class"]
+    assert len(class_chunks) >= 1, f"Should find Address class, got: {[c.chunk_type for c in chunks]}"
+
+
+@pytest.mark.asyncio
+async def test_dart_widget_hierarchy_linking():
+    """Test that widget chunks are included in hierarchy building."""
+    from mcp_vector_search.core.chunk_processor import ChunkProcessor
+    from mcp_vector_search.parsers.registry import get_parser_registry
+    from mcp_vector_search.utils.monorepo import MonorepoDetector
+
+    # Create mock chunks simulating what the parser would produce
+    from mcp_vector_search.core.models import CodeChunk
+
+    chunks = [
+        CodeChunk(
+            content="class MyWidget extends StatelessWidget { ... }",
+            file_path="test.dart",
+            start_line=1,
+            end_line=10,
+            chunk_type="widget",
+            class_name="MyWidget (StatelessWidget)",
+            language="dart",
+        ),
+        CodeChunk(
+            content="class MyModel { ... }",
+            file_path="test.dart",
+            start_line=12,
+            end_line=20,
+            chunk_type="class",
+            class_name="MyModel",
+            language="dart",
+        ),
+    ]
+
+    processor = ChunkProcessor(
+        parser_registry=get_parser_registry(),
+        monorepo_detector=MonorepoDetector(Path.cwd())
+    )
+    result = processor.build_chunk_hierarchy(chunks)
+
+    # Both chunks should be in the result - widget should not be lost
+    assert len(result) >= 2, f"Both widget and class chunks should be preserved, got {len(result)}"
+    widget_chunks = [c for c in result if c.chunk_type == "widget"]
+    assert len(widget_chunks) >= 1, "Widget chunk should be preserved in hierarchy"
+
+
+@pytest.mark.asyncio
+async def test_dart_generated_file_exclusion():
+    """Test that Flutter generated file patterns are in ignore list."""
+    from mcp_vector_search.config.defaults import DEFAULT_IGNORE_FILES
+
+    generated_patterns = ["*.g.dart", "*.freezed.dart", "*.mocks.dart", "*.gr.dart"]
+    for pattern in generated_patterns:
+        assert pattern in DEFAULT_IGNORE_FILES, f"{pattern} should be in DEFAULT_IGNORE_FILES"
+
+
+@pytest.mark.asyncio
+async def test_dart_arb_extension():
+    """Test that .arb extension is recognized."""
+    from mcp_vector_search.config.defaults import DEFAULT_FILE_EXTENSIONS, LANGUAGE_MAPPINGS
+
+    assert ".arb" in DEFAULT_FILE_EXTENSIONS, ".arb should be in DEFAULT_FILE_EXTENSIONS"
+    assert ".arb" in LANGUAGE_MAPPINGS, ".arb should be in LANGUAGE_MAPPINGS"
+    assert LANGUAGE_MAPPINGS[".arb"] == "json", ".arb should map to json"
 
 
 @pytest.mark.asyncio

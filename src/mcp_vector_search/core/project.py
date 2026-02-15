@@ -206,6 +206,22 @@ class ProjectManager:
             config_data["project_root"] = Path(config_data["project_root"])
             config_data["index_path"] = Path(config_data["index_path"])
 
+            # Merge new file extensions from DEFAULT_FILE_EXTENSIONS
+            # This ensures upgrades automatically pick up newly-supported file types
+            if "file_extensions" in config_data:
+                saved_extensions = set(config_data["file_extensions"])
+                current_defaults = set(DEFAULT_FILE_EXTENSIONS)
+                new_extensions = current_defaults - saved_extensions
+
+                if new_extensions:
+                    # Merge new extensions (preserving user's existing extensions)
+                    merged_extensions = sorted(saved_extensions | new_extensions)
+                    config_data["file_extensions"] = merged_extensions
+
+                    logger.info(
+                        f"Added {len(new_extensions)} new file extensions from updated defaults: {sorted(new_extensions)}"
+                    )
+
             config = ProjectConfig(**config_data)
             self._config = config
             return config

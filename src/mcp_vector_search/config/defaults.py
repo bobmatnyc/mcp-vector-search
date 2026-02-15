@@ -80,6 +80,8 @@ DEFAULT_FILE_EXTENSIONS = [
     ".swift",
     # Dart - fallback parsing
     ".dart",
+    # Flutter localization
+    ".arb",
     # R - fallback parsing
     ".r",
     ".R",
@@ -177,6 +179,8 @@ LANGUAGE_MAPPINGS: dict[str, str] = {
     ".swift": "swift",
     # Dart
     ".dart": "dart",
+    # Flutter localization (ARB is JSON-based)
+    ".arb": "json",
     # R
     ".r": "r",
     ".R": "r",
@@ -400,6 +404,11 @@ DEFAULT_IGNORE_FILES = [
     "*.log",
     "*.temp",
     "*.tmp",
+    # Flutter/Dart generated files
+    "*.g.dart",         # json_serializable, built_value generated
+    "*.freezed.dart",   # freezed code generation
+    "*.mocks.dart",     # mockito mock generation
+    "*.gr.dart",        # auto_route generation
 ]
 
 

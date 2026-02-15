@@ -36,53 +36,30 @@ class ParserRegistry:
 
     def _register_default_parsers(self) -> None:
         """Register default parsers for supported languages."""
-        # Register Python parser
-        python_parser = PythonParser()
-        self.register_parser("python", python_parser)
+        parsers_to_register = [
+            ("python", PythonParser),
+            ("javascript", JavaScriptParser),
+            ("typescript", TypeScriptParser),
+            ("java", JavaParser),
+            ("c_sharp", CSharpParser),
+            ("go", GoParser),
+            ("rust", RustParser),
+            ("dart", DartParser),
+            ("php", PHPParser),
+            ("ruby", RubyParser),
+            ("text", TextParser),
+            ("html", HTMLParser),
+        ]
 
-        # Register JavaScript parser
-        javascript_parser = JavaScriptParser()
-        self.register_parser("javascript", javascript_parser)
-
-        # Register TypeScript parser
-        typescript_parser = TypeScriptParser()
-        self.register_parser("typescript", typescript_parser)
-
-        # Register Java parser
-        java_parser = JavaParser()
-        self.register_parser("java", java_parser)
-
-        # Register C# parser
-        csharp_parser = CSharpParser()
-        self.register_parser("c_sharp", csharp_parser)
-
-        # Register Go parser
-        go_parser = GoParser()
-        self.register_parser("go", go_parser)
-
-        # Register Rust parser
-        rust_parser = RustParser()
-        self.register_parser("rust", rust_parser)
-
-        # Register Dart parser
-        dart_parser = DartParser()
-        self.register_parser("dart", dart_parser)
-
-        # Register PHP parser
-        php_parser = PHPParser()
-        self.register_parser("php", php_parser)
-
-        # Register Ruby parser
-        ruby_parser = RubyParser()
-        self.register_parser("ruby", ruby_parser)
-
-        # Register Text parser for .txt files
-        text_parser = TextParser()
-        self.register_parser("text", text_parser)
-
-        # Register HTML parser for .html files
-        html_parser = HTMLParser()
-        self.register_parser("html", html_parser)
+        for language, parser_class in parsers_to_register:
+            try:
+                parser = parser_class()
+                self.register_parser(language, parser)
+            except Exception as e:
+                logger.error(
+                    f"Failed to initialize {language} parser "
+                    f"({parser_class.__name__}): {e}"
+                )
 
     def register_parser(self, language: str, parser: BaseParser) -> None:
         """Register a parser for a specific language.

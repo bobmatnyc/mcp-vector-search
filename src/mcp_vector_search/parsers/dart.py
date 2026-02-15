@@ -34,7 +34,7 @@ class DartParser(BaseParser):
             )
             return
         except Exception as e:
-            logger.debug(f"tree-sitter-language-pack failed: {e}")
+            logger.warning(f"tree-sitter-language-pack failed: {e}")
 
         try:
             # Fallback to manual tree-sitter setup (requires language binaries)
@@ -60,7 +60,7 @@ class DartParser(BaseParser):
                 content = f.read()
             return await self.parse_content(content, file_path)
         except Exception as e:
-            logger.error(f"Failed to read file {file_path}: {e}")
+            logger.error(f"Failed to read file {file_path}: {e}", exc_info=True)
             return []
 
     async def parse_content(self, content: str, file_path: Path) -> list[CodeChunk]:
@@ -317,11 +317,14 @@ class DartParser(BaseParser):
         # Enhanced regex patterns for Dart
         # Match: class WidgetName extends StatelessWidget/StatefulWidget
         widget_pattern = re.compile(
-            r"^\s*class\s+(\w+)\s+extends\s+(StatelessWidget|StatefulWidget)",
+            r"^\s*(?:abstract\s+)?class\s+(\w+)(?:\s*<[^>]*>)?\s+extends\s+(StatelessWidget|StatefulWidget)",
             re.MULTILINE,
         )
         # Match: class ClassName
-        class_pattern = re.compile(r"^\s*class\s+(\w+)\s*[{<]", re.MULTILINE)
+        class_pattern = re.compile(
+            r"^\s*(?:abstract\s+)?class\s+(\w+)(?:\s*<[^>]*>)?(?:\s+(?:extends|implements|with)\s+[^{]+)*\s*\{",
+            re.MULTILINE,
+        )
         # Match: Future<Type> funcName( or Type funcName( or void funcName(
         function_pattern = re.compile(
             r"^\s*(?:Future<[\w<>]+>|void|[\w<>]+)\s+(\w+)\s*\(", re.MULTILINE
@@ -368,11 +371,6 @@ class DartParser(BaseParser):
                 )
                 chunk.imports = imports
                 chunks.append(chunk)
-
-                # Extract build method separately for Flutter widgets
-                build_method = self._extract_build_method(class_content, start_line)
-                if build_method:
-                    chunks.append(build_method)
 
         # Find regular classes (not already captured as widgets)
         widget_class_names = {
@@ -494,30 +492,6 @@ class DartParser(BaseParser):
             )
 
         return chunks
-
-    def _extract_build_method(
-        self, class_content: str, class_start_line: int
-    ) -> CodeChunk | None:
-        """Extract build() method from a Widget class."""
-        # Look for Widget build(BuildContext context)
-        build_pattern = re.compile(r"^\s*Widget\s+build\s*\(", re.MULTILINE)
-        match = build_pattern.search(class_content)
-
-        if not match:
-            return None
-
-        # Calculate line number within class
-        lines_before = class_content[: match.start()].count("\n")
-        class_start_line + lines_before
-
-        # Find end of build method
-        class_lines = class_content.splitlines(keepends=True)
-        build_start_idx = lines_before
-
-        # Simple heuristic: find matching braces
-        self._find_method_end(class_lines, build_start_idx)
-
-        return None  # Simplified - build method is already in class chunk
 
     def _find_function_end(self, lines: list[str], start_line: int) -> int:
         """Find the end line of a function using brace matching."""
