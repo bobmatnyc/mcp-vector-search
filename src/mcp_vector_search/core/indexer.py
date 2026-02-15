@@ -182,6 +182,57 @@ class SemanticIndexer:
         self.chunks_backend = ChunksBackend(index_path)
         self.vectors_backend = VectorsBackend(index_path)
 
+        # Background KG build tracking
+        self._kg_build_task: asyncio.Task | None = None
+        self._kg_build_status: str = "not_started"
+        self._enable_background_kg: bool = os.environ.get(
+            "MCP_VECTOR_SEARCH_AUTO_KG", "false"
+        ).lower() in ("true", "1", "yes")
+
+    async def _build_kg_background(self) -> None:
+        """Build knowledge graph in background (non-blocking).
+
+        This method runs after indexing completes to build the KG without
+        blocking search availability. KG enhancement will be available
+        once this completes.
+        """
+        self._kg_build_status = "building"
+        try:
+            from .kg_builder import KGBuilder
+            from .knowledge_graph import KnowledgeGraph
+
+            kg_path = self.project_root / ".mcp-vector-search" / "knowledge_graph"
+            kg = KnowledgeGraph(kg_path)
+            await kg.initialize()
+
+            builder = KGBuilder(kg, self.project_root)
+
+            logger.info("🔄 Building knowledge graph in background (non-blocking)...")
+
+            # Use the same database connection
+            async with self.database:
+                await builder.build_from_database(
+                    self.database,
+                    show_progress=False,  # No progress for background
+                    skip_documents=True,  # Fast mode for background
+                )
+
+            await kg.close()
+            self._kg_build_status = "complete"
+            logger.info("✓ Background KG build complete")
+
+        except Exception as e:
+            self._kg_build_status = f"error: {e}"
+            logger.error(f"Background KG build failed: {e}")
+
+    def get_kg_status(self) -> str:
+        """Get current KG build status.
+
+        Returns:
+            Status string: "not_started", "building", "complete", or "error: <message>"
+        """
+        return self._kg_build_status
+
     def apply_auto_optimizations(self) -> tuple[Any, Any] | None:
         """Apply automatic optimizations based on codebase profile.
 
@@ -739,6 +790,18 @@ class SemanticIndexer:
                 )
             except Exception as e:
                 logger.warning(f"Failed to save trend snapshot: {e}")
+
+        # Start background KG build if enabled and indexing completed successfully
+        if (
+            self._enable_background_kg
+            and indexed_count > 0
+            and not self._kg_build_task
+            and phase in ("all", "embed")  # Only after embeddings are ready
+        ):
+            self._kg_build_task = asyncio.create_task(self._build_kg_background())
+            logger.info(
+                "🔄 Knowledge graph building in background (search available now)"
+            )
 
         return indexed_count
 
