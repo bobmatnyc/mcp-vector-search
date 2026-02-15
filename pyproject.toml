@@ -53,6 +53,7 @@ dependencies = [
     "yake>=0.4.8",
     "kuzu>=0.7.0",
     "pyyaml>=6.0",
+    "psutil>=5.9.0",
 ]
 
 [dependency-groups]

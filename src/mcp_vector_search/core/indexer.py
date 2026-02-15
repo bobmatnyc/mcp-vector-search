@@ -28,6 +28,7 @@ from .index_metadata import IndexMetadata
 from .metrics_collector import IndexerMetricsCollector
 from .models import CodeChunk, IndexStats
 from .relationships import RelationshipStore
+from .resource_manager import calculate_optimal_workers
 from .vectors_backend import VectorsBackend
 
 
@@ -151,6 +152,18 @@ class SemanticIndexer:
 
         # Initialize parser registry
         self.parser_registry = get_parser_registry()
+
+        # Auto-configure workers if not provided
+        if max_workers is None:
+            # Use memory-aware worker calculation
+            limits = calculate_optimal_workers(
+                memory_per_worker_mb=800,  # Embedding models use more memory
+                max_workers=4,  # Embedding is GPU-bound, not CPU-bound
+            )
+            max_workers = limits.max_workers
+            logger.info(
+                f"Auto-configured {max_workers} workers based on available memory"
+            )
 
         self.chunk_processor = ChunkProcessor(
             parser_registry=self.parser_registry,

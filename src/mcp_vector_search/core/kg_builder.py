@@ -29,6 +29,7 @@ from .knowledge_graph import (
     Project,
 )
 from .models import CodeChunk
+from .resource_manager import get_batch_size_for_memory, get_configured_workers
 
 console = Console()
 
@@ -135,6 +136,16 @@ class KGBuilder:
         self.kg = kg
         self.project_root = project_root
         self._entity_map: dict[str, str] = {}  # name -> chunk_id mapping
+
+        # Auto-configure based on memory
+        self._workers = get_configured_workers()
+        self._batch_size = get_batch_size_for_memory(
+            item_size_kb=5,
+            target_batch_mb=50,  # ~5KB per entity  # 50MB batches
+        )
+        logger.debug(
+            f"KGBuilder: {self._workers} workers, batch_size={self._batch_size}"
+        )
 
     def _is_generic_entity(self, name: str) -> bool:
         """Check if entity name is too generic to be useful.
