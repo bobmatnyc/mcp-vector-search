@@ -355,7 +355,7 @@ async def run_indexing(
 
     # Check schema compatibility before indexing (unless explicitly skipped)
     if not skip_schema_check:
-        from ...core.schema import check_schema_compatibility
+        from ...core.schema import check_schema_compatibility, save_schema_version
 
         db_path = config.index_path
         is_compatible, message = check_schema_compatibility(db_path)
@@ -363,20 +363,28 @@ async def run_indexing(
         if not is_compatible:
             print_warning("⚠️  Schema Version Mismatch Detected")
             print_error(message)
-            print_info("\nOptions:")
-            print_info("  1. Reset database and reindex (recommended):")
-            print_info("     mcp-vector-search index --force")
-            print_info("  2. Skip schema check and continue (may cause errors):")
-            print_info("     mcp-vector-search index --skip-schema-check")
+            print_warning("\n🔄 Auto-resetting database for new schema...")
 
-            # If force_reindex is set, proceed with reset
-            if force_reindex:
-                print_warning(
-                    "\n🔄 Force flag detected - resetting database with new schema..."
-                )
-                # Schema version will be saved after successful reset
-            else:
-                raise typer.Exit(1)
+            # Automatically reset database on schema mismatch
+            import shutil
+
+            if config.index_path.exists():
+                try:
+                    shutil.rmtree(config.index_path)
+                    logger.info(f"Removed old database at {config.index_path}")
+                except Exception as e:
+                    logger.error(f"Failed to remove database: {e}")
+                    raise
+
+            # Ensure index path exists for new database
+            config.index_path.mkdir(parents=True, exist_ok=True)
+
+            # Save new schema version
+            save_schema_version(db_path)
+            print_info("✓ Database reset complete, proceeding with indexing...")
+
+            # Force reindex after reset
+            force_reindex = True
         else:
             logger.debug(message)
 

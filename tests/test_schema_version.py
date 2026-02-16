@@ -30,12 +30,13 @@ def test_schema_version_compatibility_same_version():
     assert v2.is_compatible_with(v1)
 
 
-def test_schema_version_compatibility_minor_upgrade():
-    """Test that minor version upgrades are compatible."""
+def test_schema_version_compatibility_exact_match_required():
+    """Test that exact version match is required (no backwards compatibility)."""
     db_version = SchemaVersion("2.3.0")
     code_version = SchemaVersion("2.4.0")
-    # Database 2.3.0 is compatible with code 2.4.0 (code can handle older DB)
-    assert db_version.is_compatible_with(code_version)
+    # Different schema versions are NOT compatible (schema must match exactly)
+    assert not db_version.is_compatible_with(code_version)
+    assert not code_version.is_compatible_with(db_version)
 
 
 def test_schema_version_incompatibility_major():
@@ -99,7 +100,7 @@ def test_check_schema_compatibility_no_version():
         is_compatible, message = check_schema_compatibility(db_path)
         assert not is_compatible
         assert "No schema version found" in message
-        assert "Reset database" in message
+        assert "automatically reset" in message
 
 
 def test_check_schema_compatibility_compatible():
@@ -128,25 +129,27 @@ def test_check_schema_compatibility_major_mismatch():
 
         is_compatible, message = check_schema_compatibility(db_path)
         assert not is_compatible
-        assert "Major version mismatch" in message
-        assert "Reset database" in message
+        assert "Schema version mismatch" in message
+        assert "automatically reset" in message
 
 
-def test_check_schema_compatibility_newer_db():
-    """Test compatibility check when database is newer than code."""
+def test_check_schema_compatibility_different_schema():
+    """Test compatibility check when schema version differs."""
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "lancedb"
         db_path.mkdir(parents=True)
 
-        # Parse current version and create a newer one
+        # Parse current version and create a different one
         current = SchemaVersion(SCHEMA_VERSION)
-        newer_version = SchemaVersion(f"{current.major}.{current.minor + 1}.0")
-        save_schema_version(db_path, newer_version)
+        different_version = SchemaVersion(
+            f"{current.major}.{current.minor}.{current.patch + 1}"
+        )
+        save_schema_version(db_path, different_version)
 
         is_compatible, message = check_schema_compatibility(db_path)
         assert not is_compatible
-        assert "newer than code" in message.lower()
-        assert "Upgrade mcp-vector-search" in message
+        assert "Schema version mismatch" in message
+        assert "automatically reset" in message
 
 
 def test_schema_version_file_location():
@@ -168,8 +171,14 @@ def test_schema_version_file_location():
         assert not wrong_location.exists()
 
 
-def test_default_schema_version_matches_package():
-    """Test that default schema version matches package version."""
-    from mcp_vector_search import __version__
+def test_schema_version_separate_from_package():
+    """Test that schema version is separate from package version."""
 
-    assert SCHEMA_VERSION == __version__
+    # Schema version is now independent of package version
+    # It only changes when database schema changes
+    assert isinstance(SCHEMA_VERSION, str)
+    assert "." in SCHEMA_VERSION  # Should be in semver format
+
+    # Schema version should be 2.3.0 (last schema change)
+    # even if package version is higher (e.g., 2.3.7)
+    assert SCHEMA_VERSION == "2.3.0"

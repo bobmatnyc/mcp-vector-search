@@ -12,8 +12,22 @@ from loguru import logger
 
 from mcp_vector_search import __version__
 
-# Schema version matches package version
-SCHEMA_VERSION = __version__
+# Schema version - ONLY bump when database schema changes (new fields, removed fields)
+# This is separate from package __version__ which changes for every release
+SCHEMA_VERSION = "2.3.0"  # Last schema change: added 'calls' and 'inherits_from' fields
+
+# Schema changelog - documents when schema actually changed
+SCHEMA_CHANGELOG = {
+    "2.3.0": "Added 'calls' and 'inherits_from' fields to chunks table",
+    "2.2.0": "Initial schema with basic chunk fields",
+}
+
+# Code versions compatible with each schema version
+# All patch versions within the same minor version are compatible
+SCHEMA_COMPATIBILITY = {
+    "2.3.0": ["2.3.0", "2.3.1", "2.3.2", "2.3.3", "2.3.4", "2.3.5", "2.3.6", "2.3.7"],
+    "2.2.0": ["2.2.0", "2.2.1", "2.2.2", "2.2.3", "2.2.4", "2.2.5"],
+}
 
 # Required fields for each table/collection
 # These are the fields that MUST exist in the database for the current code version
@@ -74,19 +88,16 @@ class SchemaVersion:
         """Check if two versions are compatible.
 
         Compatible means:
-        - Same major version (breaking changes between major versions)
-        - Database version <= code version (code can handle older schemas)
+        - Exact schema version match (same major.minor.patch)
+        - Schema versioning is now independent of code versioning
+        - Schema only changes when database fields change
         """
-        if self.major != other.major:
-            return False
-
-        # Database version must be <= code version
-        if self.minor > other.minor:
-            return False
-        if self.minor == other.minor and self.patch > other.patch:
-            return False
-
-        return True
+        # Exact schema version match required
+        return (
+            self.major == other.major
+            and self.minor == other.minor
+            and self.patch == other.patch
+        )
 
     def __str__(self) -> str:
         return self.version_str
@@ -178,48 +189,31 @@ def check_schema_compatibility(db_path: Path) -> tuple[bool, str]:
     db_version = load_schema_version(db_path)
 
     if db_version is None:
-        # No version file - assume old database (pre-2.3.x)
+        # No version file - assume old database (pre-2.3.0)
         return (
             False,
             f"No schema version found. Database may be from older version (< 2.3.0).\n"
-            f"Current code version: {current_version}\n"
-            f"Recommendation: Reset database and reindex.",
+            f"Current schema version: {current_version}\n"
+            f"Database will be automatically reset.",
         )
 
     if db_version.is_compatible_with(current_version):
         return (
             True,
-            f"Schema version {db_version} is compatible with code version {current_version}",
+            f"Schema version {db_version} is compatible (code version: {__version__})",
         )
 
-    # Incompatible versions
-    if db_version.major != current_version.major:
-        return (
-            False,
-            f"❌ Schema version mismatch!\n\n"
-            f"Database version: {db_version}\n"
-            f"Code version: {current_version}\n\n"
-            f"Major version mismatch - database schema is incompatible.\n"
-            f"Recommendation: Reset database with --force flag.",
-        )
-
-    # Same major version but database is newer than code
-    if db_version.minor > current_version.minor or (
-        db_version.minor == current_version.minor
-        and db_version.patch > current_version.patch
-    ):
-        return (
-            False,
-            f"⚠️  Database schema is newer than code!\n\n"
-            f"Database version: {db_version}\n"
-            f"Code version: {current_version}\n\n"
-            f"Recommendation: Upgrade mcp-vector-search to latest version:\n"
-            f"  pip install --upgrade mcp-vector-search",
-        )
+    # Incompatible schema versions - need reset
+    db_changelog = SCHEMA_CHANGELOG.get(str(db_version), "Unknown changes")
+    current_changelog = SCHEMA_CHANGELOG.get(str(current_version), "Unknown changes")
 
     return (
-        True,
-        f"Schema compatible (database: {db_version}, code: {current_version})",
+        False,
+        f"❌ Schema version mismatch!\n\n"
+        f"Database schema: {db_version} ({db_changelog})\n"
+        f"Current schema: {current_version} ({current_changelog})\n"
+        f"Code version: {__version__}\n\n"
+        f"Database schema is incompatible and will be automatically reset.",
     )
 
 
