@@ -1030,6 +1030,15 @@ async def _run_batch_indexing(
                 ]
             )
 
+        # Add visualization options
+        steps.extend(
+            [
+                "",
+                "[bold]Visualization:[/bold]",
+                "[cyan]mcp-vector-search visualize[/cyan] - Interactive code explorer (chunks + KG graph)",
+            ]
+        )
+
         print_next_steps(steps, title="Ready to Search")
     else:
         print_info("\n[bold]No files were indexed. Possible reasons:[/bold]")
