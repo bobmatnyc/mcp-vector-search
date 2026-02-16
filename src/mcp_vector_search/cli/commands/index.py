@@ -18,6 +18,7 @@ from ...core.factory import create_database
 from ...core.indexer import SemanticIndexer
 from ...core.project import ProjectManager
 from ..output import (
+    console,
     print_error,
     print_index_stats,
     print_info,
@@ -392,31 +393,36 @@ async def run_indexing(
     print_info(f"File extensions: {', '.join(config.file_extensions)}")
     print_info(f"Embedding model: {config.embedding_model}")
 
-    # Setup embedding function and cache
+    # Setup embedding function and cache with progress feedback
     cache_dir = (
         get_default_cache_path(project_root) if config.cache_embeddings else None
     )
-    embedding_function, cache = create_embedding_function(
-        model_name=config.embedding_model,
-        cache_dir=cache_dir,
-        cache_size=config.max_cache_size,
-    )
 
-    # Setup database
-    database = create_database(
-        persist_directory=config.index_path,
-        embedding_function=embedding_function,
-    )
+    # Show progress for model loading (can take 1-30 seconds for ~1.5GB model)
+    with console.status("[dim]Loading embedding model...[/dim]", spinner="dots"):
+        embedding_function, cache = create_embedding_function(
+            model_name=config.embedding_model,
+            cache_dir=cache_dir,
+            cache_size=config.max_cache_size,
+        )
+    console.print("[green]✓[/green] [dim]Embedding model ready[/dim]")
 
-    # Setup indexer
-    indexer = SemanticIndexer(
-        database=database,
-        project_root=project_root,
-        config=config,
-        debug=debug,
-        batch_size=batch_size,
-        auto_optimize=auto_optimize,
-    )
+    # Setup database and indexer with progress feedback
+    with console.status("[dim]Initializing indexing backend...[/dim]", spinner="dots"):
+        database = create_database(
+            persist_directory=config.index_path,
+            embedding_function=embedding_function,
+        )
+
+        indexer = SemanticIndexer(
+            database=database,
+            project_root=project_root,
+            config=config,
+            debug=debug,
+            batch_size=batch_size,
+            auto_optimize=auto_optimize,
+        )
+    console.print("[green]✓[/green] [dim]Backend ready[/dim]")
 
     try:
         async with database:
