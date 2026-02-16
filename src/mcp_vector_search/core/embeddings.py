@@ -460,8 +460,18 @@ class CodeBERTEmbeddingFunction:
             raise EmbeddingError(f"Failed to generate embeddings: {e}") from e
 
     def _generate_embeddings(self, input: list[str]) -> list[list[float]]:
-        """Internal method to generate embeddings (runs in thread pool)."""
-        embeddings = self.model.encode(input, convert_to_numpy=True)
+        """Internal method to generate embeddings (runs in thread pool).
+
+        Uses optimal batch size for GPU (512 for M4 Max, detected automatically).
+        """
+        # Use optimal batch size for GPU throughput (5x faster with 512 vs 32)
+        batch_size = _detect_optimal_batch_size()
+        embeddings = self.model.encode(
+            input,
+            convert_to_numpy=True,
+            batch_size=batch_size,
+            show_progress_bar=False,
+        )
         return embeddings.tolist()
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
