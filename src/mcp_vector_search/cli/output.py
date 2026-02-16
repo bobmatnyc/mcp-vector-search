@@ -433,10 +433,20 @@ def print_next_steps(steps: list[str], title: str = "Next Steps") -> None:
     """Print next step hints after a command execution.
 
     Args:
-        steps: List of next step descriptions
+        steps: List of next step descriptions (empty strings and [bold] headers are not numbered)
         title: Panel title (default: "Next Steps")
     """
-    content = "\n".join(f"  {i}. {step}" for i, step in enumerate(steps, 1))
+    lines = []
+    num = 1
+    for step in steps:
+        if not step:  # Empty string = blank line
+            lines.append("")
+        elif step.startswith("[bold]"):  # Headers are not numbered
+            lines.append(f"  {step}")
+        else:
+            lines.append(f"  {num}. {step}")
+            num += 1
+    content = "\n".join(lines)
     print_panel(content, title=f"🚀 {title}", border_style="blue")
 
 
