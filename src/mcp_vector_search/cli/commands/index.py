@@ -632,6 +632,12 @@ async def _run_batch_indexing(
             "[cyan]mcp-vector-search search 'your query'[/cyan] - Try semantic search",
             chat_hint,
             "[cyan]mcp-vector-search status[/cyan] - View detailed statistics",
+            "",
+            "[bold]Knowledge Graph:[/bold]",
+            "[cyan]mcp-vector-search kg stats[/cyan] - View graph statistics",
+            '[cyan]mcp-vector-search kg query "ClassName"[/cyan] - Find related entities',
+            '[cyan]mcp-vector-search kg calls "function_name"[/cyan] - Show call graph',
+            '[cyan]mcp-vector-search kg inherits "ClassName"[/cyan] - Show inheritance tree',
         ]
         print_next_steps(steps, title="Ready to Search")
     else:

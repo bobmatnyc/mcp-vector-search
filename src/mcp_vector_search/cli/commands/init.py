@@ -293,6 +293,12 @@ def main(
                 "[cyan]mcp-vector-search search 'your query'[/cyan] - Search your code",
                 "Use MCP tools in Claude Code for AI-powered code search",
                 "[cyan]mcp-vector-search status[/cyan] - Check indexing statistics",
+                "",
+                "[bold]Knowledge Graph:[/bold]",
+                "[cyan]mcp-vector-search kg stats[/cyan] - View graph statistics",
+                '[cyan]mcp-vector-search kg query "ClassName"[/cyan] - Find related entities',
+                '[cyan]mcp-vector-search kg calls "function_name"[/cyan] - Show call graph',
+                '[cyan]mcp-vector-search kg inherits "ClassName"[/cyan] - Show inheritance tree',
             ]
             print_next_steps(next_steps, title="Ready to Use")
 
@@ -311,6 +317,19 @@ def main(
             if not mcp:
                 steps.append(
                     "[cyan]mcp-vector-search mcp install[/cyan] - Add Claude Code integration"
+                )
+
+            # Add KG examples if project is indexed
+            if auto_index:
+                steps.extend(
+                    [
+                        "",
+                        "[bold]Knowledge Graph:[/bold]",
+                        "[cyan]mcp-vector-search kg stats[/cyan] - View graph statistics",
+                        '[cyan]mcp-vector-search kg query "ClassName"[/cyan] - Find related entities',
+                        '[cyan]mcp-vector-search kg calls "function_name"[/cyan] - Show call graph',
+                        '[cyan]mcp-vector-search kg inherits "ClassName"[/cyan] - Show inheritance tree',
+                    ]
                 )
 
             print_next_steps(steps)
