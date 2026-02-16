@@ -606,11 +606,13 @@ async def _run_batch_indexing(
             )
 
             # Phase 1: Chunking (file-level progress)
+            # Total should include both existing and new files
+            total_files_including_cached = existing_count + total_files
             phase1_task = progress.add_task(
                 "📄 Chunking   ",
-                total=total_files,
-                completed=0,
-                progress_text=f"0/{total_files} files",
+                total=total_files_including_cached,
+                completed=existing_count,  # Start from cached count
+                progress_text=f"{existing_count:,}/{total_files_including_cached:,} files ({existing_count:,} cached)",
             )
 
             # Phase 2: Embedding (chunk-level progress, starts with total=1 to avoid division by zero)
@@ -703,10 +705,11 @@ async def _run_batch_indexing(
                         progress_manager.update_chunking(processed_files_increment=1)
 
                     # Update Phase 1 progress (file-based, include existing context)
+                    current_total = existing_count + indexed_count
                     if existing_count > 0:
-                        progress_text_str = f"{indexed_count}/{total_files} new files → {total_chunks_created:,} chunks (+{existing_count:,} cached)"
+                        progress_text_str = f"{current_total:,}/{total_files_including_cached:,} files ({indexed_count} new + {existing_count:,} cached) → {total_chunks_created:,} chunks"
                     else:
-                        progress_text_str = f"{indexed_count}/{total_files} files → {total_chunks_created:,} chunks"
+                        progress_text_str = f"{current_total:,}/{total_files_including_cached:,} files → {total_chunks_created:,} chunks"
 
                     progress.update(
                         phase1_task,
@@ -741,12 +744,13 @@ async def _run_batch_indexing(
                     phase1_elapsed = time.time() - phase_start_times["phase1"]
 
                     # Update phases panel with existing files context
+                    current_total = existing_count + indexed_count
                     if existing_count > 0:
                         # Show both new and existing files
-                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({indexed_count}/{total_files} new • {existing_count:,} cached • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]"
+                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({current_total:,}/{total_files_including_cached:,} files • {indexed_count} new + {existing_count:,} cached • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]"
                     else:
                         # First-time indexing, no cached files
-                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({indexed_count}/{total_files} files • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]"
+                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({current_total:,}/{total_files_including_cached:,} files • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]"
 
                     layout["phases"].update(
                         Panel(
@@ -791,14 +795,15 @@ async def _run_batch_indexing(
                 phase_times["phase1"] = time.time() - phase_start_times["phase1"]
 
                 # Include existing files in completion message
+                final_total = existing_count + indexed_count
                 if existing_count > 0:
-                    completion_text = f"{indexed_count} new files → {total_chunks_created:,} chunks (+{existing_count:,} cached) • {phase_times['phase1']:.0f}s"
+                    completion_text = f"{final_total:,}/{total_files_including_cached:,} files ({indexed_count} new + {existing_count:,} cached) → {total_chunks_created:,} chunks • {phase_times['phase1']:.0f}s"
                 else:
-                    completion_text = f"{indexed_count} files → {total_chunks_created:,} chunks • {phase_times['phase1']:.0f}s"
+                    completion_text = f"{final_total:,}/{total_files_including_cached:,} files → {total_chunks_created:,} chunks • {phase_times['phase1']:.0f}s"
 
                 progress.update(
                     phase1_task,
-                    completed=total_files,
+                    completed=total_files_including_cached,
                     progress_text=completion_text,
                 )
 
