@@ -2746,6 +2746,64 @@ def get_visualization_mode_styles() -> str:
     """
 
 
+def get_kg_styles() -> str:
+    """Get styles for Knowledge Graph visualization.
+
+    Returns:
+        CSS string for KG-specific styling
+    """
+    return """
+        /* Knowledge Graph Styles */
+        #kg-graph {
+            width: 100vw;
+            height: 100vh;
+            background: var(--bg-primary);
+        }
+
+        .kg-node {
+            cursor: pointer;
+            stroke: #fff;
+            stroke-width: 1.5px;
+        }
+
+        .kg-node:hover {
+            stroke: #60a5fa;
+            stroke-width: 3px;
+        }
+
+        .kg-link {
+            stroke-opacity: 0.6;
+        }
+
+        .kg-link:hover {
+            stroke-opacity: 1;
+            stroke-width: 3px;
+        }
+
+        .kg-label {
+            font-size: 10px;
+            font-family: monospace;
+            fill: var(--text-primary);
+            pointer-events: none;
+            text-anchor: middle;
+        }
+
+        #kg-controls label {
+            display: block;
+            margin: 4px 0;
+            cursor: pointer;
+            user-select: none;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        #kg-controls input[type="checkbox"] {
+            margin-right: 6px;
+            cursor: pointer;
+        }
+    """
+
+
 def get_all_styles() -> str:
     """Get all CSS styles combined.
 
@@ -2772,5 +2830,6 @@ def get_all_styles() -> str:
             get_dependencies_styles(),
             get_trends_styles(),
             get_visualization_mode_styles(),
+            get_kg_styles(),
         ]
     )

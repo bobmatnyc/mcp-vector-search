@@ -5321,4 +5321,278 @@ document.addEventListener('DOMContentLoaded', () => {
     loadGraphData();
     console.log('=== END PAGE INITIALIZATION ===');
 });
+
+// ============================================================================
+// KNOWLEDGE GRAPH VISUALIZATION
+// ============================================================================
+
+let kgNodes = [];
+let kgLinks = [];
+let kgSimulation = null;
+let kgLinkElements = null;
+let kgNodeElements = null;
+let kgLabelElements = null;
+let currentView = 'chunks';
+
+// Color schemes for KG
+const kgNodeColors = {
+    1: '#6366f1',  // file - indigo
+    2: '#8b5cf6',  // module - purple
+    3: '#ec4899',  // class - pink
+    4: '#10b981',  // function - green
+    0: '#6b7280'   // unknown - gray
+};
+
+const kgLinkColors = {
+    'calls': '#f59e0b',      // orange
+    'imports': '#3b82f6',    // blue
+    'inherits': '#ef4444',   // red
+    'contains': '#6b7280'    // gray
+};
+
+function setView(view) {
+    currentView = view;
+
+    // Update button states
+    document.querySelectorAll('.viz-mode-btn[data-view]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.view === view);
+    });
+
+    if (view === 'chunks') {
+        // Show chunks view
+        document.getElementById('graph').style.display = 'block';
+        document.getElementById('kg-graph').style.display = 'none';
+        document.getElementById('chunk-controls').style.display = 'block';
+        document.getElementById('kg-controls').style.display = 'none';
+        document.getElementById('tree-layout-group').style.display = 'block';
+        document.getElementById('grouping-mode-group').style.display = currentVizMode === 'treemap' || currentVizMode === 'sunburst' ? 'block' : 'none';
+
+        // Re-render chunks view if needed
+        if (treeData) {
+            render();
+        }
+    } else if (view === 'kg') {
+        // Show KG view
+        document.getElementById('graph').style.display = 'none';
+        document.getElementById('kg-graph').style.display = 'block';
+        document.getElementById('chunk-controls').style.display = 'none';
+        document.getElementById('kg-controls').style.display = 'block';
+        document.getElementById('tree-layout-group').style.display = 'none';
+        document.getElementById('grouping-mode-group').style.display = 'none';
+
+        // Load and render KG if not already loaded
+        if (kgNodes.length === 0) {
+            loadKGData();
+        } else {
+            renderKG();
+        }
+    }
+}
+
+function loadKGData() {
+    console.log('Loading KG data...');
+    fetch('/api/kg-graph')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.error) {
+                console.error('KG data error:', data.error);
+                alert('Knowledge graph not found. Run: mcp-vector-search kg build');
+                setView('chunks'); // Fall back to chunks view
+                return;
+            }
+
+            kgNodes = data.nodes || [];
+            kgLinks = data.links || [];
+            console.log(`Loaded ${kgNodes.length} KG nodes, ${kgLinks.length} KG links`);
+
+            renderKG();
+        })
+        .catch(error => {
+            console.error('Failed to load KG data:', error);
+            alert('Failed to load knowledge graph: ' + error.message);
+            setView('chunks'); // Fall back to chunks view
+        });
+}
+
+function renderKG() {
+    console.log('Rendering KG...');
+
+    const svg = d3.select('#kg-graph');
+    const width = window.innerWidth - 320; // Account for sidebar
+    const height = window.innerHeight;
+
+    // Clear previous render
+    svg.selectAll('*').remove();
+    if (kgSimulation) {
+        kgSimulation.stop();
+    }
+
+    // Create zoom group
+    const g = svg.append('g');
+
+    // Add zoom behavior
+    const zoom = d3.zoom()
+        .scaleExtent([0.1, 4])
+        .on('zoom', (event) => {
+            g.attr('transform', event.transform);
+        });
+    svg.call(zoom);
+
+    // Create force simulation
+    kgSimulation = d3.forceSimulation(kgNodes)
+        .force('link', d3.forceLink(kgLinks)
+            .id(d => d.id)
+            .distance(100))
+        .force('charge', d3.forceManyBody()
+            .strength(-300))
+        .force('center', d3.forceCenter(width / 2, height / 2))
+        .force('collision', d3.forceCollide()
+            .radius(30));
+
+    // Create links
+    kgLinkElements = g.append('g')
+        .selectAll('line')
+        .data(kgLinks)
+        .join('line')
+        .attr('class', 'kg-link')
+        .attr('stroke', d => kgLinkColors[d.type] || '#6b7280')
+        .attr('stroke-width', d => Math.sqrt(d.weight || 1))
+        .attr('stroke-opacity', 0.6)
+        .style('pointer-events', 'all')
+        .on('mouseover', function(event, d) {
+            d3.select(this)
+                .attr('stroke-opacity', 1)
+                .attr('stroke-width', 3);
+        })
+        .on('mouseout', function(event, d) {
+            d3.select(this)
+                .attr('stroke-opacity', 0.6)
+                .attr('stroke-width', Math.sqrt(d.weight || 1));
+        });
+
+    // Create nodes
+    kgNodeElements = g.append('g')
+        .selectAll('circle')
+        .data(kgNodes)
+        .join('circle')
+        .attr('class', 'kg-node')
+        .attr('r', 8)
+        .attr('fill', d => kgNodeColors[d.group] || kgNodeColors[0])
+        .attr('stroke', '#fff')
+        .attr('stroke-width', 1.5)
+        .style('cursor', 'pointer')
+        .on('click', (event, d) => showKGNodeInfo(d))
+        .on('mouseover', function(event, d) {
+            d3.select(this)
+                .attr('stroke', '#60a5fa')
+                .attr('stroke-width', 3);
+        })
+        .on('mouseout', function(event, d) {
+            d3.select(this)
+                .attr('stroke', '#fff')
+                .attr('stroke-width', 1.5);
+        })
+        .call(d3.drag()
+            .on('start', dragStarted)
+            .on('drag', dragged)
+            .on('end', dragEnded));
+
+    // Create labels
+    kgLabelElements = g.append('g')
+        .selectAll('text')
+        .data(kgNodes)
+        .join('text')
+        .attr('class', 'kg-label')
+        .attr('font-size', 10)
+        .attr('font-family', 'monospace')
+        .attr('fill', '#e0e0e0')
+        .attr('text-anchor', 'middle')
+        .attr('dy', -12)
+        .style('pointer-events', 'none')
+        .text(d => d.name || d.id);
+
+    // Update positions on tick
+    kgSimulation.on('tick', () => {
+        kgLinkElements
+            .attr('x1', d => d.source.x)
+            .attr('y1', d => d.source.y)
+            .attr('x2', d => d.target.x)
+            .attr('y2', d => d.target.y);
+
+        kgNodeElements
+            .attr('cx', d => d.x)
+            .attr('cy', d => d.y);
+
+        kgLabelElements
+            .attr('x', d => d.x)
+            .attr('y', d => d.y);
+    });
+
+    console.log('KG rendering complete');
+}
+
+function dragStarted(event, d) {
+    if (!event.active) kgSimulation.alphaTarget(0.3).restart();
+    d.fx = d.x;
+    d.fy = d.y;
+}
+
+function dragged(event, d) {
+    d.fx = event.x;
+    d.fy = event.y;
+}
+
+function dragEnded(event, d) {
+    if (!event.active) kgSimulation.alphaTarget(0);
+    d.fx = null;
+    d.fy = null;
+}
+
+function filterKGLinks() {
+    if (!kgLinkElements) return;
+
+    const showCalls = document.getElementById('kg-show-calls').checked;
+    const showImports = document.getElementById('kg-show-imports').checked;
+    const showInherits = document.getElementById('kg-show-inherits').checked;
+    const showContains = document.getElementById('kg-show-contains').checked;
+
+    kgLinkElements.style('display', d => {
+        if (d.type === 'calls' && !showCalls) return 'none';
+        if (d.type === 'imports' && !showImports) return 'none';
+        if (d.type === 'inherits' && !showInherits) return 'none';
+        if (d.type === 'contains' && !showContains) return 'none';
+        return null;
+    });
+}
+
+function showKGNodeInfo(node) {
+    const viewerPanel = document.getElementById('viewer-panel');
+    const viewerTitle = document.getElementById('viewer-title');
+    const viewerContent = document.getElementById('viewer-content');
+
+    viewerTitle.textContent = node.name || node.id;
+
+    // Count connections
+    const connections = kgLinks.filter(l =>
+        l.source.id === node.id || l.target.id === node.id
+    ).length;
+
+    viewerContent.innerHTML = `
+        <div style="padding: 20px;">
+            <h3 style="color: #60a5fa; margin-top: 0;">Node Details</h3>
+            <p><strong>Name:</strong> ${node.name || node.id}</p>
+            <p><strong>Type:</strong> ${node.type || 'unknown'}</p>
+            <p><strong>File:</strong> ${node.file_path || 'N/A'}</p>
+            <p><strong>Connections:</strong> ${connections}</p>
+        </div>
+    `;
+
+    viewerPanel.classList.add('open');
+    isViewerOpen = true;
+}
 """

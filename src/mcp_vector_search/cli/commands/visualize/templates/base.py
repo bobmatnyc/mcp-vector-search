@@ -48,11 +48,33 @@ def generate_html_template() -> str:
         <div class="version-badge">v{__version__} (build {__build__})</div>
 
         <div class="control-group">
-            <label style="color: var(--text-primary); margin-bottom: 8px;">Visualization Mode</label>
+            <label style="color: var(--text-primary); margin-bottom: 8px;">View</label>
             <div class="viz-mode-buttons">
-                <button class="viz-mode-btn active" data-mode="tree" onclick="setVisualizationMode('tree')">Tree</button>
-                <button class="viz-mode-btn" data-mode="treemap" onclick="setVisualizationMode('treemap')">Treemap</button>
-                <button class="viz-mode-btn" data-mode="sunburst" onclick="setVisualizationMode('sunburst')">Sunburst</button>
+                <button class="viz-mode-btn active" data-view="chunks" onclick="setView('chunks')">Chunks</button>
+                <button class="viz-mode-btn" data-view="kg" onclick="setView('kg')">Knowledge Graph</button>
+            </div>
+        </div>
+
+        <div id="chunk-controls">
+            <div class="control-group">
+                <label style="color: var(--text-primary); margin-bottom: 8px;">Layout Mode</label>
+                <div class="viz-mode-buttons">
+                    <button class="viz-mode-btn active" data-mode="tree" onclick="setVisualizationMode('tree')">Tree</button>
+                    <button class="viz-mode-btn" data-mode="treemap" onclick="setVisualizationMode('treemap')">Treemap</button>
+                    <button class="viz-mode-btn" data-mode="sunburst" onclick="setVisualizationMode('sunburst')">Sunburst</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="kg-controls" style="display: none;">
+            <div class="control-group">
+                <label style="color: var(--text-primary); margin-bottom: 8px;">Relationship Filters</label>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="font-size: 12px;"><input type="checkbox" id="kg-show-calls" checked onchange="filterKGLinks()"> Calls</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="kg-show-imports" checked onchange="filterKGLinks()"> Imports</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="kg-show-inherits" checked onchange="filterKGLinks()"> Inherits</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="kg-show-contains" checked onchange="filterKGLinks()"> Contains</label>
+                </div>
             </div>
         </div>
 
@@ -207,6 +229,7 @@ def generate_html_template() -> str:
 
     <div id="main-container">
         <svg id="graph"></svg>
+        <svg id="kg-graph" style="display: none;"></svg>
     </div>
 
     <div id="viewer-panel" class="viewer-panel">
