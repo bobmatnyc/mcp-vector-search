@@ -404,7 +404,7 @@ async def _run_batch_indexing(
     skip_relationships: bool = False,
     phase: str = "all",
 ) -> None:
-    """Run batch indexing of all files."""
+    """Run batch indexing of all files with three-phase progress display."""
     if show_progress:
         # Import enhanced progress utilities
         from rich.layout import Layout
@@ -415,7 +415,6 @@ async def _run_batch_indexing(
             Progress,
             SpinnerColumn,
             TextColumn,
-            TimeRemainingColumn,
         )
         from rich.table import Table
 
@@ -440,29 +439,56 @@ async def _run_batch_indexing(
             indexed_count = 0
             failed_count = 0
 
-            # Create layout for two-panel display
+            # Create layout for three-phase display
             layout = Layout()
             layout.split_column(
-                Layout(name="progress", size=4),
+                Layout(name="phases", size=8),
                 Layout(name="samples", size=7),
             )
 
-            # Create progress bar
+            # Create progress bars for all three phases
             progress = Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(bar_width=40),
                 TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TextColumn("({task.completed}/{task.total} files)"),
-                TimeRemainingColumn(),
+                TextColumn("[dim]{task.completed}/{task.total} files[/dim]"),
                 console=console,
             )
 
-            task = progress.add_task("Indexing files...", total=total_files)
+            # Phase 1: Chunking (file-level progress)
+            phase1_task = progress.add_task(
+                "📄 Chunking   ", total=total_files, completed=0
+            )
 
-            # Create live display with both panels
+            # Phase 2: Embedding (happens simultaneously with chunking)
+            phase2_task = progress.add_task(
+                "🧠 Embedding  ", total=total_files, completed=0
+            )
+
+            # Phase 3: Knowledge Graph
+            phase3_task = progress.add_task("🔗 KG Build   ", total=1, completed=0)
+
+            # Track phase timing
+            import time
+
+            phase_start_times = {
+                "phase1": time.time(),
+                "phase2": None,
+                "phase3": None,
+            }
+
+            # Track phase completion
+            phase_times = {
+                "phase1": 0,
+                "phase2": 0,
+                "phase3": 0,
+            }
+
+            # Create live display
             with Live(layout, console=console, refresh_per_second=4):
-                # Index files with progress updates
+                # Phase 1: Chunking and file processing
+                total_chunks = 0
                 async for (
                     file_path,
                     chunks_added,
@@ -471,11 +497,13 @@ async def _run_batch_indexing(
                     # Update counts
                     if success:
                         indexed_count += 1
+                        total_chunks += chunks_added
                     else:
                         failed_count += 1
 
-                    # Update progress
-                    progress.update(task, advance=1)
+                    # Update Phase 1 and Phase 2 progress (they happen together)
+                    progress.update(phase1_task, advance=1)
+                    progress.update(phase2_task, advance=1)
 
                     # Update current file name for display
                     current_file_name = file_path.name
@@ -490,11 +518,14 @@ async def _run_batch_indexing(
                     if len(recent_files) > 5:
                         recent_files.pop(0)
 
-                    # Update display layouts
-                    layout["progress"].update(
+                    # Calculate phase timings
+                    phase1_elapsed = time.time() - phase_start_times["phase1"]
+
+                    # Update phases panel with simple progress renderables
+                    layout["phases"].update(
                         Panel(
                             progress,
-                            title="[bold]Indexing Progress[/bold]",
+                            title=f"[bold]Indexing Progress[/bold] [dim]({indexed_count}/{total_files} files • {total_chunks} chunks • {phase1_elapsed:.0f}s)[/dim]",
                             border_style="blue",
                         )
                     )
@@ -530,51 +561,115 @@ async def _run_batch_indexing(
                         )
                     )
 
-            # Rebuild directory index after indexing completes
-            try:
-                import os
-
-                chunk_stats = {}
-                for file_path in files_to_index:
-                    try:
-                        mtime = os.path.getmtime(file_path)
-                        chunk_stats[str(file_path)] = {
-                            "modified": mtime,
-                            "chunks": 1,  # Placeholder - real counts are in database
-                        }
-                    except OSError:
-                        pass
-
-                indexer.directory_index.rebuild_from_files(
-                    files_to_index, indexer.project_root, chunk_stats=chunk_stats
+                # Phase 1 & 2 complete (they happen together)
+                phase_times["phase1"] = time.time() - phase_start_times["phase1"]
+                progress.update(phase1_task, completed=total_files)
+                progress.update(
+                    phase1_task,
+                    description=f"📄 Chunking    [dim]{indexed_count} files • {total_chunks} chunks • {phase_times['phase1']:.0f}s[/dim]",
                 )
-                indexer.directory_index.save()
-            except Exception as e:
-                logger.error(f"Failed to update directory index: {e}")
 
-            # Mark relationships for background computation (unless skipped)
-            if not skip_relationships and indexed_count > 0:
+                # Phase 2 completes at the same time as Phase 1
+                phase_times["phase2"] = phase_times["phase1"]  # Same timing
+                progress.update(phase2_task, completed=total_files)
+                progress.update(
+                    phase2_task,
+                    description=f"🧠 Embedding   [dim]{total_chunks} chunks embedded • {phase_times['phase1']:.0f}s[/dim]",
+                )
+
+                # Update display
+                layout["phases"].update(
+                    Panel(
+                        progress,
+                        title="[bold]Indexing Progress[/bold]",
+                        border_style="blue",
+                    )
+                )
+
+                # Rebuild directory index after indexing completes
                 try:
-                    console.print(
-                        "\n[cyan]Marking relationships for background computation...[/cyan]"
-                    )
-                    all_chunks = await indexer.database.get_all_chunks()
+                    import os
 
-                    if len(all_chunks) > 0:
-                        await indexer.relationship_store.compute_and_store(
-                            all_chunks, indexer.database, background=True
-                        )
-                        console.print(
-                            "[green]✓[/green] Relationships marked for background computation"
-                        )
-                        console.print(
-                            "[dim]  → Use 'mcp-vector-search index relationships' to compute now[/dim]"
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to mark relationships: {e}")
-                    console.print(
-                        "[yellow]⚠ Relationships not marked (visualization will compute on demand)[/yellow]"
+                    chunk_stats = {}
+                    for file_path in files_to_index:
+                        try:
+                            mtime = os.path.getmtime(file_path)
+                            chunk_stats[str(file_path)] = {
+                                "modified": mtime,
+                                "chunks": 1,  # Placeholder - real counts are in database
+                            }
+                        except OSError:
+                            pass
+
+                    indexer.directory_index.rebuild_from_files(
+                        files_to_index, indexer.project_root, chunk_stats=chunk_stats
                     )
+                    indexer.directory_index.save()
+                except Exception as e:
+                    logger.error(f"Failed to update directory index: {e}")
+
+                # Phase 3: Knowledge Graph building (mark relationships)
+                if not skip_relationships and indexed_count > 0:
+                    try:
+                        phase_start_times["phase3"] = time.time()
+
+                        all_chunks = await indexer.database.get_all_chunks()
+
+                        if len(all_chunks) > 0:
+                            # Mark for background computation
+                            await indexer.relationship_store.compute_and_store(
+                                all_chunks, indexer.database, background=True
+                            )
+
+                            # Complete Phase 3
+                            phase_times["phase3"] = (
+                                time.time() - phase_start_times["phase3"]
+                            )
+                            progress.update(phase3_task, completed=1)
+                            progress.update(
+                                phase3_task,
+                                description=f"🔗 KG Build    [dim](marked • {phase_times['phase3']:.0f}s)[/dim]",
+                            )
+
+                            # Final display with total time (phase1 and phase2 overlap)
+                            total_time = phase_times["phase1"] + phase_times["phase3"]
+                            layout["phases"].update(
+                                Panel(
+                                    progress,
+                                    title=f"[bold green]✓[/bold green] [bold]Indexing Complete[/bold] [dim]Total: {total_time:.0f}s[/dim]",
+                                    border_style="green",
+                                )
+                            )
+
+                            # Update samples panel with completion message
+                            layout["samples"].update(
+                                Panel(
+                                    "[green]✓[/green] All phases complete!\n\n"
+                                    "[dim]Use 'mcp-vector-search index relationships' to compute relationships now[/dim]",
+                                    title="[bold]Status[/bold]",
+                                    border_style="green",
+                                )
+                            )
+
+                    except Exception as e:
+                        logger.warning(f"Failed to mark relationships: {e}")
+                        progress.update(phase3_task, completed=1)
+                        progress.update(
+                            phase3_task,
+                            description="🔗 KG Build    [yellow]⚠ Skipped[/yellow]",
+                        )
+
+                        # Show warning in final display (phase1 and phase2 overlap)
+                        total_time = phase_times["phase1"] + phase_times.get(
+                            "phase3", 0
+                        )
+                        layout["phases"].update(
+                            Panel(
+                                progress,
+                                title=f"[bold yellow]⚠[/bold yellow] [bold]Indexing Complete[/bold] [dim]Total: {total_time:.0f}s[/dim]",
+                                border_style="yellow",
+                            )
+                        )
 
             # Final progress summary
             console.print()
