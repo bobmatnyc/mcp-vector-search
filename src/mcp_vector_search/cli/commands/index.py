@@ -960,6 +960,7 @@ async def _run_batch_indexing(
     kg_path = indexer.project_root / ".mcp-vector-search" / "knowledge_graph"
     kg_db_path = kg_path / "code_kg"
 
+    kg_has_relationships = False  # Track whether KG has complete relationships
     if kg_db_path.exists():
         try:
             from ...core.knowledge_graph import KnowledgeGraph
@@ -972,6 +973,18 @@ async def _run_batch_indexing(
             if kg_stats.get("total_entities", 0) > 0:
                 console.print()  # Blank line before KG stats
                 print_kg_stats(kg_stats)
+
+                # Check if relationships are built
+                kg_has_relationships = await kg.has_relationships()
+
+                if not kg_has_relationships:
+                    # Show warning if incomplete KG
+                    console.print()
+                    console.print(
+                        "[yellow]⚠️  Knowledge Graph is incomplete[/yellow] "
+                        "[dim](entities exist but no relationships)[/dim]"
+                    )
+
                 await kg.close()
         except Exception as e:
             logger.debug(f"Could not load KG stats: {e}")
@@ -1001,8 +1014,9 @@ async def _run_batch_indexing(
         else:
             chat_hint = "[cyan]mcp-vector-search chat 'question'[/cyan] - Ask AI about your code [dim](requires API key)[/dim]"
 
-        # Conditionally show KG build step if not already built
-        kg_built = kg_db_path.exists()
+        # Conditionally show KG build step based on database existence AND relationship status
+        kg_db_exists = kg_db_path.exists()
+        kg_complete = kg_db_exists and kg_has_relationships
 
         steps = [
             "[cyan]mcp-vector-search search 'your query'[/cyan] - Try semantic search",
@@ -1010,7 +1024,8 @@ async def _run_batch_indexing(
             "[cyan]mcp-vector-search status[/cyan] - View detailed statistics",
         ]
 
-        if not kg_built:
+        if not kg_db_exists:
+            # KG database doesn't exist - show build hint
             steps.extend(
                 [
                     "",
@@ -1018,7 +1033,17 @@ async def _run_batch_indexing(
                     "[cyan]mcp-vector-search kg build[/cyan] - Build knowledge graph for advanced queries",
                 ]
             )
+        elif not kg_complete:
+            # KG exists but incomplete (no relationships) - show rebuild hint
+            steps.extend(
+                [
+                    "",
+                    "[bold]Knowledge Graph:[/bold]",
+                    "[cyan]mcp-vector-search kg build --force[/cyan] - Rebuild incomplete graph (has entities but no relationships)",
+                ]
+            )
         else:
+            # KG is complete - show query commands
             steps.extend(
                 [
                     "",

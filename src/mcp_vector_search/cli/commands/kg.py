@@ -311,6 +311,20 @@ def kg_stats(
 
         console.print(table)
 
+        # Check if KG is incomplete (entities exist but no relationships)
+        has_relationships = await kg.has_relationships()
+        total_entities = stats.get("total_entities", 0)
+
+        if total_entities > 0 and not has_relationships:
+            console.print()
+            console.print(
+                "[yellow]⚠️  Knowledge Graph is incomplete[/yellow] "
+                "[dim](entities exist but no relationships)[/dim]"
+            )
+            console.print(
+                "   [yellow]Run 'mcp-vector-search kg build --force' to rebuild[/yellow]"
+            )
+
         # Show helpful message if gap exists
         if gap > 0:
             console.print(

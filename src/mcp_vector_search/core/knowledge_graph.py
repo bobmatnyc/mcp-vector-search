@@ -1593,6 +1593,19 @@ class KnowledgeGraph:
             logger.error(f"Failed to export KG visualization data: {e}")
             return {"nodes": [], "links": []}
 
+    async def has_relationships(self) -> bool:
+        """Check if KG has any relationships built.
+
+        Returns:
+            True if any relationship count > 0, False otherwise
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        stats = await self.get_stats()
+        relationships = stats.get("relationships", {})
+        return sum(relationships.values()) > 0
+
     async def get_stats(self) -> dict[str, Any]:
         """Get knowledge graph statistics.
 
