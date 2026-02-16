@@ -241,6 +241,15 @@ class LanceVectorDatabase:
         # Optimize table to compact fragments and cleanup transaction files
         await self.optimize()
 
+        # Save schema version after successful operation
+        try:
+            from .schema import save_schema_version
+
+            save_schema_version(self.persist_directory)
+        except Exception as e:
+            # Non-fatal - don't fail close() if schema version save fails
+            logger.warning(f"Failed to save schema version: {e}")
+
         self._table = None
         self._db = None
         logger.debug("LanceDB connections closed")

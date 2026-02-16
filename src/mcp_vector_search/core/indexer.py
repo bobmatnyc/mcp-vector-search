@@ -7,6 +7,7 @@ Phase 2: Embed chunks, store to vectors.lance (resumable, incremental)
 import asyncio
 import os
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -1491,18 +1492,23 @@ class SemanticIndexer:
             }
 
     async def get_files_to_index(
-        self, force_reindex: bool = False
+        self,
+        force_reindex: bool = False,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> tuple[list[Path], list[Path]]:
         """Get all indexable files and those that need indexing.
 
         Args:
             force_reindex: Whether to force reindex of all files
+            progress_callback: Optional callback(dirs_scanned, files_found) for discovery progress
 
         Returns:
             Tuple of (all_indexable_files, files_to_index)
         """
-        # Find all indexable files
-        all_files = await self.file_discovery.find_indexable_files_async()
+        # Find all indexable files (with progress callback)
+        all_files = await self.file_discovery.find_indexable_files_async(
+            progress_callback=progress_callback
+        )
 
         if not all_files:
             return [], []

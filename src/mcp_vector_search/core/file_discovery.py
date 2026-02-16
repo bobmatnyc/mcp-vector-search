@@ -3,6 +3,7 @@
 import asyncio
 import fnmatch
 import os
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -98,7 +99,9 @@ class FileDiscovery:
         return self._indexable_files_cache
 
     def scan_files_sync(
-        self, cancel_token: CancellationToken | None = None
+        self,
+        cancel_token: CancellationToken | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[Path]:
         """Synchronous file scanning (runs in thread pool).
 
@@ -106,6 +109,7 @@ class FileDiscovery:
 
         Args:
             cancel_token: Optional cancellation token to interrupt scanning
+            progress_callback: Optional callback(dirs_scanned, files_found) for progress updates
 
         Returns:
             List of indexable file paths
@@ -147,18 +151,25 @@ class FileDiscovery:
                 if self.should_index_file(file_path, skip_file_check=True):
                     indexable_files.append(file_path)
 
+            # Call progress callback every 10 directories or when files found
+            if progress_callback and (dir_count % 10 == 0 or len(indexable_files) > 0):
+                progress_callback(dir_count, len(indexable_files))
+
         logger.debug(
             f"File scan complete: {dir_count} directories, {len(indexable_files)} indexable files"
         )
         return indexable_files
 
     async def find_indexable_files_async(
-        self, cancel_token: CancellationToken | None = None
+        self,
+        cancel_token: CancellationToken | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[Path]:
         """Find all files asynchronously without blocking event loop.
 
         Args:
             cancel_token: Optional cancellation token to interrupt scanning
+            progress_callback: Optional callback(dirs_scanned, files_found) for progress updates
 
         Returns:
             List of file paths to index
@@ -184,7 +195,7 @@ class FileDiscovery:
         loop = asyncio.get_running_loop()
         with ThreadPoolExecutor(max_workers=1) as executor:
             indexable_files = await loop.run_in_executor(
-                executor, lambda: self.scan_files_sync(cancel_token)
+                executor, lambda: self.scan_files_sync(cancel_token, progress_callback)
             )
 
         # Update cache

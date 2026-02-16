@@ -195,6 +195,12 @@ def main(
             force=force,
         )
 
+        # Save schema version after successful initialization
+        from ...core.schema import save_schema_version
+
+        config = project_manager.load_config()
+        save_schema_version(config.index_path)
+
         print_success("Project initialized successfully!")
 
         # Show project information

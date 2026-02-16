@@ -111,6 +111,12 @@ def main(
         help="Which indexing phase to run: all (default), chunk, or embed",
         rich_help_panel="📊 Indexing Options",
     ),
+    skip_schema_check: bool = typer.Option(
+        False,
+        "--skip-schema-check",
+        help="Skip schema compatibility check (use with caution - may cause errors if schema is incompatible)",
+        rich_help_panel="⚙️  Advanced Options",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -181,6 +187,7 @@ def main(
                 skip_relationships=skip_relationships,
                 auto_optimize=auto_optimize,
                 phase=phase,
+                skip_schema_check=skip_schema_check,
             )
         )
 
@@ -332,6 +339,7 @@ async def run_indexing(
     skip_relationships: bool = False,
     auto_optimize: bool = True,
     phase: str = "all",
+    skip_schema_check: bool = False,
 ) -> None:
     """Run the indexing process."""
     # Load project configuration
@@ -343,6 +351,33 @@ async def run_indexing(
         )
 
     config = project_manager.load_config()
+
+    # Check schema compatibility before indexing (unless explicitly skipped)
+    if not skip_schema_check:
+        from ...core.schema import check_schema_compatibility
+
+        db_path = config.index_path
+        is_compatible, message = check_schema_compatibility(db_path)
+
+        if not is_compatible:
+            print_warning("⚠️  Schema Version Mismatch Detected")
+            print_error(message)
+            print_info("\nOptions:")
+            print_info("  1. Reset database and reindex (recommended):")
+            print_info("     mcp-vector-search index --force")
+            print_info("  2. Skip schema check and continue (may cause errors):")
+            print_info("     mcp-vector-search index --skip-schema-check")
+
+            # If force_reindex is set, proceed with reset
+            if force_reindex:
+                print_warning(
+                    "\n🔄 Force flag detected - resetting database with new schema..."
+                )
+                # Schema version will be saved after successful reset
+            else:
+                raise typer.Exit(1)
+        else:
+            logger.debug(message)
 
     # Override extensions if provided
     if extensions:
@@ -416,16 +451,64 @@ async def _run_batch_indexing(
             SpinnerColumn,
             TextColumn,
         )
+
+        # Pre-scan to get total file count with live progress display
         from rich.table import Table
+        from rich.text import Text
 
         from ..output import console
 
-        # Pre-scan to get total file count
-        console.print("[dim]Scanning for indexable files...[/dim]")
-        indexable_files, files_to_index = await indexer.get_files_to_index(
-            force_reindex=force_reindex
-        )
+        console.print()  # Add blank line before progress
+
+        # Track discovery progress
+        dirs_scanned = 0
+        files_found = 0
+
+        def update_discovery_progress(dirs: int, files: int):
+            nonlocal dirs_scanned, files_found
+            dirs_scanned = dirs
+            files_found = files
+
+        # Create live-updating progress display
+        progress_text = Text()
+        progress_text.append("📂 ", style="cyan")
+        progress_text.append("Scanning directories... ", style="dim")
+
+        with Live(
+            progress_text, console=console, refresh_per_second=10
+        ) as live_display:
+
+            async def scan_with_progress():
+                return await indexer.get_files_to_index(
+                    force_reindex=force_reindex,
+                    progress_callback=update_discovery_progress,
+                )
+
+            # Poll progress while scanning
+            scan_task = asyncio.create_task(scan_with_progress())
+
+            # Update display every 100ms while scanning
+            while not scan_task.done():
+                progress_text = Text()
+                progress_text.append("📂 ", style="cyan")
+                progress_text.append("Scanning... ", style="dim")
+                progress_text.append(
+                    f"{dirs_scanned:,} dirs, {files_found:,} files found",
+                    style="cyan",
+                )
+                live_display.update(progress_text)
+                await asyncio.sleep(0.1)
+
+            # Get final results
+            indexable_files, files_to_index = await scan_task
+
         total_files = len(files_to_index)
+
+        # Show discovery results
+        console.print(
+            f"[green]✓[/green] [dim]Discovered {len(indexable_files)} files "
+            f"({total_files} to index)[/dim]\n"
+        )
 
         if total_files == 0:
             console.print("[yellow]No files need indexing[/yellow]")

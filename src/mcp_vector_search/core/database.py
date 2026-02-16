@@ -572,6 +572,15 @@ class ChromaVectorDatabase(VectorDatabase):
     async def close(self) -> None:
         """Close database connections."""
         if self._client:
+            # Save schema version after successful operation
+            try:
+                from .schema import save_schema_version
+
+                save_schema_version(self.persist_directory)
+            except Exception as e:
+                # Non-fatal - don't fail close() if schema version save fails
+                logger.warning(f"Failed to save schema version: {e}")
+
             # ChromaDB doesn't require explicit closing
             self._client = None
             self._collection = None
