@@ -439,6 +439,10 @@ async def _run_batch_indexing(
             indexed_count = 0
             failed_count = 0
 
+            # Track chunk and embedding progress separately
+            total_chunks_created = 0  # Total chunks created from parsing
+            chunks_embedded = 0  # Chunks successfully embedded
+
             # Create layout for three-phase display
             layout = Layout()
             layout.split_column(
@@ -447,27 +451,36 @@ async def _run_batch_indexing(
             )
 
             # Create progress bars for all three phases
+            # NOTE: We'll dynamically update total for Phase 2 as chunks are created
             progress = Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(bar_width=40),
                 TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TextColumn("[dim]{task.completed}/{task.total} files[/dim]"),
+                TextColumn("[dim]{task.fields[progress_text]}[/dim]"),
                 console=console,
             )
 
             # Phase 1: Chunking (file-level progress)
             phase1_task = progress.add_task(
-                "📄 Chunking   ", total=total_files, completed=0
+                "📄 Chunking   ",
+                total=total_files,
+                completed=0,
+                progress_text=f"0/{total_files} files",
             )
 
-            # Phase 2: Embedding (happens simultaneously with chunking)
+            # Phase 2: Embedding (chunk-level progress, starts with total=1 to avoid division by zero)
             phase2_task = progress.add_task(
-                "🧠 Embedding  ", total=total_files, completed=0
+                "🧠 Embedding  ",
+                total=1,
+                completed=0,
+                progress_text="0 chunks embedded",
             )
 
             # Phase 3: Knowledge Graph
-            phase3_task = progress.add_task("🔗 KG Build   ", total=1, completed=0)
+            phase3_task = progress.add_task(
+                "🔗 KG Build   ", total=1, completed=0, progress_text="pending"
+            )
 
             # Track phase timing
             import time
@@ -488,7 +501,6 @@ async def _run_batch_indexing(
             # Create live display
             with Live(layout, console=console, refresh_per_second=4):
                 # Phase 1: Chunking and file processing
-                total_chunks = 0
                 async for (
                     file_path,
                     chunks_added,
@@ -497,13 +509,29 @@ async def _run_batch_indexing(
                     # Update counts
                     if success:
                         indexed_count += 1
-                        total_chunks += chunks_added
+                        total_chunks_created += chunks_added
+                        # Phase 2 progresses AFTER chunks are embedded (happens in batch)
+                        # For now, we assume embedding happens immediately after parsing
+                        chunks_embedded += chunks_added
                     else:
                         failed_count += 1
 
-                    # Update Phase 1 and Phase 2 progress (they happen together)
-                    progress.update(phase1_task, advance=1)
-                    progress.update(phase2_task, advance=1)
+                    # Update Phase 1 progress (file-based)
+                    progress.update(
+                        phase1_task,
+                        advance=1,
+                        progress_text=f"{indexed_count}/{total_files} files → {total_chunks_created:,} chunks",
+                    )
+
+                    # Update Phase 2 progress (chunk-based)
+                    # Update total to reflect chunks created so far
+                    if total_chunks_created > 0:
+                        progress.update(
+                            phase2_task,
+                            total=total_chunks_created,
+                            completed=chunks_embedded,
+                            progress_text=f"{chunks_embedded:,}/{total_chunks_created:,} chunks embedded",
+                        )
 
                     # Update current file name for display
                     current_file_name = file_path.name
@@ -525,7 +553,7 @@ async def _run_batch_indexing(
                     layout["phases"].update(
                         Panel(
                             progress,
-                            title=f"[bold]Indexing Progress[/bold] [dim]({indexed_count}/{total_files} files • {total_chunks} chunks • {phase1_elapsed:.0f}s)[/dim]",
+                            title=f"[bold]Indexing Progress[/bold] [dim]({indexed_count}/{total_files} files • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]",
                             border_style="blue",
                         )
                     )
@@ -561,20 +589,21 @@ async def _run_batch_indexing(
                         )
                     )
 
-                # Phase 1 & 2 complete (they happen together)
+                # Phase 1 & 2 complete (they happen together in current implementation)
                 phase_times["phase1"] = time.time() - phase_start_times["phase1"]
-                progress.update(phase1_task, completed=total_files)
                 progress.update(
                     phase1_task,
-                    description=f"📄 Chunking    [dim]{indexed_count} files • {total_chunks} chunks • {phase_times['phase1']:.0f}s[/dim]",
+                    completed=total_files,
+                    progress_text=f"{indexed_count} files → {total_chunks_created:,} chunks • {phase_times['phase1']:.0f}s",
                 )
 
-                # Phase 2 completes at the same time as Phase 1
+                # Phase 2 completes at the same time as Phase 1 (embedding happens during indexing)
                 phase_times["phase2"] = phase_times["phase1"]  # Same timing
-                progress.update(phase2_task, completed=total_files)
                 progress.update(
                     phase2_task,
-                    description=f"🧠 Embedding   [dim]{total_chunks} chunks embedded • {phase_times['phase1']:.0f}s[/dim]",
+                    total=total_chunks_created if total_chunks_created > 0 else 1,
+                    completed=chunks_embedded,
+                    progress_text=f"{chunks_embedded:,} chunks embedded • {phase_times['phase1']:.0f}s",
                 )
 
                 # Update display
@@ -628,7 +657,7 @@ async def _run_batch_indexing(
                             progress.update(phase3_task, completed=1)
                             progress.update(
                                 phase3_task,
-                                description=f"🔗 KG Build    [dim](marked • {phase_times['phase3']:.0f}s)[/dim]",
+                                progress_text=f"marked • {phase_times['phase3']:.0f}s",
                             )
 
                             # Final display with total time (phase1 and phase2 overlap)
@@ -653,10 +682,10 @@ async def _run_batch_indexing(
 
                     except Exception as e:
                         logger.warning(f"Failed to mark relationships: {e}")
-                        progress.update(phase3_task, completed=1)
                         progress.update(
                             phase3_task,
-                            description="🔗 KG Build    [yellow]⚠ Skipped[/yellow]",
+                            completed=1,
+                            progress_text="[yellow]⚠ Skipped[/yellow]",
                         )
 
                         # Show warning in final display (phase1 and phase2 overlap)
