@@ -1594,17 +1594,24 @@ class KnowledgeGraph:
             return {"nodes": [], "links": []}
 
     async def has_relationships(self) -> bool:
-        """Check if KG has any relationships built.
+        """Check if KG has code relationships built.
+
+        Checks for code-structure relationships (calls, imports, inherits, contains)
+        rather than documentation relationships (follows, demonstrates, etc.).
 
         Returns:
-            True if any relationship count > 0, False otherwise
+            True if any code relationship count > 0, False otherwise
         """
         if not self._initialized:
             await self.initialize()
 
         stats = await self.get_stats()
         relationships = stats.get("relationships", {})
-        return sum(relationships.values()) > 0
+
+        # Check for code-structure relationships specifically
+        code_relationships = ["calls", "imports", "inherits", "contains"]
+        code_rel_count = sum(relationships.get(rel, 0) for rel in code_relationships)
+        return code_rel_count > 0
 
     async def get_stats(self) -> dict[str, Any]:
         """Get knowledge graph statistics.
