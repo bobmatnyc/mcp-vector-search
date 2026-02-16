@@ -5443,16 +5443,34 @@ function renderKG() {
         });
     svg.call(zoom);
 
-    // Create force simulation
+    // Create force simulation with stronger forces for subproject nodes
     kgSimulation = d3.forceSimulation(kgNodes)
         .force('link', d3.forceLink(kgLinks)
             .id(d => d.id)
-            .distance(100))
+            .distance(d => {
+                // Longer distance for subproject containment links
+                if (d.type === 'contains' && d.source.type === 'subproject') {
+                    return 200;
+                }
+                return 100;
+            }))
         .force('charge', d3.forceManyBody()
-            .strength(-300))
+            .strength(d => {
+                // Stronger repulsion for subproject nodes to separate them
+                if (d.type === 'subproject') {
+                    return -800;
+                }
+                return -300;
+            }))
         .force('center', d3.forceCenter(width / 2, height / 2))
         .force('collision', d3.forceCollide()
-            .radius(30));
+            .radius(d => {
+                // Larger collision radius for subproject nodes
+                if (d.type === 'subproject') {
+                    return 50;
+                }
+                return 30;
+            }));
 
     // Create links
     kgLinkElements = g.append('g')
@@ -5481,10 +5499,28 @@ function renderKG() {
         .data(kgNodes)
         .join('circle')
         .attr('class', 'kg-node')
-        .attr('r', 8)
-        .attr('fill', d => kgNodeColors[d.group] || kgNodeColors[0])
+        .attr('r', d => {
+            // Larger radius for subproject nodes
+            if (d.type === 'subproject') {
+                return 20;
+            }
+            return 8;
+        })
+        .attr('fill', d => {
+            // Use custom color for subproject nodes, otherwise use group color
+            if (d.color) {
+                return d.color;
+            }
+            return kgNodeColors[d.group] || kgNodeColors[0];
+        })
         .attr('stroke', '#fff')
-        .attr('stroke-width', 1.5)
+        .attr('stroke-width', d => {
+            // Thicker stroke for subproject nodes
+            if (d.type === 'subproject') {
+                return 3;
+            }
+            return 1.5;
+        })
         .style('cursor', 'pointer')
         .on('click', (event, d) => showKGNodeInfo(d))
         .on('mouseover', function(event, d) {
@@ -5495,7 +5531,7 @@ function renderKG() {
         .on('mouseout', function(event, d) {
             d3.select(this)
                 .attr('stroke', '#fff')
-                .attr('stroke-width', 1.5);
+                .attr('stroke-width', d.type === 'subproject' ? 3 : 1.5);
         })
         .call(d3.drag()
             .on('start', dragStarted)
@@ -5508,11 +5544,30 @@ function renderKG() {
         .data(kgNodes)
         .join('text')
         .attr('class', 'kg-label')
-        .attr('font-size', 10)
+        .attr('font-size', d => {
+            // Larger font for subproject nodes
+            if (d.type === 'subproject') {
+                return 14;
+            }
+            return 10;
+        })
+        .attr('font-weight', d => {
+            // Bold font for subproject nodes
+            if (d.type === 'subproject') {
+                return 'bold';
+            }
+            return 'normal';
+        })
         .attr('font-family', 'monospace')
         .attr('fill', '#e0e0e0')
         .attr('text-anchor', 'middle')
-        .attr('dy', -12)
+        .attr('dy', d => {
+            // Adjust label position for subproject nodes
+            if (d.type === 'subproject') {
+                return -24;
+            }
+            return -12;
+        })
         .style('pointer-events', 'none')
         .text(d => d.name || d.id);
 

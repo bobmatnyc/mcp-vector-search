@@ -158,13 +158,13 @@ def create_app(viz_dir: Path) -> FastAPI:
         """Get knowledge graph data for D3 force-directed visualization.
 
         Returns:
-            JSON response with nodes and links from KG
+            JSON response with nodes, links, and metadata from KG
         """
         kg_graph_file = viz_dir / "kg-graph.json"
 
         if not kg_graph_file.exists():
             return Response(
-                content='{"error": "KG graph data not found", "nodes": [], "links": []}',
+                content='{"error": "KG graph data not found", "nodes": [], "links": [], "metadata": {}}',
                 status_code=404,
                 media_type="application/json",
             )
@@ -173,10 +173,14 @@ def create_app(viz_dir: Path) -> FastAPI:
             with open(kg_graph_file, "rb") as f:
                 data = orjson.loads(f.read())
 
-            # Return nodes and links using orjson for fast serialization
+            # Return nodes, links, and metadata using orjson for fast serialization
             return Response(
                 content=orjson.dumps(
-                    {"nodes": data.get("nodes", []), "links": data.get("links", [])}
+                    {
+                        "nodes": data.get("nodes", []),
+                        "links": data.get("links", []),
+                        "metadata": data.get("metadata", {}),
+                    }
                 ),
                 media_type="application/json",
                 headers={"Cache-Control": "no-cache"},
@@ -184,7 +188,7 @@ def create_app(viz_dir: Path) -> FastAPI:
         except Exception as e:
             console.print(f"[red]Error loading KG graph data: {e}[/red]")
             return Response(
-                content='{"error": "Failed to load KG graph data", "nodes": [], "links": []}',
+                content='{"error": "Failed to load KG graph data", "nodes": [], "links": [], "metadata": {}}',
                 status_code=500,
                 media_type="application/json",
             )

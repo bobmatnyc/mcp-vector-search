@@ -2227,13 +2227,14 @@ class KnowledgeGraph:
             return []
 
     async def get_visualization_data(self) -> dict[str, Any]:
-        """Export knowledge graph data for D3.js visualization.
+        """Export knowledge graph data for D3.js visualization with monorepo support.
 
         Returns:
             Dictionary with nodes and links for force-directed graph:
             {
                 "nodes": [{"id": str, "name": str, "type": str, "file_path": str, "group": int}],
-                "links": [{"source": str, "target": str, "type": str, "weight": float}]
+                "links": [{"source": str, "target": str, "type": str, "weight": float}],
+                "metadata": {"is_monorepo": bool, "subprojects": list[str], ...}
             }
         """
         if not self._initialized:
@@ -2242,6 +2243,7 @@ class KnowledgeGraph:
         try:
             # Get all code entities as nodes
             nodes = []
+            entities = []
             entity_result = self.conn.execute(
                 """
                 MATCH (e:CodeEntity)
@@ -2252,6 +2254,59 @@ class KnowledgeGraph:
                 """
             )
 
+            # Collect entities and their file paths for subproject detection
+            while entity_result.has_next():
+                row = entity_result.get_next()
+                entities.append({
+                    "id": row[0],
+                    "name": row[1],
+                    "type": row[2] or "unknown",
+                    "file_path": row[3] or "",
+                })
+
+            # Detect subprojects from file paths (monorepo patterns)
+            subprojects: dict[str, str] = {}  # path_prefix -> subproject_name
+            monorepo_patterns = ["packages", "apps", "libs", "modules", "services"]
+
+            for entity in entities:
+                file_path = entity["file_path"]
+                if not file_path:
+                    continue
+
+                # Handle both absolute and relative paths
+                # Convert absolute paths to relative by finding monorepo pattern in path
+                parts = file_path.split("/")
+
+                # Find first occurrence of monorepo pattern in path
+                for i, part in enumerate(parts):
+                    if part in monorepo_patterns and i + 1 < len(parts):
+                        # Found pattern like packages/* or apps/*
+                        subproject_name = parts[i + 1]
+                        # Use relative path for subproject (packages/foo, apps/bar, etc.)
+                        subproject_path = f"{parts[i]}/{parts[i + 1]}"
+                        if subproject_path not in subprojects:
+                            subprojects[subproject_path] = subproject_name
+                        break
+
+            # Determine if this is a monorepo (more than 1 subproject)
+            is_monorepo = len(subprojects) > 1
+
+            # Color palette for subprojects (GitHub-style colors matching chunk graph)
+            colors = ["#238636", "#1f6feb", "#8957e5", "#f85149", "#d29922", "#3fb950"]
+
+            # Create subproject root nodes if monorepo detected
+            if is_monorepo:
+                logger.debug(f"Detected monorepo with {len(subprojects)} subprojects")
+                for i, (path, name) in enumerate(subprojects.items()):
+                    nodes.append({
+                        "id": f"subproject:{name}",
+                        "name": name,
+                        "type": "subproject",
+                        "file_path": path,
+                        "color": colors[i % len(colors)],
+                        "group": 0,  # Special group for subproject roots
+                    })
+
             # Map entity types to color groups
             type_to_group = {
                 "file": 1,
@@ -2261,18 +2316,37 @@ class KnowledgeGraph:
                 "method": 4,
             }
 
-            while entity_result.has_next():
-                row = entity_result.get_next()
-                entity_type = row[2] or "unknown"
-                nodes.append(
-                    {
-                        "id": row[0],
-                        "name": row[1],
-                        "type": entity_type,
-                        "file_path": row[3] or "",
-                        "group": type_to_group.get(entity_type, 0),
-                    }
-                )
+            # Create entity nodes with subproject assignment
+            for entity in entities:
+                file_path = entity["file_path"]
+                subproject = None
+
+                # Assign entity to subproject if in monorepo
+                if is_monorepo:
+                    # Check if file path contains any subproject pattern
+                    for path, name in subprojects.items():
+                        # Match against relative path pattern (packages/foo, apps/bar, etc.)
+                        if f"/{path}/" in file_path or file_path.startswith(path):
+                            subproject = name
+                            break
+
+                node = {
+                    "id": entity["id"],
+                    "name": entity["name"],
+                    "type": entity["type"],
+                    "file_path": file_path,
+                    "group": type_to_group.get(entity["type"], 0),
+                }
+
+                if subproject:
+                    node["subproject"] = subproject
+
+                nodes.append(node)
+
+                # Link to subproject root if in monorepo
+                if subproject:
+                    # Will be added to links below
+                    pass
 
             # Get all relationships as links
             links = []
@@ -2303,11 +2377,31 @@ class KnowledgeGraph:
                     logger.debug(f"No {rel_type} relationships found: {e}")
                     continue
 
-            return {"nodes": nodes, "links": links}
+            # Add links from subproject roots to entities in monorepo
+            if is_monorepo:
+                for node in nodes:
+                    if node.get("subproject") and node["type"] != "subproject":
+                        links.append({
+                            "source": f"subproject:{node['subproject']}",
+                            "target": node["id"],
+                            "type": "contains",
+                            "weight": 1.0,
+                        })
+
+            return {
+                "nodes": nodes,
+                "links": links,
+                "metadata": {
+                    "is_monorepo": is_monorepo,
+                    "subprojects": list(subprojects.values()) if is_monorepo else [],
+                    "total_nodes": len(nodes),
+                    "total_links": len(links),
+                }
+            }
 
         except Exception as e:
             logger.error(f"Failed to export KG visualization data: {e}")
-            return {"nodes": [], "links": []}
+            return {"nodes": [], "links": [], "metadata": {}}
 
     async def has_relationships(self) -> bool:
         """Check if KG has code relationships built.
