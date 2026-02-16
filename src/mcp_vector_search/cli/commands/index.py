@@ -379,6 +379,11 @@ async def run_indexing(
             # Ensure index path exists for new database
             config.index_path.mkdir(parents=True, exist_ok=True)
 
+            # Recreate config file to preserve initialization state
+            # (config.json was deleted with the directory)
+            project_manager.save_config(config)
+            logger.info("Recreated config.json after schema reset")
+
             # Save new schema version
             save_schema_version(db_path)
             print_info("✓ Database reset complete, proceeding with indexing...")
