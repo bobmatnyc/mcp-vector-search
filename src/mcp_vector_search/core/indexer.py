@@ -415,9 +415,16 @@ class SemanticIndexer:
             f"📄 Phase 1: Chunking {len(files)} files (parsing and extracting code structure)..."
         )
 
+        # TIMING: Track time spent in different operations
+        time_hash_check = 0.0
+        time_parsing = 0.0
+        time_hierarchy = 0.0
+        time_storage = 0.0
+
         for file_path in files:
             try:
                 # Compute current file hash
+                t_start = time.time()
                 file_hash = compute_file_hash(file_path)
                 rel_path = str(file_path.relative_to(self.project_root))
 
@@ -434,20 +441,26 @@ class SemanticIndexer:
                 deleted = await self.chunks_backend.delete_file_chunks(rel_path)
                 if deleted > 0:
                     logger.debug(f"Deleted {deleted} old chunks for {rel_path}")
+                time_hash_check += time.time() - t_start
 
                 # Parse and chunk
+                t_start = time.time()
                 chunks = await self.chunk_processor.parse_file(file_path)
+                time_parsing += time.time() - t_start
 
                 if not chunks:
                     logger.debug(f"No chunks extracted from {file_path}")
                     continue
 
                 # Build hierarchical relationships
+                t_start = time.time()
                 chunks_with_hierarchy = self.chunk_processor.build_chunk_hierarchy(
                     chunks
                 )
+                time_hierarchy += time.time() - t_start
 
                 # Convert CodeChunk objects to dicts for storage
+                t_start = time.time()
                 chunk_dicts = []
                 for chunk in chunks_with_hierarchy:
                     chunk_dict = {
@@ -477,6 +490,7 @@ class SemanticIndexer:
                 # Store chunks (without embeddings) to chunks.lance
                 if chunk_dicts:
                     count = await self.chunks_backend.add_chunks(chunk_dicts, file_hash)
+                    time_storage += time.time() - t_start
                     chunks_created += count
                     files_processed += 1
                     logger.debug(f"Chunked {count} chunks from {rel_path}")
@@ -488,6 +502,11 @@ class SemanticIndexer:
         logger.info(
             f"✓ Phase 1 complete: {files_processed} files processed, {chunks_created} chunks created"
         )
+        print("\n⏱️  TIMING: Phase 1 breakdown:", flush=True)
+        print(f"  - Hash check/change detection: {time_hash_check:.2f}s", flush=True)
+        print(f"  - File parsing: {time_parsing:.2f}s", flush=True)
+        print(f"  - Hierarchy building: {time_hierarchy:.2f}s", flush=True)
+        print(f"  - LanceDB storage: {time_storage:.2f}s\n", flush=True)
         return files_processed, chunks_created
 
     def _build_hierarchy_path(self, chunk: CodeChunk) -> str:
@@ -522,16 +541,26 @@ class SemanticIndexer:
             "🧠 Phase 2: Embedding pending chunks (GPU processing for semantic search)..."
         )
 
+        # TIMING: Track time spent in different operations
+        time_fetch_pending = 0.0
+        time_embedding = 0.0
+        time_vector_storage = 0.0
+        time_status_update = 0.0
+
         while True:
             # Get pending chunks from chunks.lance
+            t_start = time.time()
             pending = await self.chunks_backend.get_pending_chunks(batch_size)
+            time_fetch_pending += time.time() - t_start
             if not pending:
                 logger.info("No more pending chunks to embed")
                 break
 
             # Mark as processing (for crash recovery)
+            t_start = time.time()
             chunk_ids = [c["chunk_id"] for c in pending]
             await self.chunks_backend.mark_chunks_processing(chunk_ids, batch_id)
+            time_status_update += time.time() - t_start
 
             try:
                 # Generate embeddings using database's embedding function
@@ -542,20 +571,24 @@ class SemanticIndexer:
 
                 # Generate embeddings in batch
                 # Try multiple ways to access embedding function
+                t_start = time.time()
                 vectors = None
 
                 # Method 1: Check for _embedding_function (ChromaDB)
                 if hasattr(self.database, "_embedding_function"):
                     vectors = self.database._embedding_function(contents)
+                    time_embedding += time.time() - t_start
                 # Method 2: Check for _collection and its embedding function
                 elif hasattr(self.database, "_collection") and hasattr(
                     self.database._collection, "_embedding_function"
                 ):
                     vectors = self.database._collection._embedding_function(contents)
+                    time_embedding += time.time() - t_start
                 # Method 3: Use database's add_chunks which handles embedding internally
                 # This is a fallback but defeats the purpose of two-phase architecture
                 # We'll need to refactor database to expose embedding publicly
                 else:
+                    t_start = time.time()
                     logger.warning(
                         "Cannot access embedding function directly, "
                         "falling back to database.add_chunks()"
@@ -582,9 +615,12 @@ class SemanticIndexer:
 
                     # Use database to add chunks (which will generate embeddings)
                     await self.database.add_chunks(temp_chunks)
+                    time_embedding += time.time() - t_start
 
                     # Mark as complete - embeddings were generated via database
+                    t_start = time.time()
                     await self.chunks_backend.mark_chunks_complete(chunk_ids)
+                    time_status_update += time.time() - t_start
                     chunks_embedded += len(pending)
                     batches_processed += 1
 
@@ -595,6 +631,7 @@ class SemanticIndexer:
                     raise ValueError("Failed to generate embeddings")
 
                 # Add to vectors table with embeddings
+                t_start = time.time()
                 chunks_with_vectors = []
                 for chunk, vec in zip(pending, vectors, strict=True):
                     chunk_with_vec = {
@@ -613,9 +650,12 @@ class SemanticIndexer:
 
                 # Store vectors to vectors.lance
                 await self.vectors_backend.add_vectors(chunks_with_vectors)
+                time_vector_storage += time.time() - t_start
 
                 # Mark as complete in chunks.lance
+                t_start = time.time()
                 await self.chunks_backend.mark_chunks_complete(chunk_ids)
+                time_status_update += time.time() - t_start
 
                 chunks_embedded += len(pending)
                 batches_processed += 1
@@ -635,6 +675,11 @@ class SemanticIndexer:
         logger.info(
             f"✓ Phase 2 complete: {chunks_embedded} chunks embedded in {batches_processed} batches"
         )
+        print("\n⏱️  TIMING: Phase 2 breakdown:", flush=True)
+        print(f"  - Fetching pending chunks: {time_fetch_pending:.2f}s", flush=True)
+        print(f"  - Embedding generation: {time_embedding:.2f}s", flush=True)
+        print(f"  - Vector storage: {time_vector_storage:.2f}s", flush=True)
+        print(f"  - Status updates: {time_status_update:.2f}s\n", flush=True)
         return chunks_embedded, batches_processed
 
     async def index_project(
@@ -668,16 +713,29 @@ class SemanticIndexer:
             f"Starting indexing of project: {self.project_root} (phase: {phase})"
         )
 
+        # TIMING: Start overall indexing timer
+        t_start_total = time.time()
+        print("\n🚀 Starting indexing with timing instrumentation...\n", flush=True)
+
         # Initialize backends
+        t_start = time.time()
         await self.chunks_backend.initialize()
         await self.vectors_backend.initialize()
+        t_init = time.time()
+        print(f"⏱️  TIMING: Backend initialization: {t_init - t_start:.2f}s", flush=True)
 
         # Check and run pending migrations automatically
+        t_start = time.time()
         await self._run_auto_migrations()
+        t_migrations = time.time()
+        print(f"⏱️  TIMING: Migrations check: {t_migrations - t_start:.2f}s", flush=True)
 
         # Apply auto-optimizations before indexing
+        t_start = time.time()
         if self.auto_optimize:
             self.apply_auto_optimizations()
+        t_optimize = time.time()
+        print(f"⏱️  TIMING: Auto-optimizations: {t_optimize - t_start:.2f}s", flush=True)
 
         # Clean up stale lock files from previous interrupted indexing runs
         cleanup_stale_locks(self.project_root)
@@ -690,7 +748,13 @@ class SemanticIndexer:
         # Phase 1: Chunk files (if requested)
         if phase in ("all", "chunk"):
             # Find all indexable files
+            t_start = time.time()
             all_files = self.file_discovery.find_indexable_files()
+            t_scan = time.time()
+            print(
+                f"⏱️  TIMING: File scanning ({len(all_files)} files): {t_scan - t_start:.2f}s",
+                flush=True,
+            )
 
             if not all_files:
                 logger.warning("No indexable files found")
@@ -698,6 +762,7 @@ class SemanticIndexer:
                     return 0
             else:
                 # Filter files that need indexing
+                t_start = time.time()
                 files_to_index = all_files
                 if not force_reindex:
                     # Use chunks_backend for change detection instead of metadata
@@ -716,18 +781,34 @@ class SemanticIndexer:
                             )
                             filtered_files.append(f)
                     files_to_index = filtered_files
+                    t_filter = time.time()
                     logger.info(
                         f"Incremental index: {len(files_to_index)} of {len(all_files)} files need updating"
+                    )
+                    print(
+                        f"⏱️  TIMING: File change detection: {t_filter - t_start:.2f}s",
+                        flush=True,
                     )
                 else:
                     logger.info(
                         f"Force reindex: processing all {len(files_to_index)} files"
                     )
+                    t_filter = time.time()
+                    print(
+                        f"⏱️  TIMING: File filtering (force): {t_filter - t_start:.2f}s",
+                        flush=True,
+                    )
 
                 if files_to_index:
                     # Run Phase 1
+                    t_start = time.time()
                     indexed_count, chunks_created = await self._phase1_chunk_files(
                         files_to_index, force=force_reindex
+                    )
+                    t_phase1 = time.time()
+                    print(
+                        f"⏱️  TIMING: Phase 1 (parsing/chunking): {t_phase1 - t_start:.2f}s",
+                        flush=True,
                     )
 
                     # Update metadata for backward compatibility
@@ -749,11 +830,18 @@ class SemanticIndexer:
         # Phase 2: Embed chunks (if requested)
         if phase in ("all", "embed"):
             # Run Phase 2 on pending chunks
+            t_start = time.time()
             chunks_embedded, _ = await self._phase2_embed_chunks(
                 batch_size=self.batch_size
             )
+            t_phase2 = time.time()
+            print(
+                f"⏱️  TIMING: Phase 2 (embedding): {t_phase2 - t_start:.2f}s", flush=True
+            )
 
-        # Log summary
+        # Log summary with total timing
+        t_end_total = time.time()
+        total_time = t_end_total - t_start_total
         if phase == "all":
             logger.info(
                 f"✓ Two-phase indexing complete: {indexed_count} files, "
@@ -765,6 +853,8 @@ class SemanticIndexer:
             )
         elif phase == "embed":
             logger.info(f"✓ Phase 2 complete: {chunks_embedded} chunks embedded")
+
+        print(f"\n⏱️  TIMING: TOTAL indexing time: {total_time:.2f}s\n", flush=True)
 
         # Update directory index (only if files were indexed)
         if indexed_count > 0:
@@ -1451,18 +1541,35 @@ class SemanticIndexer:
         Yields:
             Tuple of (file_path, chunks_added, success) for each processed file
         """
+        # TIMING: Track overall indexing time
+        t_start_index = time.time()
+        print(
+            f"\n🚀 Starting indexing with timing instrumentation for {len(files_to_index)} files...\n",
+            flush=True,
+        )
+
         # Initialize backends if not already initialized
+        t_start = time.time()
         if self.chunks_backend._db is None:
             await self.chunks_backend.initialize()
         if self.vectors_backend._db is None:
             await self.vectors_backend.initialize()
+        t_init = time.time()
+        print(f"⏱️  TIMING: Backend initialization: {t_init - t_start:.2f}s", flush=True)
 
         # Write version header to error log at start of indexing run
         self.metadata.write_indexing_run_header()
 
+        # TIMING: Track time spent in different phases
+        time_parsing_total = 0.0
+        time_embedding_total = 0.0
+        time_storage_total = 0.0
+
         # Process files in batches for better memory management and embedding efficiency
+        batch_count = 0
         for i in range(0, len(files_to_index), self.batch_size):
             batch = files_to_index[i : i + self.batch_size]
+            batch_count += 1
 
             # Accumulate chunks from all files in batch
             all_chunks: list[CodeChunk] = []
@@ -1471,6 +1578,7 @@ class SemanticIndexer:
             file_results: dict[Path, tuple[int, bool]] = {}
 
             # Parse all files in parallel
+            t_start = time.time()
             tasks = []
             for file_path in batch:
                 task = asyncio.create_task(
@@ -1479,6 +1587,7 @@ class SemanticIndexer:
                 tasks.append(task)
 
             parse_results = await asyncio.gather(*tasks, return_exceptions=True)
+            time_parsing_total += time.time() - t_start
 
             # Accumulate chunks from successfully parsed files
             metadata_dict = self.metadata.load()
@@ -1527,9 +1636,12 @@ class SemanticIndexer:
                 logger.info(
                     f"Batch inserting {len(all_chunks)} chunks from {len(batch)} files"
                 )
+                t_start_storage = time.time()
                 try:
                     # Phase 1: Store chunks to chunks.lance (fast, durable)
-                    # Group chunks by file for proper file_hash tracking
+                    # Accumulate all chunks from batch for single write
+                    t_start = time.time()
+                    batch_chunk_dicts = []
                     for file_path_str, (
                         start_idx,
                         end_idx,
@@ -1545,11 +1657,11 @@ class SemanticIndexer:
                         await self.chunks_backend.delete_file_chunks(rel_path)
 
                         # Convert CodeChunk objects to dicts for storage
-                        chunk_dicts = []
                         for chunk in file_chunks:
                             chunk_dict = {
                                 "chunk_id": chunk.chunk_id,
                                 "file_path": rel_path,
+                                "file_hash": file_hash,  # Include file_hash per chunk
                                 "content": chunk.content,
                                 "language": chunk.language,
                                 "start_line": chunk.start_line,
@@ -1565,19 +1677,31 @@ class SemanticIndexer:
                                 "complexity": int(chunk.complexity_score),
                                 "token_count": len(chunk.content.split()),
                             }
-                            chunk_dicts.append(chunk_dict)
+                            batch_chunk_dicts.append(chunk_dict)
 
-                        # Store to chunks.lance
-                        if chunk_dicts:
-                            await self.chunks_backend.add_chunks(chunk_dicts, file_hash)
+                    # Single write for entire batch (no file_hash parameter needed)
+                    if batch_chunk_dicts:
+                        await self.chunks_backend.add_chunks_batch(batch_chunk_dicts)
+                    time_storage_total += time.time() - t_start
 
                     # Phase 2: Generate embeddings and store to code_search.lance
                     # This enables search functionality
+                    t_start = time.time()
                     await self.database.add_chunks(all_chunks, metrics=all_metrics)
+                    time_embedding_total += time.time() - t_start
 
                     logger.debug(
                         f"Successfully indexed {len(all_chunks)} chunks from batch"
                     )
+                    if batch_count == 1:  # Print timing for first batch as sample
+                        print(
+                            f"⏱️  TIMING: First batch ({len(batch)} files, {len(all_chunks)} chunks):",
+                            flush=True,
+                        )
+                        print(
+                            f"  - Storage: {time.time() - t_start_storage:.2f}s total",
+                            flush=True,
+                        )
                 except Exception as e:
                     error_msg = f"Failed to insert batch of chunks: {e}"
                     logger.error(error_msg)
@@ -1595,3 +1719,24 @@ class SemanticIndexer:
             for file_path in batch:
                 chunks_added, success = file_results.get(file_path, (0, False))
                 yield (file_path, chunks_added, success)
+
+        # TIMING: Print final summary
+        t_end_index = time.time()
+        total_time = t_end_index - t_start_index
+        print(f"\n⏱️  TIMING SUMMARY (total={total_time:.2f}s):", flush=True)
+        print(
+            f"  - Parsing: {time_parsing_total:.2f}s ({time_parsing_total / total_time * 100:.1f}%)",
+            flush=True,
+        )
+        print(
+            f"  - Embedding: {time_embedding_total:.2f}s ({time_embedding_total / total_time * 100:.1f}%)",
+            flush=True,
+        )
+        print(
+            f"  - Storage: {time_storage_total:.2f}s ({time_storage_total / total_time * 100:.1f}%)",
+            flush=True,
+        )
+        print(
+            f"  - Other overhead: {total_time - time_parsing_total - time_embedding_total - time_storage_total:.2f}s\n",
+            flush=True,
+        )

@@ -257,6 +257,113 @@ class ChunksBackend:
             logger.error(f"Failed to add chunks: {e}")
             raise DatabaseError(f"Failed to add chunks: {e}") from e
 
+    async def add_chunks_batch(self, chunks: list[dict[str, Any]]) -> int:
+        """Add parsed chunks from multiple files in a single write.
+
+        Each chunk dict must already include the file_hash field.
+        This method is optimized for batch processing where chunks from
+        multiple files are accumulated and written once.
+
+        Args:
+            chunks: List of chunk dicts with required fields including:
+                - chunk_id (str): Unique chunk identifier
+                - file_path (str): Relative path to source file
+                - file_hash (str): SHA-256 hash of source file
+                - content (str): Code content
+                - language (str): Programming language
+                - start_line (int): Starting line number
+                - end_line (int): Ending line number
+                - chunk_type (str): function, class, method, etc.
+                - name (str): Function/class name
+                Optional fields will use defaults if not provided.
+
+        Returns:
+            Number of chunks added
+
+        Raises:
+            DatabaseNotInitializedError: If backend not initialized
+            DatabaseError: If adding chunks fails
+        """
+        if self._db is None:
+            raise DatabaseNotInitializedError("Chunks backend not initialized")
+
+        if not chunks:
+            return 0
+
+        try:
+            # Normalize and validate chunks
+            normalized_chunks = []
+            timestamp = datetime.utcnow().isoformat()
+
+            for chunk in chunks:
+                # Required fields (including file_hash)
+                normalized = {
+                    "chunk_id": chunk["chunk_id"],
+                    "file_path": chunk["file_path"],
+                    "file_hash": chunk["file_hash"],
+                    "content": chunk["content"],
+                    "language": chunk["language"],
+                    "start_line": chunk["start_line"],
+                    "end_line": chunk["end_line"],
+                    "chunk_type": chunk["chunk_type"],
+                    "name": chunk["name"],
+                }
+
+                # Optional fields with defaults
+                normalized["start_char"] = chunk.get("start_char", 0)
+                normalized["end_char"] = chunk.get("end_char", 0)
+                normalized["parent_name"] = chunk.get("parent_name", "")
+                normalized["hierarchy_path"] = chunk.get("hierarchy_path", "")
+                normalized["docstring"] = chunk.get("docstring", "")
+                normalized["signature"] = chunk.get("signature", "")
+                normalized["complexity"] = chunk.get("complexity", 0)
+                normalized["token_count"] = chunk.get("token_count", 0)
+
+                # Phase tracking
+                normalized["embedding_status"] = "pending"
+                normalized["embedding_batch_id"] = 0
+                normalized["created_at"] = timestamp
+                normalized["updated_at"] = timestamp
+                normalized["error_message"] = ""
+
+                normalized_chunks.append(normalized)
+
+            # Create or append to table
+            if self._table is None:
+                # Check if table exists
+                tables_response = self._db.list_tables()
+                table_names = (
+                    tables_response.tables
+                    if hasattr(tables_response, "tables")
+                    else tables_response
+                )
+
+                if self.TABLE_NAME in table_names:
+                    # Table exists, open it
+                    self._table = self._db.open_table(self.TABLE_NAME)
+                    self._table.add(normalized_chunks)
+                    logger.debug(
+                        f"Opened existing table and added {len(normalized_chunks)} chunks"
+                    )
+                else:
+                    # Create table with first batch
+                    self._table = self._db.create_table(
+                        self.TABLE_NAME, normalized_chunks, schema=CHUNKS_SCHEMA
+                    )
+                    logger.debug(
+                        f"Created chunks table with {len(normalized_chunks)} chunks"
+                    )
+            else:
+                # Append to existing table
+                self._table.add(normalized_chunks)
+                logger.debug(f"Added {len(normalized_chunks)} chunks to table")
+
+            return len(normalized_chunks)
+
+        except Exception as e:
+            logger.error(f"Failed to add chunks batch: {e}")
+            raise DatabaseError(f"Failed to add chunks batch: {e}") from e
+
     async def get_file_hash(self, file_path: str) -> str | None:
         """Get stored hash for a file (for change detection).
 
