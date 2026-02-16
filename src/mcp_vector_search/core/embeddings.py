@@ -579,7 +579,16 @@ class BatchEmbeddingProcessor:
             """Process a single batch in thread pool."""
             async with semaphore:
                 # Run embedding generation in thread pool to avoid blocking
-                return await asyncio.to_thread(self.embedding_function, batch)
+                try:
+                    return await asyncio.to_thread(self.embedding_function, batch)
+                except BaseException as e:
+                    # PyO3 panics inherit from BaseException, not Exception
+                    if "Python interpreter is not initialized" in str(e):
+                        logger.warning("Embedding interrupted during shutdown")
+                        raise RuntimeError(
+                            "Embedding interrupted during Python shutdown"
+                        ) from e
+                    raise
 
         # Process all batches concurrently
         results = await asyncio.gather(*[process_batch(b) for b in batches])
@@ -696,8 +705,19 @@ class BatchEmbeddingProcessor:
         for i in range(0, len(contents), self.batch_size):
             batch = contents[i : i + self.batch_size]
             # Run in thread pool to avoid blocking
-            batch_embeddings = await asyncio.to_thread(self.embedding_function, batch)
-            new_embeddings.extend(batch_embeddings)
+            try:
+                batch_embeddings = await asyncio.to_thread(
+                    self.embedding_function, batch
+                )
+                new_embeddings.extend(batch_embeddings)
+            except BaseException as e:
+                # PyO3 panics inherit from BaseException, not Exception
+                if "Python interpreter is not initialized" in str(e):
+                    logger.warning("Embedding interrupted during shutdown")
+                    raise RuntimeError(
+                        "Embedding interrupted during Python shutdown"
+                    ) from e
+                raise
         return new_embeddings
 
     def get_stats(self) -> dict[str, any]:

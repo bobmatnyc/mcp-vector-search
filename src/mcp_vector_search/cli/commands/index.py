@@ -432,6 +432,18 @@ async def run_indexing(
         )
     console.print("[green]✓[/green] [dim]Backend ready[/dim]")
 
+    # Check if database has existing data for incremental update message
+    if not force_reindex:
+        existing_count = await indexer.get_indexed_count()
+        if existing_count > 0:
+            console.print(
+                f"[dim]ℹ️  Found existing index with {existing_count} files[/dim]"
+            )
+            console.print(
+                "[dim]   Running incremental update (only new/modified files)[/dim]"
+            )
+            console.print("[dim]   Use --force to reindex everything[/dim]\n")
+
     try:
         async with database:
             if watch:
@@ -519,17 +531,29 @@ async def _run_batch_indexing(
         total_files = len(files_to_index)
 
         # Show discovery results
-        console.print(
-            f"[green]✓[/green] [dim]Discovered {len(indexable_files)} files "
-            f"({total_files} to index)[/dim]\n"
-        )
-
         if total_files == 0:
-            console.print("[yellow]No files need indexing[/yellow]")
+            # All files are already indexed
+            console.print(
+                f"[green]✓[/green] [dim]All {len(indexable_files)} files are up to date[/dim]"
+            )
+            console.print("[dim]   No new or modified files to index[/dim]\n")
             indexed_count = 0
+        elif total_files == len(indexable_files):
+            # Full indexing (first run or force)
+            console.print(
+                f"[green]✓[/green] [dim]Discovered {len(indexable_files)} files to index[/dim]\n"
+            )
         else:
-            console.print(f"[dim]Found {total_files} files to index[/dim]\n")
+            # Incremental update
+            console.print(
+                f"[green]✓[/green] [dim]Discovered {len(indexable_files)} total files[/dim]"
+            )
+            console.print(
+                f"[cyan]📂 Updated {total_files} new/modified files[/cyan] "
+                f"[dim]({len(indexable_files) - total_files} unchanged)[/dim]\n"
+            )
 
+        if total_files > 0:
             # Pre-initialize backends before progress display
             with console.status(
                 "[dim]Initializing indexing backend...[/dim]", spinner="dots"

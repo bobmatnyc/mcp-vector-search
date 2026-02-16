@@ -285,7 +285,18 @@ class LanceVectorDatabase:
                 # This allows other async operations to proceed during CPU-intensive embedding
                 import asyncio
 
-                embeddings = await asyncio.to_thread(self.embedding_function, contents)
+                try:
+                    embeddings = await asyncio.to_thread(
+                        self.embedding_function, contents
+                    )
+                except BaseException as e:
+                    # PyO3 panics inherit from BaseException, not Exception
+                    if "Python interpreter is not initialized" in str(e):
+                        logger.warning("Embedding interrupted during shutdown")
+                        raise RuntimeError(
+                            "Embedding interrupted during Python shutdown"
+                        ) from e
+                    raise
 
             # Convert chunks to LanceDB records
             records = []

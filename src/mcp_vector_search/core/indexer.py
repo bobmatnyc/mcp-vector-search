@@ -1491,6 +1491,24 @@ class SemanticIndexer:
                 "total_chunks": 0,
             }
 
+    async def get_indexed_count(self) -> int:
+        """Get count of files currently indexed in the database.
+
+        Returns:
+            Number of unique files indexed
+        """
+        try:
+            # Initialize chunks_backend if needed
+            if self.chunks_backend._db is None:
+                await self.chunks_backend.initialize()
+
+            # Get stats from chunks_backend (Phase 1 storage)
+            chunks_stats = await self.chunks_backend.get_stats()
+            return chunks_stats.get("files", 0)
+        except Exception as e:
+            logger.warning(f"Failed to get indexed count: {e}")
+            return 0
+
     async def get_files_to_index(
         self,
         force_reindex: bool = False,
