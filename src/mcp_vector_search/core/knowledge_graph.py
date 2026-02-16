@@ -1613,6 +1613,119 @@ class KnowledgeGraph:
         code_rel_count = sum(relationships.get(rel, 0) for rel in code_relationships)
         return code_rel_count > 0
 
+    async def get_detailed_stats(self) -> dict[str, Any]:
+        """Get detailed knowledge graph statistics with entity type breakdowns.
+
+        Returns:
+            Dictionary with detailed entity counts by type and relationship counts
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Count total code entities
+            entity_result = self.conn.execute(
+                "MATCH (e:CodeEntity) RETURN count(e) AS count"
+            )
+            total_entities = (
+                entity_result.get_next()[0] if entity_result.has_next() else 0
+            )
+
+            # Get all distinct entity types and their counts
+            entity_types_result = self.conn.execute(
+                """
+                MATCH (e:CodeEntity)
+                RETURN e.entity_type AS type, count(e) AS count
+                ORDER BY count DESC
+                """
+            )
+            entity_types = {}
+            while entity_types_result.has_next():
+                row = entity_types_result.get_next()
+                entity_types[row[0]] = row[1]
+
+            # Count doc sections
+            doc_result = self.conn.execute(
+                "MATCH (d:DocSection) RETURN count(d) AS count"
+            )
+            doc_count = doc_result.get_next()[0] if doc_result.has_next() else 0
+
+            # Count tags
+            tag_result = self.conn.execute("MATCH (t:Tag) RETURN count(t) AS count")
+            tag_count = tag_result.get_next()[0] if tag_result.has_next() else 0
+
+            # Count persons
+            person_result = self.conn.execute(
+                "MATCH (p:Person) RETURN count(p) AS count"
+            )
+            person_count = (
+                person_result.get_next()[0] if person_result.has_next() else 0
+            )
+
+            # Count projects
+            project_result = self.conn.execute(
+                "MATCH (p:Project) RETURN count(p) AS count"
+            )
+            project_count = (
+                project_result.get_next()[0] if project_result.has_next() else 0
+            )
+
+            # Count relationships by type
+            rel_counts = {}
+            for rel_type in [
+                "CALLS",
+                "IMPORTS",
+                "INHERITS",
+                "CONTAINS",
+                "REFERENCES",
+                "DOCUMENTS",
+                "FOLLOWS",
+                "HAS_TAG",
+                "DEMONSTRATES",
+                "LINKS_TO",
+                "AUTHORED",
+                "MODIFIED",
+                "PART_OF",
+            ]:
+                try:
+                    rel_result = self.conn.execute(
+                        f"MATCH ()-[r:{rel_type}]->() RETURN count(r) AS count"
+                    )
+                    rel_counts[rel_type.lower()] = (
+                        rel_result.get_next()[0] if rel_result.has_next() else 0
+                    )
+                except Exception:
+                    rel_counts[rel_type.lower()] = 0
+
+            return {
+                "total_entities": total_entities
+                + doc_count
+                + tag_count
+                + person_count
+                + project_count,
+                "code_entities": total_entities,
+                "entity_types": entity_types,
+                "doc_sections": doc_count,
+                "tags": tag_count,
+                "persons": person_count,
+                "projects": project_count,
+                "relationships": rel_counts,
+                "database_path": str(self.db_path / "code_kg"),
+            }
+        except Exception as e:
+            logger.error(f"Failed to get detailed KG stats: {e}")
+            return {
+                "total_entities": 0,
+                "code_entities": 0,
+                "entity_types": {},
+                "doc_sections": 0,
+                "tags": 0,
+                "persons": 0,
+                "projects": 0,
+                "relationships": {},
+                "error": str(e),
+            }
+
     async def get_stats(self) -> dict[str, Any]:
         """Get knowledge graph statistics.
 

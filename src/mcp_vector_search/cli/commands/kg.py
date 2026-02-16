@@ -10,6 +10,7 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.tree import Tree
 
 from ...core.factory import ComponentFactory
 from ...core.kg_builder import KGBuilder
@@ -335,6 +336,174 @@ def kg_stats(
         await kg.close()
 
     asyncio.run(_stats())
+
+
+@kg_app.command("status")
+def kg_status(
+    project_root: Path = typer.Option(
+        ".", help="Project root directory", exists=True, file_okay=False
+    ),
+):
+    """Show detailed knowledge graph status with hierarchical breakdown.
+
+    Display comprehensive status including:
+    - Node counts by type (classes, functions, modules, files)
+    - Relationship counts by category (code structure, documentation, metadata)
+    - Warnings for incomplete builds
+
+    Example:
+        mcp-vector-search kg status
+    """
+    project_root = project_root.resolve()
+
+    async def _status():
+        # Initialize knowledge graph
+        kg_path = project_root / ".mcp-vector-search" / "knowledge_graph"
+        kg = KnowledgeGraph(kg_path)
+        await kg.initialize()
+
+        # Get detailed statistics
+        stats = await kg.get_detailed_stats()
+
+        # Check if graph exists
+        if stats["total_entities"] == 0:
+            console.print(
+                "[red]✗[/red] Knowledge graph is empty. "
+                "Run 'mcp-vector-search kg build' first."
+            )
+            await kg.close()
+            raise typer.Exit(1)
+
+        # Display header
+        console.print()
+        console.print(
+            Panel.fit(
+                "[bold cyan]Knowledge Graph Status[/bold cyan]",
+                border_style="cyan",
+            )
+        )
+        console.print()
+
+        # Build Nodes tree
+        nodes_tree = Tree(
+            f"[bold cyan]Nodes[/bold cyan] [dim]({stats['total_entities']:,} total)[/dim]"
+        )
+
+        # Code Entities subtree
+        entity_types = stats.get("entity_types", {})
+        total_code = stats.get("code_entities", 0)
+        code_branch = nodes_tree.add(
+            f"[green]Code Entities[/green] [dim]{total_code:,}[/dim]"
+        )
+
+        # Display entity types dynamically based on what exists in the database
+        for entity_type, count in entity_types.items():
+            # Pluralize entity type for display
+            if entity_type.endswith("s"):
+                display_name = entity_type.capitalize() + "es"
+            else:
+                display_name = entity_type.capitalize() + "s"
+            code_branch.add(f"[dim]{display_name:<13}[/dim] {count:,}")
+
+        # Doc Sections
+        nodes_tree.add(
+            f"[green]Doc Sections[/green] [dim]{stats.get('doc_sections', 0):,}[/dim]"
+        )
+
+        # Tags
+        nodes_tree.add(
+            f"[green]Tags[/green]         [dim]{stats.get('tags', 0):,}[/dim]"
+        )
+
+        # Persons
+        nodes_tree.add(
+            f"[green]Persons[/green]      [dim]{stats.get('persons', 0):,}[/dim]"
+        )
+
+        # Projects
+        nodes_tree.add(
+            f"[green]Projects[/green]     [dim]{stats.get('projects', 0):,}[/dim]"
+        )
+
+        console.print(nodes_tree)
+        console.print()
+
+        # Build Relationships tree
+        relationships = stats.get("relationships", {})
+        total_rels = sum(relationships.values())
+        rels_tree = Tree(
+            f"[bold cyan]Relationships[/bold cyan] [dim]({total_rels:,} total)[/dim]"
+        )
+
+        # Code Structure subtree
+        code_rels = {
+            "calls": relationships.get("calls", 0),
+            "imports": relationships.get("imports", 0),
+            "inherits": relationships.get("inherits", 0),
+            "contains": relationships.get("contains", 0),
+        }
+        code_rels_total = sum(code_rels.values())
+        code_structure_label = (
+            f"[green]Code Structure[/green]       [dim]{code_rels_total:,}[/dim]"
+            if code_rels_total > 0
+            else f"[yellow]Code Structure[/yellow]       [dim]{code_rels_total:,}[/dim]  [yellow]⚠️[/yellow]"
+        )
+        code_rel_branch = rels_tree.add(code_structure_label)
+        code_rel_branch.add(f"[dim]Calls[/dim]            {code_rels['calls']:,}")
+        code_rel_branch.add(f"[dim]Imports[/dim]          {code_rels['imports']:,}")
+        code_rel_branch.add(f"[dim]Inherits[/dim]         {code_rels['inherits']:,}")
+        code_rel_branch.add(f"[dim]Contains[/dim]         {code_rels['contains']:,}")
+
+        # Documentation subtree
+        doc_rels = {
+            "follows": relationships.get("follows", 0),
+            "demonstrates": relationships.get("demonstrates", 0),
+            "documents": relationships.get("documents", 0),
+            "references": relationships.get("references", 0),
+            "links_to": relationships.get("links_to", 0),
+        }
+        doc_rels_total = sum(doc_rels.values())
+        doc_rel_branch = rels_tree.add(
+            f"[green]Documentation[/green]    [dim]{doc_rels_total:,}[/dim]"
+        )
+        doc_rel_branch.add(f"[dim]Follows[/dim]        {doc_rels['follows']:,}")
+        doc_rel_branch.add(f"[dim]Demonstrates[/dim]   {doc_rels['demonstrates']:,}")
+        doc_rel_branch.add(f"[dim]Documents[/dim]      {doc_rels['documents']:,}")
+        doc_rel_branch.add(f"[dim]References[/dim]     {doc_rels['references']:,}")
+        doc_rel_branch.add(f"[dim]Links To[/dim]       {doc_rels['links_to']:,}")
+
+        # Metadata subtree
+        meta_rels = {
+            "has_tag": relationships.get("has_tag", 0),
+            "authored": relationships.get("authored", 0),
+            "modified": relationships.get("modified", 0),
+            "part_of": relationships.get("part_of", 0),
+        }
+        meta_rels_total = sum(meta_rels.values())
+        meta_rel_branch = rels_tree.add(
+            f"[green]Metadata[/green]             [dim]{meta_rels_total:,}[/dim]"
+        )
+        meta_rel_branch.add(f"[dim]Has_Tag[/dim]          {meta_rels['has_tag']:,}")
+        meta_rel_branch.add(f"[dim]Authored[/dim]         {meta_rels['authored']:,}")
+        meta_rel_branch.add(f"[dim]Modified[/dim]         {meta_rels['modified']:,}")
+        meta_rel_branch.add(f"[dim]Part_Of[/dim]          {meta_rels['part_of']:,}")
+
+        console.print(rels_tree)
+
+        # Show warning if code relationships are missing
+        if code_rels_total == 0:
+            console.print()
+            console.print("[yellow]⚠️  Code relationships not built[/yellow]")
+            console.print(
+                "   Run [cyan]'mcp-vector-search kg build --force'[/cyan] to rebuild"
+            )
+
+        console.print()
+
+        # Close connection
+        await kg.close()
+
+    asyncio.run(_status())
 
 
 @kg_app.command("calls")
