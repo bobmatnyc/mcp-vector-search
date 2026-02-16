@@ -500,6 +500,55 @@ def kg_status(
 
         console.print()
 
+        # Build Cross-Entity Relationships tree
+        cross_samples = await kg.get_cross_entity_samples(limit_per_type=2)
+
+        if cross_samples:
+            cross_tree = Tree("[bold cyan]Cross-Entity Relationships[/bold cyan]")
+
+            # Map pattern names to relationship types for count lookup
+            pattern_to_rel = {
+                "DocSection → DOCUMENTS → CodeEntity": "documents",
+                "DocSection → DEMONSTRATES → Tag": "demonstrates",
+                "DocSection → REFERENCES → CodeEntity": "references",
+                "Person → AUTHORED → CodeEntity": "authored",
+                "Person → MODIFIED → CodeEntity": "modified",
+                "DocSection → HAS_TAG → Tag": "has_tag",
+                "CodeEntity → PART_OF → Project": "part_of",
+            }
+
+            for pattern_name, samples in cross_samples.items():
+                # Get total count from stats
+                rel_type = pattern_to_rel.get(pattern_name, "")
+                total_count = relationships.get(rel_type, 0)
+
+                # Create branch for this pattern with total count
+                if total_count > len(samples):
+                    pattern_label = (
+                        f"[green]{pattern_name}[/green] "
+                        f"[dim](showing {len(samples)} of {total_count:,})[/dim]"
+                    )
+                else:
+                    pattern_label = (
+                        f"[green]{pattern_name}[/green] "
+                        f"[dim](showing {len(samples)})[/dim]"
+                    )
+
+                pattern_branch = cross_tree.add(pattern_label)
+
+                # Add sample relationships
+                for sample in samples:
+                    pattern_branch.add(
+                        f"[cyan]{sample['source']}[/cyan] "
+                        f"[dim]→[/dim] "
+                        f"[yellow]{sample['rel']}[/yellow] "
+                        f"[dim]→[/dim] "
+                        f"[magenta]{sample['target']}[/magenta]"
+                    )
+
+            console.print(cross_tree)
+            console.print()
+
         # Close connection
         await kg.close()
 

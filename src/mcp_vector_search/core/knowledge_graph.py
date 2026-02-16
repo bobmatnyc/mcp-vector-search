@@ -1824,6 +1824,87 @@ class KnowledgeGraph:
                 "error": str(e),
             }
 
+    async def get_cross_entity_samples(
+        self, limit_per_type: int = 3
+    ) -> dict[str, list[dict[str, str]]]:
+        """Get sample cross-entity relationships to show connections between different node types.
+
+        Args:
+            limit_per_type: Number of samples per relationship pattern (default: 3)
+
+        Returns:
+            Dictionary mapping relationship patterns to sample relationships:
+            {
+                "DocSection -> DOCUMENTS -> CodeEntity": [
+                    {"source": "API Guide", "rel": "DOCUMENTS", "target": "UserService"},
+                    ...
+                ],
+                "DocSection -> DEMONSTRATES -> Tag": [...],
+                "Person -> AUTHORED -> CodeEntity": [...],
+                ...
+            }
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        samples: dict[str, list[dict[str, str]]] = {}
+
+        # Define cross-entity relationship patterns to sample
+        patterns = [
+            # Documentation to Code
+            (
+                "DocSection",
+                "DOCUMENTS",
+                "CodeEntity",
+                "DocSection → DOCUMENTS → CodeEntity",
+            ),
+            (
+                "DocSection",
+                "DEMONSTRATES",
+                "Tag",
+                "DocSection → DEMONSTRATES → Tag",
+            ),
+            (
+                "DocSection",
+                "REFERENCES",
+                "CodeEntity",
+                "DocSection → REFERENCES → CodeEntity",
+            ),
+            # People to Code
+            ("Person", "AUTHORED", "CodeEntity", "Person → AUTHORED → CodeEntity"),
+            ("Person", "MODIFIED", "CodeEntity", "Person → MODIFIED → CodeEntity"),
+            # Tags (reverse direction - CodeEntity has tags via DocSection)
+            ("DocSection", "HAS_TAG", "Tag", "DocSection → HAS_TAG → Tag"),
+            # Project relationships
+            ("CodeEntity", "PART_OF", "Project", "CodeEntity → PART_OF → Project"),
+        ]
+
+        for source_label, rel_type, target_label, pattern_name in patterns:
+            try:
+                result = self.conn.execute(
+                    f"""
+                    MATCH (s:{source_label})-[r:{rel_type}]->(t:{target_label})
+                    RETURN s.name AS source, '{rel_type}' AS rel, t.name AS target
+                    LIMIT {limit_per_type}
+                """
+                )
+
+                pattern_samples = []
+                while result.has_next():
+                    row = result.get_next()
+                    pattern_samples.append(
+                        {"source": row[0], "rel": row[1], "target": row[2]}
+                    )
+
+                if pattern_samples:
+                    samples[pattern_name] = pattern_samples
+
+            except Exception as e:
+                logger.debug(f"No samples found for {pattern_name}: {e}")
+                continue
+
+        return samples
+
     async def close(self):
         """Close database connection."""
         if self.conn:
