@@ -516,6 +516,17 @@ async def _run_batch_indexing(
         else:
             console.print(f"[dim]Found {total_files} files to index[/dim]\n")
 
+            # Pre-initialize backends before progress display
+            with console.status(
+                "[dim]Initializing indexing backend...[/dim]", spinner="dots"
+            ):
+                # Initialize the backends here so the progress display starts with tasks already added
+                if indexer.chunks_backend._db is None:
+                    await indexer.chunks_backend.initialize()
+                if indexer.vectors_backend._db is None:
+                    await indexer.vectors_backend.initialize()
+            console.print("[green]✓[/green] [dim]Backend ready[/dim]\n")
+
             # Track recently indexed files for display
             recent_files = []
             current_file_name = ""
@@ -525,13 +536,6 @@ async def _run_batch_indexing(
             # Track chunk and embedding progress separately
             total_chunks_created = 0  # Total chunks created from parsing
             chunks_embedded = 0  # Chunks successfully embedded
-
-            # Create layout for three-phase display
-            layout = Layout()
-            layout.split_column(
-                Layout(name="phases", size=8),
-                Layout(name="samples", size=7),
-            )
 
             # Create progress bars for all three phases
             # NOTE: We'll dynamically update total for Phase 2 as chunks are created
@@ -580,6 +584,36 @@ async def _run_batch_indexing(
                 "phase2": 0,
                 "phase3": 0,
             }
+
+            # Create samples table BEFORE layout to have all content ready
+            samples_table = Table.grid(expand=True)
+            samples_table.add_column(style="dim")
+            samples_table.add_row("[dim]Starting indexing...[/dim]")
+
+            # Create layout with initial content to avoid debug output
+            layout = Layout()
+            layout.split_column(
+                Layout(name="phases", size=8),
+                Layout(name="samples", size=7),
+            )
+
+            # Initialize panels with actual content BEFORE Live display
+            # Progress now has tasks added, so it won't show debug representation
+            layout["phases"].update(
+                Panel(
+                    progress,
+                    title="[bold]📊 Indexing Progress[/bold]",
+                    border_style="blue",
+                )
+            )
+
+            layout["samples"].update(
+                Panel(
+                    samples_table,
+                    title="[bold]📁 Recently Processed[/bold]",
+                    border_style="dim",
+                )
+            )
 
             # Create live display
             with Live(layout, console=console, refresh_per_second=4):
@@ -636,7 +670,7 @@ async def _run_batch_indexing(
                     layout["phases"].update(
                         Panel(
                             progress,
-                            title=f"[bold]Indexing Progress[/bold] [dim]({indexed_count}/{total_files} files • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]",
+                            title=f"[bold]📊 Indexing Progress[/bold] [dim]({indexed_count}/{total_files} files • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]",
                             border_style="blue",
                         )
                     )
@@ -667,7 +701,7 @@ async def _run_batch_indexing(
                     layout["samples"].update(
                         Panel(
                             samples_table,
-                            title="[bold]File Processing[/bold]",
+                            title="[bold]📁 Recently Processed[/bold]",
                             border_style="dim",
                         )
                     )
@@ -693,7 +727,7 @@ async def _run_batch_indexing(
                 layout["phases"].update(
                     Panel(
                         progress,
-                        title="[bold]Indexing Progress[/bold]",
+                        title="[bold]📊 Indexing Progress[/bold]",
                         border_style="blue",
                     )
                 )
@@ -748,7 +782,7 @@ async def _run_batch_indexing(
                             layout["phases"].update(
                                 Panel(
                                     progress,
-                                    title=f"[bold green]✓[/bold green] [bold]Indexing Complete[/bold] [dim]Total: {total_time:.0f}s[/dim]",
+                                    title=f"[bold green]✓[/bold green] [bold]📊 Indexing Complete[/bold] [dim]Total: {total_time:.0f}s[/dim]",
                                     border_style="green",
                                 )
                             )
@@ -758,7 +792,7 @@ async def _run_batch_indexing(
                                 Panel(
                                     "[green]✓[/green] All phases complete!\n\n"
                                     "[dim]Use 'mcp-vector-search index relationships' to compute relationships now[/dim]",
-                                    title="[bold]Status[/bold]",
+                                    title="[bold]📁 Status[/bold]",
                                     border_style="green",
                                 )
                             )
@@ -778,7 +812,7 @@ async def _run_batch_indexing(
                         layout["phases"].update(
                             Panel(
                                 progress,
-                                title=f"[bold yellow]⚠[/bold yellow] [bold]Indexing Complete[/bold] [dim]Total: {total_time:.0f}s[/dim]",
+                                title=f"[bold yellow]⚠[/bold yellow] [bold]📊 Indexing Complete[/bold] [dim]Total: {total_time:.0f}s[/dim]",
                                 border_style="yellow",
                             )
                         )
