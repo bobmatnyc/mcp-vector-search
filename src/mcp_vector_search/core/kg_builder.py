@@ -321,7 +321,7 @@ class KGBuilder:
                     BarColumn(bar_width=40),
                     TaskProgressColumn(),
                     console=console,
-                    refresh_per_second=0.001,  # Very slow refresh to avoid thread safety issues with Kuzu
+                    auto_refresh=False,  # CRITICAL: Disable background thread entirely
                 ) as progress
             ):
                 # Phase 1: Extract entities and relationships
@@ -2793,7 +2793,7 @@ class KGBuilder:
                     BarColumn(bar_width=40),
                     TaskProgressColumn(),
                     console=console,
-                    refresh_per_second=0.001,  # Very slow refresh to avoid thread safety issues with Kuzu
+                    auto_refresh=False,  # CRITICAL: Disable background thread entirely
                 ) as progress
             ):
                 task = progress.add_task("loading", total=total_chunks)
