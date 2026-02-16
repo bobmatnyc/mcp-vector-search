@@ -202,10 +202,11 @@ class KGBuilder:
             if c.language == "text" or str(c.file_path).endswith(".md")
         ]
 
-        logger.info(
-            f"Building knowledge graph from {len(code_chunks)} code chunks "
-            f"and {len(text_chunks)} text chunks ({len(chunks)} total)..."
-        )
+        if not show_progress:
+            logger.info(
+                f"Building knowledge graph from {len(code_chunks)} code chunks "
+                f"and {len(text_chunks)} text chunks ({len(chunks)} total)..."
+            )
 
         stats = {
             "entities": 0,
@@ -228,80 +229,192 @@ class KGBuilder:
             "part_of": 0,
         }
 
-        # Phase 1: Collect all entities and relationships (no DB writes)
-        logger.info("Phase 1: Extracting entities and relationships from chunks...")
-        code_entities: list[CodeEntity] = []
-        doc_sections: list[DocSection] = []
-        tags: set[str] = set()
-        relationships: dict[str, list[CodeRelationship]] = {
-            "CALLS": [],
-            "IMPORTS": [],
-            "INHERITS": [],
-            "CONTAINS": [],
-            "REFERENCES": [],
-            "DOCUMENTS": [],
-            "FOLLOWS": [],
-            "HAS_TAG": [],
-            "DEMONSTRATES": [],
-            "LINKS_TO": [],
-        }
+        if show_progress:
+            # Use Rich progress bars for visual feedback
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(bar_width=40),
+                TaskProgressColumn(),
+                console=console,
+            ) as progress:
+                # Phase 1: Extract entities and relationships
+                task1 = progress.add_task(
+                    "[cyan]🔍 Scanning chunks...",
+                    total=len(code_chunks) + len(text_chunks),
+                )
 
-        # Extract from code chunks
-        for chunk in code_chunks:
-            entity, rels = self._extract_code_entity(chunk)
-            if entity:
-                code_entities.append(entity)
+                code_entities: list[CodeEntity] = []
+                doc_sections: list[DocSection] = []
+                tags: set[str] = set()
+                relationships: dict[str, list[CodeRelationship]] = {
+                    "CALLS": [],
+                    "IMPORTS": [],
+                    "INHERITS": [],
+                    "CONTAINS": [],
+                    "REFERENCES": [],
+                    "DOCUMENTS": [],
+                    "FOLLOWS": [],
+                    "HAS_TAG": [],
+                    "DEMONSTRATES": [],
+                    "LINKS_TO": [],
+                }
+
+                # Extract from code chunks
+                for chunk in code_chunks:
+                    entity, rels = self._extract_code_entity(chunk)
+                    if entity:
+                        code_entities.append(entity)
+                        for rel_type, rel_list in rels.items():
+                            relationships[rel_type].extend(rel_list)
+                    progress.update(task1, advance=1)
+
+                # Extract from text chunks
+                for chunk in text_chunks:
+                    docs, chunk_tags, rels = self._extract_doc_sections(chunk)
+                    doc_sections.extend(docs)
+                    tags.update(chunk_tags)
+                    for rel_type, rel_list in rels.items():
+                        relationships[rel_type].extend(rel_list)
+                    progress.update(task1, advance=1)
+
+                progress.update(
+                    task1,
+                    description=f"[green]✓ Scanned {len(chunks)} chunks",
+                    completed=len(chunks),
+                )
+
+                # Phase 2: Insert entities
+                total_entities = len(code_entities) + len(doc_sections) + len(tags)
+                task2 = progress.add_task(
+                    "[cyan]🏗️  Extracting entities...", total=total_entities
+                )
+
+                if code_entities:
+                    stats["entities"] = await self.kg.add_entities_batch(code_entities)
+                    progress.update(task2, advance=len(code_entities))
+
+                if doc_sections:
+                    stats["doc_sections"] = await self.kg.add_doc_sections_batch(
+                        doc_sections
+                    )
+                    progress.update(task2, advance=len(doc_sections))
+
+                if tags:
+                    stats["tags"] = await self.kg.add_tags_batch(list(tags))
+                    progress.update(task2, advance=len(tags))
+
+                progress.update(
+                    task2,
+                    description=f"[green]✓ Extracted {total_entities} entities",
+                    completed=total_entities,
+                )
+
+                # Phase 3: Insert relationships
+                total_rels = sum(len(r) for r in relationships.values())
+                task3 = progress.add_task(
+                    "[cyan]🔗 Building relations...", total=total_rels
+                )
+
+                for rel_type, rels in relationships.items():
+                    if rels:
+                        count = await self.kg.add_relationships_batch(rels)
+                        stats[rel_type.lower()] = count
+                        progress.update(task3, advance=len(rels))
+
+                progress.update(
+                    task3,
+                    description=f"[green]✓ Built {total_rels} relations",
+                    completed=total_rels,
+                )
+
+                # Phase 4: Extract DOCUMENTS relationships (optional)
+                if not skip_documents and text_chunks and code_chunks:
+                    task4 = progress.add_task(
+                        "[cyan]📄 Extracting DOCUMENTS...",
+                        total=len(text_chunks) * len(code_chunks),
+                    )
+                    await self._extract_documents_relationships(
+                        text_chunks, stats, progress_task=task4, progress_obj=progress
+                    )
+
+        else:
+            # No progress bars - original implementation
+            logger.info("Phase 1: Extracting entities and relationships from chunks...")
+            code_entities: list[CodeEntity] = []
+            doc_sections: list[DocSection] = []
+            tags: set[str] = set()
+            relationships: dict[str, list[CodeRelationship]] = {
+                "CALLS": [],
+                "IMPORTS": [],
+                "INHERITS": [],
+                "CONTAINS": [],
+                "REFERENCES": [],
+                "DOCUMENTS": [],
+                "FOLLOWS": [],
+                "HAS_TAG": [],
+                "DEMONSTRATES": [],
+                "LINKS_TO": [],
+            }
+
+            # Extract from code chunks
+            for chunk in code_chunks:
+                entity, rels = self._extract_code_entity(chunk)
+                if entity:
+                    code_entities.append(entity)
+                    for rel_type, rel_list in rels.items():
+                        relationships[rel_type].extend(rel_list)
+
+            # Extract from text chunks
+            for chunk in text_chunks:
+                docs, chunk_tags, rels = self._extract_doc_sections(chunk)
+                doc_sections.extend(docs)
+                tags.update(chunk_tags)
                 for rel_type, rel_list in rels.items():
                     relationships[rel_type].extend(rel_list)
 
-        # Extract from text chunks
-        for chunk in text_chunks:
-            docs, chunk_tags, rels = self._extract_doc_sections(chunk)
-            doc_sections.extend(docs)
-            tags.update(chunk_tags)
-            for rel_type, rel_list in rels.items():
-                relationships[rel_type].extend(rel_list)
-
-        logger.info(
-            f"Extracted {len(code_entities)} entities, {len(doc_sections)} doc sections, "
-            f"{len(tags)} tags, {sum(len(r) for r in relationships.values())} relationships"
-        )
-
-        # Phase 2: Batch insert entities
-        logger.info("Phase 2: Batch inserting entities...")
-        if code_entities:
-            stats["entities"] = await self.kg.add_entities_batch(code_entities)
-            logger.info(f"✓ Inserted {stats['entities']} code entities")
-
-        if doc_sections:
-            stats["doc_sections"] = await self.kg.add_doc_sections_batch(doc_sections)
-            logger.info(f"✓ Inserted {stats['doc_sections']} doc sections")
-
-        if tags:
-            stats["tags"] = await self.kg.add_tags_batch(list(tags))
-            logger.info(f"✓ Inserted {stats['tags']} tags")
-
-        # Phase 3: Batch insert relationships
-        logger.info("Phase 3: Batch inserting relationships...")
-        for rel_type, rels in relationships.items():
-            if rels:
-                count = await self.kg.add_relationships_batch(rels)
-                stats[rel_type.lower()] = count
-                if count > 0:
-                    logger.info(f"✓ Inserted {count} {rel_type} relationships")
-
-        # Phase 4: Extract DOCUMENTS relationships (optional, expensive)
-        if not skip_documents and text_chunks and code_chunks:
             logger.info(
-                "Phase 4: Extracting DOCUMENTS relationships (this may take a while)..."
+                f"Extracted {len(code_entities)} entities, {len(doc_sections)} doc sections, "
+                f"{len(tags)} tags, {sum(len(r) for r in relationships.values())} relationships"
             )
-            await self._extract_documents_relationships(text_chunks, stats)
 
-        logger.info(
-            f"✓ Knowledge graph built: {stats['entities']} code entities, "
-            f"{stats['doc_sections']} doc sections, "
-            f"{sum(stats.values()) - stats['entities'] - stats['doc_sections']} relationships"
-        )
+            # Phase 2: Batch insert entities
+            logger.info("Phase 2: Batch inserting entities...")
+            if code_entities:
+                stats["entities"] = await self.kg.add_entities_batch(code_entities)
+                logger.info(f"✓ Inserted {stats['entities']} code entities")
+
+            if doc_sections:
+                stats["doc_sections"] = await self.kg.add_doc_sections_batch(
+                    doc_sections
+                )
+                logger.info(f"✓ Inserted {stats['doc_sections']} doc sections")
+
+            if tags:
+                stats["tags"] = await self.kg.add_tags_batch(list(tags))
+                logger.info(f"✓ Inserted {stats['tags']} tags")
+
+            # Phase 3: Batch insert relationships
+            logger.info("Phase 3: Batch inserting relationships...")
+            for rel_type, rels in relationships.items():
+                if rels:
+                    count = await self.kg.add_relationships_batch(rels)
+                    stats[rel_type.lower()] = count
+                    if count > 0:
+                        logger.info(f"✓ Inserted {count} {rel_type} relationships")
+
+            # Phase 4: Extract DOCUMENTS relationships (optional, expensive)
+            if not skip_documents and text_chunks and code_chunks:
+                logger.info(
+                    "Phase 4: Extracting DOCUMENTS relationships (this may take a while)..."
+                )
+                await self._extract_documents_relationships(text_chunks, stats)
+
+            logger.info(
+                f"✓ Knowledge graph built: {stats['entities']} code entities, "
+                f"{stats['doc_sections']} doc sections, "
+                f"{sum(stats.values()) - stats['entities'] - stats['doc_sections']} relationships"
+            )
 
         return stats
 
@@ -1019,12 +1132,16 @@ class KGBuilder:
         self,
         doc_chunks: list[CodeChunk],
         stats: dict[str, int],
+        progress_task=None,
+        progress_obj=None,
     ) -> None:
         """Create DOCUMENTS edges between doc sections and code entities.
 
         Args:
             doc_chunks: Text/documentation chunks
             stats: Statistics dict to update
+            progress_task: Optional Rich progress task ID
+            progress_obj: Optional Rich progress object
         """
         threshold = 0.5
         documents_count = 0
@@ -1042,9 +1159,10 @@ class KGBuilder:
             logger.debug(f"Failed to fetch code entities: {e}")
             return
 
-        logger.info(
-            f"Matching {len(doc_chunks)} doc sections against {len(entity_info)} code entities..."
-        )
+        if not progress_obj:
+            logger.info(
+                f"Matching {len(doc_chunks)} doc sections against {len(entity_info)} code entities..."
+            )
 
         # Extract headers from doc chunks and create doc section IDs
         doc_sections = []
@@ -1064,7 +1182,14 @@ class KGBuilder:
                     }
                 )
 
+        # Update progress total to actual doc sections count
+        if progress_obj and progress_task:
+            progress_obj.update(
+                progress_task, total=len(doc_sections) * len(entity_info)
+            )
+
         # Match doc sections against code entities
+        processed = 0
         for doc_section in doc_sections:
             doc_id = doc_section["id"]
             doc_name = doc_section["name"]
@@ -1074,6 +1199,9 @@ class KGBuilder:
             for entity_id, entity_name, entity_type, entity_file in entity_info:
                 # Skip generic entity names using centralized filter
                 if self._is_generic_entity(entity_name):
+                    processed += 1
+                    if progress_obj and progress_task:
+                        progress_obj.update(progress_task, advance=1)
                     continue
 
                 score = self._compute_documents_score(
@@ -1098,8 +1226,20 @@ class KGBuilder:
                     except Exception as e:
                         logger.debug(f"Failed to add DOCUMENTS relationship: {e}")
 
+                processed += 1
+                if progress_obj and progress_task:
+                    progress_obj.update(progress_task, advance=1)
+
         stats["documents"] = documents_count
-        logger.info(f"✓ Created {documents_count} DOCUMENTS relationships")
+
+        if progress_obj and progress_task:
+            progress_obj.update(
+                progress_task,
+                description=f"[green]✓ Extracted {documents_count} DOCUMENTS",
+                completed=processed,
+            )
+        else:
+            logger.info(f"✓ Created {documents_count} DOCUMENTS relationships")
 
     def _hash_email(self, email: str) -> str:
         """Hash email for privacy.

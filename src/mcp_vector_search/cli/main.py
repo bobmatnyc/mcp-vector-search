@@ -103,6 +103,7 @@ explore unfamiliar projects, and integrate with AI coding tools via MCP.
   demo       🎬 Run interactive demo
   doctor     🩺 Check system health
   index      📇 Index codebase
+  progress   📊 Show indexing progress
   reset      🔄 Reset and recovery operations
   mcp        🔌 MCP server operations
   config     ⚙️  Configure settings
@@ -126,6 +127,7 @@ from .commands.install import install_app  # noqa: E402
 from .commands.mcp import mcp_app  # noqa: E402
 from .commands.migrate import migrate_app  # noqa: E402
 from .commands.profile import profile_app  # noqa: E402
+from .commands.progress import app as progress_app  # noqa: E402
 from .commands.reset import reset_app  # noqa: E402
 from .commands.search import search_app, search_main  # noqa: E402, F401
 from .commands.setup import setup_app  # noqa: E402
@@ -185,6 +187,9 @@ app.add_typer(
 
 # 8. INDEX - Index codebase
 app.add_typer(index_app, name="index", help="📇 Index codebase for semantic search")
+
+# 8.2. PROGRESS - Show indexing progress
+app.add_typer(progress_app, name="progress", help="📊 Show indexing progress")
 
 # 8.5. PROFILE - Profile codebase
 app.add_typer(profile_app, name="profile", help="📊 Profile codebase characteristics")

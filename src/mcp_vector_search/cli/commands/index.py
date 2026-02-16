@@ -206,7 +206,9 @@ def main(
             )
 
     except KeyboardInterrupt:
-        print_info("Indexing interrupted by user")
+        print_info("\nIndexing interrupted by user")
+        print_info("Progress has been saved. Check status with:")
+        print_info("  [cyan]mcp-vector-search progress[/cyan]")
         raise typer.Exit(0)
     except Exception as e:
         logger.error(f"Indexing failed: {e}")
@@ -471,6 +473,12 @@ async def _run_batch_indexing(
     phase: str = "all",
 ) -> None:
     """Run batch indexing of all files with three-phase progress display."""
+    # Initialize progress state tracking
+    from .progress_state import ProgressStateManager
+
+    progress_manager = ProgressStateManager(indexer.project_root)
+    progress_manager.reset()  # Start fresh tracking
+
     if show_progress:
         # Import enhanced progress utilities
         from rich.layout import Layout
@@ -537,6 +545,9 @@ async def _run_batch_indexing(
             indexable_files, files_to_index = await scan_task
 
         total_files = len(files_to_index)
+
+        # Initialize progress state with total files
+        progress_manager.update_chunking(total_files=total_files)
 
         # Show discovery results
         if total_files == 0:
@@ -676,8 +687,20 @@ async def _run_batch_indexing(
                         # Phase 2 progresses AFTER chunks are embedded (happens in batch)
                         # For now, we assume embedding happens immediately after parsing
                         chunks_embedded += chunks_added
+
+                        # Update progress state
+                        progress_manager.update_chunking(
+                            processed_files_increment=1,
+                            chunks_increment=chunks_added,
+                        )
+                        progress_manager.update_embedding(
+                            total_chunks=total_chunks_created,
+                            embedded_chunks_increment=chunks_added,
+                        )
                     else:
                         failed_count += 1
+                        # Still count as processed even if failed
+                        progress_manager.update_chunking(processed_files_increment=1)
 
                     # Update Phase 1 progress (file-based, include existing context)
                     if existing_count > 0:
@@ -827,6 +850,11 @@ async def _run_batch_indexing(
                         all_chunks = await indexer.database.get_all_chunks()
 
                         if len(all_chunks) > 0:
+                            # Initialize KG build phase in progress state
+                            progress_manager.update_kg_build(
+                                processed_chunks_increment=len(all_chunks),
+                            )
+
                             # Mark for background computation
                             await indexer.relationship_store.compute_and_store(
                                 all_chunks, indexer.database, background=True
@@ -841,6 +869,9 @@ async def _run_batch_indexing(
                                 phase3_task,
                                 progress_text=f"marked • {phase_times['phase3']:.0f}s",
                             )
+
+                            # Mark indexing as complete in progress state
+                            progress_manager.mark_complete()
 
                             # Final display with total time (phase1 and phase2 overlap)
                             total_time = phase_times["phase1"] + phase_times["phase3"]
@@ -881,6 +912,11 @@ async def _run_batch_indexing(
                                 border_style="yellow",
                             )
                         )
+                        # Still mark as complete even if KG build failed
+                        progress_manager.mark_complete()
+                else:
+                    # If relationships were skipped, still mark as complete
+                    progress_manager.mark_complete()
 
             # Final progress summary
             console.print()
