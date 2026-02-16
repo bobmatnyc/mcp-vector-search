@@ -231,12 +231,16 @@ class KGBuilder:
 
         if show_progress:
             # Use Rich progress bars for visual feedback
+            # IMPORTANT: Disable auto-refresh to avoid thread safety issues with Kuzu
+            # The background refresh thread (default 4Hz) causes segfaults when
+            # accessing Kuzu connection from multiple threads
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(bar_width=40),
                 TaskProgressColumn(),
                 console=console,
+                refresh_per_second=0,  # Disable automatic refresh thread
             ) as progress:
                 # Phase 1: Extract entities and relationships
                 task1 = progress.add_task(
@@ -268,6 +272,7 @@ class KGBuilder:
                         for rel_type, rel_list in rels.items():
                             relationships[rel_type].extend(rel_list)
                     progress.update(task1, advance=1)
+                    progress.refresh()  # Manual refresh (no background thread)
 
                 # Extract from text chunks
                 for chunk in text_chunks:
@@ -277,12 +282,14 @@ class KGBuilder:
                     for rel_type, rel_list in rels.items():
                         relationships[rel_type].extend(rel_list)
                     progress.update(task1, advance=1)
+                    progress.refresh()  # Manual refresh (no background thread)
 
                 progress.update(
                     task1,
                     description=f"[green]✓ Scanned {len(chunks)} chunks",
                     completed=len(chunks),
                 )
+                progress.refresh()
 
                 # Phase 2: Insert entities
                 total_entities = len(code_entities) + len(doc_sections) + len(tags)
@@ -293,22 +300,26 @@ class KGBuilder:
                 if code_entities:
                     stats["entities"] = await self.kg.add_entities_batch(code_entities)
                     progress.update(task2, advance=len(code_entities))
+                    progress.refresh()
 
                 if doc_sections:
                     stats["doc_sections"] = await self.kg.add_doc_sections_batch(
                         doc_sections
                     )
                     progress.update(task2, advance=len(doc_sections))
+                    progress.refresh()
 
                 if tags:
                     stats["tags"] = await self.kg.add_tags_batch(list(tags))
                     progress.update(task2, advance=len(tags))
+                    progress.refresh()
 
                 progress.update(
                     task2,
                     description=f"[green]✓ Extracted {total_entities} entities",
                     completed=total_entities,
                 )
+                progress.refresh()
 
                 # Phase 3: Insert relationships
                 total_rels = sum(len(r) for r in relationships.values())
@@ -321,12 +332,14 @@ class KGBuilder:
                         count = await self.kg.add_relationships_batch(rels)
                         stats[rel_type.lower()] = count
                         progress.update(task3, advance=len(rels))
+                        progress.refresh()
 
                 progress.update(
                     task3,
                     description=f"[green]✓ Built {total_rels} relations",
                     completed=total_rels,
                 )
+                progress.refresh()
 
                 # Phase 4: Extract DOCUMENTS relationships (optional)
                 if not skip_documents and text_chunks and code_chunks:
@@ -1187,6 +1200,7 @@ class KGBuilder:
             progress_obj.update(
                 progress_task, total=len(doc_sections) * len(entity_info)
             )
+            progress_obj.refresh()
 
         # Match doc sections against code entities
         processed = 0
@@ -1202,6 +1216,7 @@ class KGBuilder:
                     processed += 1
                     if progress_obj and progress_task:
                         progress_obj.update(progress_task, advance=1)
+                        progress_obj.refresh()
                     continue
 
                 score = self._compute_documents_score(
@@ -1229,6 +1244,7 @@ class KGBuilder:
                 processed += 1
                 if progress_obj and progress_task:
                     progress_obj.update(progress_task, advance=1)
+                    progress_obj.refresh()
 
         stats["documents"] = documents_count
 
@@ -1238,6 +1254,7 @@ class KGBuilder:
                 description=f"[green]✓ Extracted {documents_count} DOCUMENTS",
                 completed=processed,
             )
+            progress_obj.refresh()
         else:
             logger.info(f"✓ Created {documents_count} DOCUMENTS relationships")
 
@@ -1579,12 +1596,14 @@ class KGBuilder:
 
         # Load chunks with progress reporting
         if show_progress:
+            # IMPORTANT: Disable auto-refresh to avoid thread safety issues with Kuzu
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[cyan]Loading chunks from database...[/cyan]"),
                 BarColumn(bar_width=40),
                 TaskProgressColumn(),
                 console=console,
+                refresh_per_second=0,  # Disable automatic refresh thread
             ) as progress:
                 task = progress.add_task("loading", total=total_chunks)
 
@@ -1592,11 +1611,13 @@ class KGBuilder:
                 for batch in database.iter_chunks_batched(batch_size=5000):
                     chunks.extend(batch)
                     progress.update(task, advance=len(batch))
+                    progress.refresh()  # Manual refresh (no background thread)
 
                     # Apply limit if specified
                     if limit and len(chunks) >= limit:
                         chunks = chunks[:limit]
                         progress.update(task, completed=total_chunks)
+                        progress.refresh()
                         break
         else:
             logger.info("Loading chunks from database...")
