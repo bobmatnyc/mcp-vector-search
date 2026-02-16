@@ -483,6 +483,9 @@ async def _run_batch_indexing(
             TextColumn,
         )
 
+        # Get existing indexed count BEFORE scanning (for progress display context)
+        existing_count = await indexer.get_indexed_count()
+
         # Pre-scan to get total file count with live progress display
         from rich.table import Table
         from rich.text import Text
@@ -676,11 +679,16 @@ async def _run_batch_indexing(
                     else:
                         failed_count += 1
 
-                    # Update Phase 1 progress (file-based)
+                    # Update Phase 1 progress (file-based, include existing context)
+                    if existing_count > 0:
+                        progress_text_str = f"{indexed_count}/{total_files} new files → {total_chunks_created:,} chunks (+{existing_count:,} cached)"
+                    else:
+                        progress_text_str = f"{indexed_count}/{total_files} files → {total_chunks_created:,} chunks"
+
                     progress.update(
                         phase1_task,
                         advance=1,
-                        progress_text=f"{indexed_count}/{total_files} files → {total_chunks_created:,} chunks",
+                        progress_text=progress_text_str,
                     )
 
                     # Update Phase 2 progress (chunk-based)
@@ -709,11 +717,18 @@ async def _run_batch_indexing(
                     # Calculate phase timings
                     phase1_elapsed = time.time() - phase_start_times["phase1"]
 
-                    # Update phases panel with simple progress renderables
+                    # Update phases panel with existing files context
+                    if existing_count > 0:
+                        # Show both new and existing files
+                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({indexed_count}/{total_files} new • {existing_count:,} cached • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]"
+                    else:
+                        # First-time indexing, no cached files
+                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({indexed_count}/{total_files} files • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]"
+
                     layout["phases"].update(
                         Panel(
                             progress,
-                            title=f"[bold]📊 Indexing Progress[/bold] [dim]({indexed_count}/{total_files} files • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]",
+                            title=title_text,
                             border_style="blue",
                         )
                     )
@@ -751,10 +766,17 @@ async def _run_batch_indexing(
 
                 # Phase 1 & 2 complete (they happen together in current implementation)
                 phase_times["phase1"] = time.time() - phase_start_times["phase1"]
+
+                # Include existing files in completion message
+                if existing_count > 0:
+                    completion_text = f"{indexed_count} new files → {total_chunks_created:,} chunks (+{existing_count:,} cached) • {phase_times['phase1']:.0f}s"
+                else:
+                    completion_text = f"{indexed_count} files → {total_chunks_created:,} chunks • {phase_times['phase1']:.0f}s"
+
                 progress.update(
                     phase1_task,
                     completed=total_files,
-                    progress_text=f"{indexed_count} files → {total_chunks_created:,} chunks • {phase_times['phase1']:.0f}s",
+                    progress_text=completion_text,
                 )
 
                 # Phase 2 completes at the same time as Phase 1 (embedding happens during indexing)
