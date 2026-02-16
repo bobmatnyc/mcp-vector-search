@@ -314,14 +314,16 @@ class KGBuilder:
             # IMPORTANT: Disable auto-refresh to avoid thread safety issues with Kuzu
             # The background refresh thread (default 4Hz) causes segfaults when
             # accessing Kuzu connection from multiple threads
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(bar_width=40),
-                TaskProgressColumn(),
-                console=console,
-                refresh_per_second=0,  # Disable automatic refresh thread
-            ) as progress:
+            with (
+                Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(bar_width=40),
+                    TaskProgressColumn(),
+                    console=console,
+                    refresh_per_second=0.001,  # Very slow refresh to avoid thread safety issues with Kuzu
+                ) as progress
+            ):
                 # Phase 1: Extract entities and relationships
                 task1 = progress.add_task(
                     "[cyan]🔍 Scanning chunks...",
@@ -2404,14 +2406,16 @@ class KGBuilder:
         # Load chunks with progress reporting
         if show_progress:
             # IMPORTANT: Disable auto-refresh to avoid thread safety issues with Kuzu
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[cyan]Loading chunks from database...[/cyan]"),
-                BarColumn(bar_width=40),
-                TaskProgressColumn(),
-                console=console,
-                refresh_per_second=0,  # Disable automatic refresh thread
-            ) as progress:
+            with (
+                Progress(
+                    SpinnerColumn(),
+                    TextColumn("[cyan]Loading chunks from database...[/cyan]"),
+                    BarColumn(bar_width=40),
+                    TaskProgressColumn(),
+                    console=console,
+                    refresh_per_second=0.001,  # Very slow refresh to avoid thread safety issues with Kuzu
+                ) as progress
+            ):
                 task = progress.add_task("loading", total=total_chunks)
 
                 chunks = []
