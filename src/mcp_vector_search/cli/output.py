@@ -316,6 +316,37 @@ def print_index_stats(stats: dict[str, Any]) -> None:
     console.print(table)
 
 
+def print_kg_stats(stats: dict[str, Any]) -> None:
+    """Print Knowledge Graph statistics in a table."""
+    table = Table(title="Knowledge Graph Statistics", show_header=False)
+    table.add_column("Metric", style="cyan", no_wrap=True)
+    table.add_column("Value", style="green")
+
+    # Entity counts
+    total_entities = stats.get("total_entities", 0)
+    code_entities = stats.get("code_entities", 0)
+    doc_sections = stats.get("doc_sections", 0)
+
+    table.add_row("Total Entities", f"{total_entities:,}")
+    table.add_row("  Code Entities", f"{code_entities:,}")
+    if doc_sections > 0:
+        table.add_row("  Doc Sections", f"{doc_sections:,}")
+
+    # Relationship counts
+    relationships = stats.get("relationships", {})
+    if relationships:
+        total_rels = sum(relationships.values())
+        table.add_row("Total Relationships", f"{total_rels:,}")
+
+        # Show major relationship types
+        for rel_type in ["calls", "imports", "inherits", "contains"]:
+            count = relationships.get(rel_type, 0)
+            if count > 0:
+                table.add_row(f"  {rel_type.capitalize()}", f"{count:,}")
+
+    console.print(table)
+
+
 def print_config(config_dict: dict[str, Any]) -> None:
     """Print configuration in a formatted table."""
     table = Table(title="Configuration", show_header=False)

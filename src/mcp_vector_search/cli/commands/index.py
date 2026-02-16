@@ -951,6 +951,32 @@ async def _run_batch_indexing(
 
     print_index_stats(stats)
 
+    # Check for KG stats and show if available
+    kg_path = indexer.project_root / ".mcp-vector-search" / "knowledge_graph"
+    kg_db_path = kg_path / "code_kg"
+
+    if kg_db_path.exists():
+        try:
+            from ...core.knowledge_graph import KnowledgeGraph
+            from ..output import print_kg_stats
+
+            kg = KnowledgeGraph(kg_path)
+            await kg.initialize()
+            kg_stats = await kg.get_stats()
+
+            if kg_stats.get("total_entities", 0) > 0:
+                console.print()  # Blank line before KG stats
+                print_kg_stats(kg_stats)
+                await kg.close()
+        except Exception as e:
+            logger.debug(f"Could not load KG stats: {e}")
+    else:
+        # KG not built - show hint
+        console.print()
+        console.print(
+            "[dim]💡 Run 'mcp-vector-search kg build' to enable graph queries[/dim]"
+        )
+
     # Add next-step hints
     if indexed_count > 0:
         # Check if LLM is configured for chat command
@@ -970,17 +996,35 @@ async def _run_batch_indexing(
         else:
             chat_hint = "[cyan]mcp-vector-search chat 'question'[/cyan] - Ask AI about your code [dim](requires API key)[/dim]"
 
+        # Conditionally show KG build step if not already built
+        kg_built = kg_db_path.exists()
+
         steps = [
             "[cyan]mcp-vector-search search 'your query'[/cyan] - Try semantic search",
             chat_hint,
             "[cyan]mcp-vector-search status[/cyan] - View detailed statistics",
-            "",
-            "[bold]Knowledge Graph:[/bold]",
-            "[cyan]mcp-vector-search kg stats[/cyan] - View graph statistics",
-            '[cyan]mcp-vector-search kg query "ClassName"[/cyan] - Find related entities',
-            '[cyan]mcp-vector-search kg calls "function_name"[/cyan] - Show call graph',
-            '[cyan]mcp-vector-search kg inherits "ClassName"[/cyan] - Show inheritance tree',
         ]
+
+        if not kg_built:
+            steps.extend(
+                [
+                    "",
+                    "[bold]Knowledge Graph:[/bold]",
+                    "[cyan]mcp-vector-search kg build[/cyan] - Build knowledge graph for advanced queries",
+                ]
+            )
+        else:
+            steps.extend(
+                [
+                    "",
+                    "[bold]Knowledge Graph:[/bold]",
+                    "[cyan]mcp-vector-search kg stats[/cyan] - View graph statistics",
+                    '[cyan]mcp-vector-search kg query "ClassName"[/cyan] - Find related entities',
+                    '[cyan]mcp-vector-search kg calls "function_name"[/cyan] - Show call graph',
+                    '[cyan]mcp-vector-search kg inherits "ClassName"[/cyan] - Show inheritance tree',
+                ]
+            )
+
         print_next_steps(steps, title="Ready to Search")
     else:
         print_info("\n[bold]No files were indexed. Possible reasons:[/bold]")
