@@ -76,6 +76,40 @@ class Project:
 
 
 @dataclass
+class Repository:
+    """A repository node for version control tracking in the knowledge graph."""
+
+    id: str  # Unique identifier (repo:<name>)
+    name: str  # Repository name
+    url: str = ""  # Git remote URL
+    default_branch: str = "main"  # Default branch name
+    created_at: str | None = None  # ISO timestamp of first commit
+
+
+@dataclass
+class Branch:
+    """A branch node for version control tracking in the knowledge graph."""
+
+    id: str  # Unique identifier (branch:<repo_name>:<branch_name>)
+    name: str  # Branch name
+    repository_id: str = ""  # Parent repository ID
+    is_default: bool = False  # Whether this is the default branch
+    created_at: str | None = None  # ISO timestamp of first commit on branch
+
+
+@dataclass
+class Commit:
+    """A commit node for version control tracking in the knowledge graph."""
+
+    id: str  # Unique identifier (commit:<sha>)
+    sha: str  # Git commit SHA (full 40-char hash)
+    message: str = ""  # Commit message
+    author_name: str = ""  # Commit author name
+    author_email: str = ""  # Commit author email
+    timestamp: str | None = None  # ISO timestamp of commit
+
+
+@dataclass
 class CodeRelationship:
     """An edge in the knowledge graph."""
 
@@ -382,6 +416,117 @@ class KnowledgeGraph:
             logger.debug("Created PART_OF relationship table")
         except Exception as e:
             logger.debug(f"PART_OF table creation: {e}")
+
+        # Create Repository node table
+        try:
+            self.conn.execute(
+                """
+                CREATE NODE TABLE IF NOT EXISTS Repository (
+                    id STRING PRIMARY KEY,
+                    name STRING,
+                    url STRING,
+                    default_branch STRING,
+                    created_at STRING
+                )
+            """
+            )
+            logger.debug("Created Repository node table")
+        except Exception as e:
+            logger.debug(f"Repository table creation: {e}")
+
+        # Create Branch node table
+        try:
+            self.conn.execute(
+                """
+                CREATE NODE TABLE IF NOT EXISTS Branch (
+                    id STRING PRIMARY KEY,
+                    name STRING,
+                    repository_id STRING,
+                    is_default BOOLEAN,
+                    created_at STRING
+                )
+            """
+            )
+            logger.debug("Created Branch node table")
+        except Exception as e:
+            logger.debug(f"Branch table creation: {e}")
+
+        # Create Commit node table
+        try:
+            self.conn.execute(
+                """
+                CREATE NODE TABLE IF NOT EXISTS Commit (
+                    id STRING PRIMARY KEY,
+                    sha STRING,
+                    message STRING,
+                    author_name STRING,
+                    author_email STRING,
+                    timestamp STRING
+                )
+            """
+            )
+            logger.debug("Created Commit node table")
+        except Exception as e:
+            logger.debug(f"Commit table creation: {e}")
+
+        # Create MODIFIES relationship (Commit -> CodeEntity)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS MODIFIES (
+                    FROM Commit TO CodeEntity,
+                    lines_added INT64 DEFAULT 0,
+                    lines_deleted INT64 DEFAULT 0,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created MODIFIES relationship table")
+        except Exception as e:
+            logger.debug(f"MODIFIES table creation: {e}")
+
+        # Create BRANCHED_FROM relationship (Branch -> Branch)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS BRANCHED_FROM (
+                    FROM Branch TO Branch,
+                    timestamp STRING,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created BRANCHED_FROM relationship table")
+        except Exception as e:
+            logger.debug(f"BRANCHED_FROM table creation: {e}")
+
+        # Create COMMITTED_TO relationship (Commit -> Branch)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS COMMITTED_TO (
+                    FROM Commit TO Branch,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created COMMITTED_TO relationship table")
+        except Exception as e:
+            logger.debug(f"COMMITTED_TO table creation: {e}")
+
+        # Create BELONGS_TO relationship (Branch -> Repository)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS BELONGS_TO (
+                    FROM Branch TO Repository,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created BELONGS_TO relationship table")
+        except Exception as e:
+            logger.debug(f"BELONGS_TO table creation: {e}")
 
     async def add_entity(self, entity: CodeEntity):
         """Add or update a code entity.
@@ -719,6 +864,298 @@ class KnowledgeGraph:
             )
         except Exception as e:
             logger.error(f"Failed to add PART_OF relationship: {e}")
+            raise
+
+    async def add_repository(self, repository: "Repository"):
+        """Add or update a repository.
+
+        Args:
+            repository: Repository to add/update
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Use MERGE to avoid duplicates
+            self.conn.execute(
+                """
+                MERGE (r:Repository {id: $id})
+                ON MATCH SET r.name = $name,
+                             r.url = $url,
+                             r.default_branch = $default_branch,
+                             r.created_at = $created_at
+                ON CREATE SET r.name = $name,
+                              r.url = $url,
+                              r.default_branch = $default_branch,
+                              r.created_at = $created_at
+            """,
+                {
+                    "id": repository.id,
+                    "name": repository.name,
+                    "url": repository.url,
+                    "default_branch": repository.default_branch,
+                    "created_at": repository.created_at or "",
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add repository {repository.id}: {e}")
+            raise
+
+    async def add_branch(self, branch: "Branch"):
+        """Add or update a branch.
+
+        Args:
+            branch: Branch to add/update
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Use MERGE to avoid duplicates
+            self.conn.execute(
+                """
+                MERGE (b:Branch {id: $id})
+                ON MATCH SET b.name = $name,
+                             b.repository_id = $repository_id,
+                             b.is_default = $is_default,
+                             b.created_at = $created_at
+                ON CREATE SET b.name = $name,
+                              b.repository_id = $repository_id,
+                              b.is_default = $is_default,
+                              b.created_at = $created_at
+            """,
+                {
+                    "id": branch.id,
+                    "name": branch.name,
+                    "repository_id": branch.repository_id,
+                    "is_default": branch.is_default,
+                    "created_at": branch.created_at or "",
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add branch {branch.id}: {e}")
+            raise
+
+    async def add_commit(self, commit: "Commit"):
+        """Add or update a commit.
+
+        Args:
+            commit: Commit to add/update
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Use MERGE to avoid duplicates
+            self.conn.execute(
+                """
+                MERGE (c:Commit {id: $id})
+                ON MATCH SET c.sha = $sha,
+                             c.message = $message,
+                             c.author_name = $author_name,
+                             c.author_email = $author_email,
+                             c.timestamp = $timestamp
+                ON CREATE SET c.sha = $sha,
+                              c.message = $message,
+                              c.author_name = $author_name,
+                              c.author_email = $author_email,
+                              c.timestamp = $timestamp
+            """,
+                {
+                    "id": commit.id,
+                    "sha": commit.sha,
+                    "message": commit.message,
+                    "author_name": commit.author_name,
+                    "author_email": commit.author_email,
+                    "timestamp": commit.timestamp or "",
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add commit {commit.id}: {e}")
+            raise
+
+    async def add_modifies_relationship(
+        self,
+        commit_id: str,
+        entity_id: str,
+        lines_added: int = 0,
+        lines_deleted: int = 0,
+    ):
+        """Add a MODIFIES relationship between a commit and code entity.
+
+        Args:
+            commit_id: Commit ID
+            entity_id: Code entity ID
+            lines_added: Number of lines added
+            lines_deleted: Number of lines deleted
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Check if both nodes exist
+            commit_exists = self.conn.execute(
+                "MATCH (c:Commit {id: $id}) RETURN c", {"id": commit_id}
+            )
+            entity_exists = self.conn.execute(
+                "MATCH (e:CodeEntity {id: $id}) RETURN e", {"id": entity_id}
+            )
+
+            if not commit_exists.has_next() or not entity_exists.has_next():
+                logger.warning(
+                    f"Skipping MODIFIES: commit or entity does not exist "
+                    f"(commit={commit_id}, entity={entity_id})"
+                )
+                return
+
+            # Create relationship
+            self.conn.execute(
+                """
+                MATCH (c:Commit {id: $commit_id}), (e:CodeEntity {id: $entity_id})
+                MERGE (c)-[r:MODIFIES]->(e)
+                ON MATCH SET r.lines_added = $lines_added,
+                             r.lines_deleted = $lines_deleted
+                ON CREATE SET r.lines_added = $lines_added,
+                              r.lines_deleted = $lines_deleted
+            """,
+                {
+                    "commit_id": commit_id,
+                    "entity_id": entity_id,
+                    "lines_added": lines_added,
+                    "lines_deleted": lines_deleted,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add MODIFIES relationship: {e}")
+            raise
+
+    async def add_branched_from_relationship(
+        self, source_branch_id: str, target_branch_id: str, timestamp: str
+    ):
+        """Add a BRANCHED_FROM relationship between branches.
+
+        Args:
+            source_branch_id: Source branch ID
+            target_branch_id: Target branch ID (parent branch)
+            timestamp: ISO timestamp when branch was created
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Check if both nodes exist
+            source_exists = self.conn.execute(
+                "MATCH (b:Branch {id: $id}) RETURN b", {"id": source_branch_id}
+            )
+            target_exists = self.conn.execute(
+                "MATCH (b:Branch {id: $id}) RETURN b", {"id": target_branch_id}
+            )
+
+            if not source_exists.has_next() or not target_exists.has_next():
+                logger.warning(
+                    f"Skipping BRANCHED_FROM: branch does not exist "
+                    f"(source={source_branch_id}, target={target_branch_id})"
+                )
+                return
+
+            # Create relationship
+            self.conn.execute(
+                """
+                MATCH (s:Branch {id: $source_id}), (t:Branch {id: $target_id})
+                MERGE (s)-[r:BRANCHED_FROM]->(t)
+                ON MATCH SET r.timestamp = $timestamp
+                ON CREATE SET r.timestamp = $timestamp
+            """,
+                {
+                    "source_id": source_branch_id,
+                    "target_id": target_branch_id,
+                    "timestamp": timestamp,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add BRANCHED_FROM relationship: {e}")
+            raise
+
+    async def add_committed_to_relationship(self, commit_id: str, branch_id: str):
+        """Add a COMMITTED_TO relationship between commit and branch.
+
+        Args:
+            commit_id: Commit ID
+            branch_id: Branch ID
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Check if both nodes exist
+            commit_exists = self.conn.execute(
+                "MATCH (c:Commit {id: $id}) RETURN c", {"id": commit_id}
+            )
+            branch_exists = self.conn.execute(
+                "MATCH (b:Branch {id: $id}) RETURN b", {"id": branch_id}
+            )
+
+            if not commit_exists.has_next() or not branch_exists.has_next():
+                logger.warning(
+                    f"Skipping COMMITTED_TO: commit or branch does not exist "
+                    f"(commit={commit_id}, branch={branch_id})"
+                )
+                return
+
+            # Create relationship
+            self.conn.execute(
+                """
+                MATCH (c:Commit {id: $commit_id}), (b:Branch {id: $branch_id})
+                MERGE (c)-[r:COMMITTED_TO]->(b)
+            """,
+                {
+                    "commit_id": commit_id,
+                    "branch_id": branch_id,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add COMMITTED_TO relationship: {e}")
+            raise
+
+    async def add_belongs_to_relationship(self, branch_id: str, repository_id: str):
+        """Add a BELONGS_TO relationship between branch and repository.
+
+        Args:
+            branch_id: Branch ID
+            repository_id: Repository ID
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Check if both nodes exist
+            branch_exists = self.conn.execute(
+                "MATCH (b:Branch {id: $id}) RETURN b", {"id": branch_id}
+            )
+            repo_exists = self.conn.execute(
+                "MATCH (r:Repository {id: $id}) RETURN r", {"id": repository_id}
+            )
+
+            if not branch_exists.has_next() or not repo_exists.has_next():
+                logger.warning(
+                    f"Skipping BELONGS_TO: branch or repository does not exist "
+                    f"(branch={branch_id}, repository={repository_id})"
+                )
+                return
+
+            # Create relationship
+            self.conn.execute(
+                """
+                MATCH (b:Branch {id: $branch_id}), (r:Repository {id: $repository_id})
+                MERGE (b)-[rel:BELONGS_TO]->(r)
+            """,
+                {
+                    "branch_id": branch_id,
+                    "repository_id": repository_id,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add BELONGS_TO relationship: {e}")
             raise
 
     async def add_entities_batch(
@@ -1670,6 +2107,28 @@ class KnowledgeGraph:
                 project_result.get_next()[0] if project_result.has_next() else 0
             )
 
+            # Count repositories
+            repo_result = self.conn.execute(
+                "MATCH (r:Repository) RETURN count(r) AS count"
+            )
+            repo_count = repo_result.get_next()[0] if repo_result.has_next() else 0
+
+            # Count branches
+            branch_result = self.conn.execute(
+                "MATCH (b:Branch) RETURN count(b) AS count"
+            )
+            branch_count = (
+                branch_result.get_next()[0] if branch_result.has_next() else 0
+            )
+
+            # Count commits
+            commit_result = self.conn.execute(
+                "MATCH (c:Commit) RETURN count(c) AS count"
+            )
+            commit_count = (
+                commit_result.get_next()[0] if commit_result.has_next() else 0
+            )
+
             # Count relationships by type
             rel_counts = {}
             for rel_type in [
@@ -1686,6 +2145,10 @@ class KnowledgeGraph:
                 "AUTHORED",
                 "MODIFIED",
                 "PART_OF",
+                "MODIFIES",
+                "BRANCHED_FROM",
+                "COMMITTED_TO",
+                "BELONGS_TO",
             ]:
                 try:
                     rel_result = self.conn.execute(
@@ -1702,13 +2165,19 @@ class KnowledgeGraph:
                 + doc_count
                 + tag_count
                 + person_count
-                + project_count,
+                + project_count
+                + repo_count
+                + branch_count
+                + commit_count,
                 "code_entities": total_entities,
                 "entity_types": entity_types,
                 "doc_sections": doc_count,
                 "tags": tag_count,
                 "persons": person_count,
                 "projects": project_count,
+                "repositories": repo_count,
+                "branches": branch_count,
+                "commits": commit_count,
                 "relationships": rel_counts,
                 "database_path": str(self.db_path / "code_kg"),
             }
@@ -1722,6 +2191,9 @@ class KnowledgeGraph:
                 "tags": 0,
                 "persons": 0,
                 "projects": 0,
+                "repositories": 0,
+                "branches": 0,
+                "commits": 0,
                 "relationships": {},
                 "error": str(e),
             }
@@ -1770,6 +2242,28 @@ class KnowledgeGraph:
                 project_result.get_next()[0] if project_result.has_next() else 0
             )
 
+            # Count repositories
+            repo_result = self.conn.execute(
+                "MATCH (r:Repository) RETURN count(r) AS count"
+            )
+            repo_count = repo_result.get_next()[0] if repo_result.has_next() else 0
+
+            # Count branches
+            branch_result = self.conn.execute(
+                "MATCH (b:Branch) RETURN count(b) AS count"
+            )
+            branch_count = (
+                branch_result.get_next()[0] if branch_result.has_next() else 0
+            )
+
+            # Count commits
+            commit_result = self.conn.execute(
+                "MATCH (c:Commit) RETURN count(c) AS count"
+            )
+            commit_count = (
+                commit_result.get_next()[0] if commit_result.has_next() else 0
+            )
+
             # Count relationships by type
             rel_counts = {}
             for rel_type in [
@@ -1786,6 +2280,10 @@ class KnowledgeGraph:
                 "AUTHORED",
                 "MODIFIED",
                 "PART_OF",
+                "MODIFIES",
+                "BRANCHED_FROM",
+                "COMMITTED_TO",
+                "BELONGS_TO",
             ]:
                 try:
                     rel_result = self.conn.execute(
@@ -1802,12 +2300,18 @@ class KnowledgeGraph:
                 + doc_count
                 + tag_count
                 + person_count
-                + project_count,
+                + project_count
+                + repo_count
+                + branch_count
+                + commit_count,
                 "code_entities": entity_count,
                 "doc_sections": doc_count,
                 "tags": tag_count,
                 "persons": person_count,
                 "projects": project_count,
+                "repositories": repo_count,
+                "branches": branch_count,
+                "commits": commit_count,
                 "relationships": rel_counts,
                 "database_path": str(self.db_path / "code_kg"),
             }
@@ -1820,6 +2324,9 @@ class KnowledgeGraph:
                 "tags": 0,
                 "persons": 0,
                 "projects": 0,
+                "repositories": 0,
+                "branches": 0,
+                "commits": 0,
                 "relationships": {},
                 "error": str(e),
             }

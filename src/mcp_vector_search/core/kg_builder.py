@@ -23,12 +23,15 @@ from rich.progress import (
 )
 
 from .knowledge_graph import (
+    Branch,
     CodeEntity,
     CodeRelationship,
+    Commit,
     DocSection,
     KnowledgeGraph,
     Person,
     Project,
+    Repository,
 )
 from .models import CodeChunk
 from .resource_manager import get_batch_size_for_memory, get_configured_workers
@@ -1465,6 +1468,299 @@ class KGBuilder:
 
         return project
 
+    async def _extract_git_history(
+        self, stats: dict
+    ) -> tuple[Repository | None, dict[str, Branch], dict[str, Commit]]:
+        """Extract Repository, Branch, and Commit entities from git history.
+
+        Args:
+            stats: Statistics dictionary to update
+
+        Returns:
+            Tuple of (repository, branches_dict, commits_dict)
+        """
+        repository = None
+        branches = {}
+        commits = {}
+
+        try:
+            # Get repository info
+            repo_name = self.project_root.name
+            repo_url = ""
+            default_branch = "main"
+
+            # Get remote URL
+            try:
+                result = subprocess.run(
+                    ["git", "remote", "get-url", "origin"],
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    repo_url = result.stdout.strip()
+            except Exception:
+                pass
+
+            # Get default branch
+            try:
+                result = subprocess.run(
+                    ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    # Extract branch name from refs/remotes/origin/main
+                    default_branch = result.stdout.strip().split("/")[-1]
+            except Exception:
+                pass
+
+            # Get first commit timestamp
+            first_commit_time = None
+            try:
+                result = subprocess.run(
+                    ["git", "log", "--reverse", "--format=%aI", "--max-count=1"],
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    first_commit_time = result.stdout.strip()
+            except Exception:
+                pass
+
+            # Create repository entity
+            repository = Repository(
+                id=f"repo:{repo_name}",
+                name=repo_name,
+                url=repo_url,
+                default_branch=default_branch,
+                created_at=first_commit_time,
+            )
+            await self.kg.add_repository(repository)
+            stats["repositories"] = 1
+            logger.info(f"✓ Extracted repository: {repo_name}")
+
+            # Get all branches
+            try:
+                result = subprocess.run(
+                    [
+                        "git",
+                        "for-each-ref",
+                        "--format=%(refname:short)|%(creatordate:iso8601)",
+                        "refs/heads/",
+                    ],
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split("\n"):
+                        if not line:
+                            continue
+                        parts = line.split("|")
+                        if len(parts) < 2:
+                            continue
+
+                        branch_name = parts[0]
+                        created_at = parts[1]
+                        is_default = branch_name == default_branch
+
+                        branch = Branch(
+                            id=f"branch:{repo_name}:{branch_name}",
+                            name=branch_name,
+                            repository_id=repository.id,
+                            is_default=is_default,
+                            created_at=created_at,
+                        )
+                        await self.kg.add_branch(branch)
+                        branches[branch_name] = branch
+
+                        # Create BELONGS_TO relationship
+                        await self.kg.add_belongs_to_relationship(
+                            branch.id, repository.id
+                        )
+
+                    stats["branches"] = len(branches)
+                    logger.info(f"✓ Extracted {len(branches)} branches")
+            except Exception as e:
+                logger.debug(f"Failed to extract branches: {e}")
+
+            # Get recent commits (limit to 500 for performance)
+            try:
+                result = subprocess.run(
+                    ["git", "log", "--format=%H|%s|%an|%ae|%aI", "--all", "-n", "500"],
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split("\n"):
+                        if not line:
+                            continue
+                        parts = line.split("|")
+                        if len(parts) < 5:
+                            continue
+
+                        sha = parts[0]
+                        message = parts[1]
+                        author_name = parts[2]
+                        author_email = parts[3]
+                        timestamp = parts[4]
+
+                        commit = Commit(
+                            id=f"commit:{sha[:12]}",  # Use short SHA for ID
+                            sha=sha,
+                            message=message,
+                            author_name=author_name,
+                            author_email=author_email,
+                            timestamp=timestamp,
+                        )
+                        await self.kg.add_commit(commit)
+                        commits[sha] = commit
+
+                    stats["commits"] = len(commits)
+                    logger.info(f"✓ Extracted {len(commits)} commits")
+            except Exception as e:
+                logger.debug(f"Failed to extract commits: {e}")
+
+            # Create COMMITTED_TO relationships (commit -> branch)
+            # Map commits to branches they belong to
+            if commits and branches:
+                try:
+                    for branch_name, branch in branches.items():
+                        # Get commits for this branch (limit to 100 per branch)
+                        result = subprocess.run(
+                            ["git", "log", "--format=%H", branch_name, "-n", "100"],
+                            cwd=self.project_root,
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                        )
+                        if result.returncode == 0:
+                            commit_count = 0
+                            for sha in result.stdout.strip().split("\n"):
+                                if sha and sha in commits:
+                                    await self.kg.add_committed_to_relationship(
+                                        commits[sha].id, branch.id
+                                    )
+                                    commit_count += 1
+                            logger.debug(
+                                f"Created {commit_count} COMMITTED_TO relationships for branch {branch_name}"
+                            )
+                except Exception as e:
+                    logger.debug(f"Failed to create COMMITTED_TO relationships: {e}")
+
+        except FileNotFoundError:
+            logger.debug("Git not found, skipping git history extraction")
+        except Exception as e:
+            logger.debug(f"Failed to extract git history: {e}")
+
+        return repository, branches, commits
+
+    async def _extract_modifies_relationships(
+        self, commits: dict[str, Commit], stats: dict
+    ) -> None:
+        """Extract MODIFIES relationships between commits and code entities.
+
+        Args:
+            commits: Dictionary of commit SHA to Commit entity
+            stats: Statistics dictionary to update
+        """
+        if not commits:
+            return
+
+        modifies_count = 0
+
+        try:
+            # Get file paths for all code entities
+            entity_files: dict[str, list[str]] = {}  # file_path -> [entity_ids]
+            try:
+                result = self.kg.conn.execute(
+                    "MATCH (e:CodeEntity) RETURN e.id, e.file_path"
+                )
+                while result.has_next():
+                    row = result.get_next()
+                    entity_id, file_path = row[0], row[1]
+                    if file_path:
+                        # Normalize to relative path
+                        try:
+                            rel_path = str(
+                                Path(file_path).relative_to(self.project_root)
+                            )
+                        except ValueError:
+                            rel_path = str(file_path)
+
+                        if rel_path not in entity_files:
+                            entity_files[rel_path] = []
+                        entity_files[rel_path].append(entity_id)
+            except Exception as e:
+                logger.debug(f"Failed to fetch entity file paths: {e}")
+                return
+
+            # For each commit, find modified files using git diff
+            for sha, commit in list(commits.items())[:100]:  # Limit to 100 commits
+                try:
+                    result = subprocess.run(
+                        ["git", "diff", "--numstat", f"{sha}^..{sha}"],
+                        cwd=self.project_root,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if result.returncode != 0:
+                        continue
+
+                    # Parse diff output: "lines_added lines_deleted file_path"
+                    for line in result.stdout.strip().split("\n"):
+                        if not line:
+                            continue
+                        parts = line.split("\t")
+                        if len(parts) < 3:
+                            continue
+
+                        added = parts[0]
+                        deleted = parts[1]
+                        file_path = parts[2]
+
+                        # Convert to int (handle binary files marked as "-")
+                        try:
+                            lines_added = int(added) if added != "-" else 0
+                            lines_deleted = int(deleted) if deleted != "-" else 0
+                        except ValueError:
+                            continue
+
+                        # Find entities for this file
+                        if file_path in entity_files:
+                            for entity_id in entity_files[file_path]:
+                                try:
+                                    await self.kg.add_modifies_relationship(
+                                        commit.id,
+                                        entity_id,
+                                        lines_added,
+                                        lines_deleted,
+                                    )
+                                    modifies_count += 1
+                                except Exception:
+                                    pass
+
+                except subprocess.TimeoutExpired:
+                    logger.debug(f"Git diff timed out for commit {sha}")
+                except Exception as e:
+                    logger.debug(f"Failed to process commit {sha}: {e}")
+
+            stats["modifies"] = modifies_count
+            logger.info(f"✓ Created {modifies_count} MODIFIES relationships")
+
+        except Exception as e:
+            logger.debug(f"Failed to extract MODIFIES relationships: {e}")
+
     async def _extract_authorship_fast(
         self,
         code_entities: list[tuple[str, str]],  # (entity_id, file_path)
@@ -1747,6 +2043,15 @@ class KGBuilder:
         logger.info("Extracting work entities from git...")
         persons = await self._extract_git_authors(stats)
         project = await self._extract_project_info(stats)
+
+        # Extract git history (repository, branches, commits)
+        logger.info("Extracting git history (repository, branches, commits)...")
+        repository, branches, commits = await self._extract_git_history(stats)
+
+        # Extract MODIFIES relationships (commits -> code entities)
+        if commits:
+            logger.info("Extracting MODIFIES relationships...")
+            await self._extract_modifies_relationships(commits, stats)
 
         # Extract authorship relationships (simplified - first author per file)
         if persons:

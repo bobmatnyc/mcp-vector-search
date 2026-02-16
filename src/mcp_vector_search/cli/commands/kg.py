@@ -115,6 +115,12 @@ def build_kg(
             table.add_row("Tags", str(build_stats.get("tags", 0)))
             table.add_row("Persons", str(build_stats.get("persons", 0)))
             table.add_row("Projects", str(build_stats.get("projects", 0)))
+            if build_stats.get("repositories", 0) > 0:
+                table.add_row("Repositories", str(build_stats.get("repositories", 0)))
+            if build_stats.get("branches", 0) > 0:
+                table.add_row("Branches", str(build_stats.get("branches", 0)))
+            if build_stats.get("commits", 0) > 0:
+                table.add_row("Commits", str(build_stats.get("commits", 0)))
             table.add_row("Calls", str(build_stats["calls"]))
             table.add_row("Imports", str(build_stats["imports"]))
             table.add_row("Inherits", str(build_stats["inherits"]))
@@ -128,6 +134,14 @@ def build_kg(
             table.add_row("Authored", str(build_stats.get("authored", 0)))
             table.add_row("Modified", str(build_stats.get("modified", 0)))
             table.add_row("Part Of", str(build_stats.get("part_of", 0)))
+            if build_stats.get("modifies", 0) > 0:
+                table.add_row("Modifies", str(build_stats.get("modifies", 0)))
+            if build_stats.get("branched_from", 0) > 0:
+                table.add_row("Branched From", str(build_stats.get("branched_from", 0)))
+            if build_stats.get("committed_to", 0) > 0:
+                table.add_row("Committed To", str(build_stats.get("committed_to", 0)))
+            if build_stats.get("belongs_to", 0) > 0:
+                table.add_row("Belongs To", str(build_stats.get("belongs_to", 0)))
 
             console.print(table)
             console.print("[green]✓[/green] Knowledge graph built successfully!")
@@ -425,6 +439,24 @@ def kg_status(
             f"[green]Projects[/green]     [dim]{stats.get('projects', 0):,}[/dim]"
         )
 
+        # Repositories
+        if stats.get("repositories", 0) > 0:
+            nodes_tree.add(
+                f"[green]Repositories[/green] [dim]{stats.get('repositories', 0):,}[/dim]"
+            )
+
+        # Branches
+        if stats.get("branches", 0) > 0:
+            nodes_tree.add(
+                f"[green]Branches[/green]     [dim]{stats.get('branches', 0):,}[/dim]"
+            )
+
+        # Commits
+        if stats.get("commits", 0) > 0:
+            nodes_tree.add(
+                f"[green]Commits[/green]      [dim]{stats.get('commits', 0):,}[/dim]"
+            )
+
         console.print(nodes_tree)
         console.print()
 
@@ -487,6 +519,27 @@ def kg_status(
         meta_rel_branch.add(f"[dim]Authored[/dim]         {meta_rels['authored']:,}")
         meta_rel_branch.add(f"[dim]Modified[/dim]         {meta_rels['modified']:,}")
         meta_rel_branch.add(f"[dim]Part_Of[/dim]          {meta_rels['part_of']:,}")
+
+        # Version Control subtree
+        vc_rels = {
+            "modifies": relationships.get("modifies", 0),
+            "branched_from": relationships.get("branched_from", 0),
+            "committed_to": relationships.get("committed_to", 0),
+            "belongs_to": relationships.get("belongs_to", 0),
+        }
+        vc_rels_total = sum(vc_rels.values())
+        if vc_rels_total > 0:
+            vc_rel_branch = rels_tree.add(
+                f"[green]Version Control[/green]      [dim]{vc_rels_total:,}[/dim]"
+            )
+            vc_rel_branch.add(f"[dim]Modifies[/dim]         {vc_rels['modifies']:,}")
+            vc_rel_branch.add(
+                f"[dim]Branched_From[/dim]    {vc_rels['branched_from']:,}"
+            )
+            vc_rel_branch.add(
+                f"[dim]Committed_To[/dim]     {vc_rels['committed_to']:,}"
+            )
+            vc_rel_branch.add(f"[dim]Belongs_To[/dim]       {vc_rels['belongs_to']:,}")
 
         console.print(rels_tree)
 
