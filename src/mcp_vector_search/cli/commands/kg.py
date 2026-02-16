@@ -457,6 +457,18 @@ def kg_status(
                 f"[green]Commits[/green]      [dim]{stats.get('commits', 0):,}[/dim]"
             )
 
+        # Languages
+        if stats.get("languages", 0) > 0:
+            nodes_tree.add(
+                f"[green]Languages[/green]    [dim]{stats.get('languages', 0):,}[/dim]"
+            )
+
+        # Frameworks
+        if stats.get("frameworks", 0) > 0:
+            nodes_tree.add(
+                f"[green]Frameworks[/green]   [dim]{stats.get('frameworks', 0):,}[/dim]"
+            )
+
         console.print(nodes_tree)
         console.print()
 
@@ -540,6 +552,27 @@ def kg_status(
                 f"[dim]Committed_To[/dim]     {vc_rels['committed_to']:,}"
             )
             vc_rel_branch.add(f"[dim]Belongs_To[/dim]       {vc_rels['belongs_to']:,}")
+
+        # Language/Framework subtree
+        lang_rels = {
+            "written_in": relationships.get("written_in", 0),
+            "uses_framework": relationships.get("uses_framework", 0),
+            "framework_for": relationships.get("framework_for", 0),
+        }
+        lang_rels_total = sum(lang_rels.values())
+        if lang_rels_total > 0:
+            lang_rel_branch = rels_tree.add(
+                f"[green]Language/Framework[/green]   [dim]{lang_rels_total:,}[/dim]"
+            )
+            lang_rel_branch.add(
+                f"[dim]Written_In[/dim]        {lang_rels['written_in']:,}"
+            )
+            lang_rel_branch.add(
+                f"[dim]Uses_Framework[/dim]    {lang_rels['uses_framework']:,}"
+            )
+            lang_rel_branch.add(
+                f"[dim]Framework_For[/dim]     {lang_rels['framework_for']:,}"
+            )
 
         console.print(rels_tree)
 

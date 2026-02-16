@@ -30,6 +30,8 @@ from .knowledge_graph import (
     DocSection,
     KnowledgeGraph,
     Person,
+    ProgrammingFramework,
+    ProgrammingLanguage,
     Project,
     Repository,
 )
@@ -1468,6 +1470,427 @@ class KGBuilder:
 
         return project
 
+    def _detect_language_from_extension(self, file_path: str) -> str | None:
+        """Detect programming language from file extension.
+
+        Args:
+            file_path: File path to detect language from
+
+        Returns:
+            Language name or None if not recognized
+        """
+        ext_map = {
+            ".py": "python",
+            ".pyi": "python",
+            ".js": "javascript",
+            ".jsx": "javascript",
+            ".ts": "typescript",
+            ".tsx": "typescript",
+            ".rs": "rust",
+            ".go": "go",
+            ".java": "java",
+            ".rb": "ruby",
+            ".php": "php",
+            ".c": "c",
+            ".cpp": "cpp",
+            ".cc": "cpp",
+            ".cxx": "cpp",
+            ".h": "c",
+            ".hpp": "cpp",
+            ".cs": "csharp",
+            ".swift": "swift",
+            ".kt": "kotlin",
+            ".scala": "scala",
+            ".r": "r",
+            ".m": "objective-c",
+            ".lua": "lua",
+            ".pl": "perl",
+            ".sh": "shell",
+            ".bash": "shell",
+            ".zsh": "shell",
+        }
+
+        path = Path(file_path)
+        suffix = path.suffix.lower()
+        return ext_map.get(suffix)
+
+    async def _extract_languages_and_frameworks(
+        self, project: Project | None, stats: dict
+    ) -> dict[str, ProgrammingLanguage]:
+        """Extract programming languages and frameworks from project files.
+
+        Args:
+            project: Project entity (for USES_FRAMEWORK relationships)
+            stats: Statistics dictionary to update
+
+        Returns:
+            Dictionary mapping language ID to ProgrammingLanguage entity
+        """
+        languages: dict[str, ProgrammingLanguage] = {}
+        frameworks: list[ProgrammingFramework] = []
+
+        # Detect languages from file extensions in CodeEntity nodes
+        try:
+            result = self.kg.conn.execute(
+                "MATCH (e:CodeEntity) RETURN DISTINCT e.file_path"
+            )
+            file_paths = []
+            while result.has_next():
+                file_paths.append(result.get_next()[0])
+
+            # Count language usage
+            language_counts: dict[str, int] = {}
+            for file_path in file_paths:
+                lang = self._detect_language_from_extension(file_path)
+                if lang:
+                    language_counts[lang] = language_counts.get(lang, 0) + 1
+
+            # Create ProgrammingLanguage nodes
+            for lang_name, _count in language_counts.items():
+                lang_id = f"lang:{lang_name}"
+                extensions = self._get_extensions_for_language(lang_name)
+
+                language = ProgrammingLanguage(
+                    id=lang_id,
+                    name=lang_name,
+                    version="",  # Could be detected from config files
+                    file_extensions=",".join(extensions),
+                )
+                await self.kg.add_programming_language(language)
+                languages[lang_id] = language
+
+            stats["languages"] = len(languages)
+            if len(languages) > 0:
+                logger.info(f"✓ Detected {len(languages)} programming languages")
+
+        except Exception as e:
+            logger.debug(f"Failed to extract languages: {e}")
+
+        # Detect frameworks from config files
+        try:
+            # Python: pyproject.toml, requirements.txt
+            python_frameworks = await self._detect_python_frameworks()
+            frameworks.extend(python_frameworks)
+
+            # JavaScript/TypeScript: package.json
+            js_frameworks = await self._detect_javascript_frameworks()
+            frameworks.extend(js_frameworks)
+
+            # Rust: Cargo.toml
+            rust_frameworks = await self._detect_rust_frameworks()
+            frameworks.extend(rust_frameworks)
+
+            # Go: go.mod
+            go_frameworks = await self._detect_go_frameworks()
+            frameworks.extend(go_frameworks)
+
+            # Add framework nodes
+            for framework in frameworks:
+                await self.kg.add_programming_framework(framework)
+
+                # Add FRAMEWORK_FOR relationship
+                if framework.language_id in languages:
+                    await self.kg.add_framework_for_relationship(
+                        framework.id, framework.language_id
+                    )
+
+                # Add USES_FRAMEWORK relationship
+                if project:
+                    await self.kg.add_uses_framework_relationship(
+                        project.id, framework.id
+                    )
+
+            stats["frameworks"] = len(frameworks)
+            if len(frameworks) > 0:
+                logger.info(f"✓ Detected {len(frameworks)} frameworks")
+
+        except Exception as e:
+            logger.debug(f"Failed to extract frameworks: {e}")
+
+        return languages
+
+    def _get_extensions_for_language(self, language: str) -> list[str]:
+        """Get file extensions for a programming language.
+
+        Args:
+            language: Language name
+
+        Returns:
+            List of file extensions (e.g., [".py", ".pyi"])
+        """
+        ext_map = {
+            "python": [".py", ".pyi"],
+            "javascript": [".js", ".jsx"],
+            "typescript": [".ts", ".tsx"],
+            "rust": [".rs"],
+            "go": [".go"],
+            "java": [".java"],
+            "ruby": [".rb"],
+            "php": [".php"],
+            "c": [".c", ".h"],
+            "cpp": [".cpp", ".cc", ".cxx", ".hpp"],
+            "csharp": [".cs"],
+            "swift": [".swift"],
+            "kotlin": [".kt"],
+            "scala": [".scala"],
+            "r": [".r"],
+            "objective-c": [".m"],
+            "lua": [".lua"],
+            "perl": [".pl"],
+            "shell": [".sh", ".bash", ".zsh"],
+        }
+        return ext_map.get(language, [])
+
+    async def _detect_python_frameworks(self) -> list[ProgrammingFramework]:
+        """Detect Python frameworks from pyproject.toml and requirements.txt.
+
+        Returns:
+            List of detected ProgrammingFramework entities
+        """
+        frameworks = []
+
+        # Framework detection patterns
+        framework_patterns = {
+            "fastapi": ("web", "FastAPI"),
+            "django": ("web", "Django"),
+            "flask": ("web", "Flask"),
+            "pytest": ("testing", "pytest"),
+            "unittest": ("testing", "unittest"),
+            "sqlalchemy": ("orm", "SQLAlchemy"),
+            "pydantic": ("validation", "Pydantic"),
+            "numpy": ("scientific", "NumPy"),
+            "pandas": ("data", "Pandas"),
+            "requests": ("http", "Requests"),
+            "aiohttp": ("http", "aiohttp"),
+            "click": ("cli", "Click"),
+            "typer": ("cli", "Typer"),
+        }
+
+        # Check pyproject.toml
+        pyproject = self.project_root / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                import tomllib
+
+                with open(pyproject, "rb") as f:
+                    data = tomllib.load(f)
+
+                # Check dependencies
+                deps = []
+                if "project" in data and "dependencies" in data["project"]:
+                    deps.extend(data["project"]["dependencies"])
+                if "tool" in data and "poetry" in data["tool"]:
+                    poetry_deps = data["tool"]["poetry"].get("dependencies", {})
+                    deps.extend(poetry_deps.keys())
+
+                for dep in deps:
+                    # Parse dependency (e.g., "fastapi>=0.100.0" -> "fastapi")
+                    package_name = (
+                        dep.split("[")[0].split(">=")[0].split("==")[0].strip().lower()
+                    )
+
+                    if package_name in framework_patterns:
+                        category, display_name = framework_patterns[package_name]
+                        frameworks.append(
+                            ProgrammingFramework(
+                                id=f"framework:{package_name}",
+                                name=display_name,
+                                version="",  # Could parse from dependency spec
+                                language_id="lang:python",
+                                category=category,
+                            )
+                        )
+
+            except Exception as e:
+                logger.debug(f"Failed to parse pyproject.toml: {e}")
+
+        # Check requirements.txt
+        requirements = self.project_root / "requirements.txt"
+        if requirements.exists():
+            try:
+                with open(requirements) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+
+                        # Parse package name
+                        package_name = (
+                            line.split("[")[0]
+                            .split(">=")[0]
+                            .split("==")[0]
+                            .strip()
+                            .lower()
+                        )
+
+                        if package_name in framework_patterns:
+                            category, display_name = framework_patterns[package_name]
+                            framework_id = f"framework:{package_name}"
+
+                            # Avoid duplicates
+                            if not any(f.id == framework_id for f in frameworks):
+                                frameworks.append(
+                                    ProgrammingFramework(
+                                        id=framework_id,
+                                        name=display_name,
+                                        version="",
+                                        language_id="lang:python",
+                                        category=category,
+                                    )
+                                )
+
+            except Exception as e:
+                logger.debug(f"Failed to parse requirements.txt: {e}")
+
+        return frameworks
+
+    async def _detect_javascript_frameworks(self) -> list[ProgrammingFramework]:
+        """Detect JavaScript/TypeScript frameworks from package.json.
+
+        Returns:
+            List of detected ProgrammingFramework entities
+        """
+        frameworks = []
+
+        framework_patterns = {
+            "react": ("web", "React"),
+            "vue": ("web", "Vue"),
+            "angular": ("web", "Angular"),
+            "express": ("web", "Express"),
+            "next": ("web", "Next.js"),
+            "nuxt": ("web", "Nuxt.js"),
+            "jest": ("testing", "Jest"),
+            "mocha": ("testing", "Mocha"),
+            "vitest": ("testing", "Vitest"),
+            "axios": ("http", "Axios"),
+        }
+
+        package_json = self.project_root / "package.json"
+        if package_json.exists():
+            try:
+                import json
+
+                with open(package_json) as f:
+                    data = json.load(f)
+
+                deps = []
+                deps.extend(data.get("dependencies", {}).keys())
+                deps.extend(data.get("devDependencies", {}).keys())
+
+                for dep in deps:
+                    dep_lower = dep.lower()
+                    if dep_lower in framework_patterns:
+                        category, display_name = framework_patterns[dep_lower]
+                        lang_id = (
+                            "lang:typescript"
+                            if (self.project_root / "tsconfig.json").exists()
+                            else "lang:javascript"
+                        )
+
+                        frameworks.append(
+                            ProgrammingFramework(
+                                id=f"framework:{dep_lower}",
+                                name=display_name,
+                                version=data.get("dependencies", {}).get(dep, "")
+                                or data.get("devDependencies", {}).get(dep, ""),
+                                language_id=lang_id,
+                                category=category,
+                            )
+                        )
+
+            except Exception as e:
+                logger.debug(f"Failed to parse package.json: {e}")
+
+        return frameworks
+
+    async def _detect_rust_frameworks(self) -> list[ProgrammingFramework]:
+        """Detect Rust frameworks from Cargo.toml.
+
+        Returns:
+            List of detected ProgrammingFramework entities
+        """
+        frameworks = []
+
+        framework_patterns = {
+            "actix-web": ("web", "Actix Web"),
+            "rocket": ("web", "Rocket"),
+            "tokio": ("async", "Tokio"),
+            "serde": ("serialization", "Serde"),
+        }
+
+        cargo_toml = self.project_root / "Cargo.toml"
+        if cargo_toml.exists():
+            try:
+                import tomllib
+
+                with open(cargo_toml, "rb") as f:
+                    data = tomllib.load(f)
+
+                deps = data.get("dependencies", {}).keys()
+
+                for dep in deps:
+                    if dep in framework_patterns:
+                        category, display_name = framework_patterns[dep]
+                        frameworks.append(
+                            ProgrammingFramework(
+                                id=f"framework:{dep}",
+                                name=display_name,
+                                version="",
+                                language_id="lang:rust",
+                                category=category,
+                            )
+                        )
+
+            except Exception as e:
+                logger.debug(f"Failed to parse Cargo.toml: {e}")
+
+        return frameworks
+
+    async def _detect_go_frameworks(self) -> list[ProgrammingFramework]:
+        """Detect Go frameworks from go.mod.
+
+        Returns:
+            List of detected ProgrammingFramework entities
+        """
+        frameworks = []
+
+        framework_patterns = {
+            "gin": ("web", "Gin"),
+            "echo": ("web", "Echo"),
+            "fiber": ("web", "Fiber"),
+            "gorm": ("orm", "GORM"),
+        }
+
+        go_mod = self.project_root / "go.mod"
+        if go_mod.exists():
+            try:
+                with open(go_mod) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("require"):
+                            continue
+
+                        for pattern, (
+                            category,
+                            display_name,
+                        ) in framework_patterns.items():
+                            if pattern in line.lower():
+                                frameworks.append(
+                                    ProgrammingFramework(
+                                        id=f"framework:{pattern}",
+                                        name=display_name,
+                                        version="",
+                                        language_id="lang:go",
+                                        category=category,
+                                    )
+                                )
+                                break
+
+            except Exception as e:
+                logger.debug(f"Failed to parse go.mod: {e}")
+
+        return frameworks
+
     async def _extract_git_history(
         self, stats: dict
     ) -> tuple[Repository | None, dict[str, Branch], dict[str, Commit]]:
@@ -2043,6 +2466,36 @@ class KGBuilder:
         logger.info("Extracting work entities from git...")
         persons = await self._extract_git_authors(stats)
         project = await self._extract_project_info(stats)
+
+        # Extract programming languages and frameworks
+        logger.info("Extracting programming languages and frameworks...")
+        languages = await self._extract_languages_and_frameworks(project, stats)
+
+        # Create WRITTEN_IN relationships for all code entities
+        if languages:
+            logger.info("Creating WRITTEN_IN relationships...")
+            try:
+                result = self.kg.conn.execute(
+                    "MATCH (e:CodeEntity) RETURN e.id, e.file_path"
+                )
+                written_in_count = 0
+                while result.has_next():
+                    row = result.get_next()
+                    entity_id, file_path = row[0], row[1]
+                    if file_path:
+                        lang = self._detect_language_from_extension(file_path)
+                        if lang:
+                            lang_id = f"lang:{lang}"
+                            if lang_id in languages:
+                                await self.kg.add_written_in_relationship(
+                                    entity_id, lang_id
+                                )
+                                written_in_count += 1
+
+                stats["written_in"] = written_in_count
+                logger.info(f"✓ Created {written_in_count} WRITTEN_IN relationships")
+            except Exception as e:
+                logger.debug(f"Failed to create WRITTEN_IN relationships: {e}")
 
         # Extract git history (repository, branches, commits)
         logger.info("Extracting git history (repository, branches, commits)...")

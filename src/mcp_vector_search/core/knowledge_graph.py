@@ -110,6 +110,27 @@ class Commit:
 
 
 @dataclass
+class ProgrammingLanguage:
+    """A programming language node in the knowledge graph."""
+
+    id: str  # Unique identifier (lang:<name>)
+    name: str  # Language name (Python, JavaScript, TypeScript, etc.)
+    version: str = ""  # Version if detected (e.g., "3.12", "ES2022")
+    file_extensions: str = ""  # Comma-separated list (e.g., ".py,.pyi")
+
+
+@dataclass
+class ProgrammingFramework:
+    """A programming framework node in the knowledge graph."""
+
+    id: str  # Unique identifier (framework:<name>)
+    name: str  # Framework name (FastAPI, React, pytest, etc.)
+    version: str = ""  # Version from package manifest
+    language_id: str = ""  # Reference to ProgrammingLanguage node
+    category: str = ""  # web, testing, orm, cli, etc.
+
+
+@dataclass
 class CodeRelationship:
     """An edge in the knowledge graph."""
 
@@ -469,6 +490,39 @@ class KnowledgeGraph:
         except Exception as e:
             logger.debug(f"Commit table creation: {e}")
 
+        # Create ProgrammingLanguage node table
+        try:
+            self.conn.execute(
+                """
+                CREATE NODE TABLE IF NOT EXISTS ProgrammingLanguage (
+                    id STRING PRIMARY KEY,
+                    name STRING,
+                    version STRING,
+                    file_extensions STRING
+                )
+            """
+            )
+            logger.debug("Created ProgrammingLanguage node table")
+        except Exception as e:
+            logger.debug(f"ProgrammingLanguage table creation: {e}")
+
+        # Create ProgrammingFramework node table
+        try:
+            self.conn.execute(
+                """
+                CREATE NODE TABLE IF NOT EXISTS ProgrammingFramework (
+                    id STRING PRIMARY KEY,
+                    name STRING,
+                    version STRING,
+                    language_id STRING,
+                    category STRING
+                )
+            """
+            )
+            logger.debug("Created ProgrammingFramework node table")
+        except Exception as e:
+            logger.debug(f"ProgrammingFramework table creation: {e}")
+
         # Create MODIFIES relationship (Commit -> CodeEntity)
         try:
             self.conn.execute(
@@ -527,6 +581,48 @@ class KnowledgeGraph:
             logger.debug("Created BELONGS_TO relationship table")
         except Exception as e:
             logger.debug(f"BELONGS_TO table creation: {e}")
+
+        # Create WRITTEN_IN relationship (CodeEntity -> ProgrammingLanguage)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS WRITTEN_IN (
+                    FROM CodeEntity TO ProgrammingLanguage,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created WRITTEN_IN relationship table")
+        except Exception as e:
+            logger.debug(f"WRITTEN_IN table creation: {e}")
+
+        # Create USES_FRAMEWORK relationship (Project -> ProgrammingFramework)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS USES_FRAMEWORK (
+                    FROM Project TO ProgrammingFramework,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created USES_FRAMEWORK relationship table")
+        except Exception as e:
+            logger.debug(f"USES_FRAMEWORK table creation: {e}")
+
+        # Create FRAMEWORK_FOR relationship (ProgrammingFramework -> ProgrammingLanguage)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS FRAMEWORK_FOR (
+                    FROM ProgrammingFramework TO ProgrammingLanguage,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created FRAMEWORK_FOR relationship table")
+        except Exception as e:
+            logger.debug(f"FRAMEWORK_FOR table creation: {e}")
 
     async def add_entity(self, entity: CodeEntity):
         """Add or update a code entity.
@@ -973,6 +1069,189 @@ class KnowledgeGraph:
         except Exception as e:
             logger.error(f"Failed to add commit {commit.id}: {e}")
             raise
+
+    async def add_programming_language(self, language: "ProgrammingLanguage"):
+        """Add or update a programming language.
+
+        Args:
+            language: ProgrammingLanguage to add/update
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Use MERGE to avoid duplicates
+            self.conn.execute(
+                """
+                MERGE (l:ProgrammingLanguage {id: $id})
+                ON MATCH SET l.name = $name,
+                             l.version = $version,
+                             l.file_extensions = $file_extensions
+                ON CREATE SET l.name = $name,
+                              l.version = $version,
+                              l.file_extensions = $file_extensions
+            """,
+                {
+                    "id": language.id,
+                    "name": language.name,
+                    "version": language.version,
+                    "file_extensions": language.file_extensions,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add programming language {language.id}: {e}")
+            raise
+
+    async def add_programming_framework(self, framework: "ProgrammingFramework"):
+        """Add or update a programming framework.
+
+        Args:
+            framework: ProgrammingFramework to add/update
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Use MERGE to avoid duplicates
+            self.conn.execute(
+                """
+                MERGE (f:ProgrammingFramework {id: $id})
+                ON MATCH SET f.name = $name,
+                             f.version = $version,
+                             f.language_id = $language_id,
+                             f.category = $category
+                ON CREATE SET f.name = $name,
+                              f.version = $version,
+                              f.language_id = $language_id,
+                              f.category = $category
+            """,
+                {
+                    "id": framework.id,
+                    "name": framework.name,
+                    "version": framework.version,
+                    "language_id": framework.language_id,
+                    "category": framework.category,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add programming framework {framework.id}: {e}")
+            raise
+
+    async def add_written_in_relationship(self, entity_id: str, language_id: str):
+        """Add a WRITTEN_IN relationship between a code entity and programming language.
+
+        Args:
+            entity_id: Code entity ID
+            language_id: Programming language ID
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Check if both nodes exist
+            entity_exists = self.conn.execute(
+                "MATCH (e:CodeEntity {id: $id}) RETURN e", {"id": entity_id}
+            )
+            language_exists = self.conn.execute(
+                "MATCH (l:ProgrammingLanguage {id: $id}) RETURN l", {"id": language_id}
+            )
+
+            if not entity_exists.has_next() or not language_exists.has_next():
+                logger.debug(
+                    f"Skipping WRITTEN_IN: entity or language does not exist "
+                    f"(entity={entity_id}, language={language_id})"
+                )
+                return
+
+            # Create relationship
+            self.conn.execute(
+                """
+                MATCH (e:CodeEntity {id: $entity_id})
+                MATCH (l:ProgrammingLanguage {id: $language_id})
+                MERGE (e)-[:WRITTEN_IN]->(l)
+            """,
+                {"entity_id": entity_id, "language_id": language_id},
+            )
+        except Exception as e:
+            logger.debug(f"Failed to add WRITTEN_IN relationship: {e}")
+
+    async def add_uses_framework_relationship(self, project_id: str, framework_id: str):
+        """Add a USES_FRAMEWORK relationship between a project and framework.
+
+        Args:
+            project_id: Project ID
+            framework_id: Framework ID
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Check if both nodes exist
+            project_exists = self.conn.execute(
+                "MATCH (p:Project {id: $id}) RETURN p", {"id": project_id}
+            )
+            framework_exists = self.conn.execute(
+                "MATCH (f:ProgrammingFramework {id: $id}) RETURN f",
+                {"id": framework_id},
+            )
+
+            if not project_exists.has_next() or not framework_exists.has_next():
+                logger.debug(
+                    f"Skipping USES_FRAMEWORK: project or framework does not exist "
+                    f"(project={project_id}, framework={framework_id})"
+                )
+                return
+
+            # Create relationship
+            self.conn.execute(
+                """
+                MATCH (p:Project {id: $project_id})
+                MATCH (f:ProgrammingFramework {id: $framework_id})
+                MERGE (p)-[:USES_FRAMEWORK]->(f)
+            """,
+                {"project_id": project_id, "framework_id": framework_id},
+            )
+        except Exception as e:
+            logger.debug(f"Failed to add USES_FRAMEWORK relationship: {e}")
+
+    async def add_framework_for_relationship(self, framework_id: str, language_id: str):
+        """Add a FRAMEWORK_FOR relationship between a framework and language.
+
+        Args:
+            framework_id: Framework ID
+            language_id: Language ID
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Check if both nodes exist
+            framework_exists = self.conn.execute(
+                "MATCH (f:ProgrammingFramework {id: $id}) RETURN f",
+                {"id": framework_id},
+            )
+            language_exists = self.conn.execute(
+                "MATCH (l:ProgrammingLanguage {id: $id}) RETURN l", {"id": language_id}
+            )
+
+            if not framework_exists.has_next() or not language_exists.has_next():
+                logger.debug(
+                    f"Skipping FRAMEWORK_FOR: framework or language does not exist "
+                    f"(framework={framework_id}, language={language_id})"
+                )
+                return
+
+            # Create relationship
+            self.conn.execute(
+                """
+                MATCH (f:ProgrammingFramework {id: $framework_id})
+                MATCH (l:ProgrammingLanguage {id: $language_id})
+                MERGE (f)-[:FRAMEWORK_FOR]->(l)
+            """,
+                {"framework_id": framework_id, "language_id": language_id},
+            )
+        except Exception as e:
+            logger.debug(f"Failed to add FRAMEWORK_FOR relationship: {e}")
 
     async def add_modifies_relationship(
         self,
@@ -2129,6 +2408,20 @@ class KnowledgeGraph:
                 commit_result.get_next()[0] if commit_result.has_next() else 0
             )
 
+            # Count languages
+            lang_result = self.conn.execute(
+                "MATCH (l:ProgrammingLanguage) RETURN count(l) AS count"
+            )
+            lang_count = lang_result.get_next()[0] if lang_result.has_next() else 0
+
+            # Count frameworks
+            framework_result = self.conn.execute(
+                "MATCH (f:ProgrammingFramework) RETURN count(f) AS count"
+            )
+            framework_count = (
+                framework_result.get_next()[0] if framework_result.has_next() else 0
+            )
+
             # Count relationships by type
             rel_counts = {}
             for rel_type in [
@@ -2149,6 +2442,9 @@ class KnowledgeGraph:
                 "BRANCHED_FROM",
                 "COMMITTED_TO",
                 "BELONGS_TO",
+                "WRITTEN_IN",
+                "USES_FRAMEWORK",
+                "FRAMEWORK_FOR",
             ]:
                 try:
                     rel_result = self.conn.execute(
@@ -2168,7 +2464,9 @@ class KnowledgeGraph:
                 + project_count
                 + repo_count
                 + branch_count
-                + commit_count,
+                + commit_count
+                + lang_count
+                + framework_count,
                 "code_entities": total_entities,
                 "entity_types": entity_types,
                 "doc_sections": doc_count,
@@ -2178,6 +2476,8 @@ class KnowledgeGraph:
                 "repositories": repo_count,
                 "branches": branch_count,
                 "commits": commit_count,
+                "languages": lang_count,
+                "frameworks": framework_count,
                 "relationships": rel_counts,
                 "database_path": str(self.db_path / "code_kg"),
             }
@@ -2194,6 +2494,8 @@ class KnowledgeGraph:
                 "repositories": 0,
                 "branches": 0,
                 "commits": 0,
+                "languages": 0,
+                "frameworks": 0,
                 "relationships": {},
                 "error": str(e),
             }
