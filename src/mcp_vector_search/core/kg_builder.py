@@ -1586,6 +1586,30 @@ class KGBuilder:
             go_frameworks = await self._detect_go_frameworks()
             frameworks.extend(go_frameworks)
 
+            # Java: pom.xml, build.gradle
+            java_frameworks = await self._detect_java_frameworks()
+            frameworks.extend(java_frameworks)
+
+            # Ruby: Gemfile
+            ruby_frameworks = await self._detect_ruby_frameworks()
+            frameworks.extend(ruby_frameworks)
+
+            # PHP: composer.json
+            php_frameworks = await self._detect_php_frameworks()
+            frameworks.extend(php_frameworks)
+
+            # C#/.NET: *.csproj
+            csharp_frameworks = await self._detect_csharp_frameworks()
+            frameworks.extend(csharp_frameworks)
+
+            # Swift: Package.swift
+            swift_frameworks = await self._detect_swift_frameworks()
+            frameworks.extend(swift_frameworks)
+
+            # Kotlin: build.gradle.kts
+            kotlin_frameworks = await self._detect_kotlin_frameworks()
+            frameworks.extend(kotlin_frameworks)
+
             # Add framework nodes
             for framework in frameworks:
                 await self.kg.add_programming_framework(framework)
@@ -1890,6 +1914,362 @@ class KGBuilder:
 
             except Exception as e:
                 logger.debug(f"Failed to parse go.mod: {e}")
+
+        return frameworks
+
+    async def _detect_java_frameworks(self) -> list[ProgrammingFramework]:
+        """Detect Java frameworks from pom.xml and build.gradle.
+
+        Returns:
+            List of detected ProgrammingFramework entities
+        """
+        frameworks = []
+
+        framework_patterns = {
+            "spring-boot": ("web", "Spring Boot"),
+            "spring": ("web", "Spring Framework"),
+            "hibernate": ("orm", "Hibernate"),
+            "junit": ("testing", "JUnit"),
+            "testng": ("testing", "TestNG"),
+            "log4j": ("logging", "Log4j"),
+            "slf4j": ("logging", "SLF4J"),
+            "jackson": ("serialization", "Jackson"),
+            "gson": ("serialization", "Gson"),
+            "mockito": ("testing", "Mockito"),
+        }
+
+        # Parse pom.xml (Maven)
+        pom_xml = self.project_root / "pom.xml"
+        if pom_xml.exists():
+            try:
+                import xml.etree.ElementTree as ET
+
+                tree = ET.parse(pom_xml)
+                root = tree.getroot()
+
+                # Extract namespace if present
+                namespace = ""
+                if root.tag.startswith("{"):
+                    namespace = root.tag[: root.tag.index("}") + 1]
+
+                # Check dependencies
+                for dep in root.findall(f".//{namespace}dependency"):
+                    artifact_id = dep.find(f"{namespace}artifactId")
+                    if artifact_id is not None and artifact_id.text:
+                        artifact_lower = artifact_id.text.lower()
+
+                        # Check for pattern matches
+                        for pattern, (
+                            category,
+                            display_name,
+                        ) in framework_patterns.items():
+                            if pattern in artifact_lower:
+                                framework_id = f"framework:{pattern}"
+
+                                # Avoid duplicates
+                                if not any(f.id == framework_id for f in frameworks):
+                                    frameworks.append(
+                                        ProgrammingFramework(
+                                            id=framework_id,
+                                            name=display_name,
+                                            version="",
+                                            language_id="lang:java",
+                                            category=category,
+                                        )
+                                    )
+                                break
+
+            except Exception as e:
+                logger.debug(f"Failed to parse pom.xml: {e}")
+
+        # Parse build.gradle (Gradle)
+        build_gradle = self.project_root / "build.gradle"
+        build_gradle_kts = self.project_root / "build.gradle.kts"
+
+        gradle_file = build_gradle if build_gradle.exists() else build_gradle_kts
+        if gradle_file.exists():
+            try:
+                with open(gradle_file) as f:
+                    content = f.read()
+
+                    for pattern, (category, display_name) in framework_patterns.items():
+                        # Match dependencies like: implementation 'org.springframework.boot:spring-boot-starter-web'
+                        if pattern in content.lower():
+                            framework_id = f"framework:{pattern}"
+
+                            # Avoid duplicates
+                            if not any(f.id == framework_id for f in frameworks):
+                                frameworks.append(
+                                    ProgrammingFramework(
+                                        id=framework_id,
+                                        name=display_name,
+                                        version="",
+                                        language_id="lang:java",
+                                        category=category,
+                                    )
+                                )
+
+            except Exception as e:
+                logger.debug(f"Failed to parse {gradle_file.name}: {e}")
+
+        return frameworks
+
+    async def _detect_ruby_frameworks(self) -> list[ProgrammingFramework]:
+        """Detect Ruby frameworks from Gemfile.
+
+        Returns:
+            List of detected ProgrammingFramework entities
+        """
+        frameworks = []
+
+        framework_patterns = {
+            "rails": ("web", "Ruby on Rails"),
+            "sinatra": ("web", "Sinatra"),
+            "rspec": ("testing", "RSpec"),
+            "minitest": ("testing", "Minitest"),
+            "sidekiq": ("background", "Sidekiq"),
+            "activerecord": ("orm", "ActiveRecord"),
+            "devise": ("auth", "Devise"),
+            "pundit": ("authorization", "Pundit"),
+            "factory_bot": ("testing", "FactoryBot"),
+        }
+
+        gemfile = self.project_root / "Gemfile"
+        if gemfile.exists():
+            try:
+                with open(gemfile) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+
+                        # Match gem declarations: gem 'rails', '~> 7.0'
+                        if line.startswith("gem"):
+                            for pattern, (
+                                category,
+                                display_name,
+                            ) in framework_patterns.items():
+                                if pattern in line.lower():
+                                    framework_id = f"framework:{pattern}"
+
+                                    # Avoid duplicates
+                                    if not any(
+                                        f.id == framework_id for f in frameworks
+                                    ):
+                                        frameworks.append(
+                                            ProgrammingFramework(
+                                                id=framework_id,
+                                                name=display_name,
+                                                version="",
+                                                language_id="lang:ruby",
+                                                category=category,
+                                            )
+                                        )
+                                    break
+
+            except Exception as e:
+                logger.debug(f"Failed to parse Gemfile: {e}")
+
+        return frameworks
+
+    async def _detect_php_frameworks(self) -> list[ProgrammingFramework]:
+        """Detect PHP frameworks from composer.json.
+
+        Returns:
+            List of detected ProgrammingFramework entities
+        """
+        frameworks = []
+
+        framework_patterns = {
+            "laravel": ("web", "Laravel"),
+            "symfony": ("web", "Symfony"),
+            "phpunit": ("testing", "PHPUnit"),
+            "doctrine": ("orm", "Doctrine"),
+            "guzzle": ("http", "Guzzle"),
+            "monolog": ("logging", "Monolog"),
+            "twig": ("templating", "Twig"),
+            "pest": ("testing", "Pest"),
+        }
+
+        composer_json = self.project_root / "composer.json"
+        if composer_json.exists():
+            try:
+                with open(composer_json) as f:
+                    data = json.load(f)
+
+                deps = []
+                deps.extend(data.get("require", {}).keys())
+                deps.extend(data.get("require-dev", {}).keys())
+
+                for dep in deps:
+                    dep_lower = dep.lower()
+
+                    for pattern, (category, display_name) in framework_patterns.items():
+                        if pattern in dep_lower:
+                            framework_id = f"framework:{pattern}"
+
+                            # Avoid duplicates
+                            if not any(f.id == framework_id for f in frameworks):
+                                frameworks.append(
+                                    ProgrammingFramework(
+                                        id=framework_id,
+                                        name=display_name,
+                                        version="",
+                                        language_id="lang:php",
+                                        category=category,
+                                    )
+                                )
+                            break
+
+            except Exception as e:
+                logger.debug(f"Failed to parse composer.json: {e}")
+
+        return frameworks
+
+    async def _detect_csharp_frameworks(self) -> list[ProgrammingFramework]:
+        """Detect C#/.NET frameworks from *.csproj files.
+
+        Returns:
+            List of detected ProgrammingFramework entities
+        """
+        frameworks = []
+
+        framework_patterns = {
+            "microsoft.aspnetcore": ("web", "ASP.NET Core"),
+            "entityframework": ("orm", "Entity Framework"),
+            "xunit": ("testing", "xUnit"),
+            "nunit": ("testing", "NUnit"),
+            "serilog": ("logging", "Serilog"),
+            "automapper": ("mapping", "AutoMapper"),
+            "newtonsoft.json": ("serialization", "Json.NET"),
+            "fluentvalidation": ("validation", "FluentValidation"),
+        }
+
+        # Find all .csproj files
+        csproj_files = list(self.project_root.glob("**/*.csproj"))
+
+        for csproj_file in csproj_files:
+            try:
+                import xml.etree.ElementTree as ET
+
+                tree = ET.parse(csproj_file)
+                root = tree.getroot()
+
+                # Check PackageReference elements
+                for package_ref in root.findall(".//PackageReference"):
+                    include = package_ref.get("Include")
+                    if include:
+                        include_lower = include.lower()
+
+                        for pattern, (
+                            category,
+                            display_name,
+                        ) in framework_patterns.items():
+                            if pattern in include_lower:
+                                framework_id = f"framework:{pattern.split('.')[0]}"
+
+                                # Avoid duplicates
+                                if not any(f.id == framework_id for f in frameworks):
+                                    frameworks.append(
+                                        ProgrammingFramework(
+                                            id=framework_id,
+                                            name=display_name,
+                                            version="",
+                                            language_id="lang:csharp",
+                                            category=category,
+                                        )
+                                    )
+                                break
+
+            except Exception as e:
+                logger.debug(f"Failed to parse {csproj_file.name}: {e}")
+
+        return frameworks
+
+    async def _detect_swift_frameworks(self) -> list[ProgrammingFramework]:
+        """Detect Swift frameworks from Package.swift.
+
+        Returns:
+            List of detected ProgrammingFramework entities
+        """
+        frameworks = []
+
+        framework_patterns = {
+            "vapor": ("web", "Vapor"),
+            "swiftui": ("ui", "SwiftUI"),
+            "alamofire": ("http", "Alamofire"),
+            "combine": ("reactive", "Combine"),
+            "swiftnio": ("async", "SwiftNIO"),
+        }
+
+        package_swift = self.project_root / "Package.swift"
+        if package_swift.exists():
+            try:
+                with open(package_swift) as f:
+                    content = f.read().lower()
+
+                    for pattern, (category, display_name) in framework_patterns.items():
+                        if pattern in content:
+                            framework_id = f"framework:{pattern}"
+
+                            # Avoid duplicates
+                            if not any(f.id == framework_id for f in frameworks):
+                                frameworks.append(
+                                    ProgrammingFramework(
+                                        id=framework_id,
+                                        name=display_name,
+                                        version="",
+                                        language_id="lang:swift",
+                                        category=category,
+                                    )
+                                )
+
+            except Exception as e:
+                logger.debug(f"Failed to parse Package.swift: {e}")
+
+        return frameworks
+
+    async def _detect_kotlin_frameworks(self) -> list[ProgrammingFramework]:
+        """Detect Kotlin frameworks from build.gradle.kts.
+
+        Returns:
+            List of detected ProgrammingFramework entities
+        """
+        frameworks = []
+
+        framework_patterns = {
+            "ktor": ("web", "Ktor"),
+            "spring": ("web", "Spring"),
+            "exposed": ("orm", "Exposed"),
+            "koin": ("di", "Koin"),
+            "coroutines": ("async", "Kotlin Coroutines"),
+            "kotest": ("testing", "Kotest"),
+        }
+
+        build_gradle_kts = self.project_root / "build.gradle.kts"
+        if build_gradle_kts.exists():
+            try:
+                with open(build_gradle_kts) as f:
+                    content = f.read().lower()
+
+                    for pattern, (category, display_name) in framework_patterns.items():
+                        if pattern in content:
+                            framework_id = f"framework:{pattern}"
+
+                            # Avoid duplicates
+                            if not any(f.id == framework_id for f in frameworks):
+                                frameworks.append(
+                                    ProgrammingFramework(
+                                        id=framework_id,
+                                        name=display_name,
+                                        version="",
+                                        language_id="lang:kotlin",
+                                        category=category,
+                                    )
+                                )
+
+            except Exception as e:
+                logger.debug(f"Failed to parse build.gradle.kts: {e}")
 
         return frameworks
 
