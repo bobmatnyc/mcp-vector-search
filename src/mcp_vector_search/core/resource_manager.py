@@ -32,21 +32,24 @@ def get_system_memory() -> tuple[int, int]:
 def calculate_optimal_workers(
     memory_per_worker_mb: int = 500,
     min_workers: int = 1,
-    max_workers: int = 8,
+    max_workers: int | None = None,
     memory_reserve_mb: int = 1000,
     memory_fraction: float = 0.7,
 ) -> ResourceLimits:
-    """Calculate optimal number of workers based on available memory.
+    """Calculate optimal number of workers based on available memory and CPU cores.
 
     Args:
         memory_per_worker_mb: Memory budget per worker (default: 500MB)
         min_workers: Minimum workers regardless of memory (default: 1)
-        max_workers: Maximum workers regardless of memory (default: 8)
+        max_workers: Maximum workers regardless of memory (default: None = use CPU count)
         memory_reserve_mb: Memory to reserve for OS/other processes (default: 1GB)
         memory_fraction: Max fraction of available memory to use (default: 0.7)
 
     Returns:
         ResourceLimits with calculated values
+
+    Environment Variables:
+        MCP_VECTOR_SEARCH_WORKERS: Override worker count
     """
     total_mb, available_mb = get_system_memory()
 
@@ -54,12 +57,20 @@ def calculate_optimal_workers(
     usable_mb = int(available_mb * memory_fraction) - memory_reserve_mb
     usable_mb = max(usable_mb, memory_per_worker_mb)  # At least one worker's worth
 
-    # Calculate optimal workers
+    # Calculate memory-based optimal workers
     optimal = usable_mb // memory_per_worker_mb
+
+    # Also check CPU cores for upper bound
+    cpu_count = os.cpu_count() or 4
+
+    # If max_workers not specified, use CPU count as upper bound
+    if max_workers is None:
+        max_workers = cpu_count
+
+    # Apply bounds: min_workers <= optimal <= max_workers
     optimal = max(min_workers, min(optimal, max_workers))
 
-    # Also check CPU cores
-    cpu_count = os.cpu_count() or 4
+    # Also respect CPU count as hard upper bound
     optimal = min(optimal, cpu_count)
 
     limits = ResourceLimits(

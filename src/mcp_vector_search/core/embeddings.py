@@ -511,7 +511,7 @@ class BatchEmbeddingProcessor:
         self.batch_size = batch_size
 
     async def embed_batches_parallel(
-        self, texts: list[str], batch_size: int = 32, max_concurrent: int = 2
+        self, texts: list[str], batch_size: int = 32, max_concurrent: int | None = None
     ) -> list[list[float]]:
         """Generate embeddings in parallel batches for improved throughput.
 
@@ -521,10 +521,13 @@ class BatchEmbeddingProcessor:
         Args:
             texts: List of text content to embed
             batch_size: Size of each batch (default: 32)
-            max_concurrent: Maximum number of concurrent batches (default: 2)
+            max_concurrent: Maximum number of concurrent batches (default: 8 for GPU, override with MCP_VECTOR_SEARCH_MAX_CONCURRENT)
 
         Returns:
             List of embeddings corresponding to input texts
+
+        Environment Variables:
+            MCP_VECTOR_SEARCH_MAX_CONCURRENT: Override max concurrent embedding batches (default: 8)
 
         Note:
             This method is most effective when:
@@ -532,6 +535,25 @@ class BatchEmbeddingProcessor:
             - Using GPU for embeddings (parallel batches maximize GPU utilization)
             - Balancing batch size with max_concurrent to avoid OOM
         """
+        # Auto-detect optimal max_concurrent if not specified
+        if max_concurrent is None:
+            # Check environment variable first
+            env_max_concurrent = os.environ.get("MCP_VECTOR_SEARCH_MAX_CONCURRENT")
+            if env_max_concurrent:
+                try:
+                    max_concurrent = int(env_max_concurrent)
+                    logger.debug(
+                        f"Using max_concurrent from environment: {max_concurrent}"
+                    )
+                except ValueError:
+                    logger.warning(
+                        f"Invalid MCP_VECTOR_SEARCH_MAX_CONCURRENT value: {env_max_concurrent}, using default 8"
+                    )
+                    max_concurrent = 8
+            else:
+                # Default to 8 for better GPU utilization (up from 2)
+                # GPUs like M4 Max can handle much higher concurrency than CPUs
+                max_concurrent = 8
         import asyncio
 
         if not texts:
@@ -609,10 +631,11 @@ class BatchEmbeddingProcessor:
                         logger.debug(
                             f"Using parallel embedding generation for {len(uncached_contents)} items"
                         )
+                        # max_concurrent now auto-detects from env var (defaults to 8)
                         new_embeddings = await self.embed_batches_parallel(
                             uncached_contents,
                             batch_size=self.batch_size,
-                            max_concurrent=2,
+                            max_concurrent=None,  # Auto-detect
                         )
                     except Exception as parallel_error:
                         # Graceful fallback to sequential if parallel fails

@@ -107,19 +107,25 @@ class SemanticIndexer:
 
         # Set batch size with environment variable override
         if batch_size is None:
-            # Check environment variable first
-            env_batch_size = os.environ.get("MCP_VECTOR_SEARCH_BATCH_SIZE")
+            # Check for FILE_BATCH_SIZE first (new name for clarity)
+            env_batch_size = os.environ.get(
+                "MCP_VECTOR_SEARCH_FILE_BATCH_SIZE"
+            ) or os.environ.get("MCP_VECTOR_SEARCH_BATCH_SIZE")
             if env_batch_size:
                 try:
                     self.batch_size = int(env_batch_size)
-                    logger.info(f"Using batch size from environment: {self.batch_size}")
+                    logger.info(
+                        f"Using file batch size from environment: {self.batch_size}"
+                    )
                 except ValueError:
                     logger.warning(
-                        f"Invalid MCP_VECTOR_SEARCH_BATCH_SIZE value: {env_batch_size}, using default 32"
+                        f"Invalid batch size value: {env_batch_size}, using default 128"
                     )
-                    self.batch_size = 32
+                    self.batch_size = 128
             else:
-                self.batch_size = 32  # New default (increased from 10)
+                # Increased default from 32 to 128 for better throughput
+                # Larger batches = fewer overhead from spawning processes
+                self.batch_size = 128
         else:
             self.batch_size = batch_size
 
@@ -155,15 +161,30 @@ class SemanticIndexer:
 
         # Auto-configure workers if not provided
         if max_workers is None:
-            # Use memory-aware worker calculation
-            limits = calculate_optimal_workers(
-                memory_per_worker_mb=800,  # Embedding models use more memory
-                max_workers=4,  # Embedding is GPU-bound, not CPU-bound
-            )
-            max_workers = limits.max_workers
-            logger.info(
-                f"Auto-configured {max_workers} workers based on available memory"
-            )
+            # Check environment variable first for explicit override
+            env_workers = os.environ.get("MCP_VECTOR_SEARCH_WORKERS")
+            if env_workers:
+                try:
+                    max_workers = int(env_workers)
+                    logger.info(f"Using worker count from environment: {max_workers}")
+                except ValueError:
+                    logger.warning(
+                        f"Invalid MCP_VECTOR_SEARCH_WORKERS value: {env_workers}, using auto-detection"
+                    )
+                    max_workers = None
+
+            # Auto-detect based on CPU cores and memory if not overridden
+            if max_workers is None:
+                # Use memory-aware worker calculation
+                # Remove hard-coded max_workers=4 limit - let calculate_optimal_workers decide
+                limits = calculate_optimal_workers(
+                    memory_per_worker_mb=800,  # Embedding models use more memory
+                    # max_workers defaults to 8 in calculate_optimal_workers, but CPU count is also considered
+                )
+                max_workers = limits.max_workers
+                logger.info(
+                    f"Auto-configured {max_workers} workers based on available memory and CPU cores"
+                )
 
         self.chunk_processor = ChunkProcessor(
             parser_registry=self.parser_registry,
@@ -220,7 +241,9 @@ class SemanticIndexer:
 
             builder = KGBuilder(kg, self.project_root)
 
-            logger.info("🔄 Building knowledge graph in background (non-blocking)...")
+            logger.info(
+                "🔗 Phase 3: Building knowledge graph in background (relationship extraction)..."
+            )
 
             # Use the same database connection
             async with self.database:
@@ -232,7 +255,7 @@ class SemanticIndexer:
 
             await kg.close()
             self._kg_build_status = "complete"
-            logger.info("✓ Background KG build complete")
+            logger.info("✓ Phase 3 complete: Knowledge graph built successfully")
 
         except Exception as e:
             self._kg_build_status = f"error: {e}"
@@ -388,7 +411,9 @@ class SemanticIndexer:
         files_processed = 0
         chunks_created = 0
 
-        logger.info(f"Phase 1: Chunking {len(files)} files...")
+        logger.info(
+            f"📄 Phase 1: Chunking {len(files)} files (parsing and extracting code structure)..."
+        )
 
         for file_path in files:
             try:
@@ -461,7 +486,7 @@ class SemanticIndexer:
                 continue
 
         logger.info(
-            f"Phase 1 complete: {files_processed} files processed, {chunks_created} chunks created"
+            f"✓ Phase 1 complete: {files_processed} files processed, {chunks_created} chunks created"
         )
         return files_processed, chunks_created
 
@@ -493,7 +518,9 @@ class SemanticIndexer:
         batches_processed = 0
         batch_id = int(datetime.now().timestamp())
 
-        logger.info("Phase 2: Embedding pending chunks...")
+        logger.info(
+            "🧠 Phase 2: Embedding pending chunks (GPU processing for semantic search)..."
+        )
 
         while True:
             # Get pending chunks from chunks.lance
@@ -606,7 +633,7 @@ class SemanticIndexer:
                 continue
 
         logger.info(
-            f"Phase 2 complete: {chunks_embedded} chunks embedded in {batches_processed} batches"
+            f"✓ Phase 2 complete: {chunks_embedded} chunks embedded in {batches_processed} batches"
         )
         return chunks_embedded, batches_processed
 
@@ -729,15 +756,15 @@ class SemanticIndexer:
         # Log summary
         if phase == "all":
             logger.info(
-                f"Two-phase indexing complete: {indexed_count} files, "
+                f"✓ Two-phase indexing complete: {indexed_count} files, "
                 f"{chunks_created} chunks created, {chunks_embedded} chunks embedded"
             )
         elif phase == "chunk":
             logger.info(
-                f"Phase 1 complete: {indexed_count} files, {chunks_created} chunks created"
+                f"✓ Phase 1 complete: {indexed_count} files, {chunks_created} chunks created"
             )
         elif phase == "embed":
-            logger.info(f"Phase 2 complete: {chunks_embedded} chunks embedded")
+            logger.info(f"✓ Phase 2 complete: {chunks_embedded} chunks embedded")
 
         # Update directory index (only if files were indexed)
         if indexed_count > 0:
@@ -813,7 +840,7 @@ class SemanticIndexer:
         ):
             self._kg_build_task = asyncio.create_task(self._build_kg_background())
             logger.info(
-                "🔄 Knowledge graph building in background (search available now)"
+                "🔗 Phase 3: Knowledge graph building in background (search available now)"
             )
 
         return indexed_count
