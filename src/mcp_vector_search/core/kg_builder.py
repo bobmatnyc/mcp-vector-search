@@ -5,8 +5,10 @@ and populates the Kuzu knowledge graph.
 """
 
 import hashlib
+import json
 import re
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -136,6 +138,9 @@ class KGBuilder:
         self.kg = kg
         self.project_root = project_root
         self._entity_map: dict[str, str] = {}  # name -> chunk_id mapping
+        self._metadata_path = (
+            project_root / ".mcp-vector-search" / "knowledge_graph" / "kg_metadata.json"
+        )
 
         # Auto-configure based on memory
         self._workers = get_configured_workers()
@@ -146,6 +151,76 @@ class KGBuilder:
         logger.debug(
             f"KGBuilder: {self._workers} workers, batch_size={self._batch_size}"
         )
+
+    def _load_metadata(self) -> dict | None:
+        """Load KG metadata from disk.
+
+        Returns:
+            Metadata dictionary or None if not found
+        """
+        if not self._metadata_path.exists():
+            return None
+
+        try:
+            with open(self._metadata_path) as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load KG metadata: {e}")
+            return None
+
+    def _save_metadata(
+        self,
+        source_chunk_count: int,
+        source_chunk_ids: set[str],
+        entities_created: int,
+        relationships_created: int,
+        build_duration_seconds: float,
+    ) -> None:
+        """Save KG metadata to disk.
+
+        Args:
+            source_chunk_count: Number of chunks processed
+            source_chunk_ids: Set of chunk IDs processed
+            entities_created: Number of entities created
+            relationships_created: Number of relationships created
+            build_duration_seconds: Build duration in seconds
+        """
+        # Ensure directory exists
+        self._metadata_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Compute hash of chunk IDs for efficient comparison
+        chunk_id_hash = hashlib.sha256(
+            json.dumps(sorted(source_chunk_ids), sort_keys=True).encode()
+        ).hexdigest()[:16]
+
+        metadata = {
+            "last_build": datetime.now(UTC).isoformat(),
+            "source_chunk_count": source_chunk_count,
+            "source_chunk_id_hash": chunk_id_hash,
+            "source_chunk_ids": list(source_chunk_ids),  # Store all IDs
+            "entities_created": entities_created,
+            "relationships_created": relationships_created,
+            "build_duration_seconds": build_duration_seconds,
+        }
+
+        try:
+            with open(self._metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+            logger.debug(f"Saved KG metadata to {self._metadata_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save KG metadata: {e}")
+
+    def _get_processed_chunk_ids(self) -> set[str]:
+        """Get set of chunk IDs from metadata.
+
+        Returns:
+            Set of previously processed chunk IDs
+        """
+        metadata = self._load_metadata()
+        if not metadata or "source_chunk_ids" not in metadata:
+            return set()
+
+        return set(metadata["source_chunk_ids"])
 
     def _is_generic_entity(self, name: str) -> bool:
         """Check if entity name is too generic to be useful.
@@ -1578,6 +1653,7 @@ class KGBuilder:
         show_progress: bool = True,
         limit: int | None = None,
         skip_documents: bool = False,
+        incremental: bool = False,
     ) -> dict[str, int]:
         """Build graph from all chunks in database.
 
@@ -1586,13 +1662,25 @@ class KGBuilder:
             show_progress: Whether to show progress bar
             limit: Optional limit on number of chunks to process (for testing)
             skip_documents: Skip expensive DOCUMENTS relationship extraction (default False)
+            incremental: Only process new chunks not in metadata (default False)
 
         Returns:
             Statistics dictionary
         """
+        import time
+
+        start_time = time.time()
         # Get chunk count first for progress reporting
         total_chunks = database.get_chunk_count()
         logger.info(f"Database has {total_chunks} total chunks")
+
+        # Handle incremental mode
+        processed_chunk_ids = set()
+        if incremental:
+            processed_chunk_ids = self._get_processed_chunk_ids()
+            logger.info(
+                f"Incremental mode: {len(processed_chunk_ids)} chunks already processed"
+            )
 
         # Load chunks with progress reporting
         if show_progress:
@@ -1609,6 +1697,14 @@ class KGBuilder:
 
                 chunks = []
                 for batch in database.iter_chunks_batched(batch_size=5000):
+                    # Filter out already processed chunks in incremental mode
+                    if incremental:
+                        batch = [
+                            c
+                            for c in batch
+                            if (c.chunk_id or c.id) not in processed_chunk_ids
+                        ]
+
                     chunks.extend(batch)
                     progress.update(task, advance=len(batch))
                     progress.refresh()  # Manual refresh (no background thread)
@@ -1623,10 +1719,22 @@ class KGBuilder:
             logger.info("Loading chunks from database...")
             chunks = []
             for batch in database.iter_chunks_batched(batch_size=5000):
+                # Filter out already processed chunks in incremental mode
+                if incremental:
+                    batch = [
+                        c
+                        for c in batch
+                        if (c.chunk_id or c.id) not in processed_chunk_ids
+                    ]
+
                 chunks.extend(batch)
                 if limit and len(chunks) >= limit:
                     chunks = chunks[:limit]
                     break
+
+        if incremental and len(chunks) == 0:
+            logger.info("No new chunks to process in incremental mode")
+            return {}
 
         logger.info(f"Loaded {len(chunks)} chunks for processing")
 
@@ -1674,5 +1782,51 @@ class KGBuilder:
                     logger.info(f"✓ Created {part_of_count} PART_OF relationships")
                 except Exception as e:
                     logger.debug(f"Failed to create PART_OF relationships: {e}")
+
+        # Save metadata after successful build
+        build_duration = time.time() - start_time
+
+        # Collect all processed chunk IDs (existing + new)
+        all_chunk_ids = processed_chunk_ids if incremental else set()
+        for chunk in chunks:
+            all_chunk_ids.add(chunk.chunk_id or chunk.id)
+
+        # Calculate total entities and relationships
+        total_entities = (
+            stats.get("entities", 0)
+            + stats.get("doc_sections", 0)
+            + stats.get("tags", 0)
+        )
+        total_relationships = sum(
+            stats.get(key, 0)
+            for key in [
+                "calls",
+                "imports",
+                "inherits",
+                "contains",
+                "references",
+                "documents",
+                "follows",
+                "has_tag",
+                "demonstrates",
+                "links_to",
+                "authored",
+                "modified",
+                "part_of",
+            ]
+        )
+
+        self._save_metadata(
+            source_chunk_count=len(all_chunk_ids),
+            source_chunk_ids=all_chunk_ids,
+            entities_created=total_entities,
+            relationships_created=total_relationships,
+            build_duration_seconds=build_duration,
+        )
+
+        logger.info(
+            f"Build completed in {build_duration:.1f}s "
+            f"({len(all_chunk_ids)} total chunks tracked)"
+        )
 
         return stats

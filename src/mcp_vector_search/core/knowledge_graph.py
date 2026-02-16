@@ -1510,6 +1510,89 @@ class KnowledgeGraph:
             logger.error(f"Failed to get doc references for {entity_name}: {e}")
             return []
 
+    async def get_visualization_data(self) -> dict[str, Any]:
+        """Export knowledge graph data for D3.js visualization.
+
+        Returns:
+            Dictionary with nodes and links for force-directed graph:
+            {
+                "nodes": [{"id": str, "name": str, "type": str, "file_path": str, "group": int}],
+                "links": [{"source": str, "target": str, "type": str, "weight": float}]
+            }
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Get all code entities as nodes
+            nodes = []
+            entity_result = self.conn.execute(
+                """
+                MATCH (e:CodeEntity)
+                RETURN e.id AS id,
+                       e.name AS name,
+                       e.entity_type AS type,
+                       e.file_path AS file_path
+                """
+            )
+
+            # Map entity types to color groups
+            type_to_group = {
+                "file": 1,
+                "module": 2,
+                "class": 3,
+                "function": 4,
+                "method": 4,
+            }
+
+            while entity_result.has_next():
+                row = entity_result.get_next()
+                entity_type = row[2] or "unknown"
+                nodes.append(
+                    {
+                        "id": row[0],
+                        "name": row[1],
+                        "type": entity_type,
+                        "file_path": row[3] or "",
+                        "group": type_to_group.get(entity_type, 0),
+                    }
+                )
+
+            # Get all relationships as links
+            links = []
+            relationship_types = ["CALLS", "IMPORTS", "INHERITS", "CONTAINS"]
+
+            for rel_type in relationship_types:
+                try:
+                    rel_result = self.conn.execute(
+                        f"""
+                        MATCH (a:CodeEntity)-[r:{rel_type}]->(b:CodeEntity)
+                        RETURN a.id AS source,
+                               b.id AS target,
+                               r.weight AS weight
+                    """
+                    )
+
+                    while rel_result.has_next():
+                        row = rel_result.get_next()
+                        links.append(
+                            {
+                                "source": row[0],
+                                "target": row[1],
+                                "type": rel_type.lower(),
+                                "weight": row[2] if row[2] is not None else 1.0,
+                            }
+                        )
+                except Exception as e:
+                    logger.debug(f"No {rel_type} relationships found: {e}")
+                    continue
+
+            return {"nodes": nodes, "links": links}
+
+        except Exception as e:
+            logger.error(f"Failed to export KG visualization data: {e}")
+            return {"nodes": [], "links": []}
+
     async def get_stats(self) -> dict[str, Any]:
         """Get knowledge graph statistics.
 

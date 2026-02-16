@@ -153,6 +153,42 @@ def create_app(viz_dir: Path) -> FastAPI:
                 media_type="application/json",
             )
 
+    @app.get("/api/kg-graph")
+    async def get_kg_graph_data() -> Response:
+        """Get knowledge graph data for D3 force-directed visualization.
+
+        Returns:
+            JSON response with nodes and links from KG
+        """
+        kg_graph_file = viz_dir / "kg-graph.json"
+
+        if not kg_graph_file.exists():
+            return Response(
+                content='{"error": "KG graph data not found", "nodes": [], "links": []}',
+                status_code=404,
+                media_type="application/json",
+            )
+
+        try:
+            with open(kg_graph_file, "rb") as f:
+                data = orjson.loads(f.read())
+
+            # Return nodes and links using orjson for fast serialization
+            return Response(
+                content=orjson.dumps(
+                    {"nodes": data.get("nodes", []), "links": data.get("links", [])}
+                ),
+                media_type="application/json",
+                headers={"Cache-Control": "no-cache"},
+            )
+        except Exception as e:
+            console.print(f"[red]Error loading KG graph data: {e}[/red]")
+            return Response(
+                content='{"error": "Failed to load KG graph data", "nodes": [], "links": []}',
+                status_code=500,
+                media_type="application/json",
+            )
+
     @app.get("/api/relationships/{chunk_id}")
     async def get_chunk_relationships(chunk_id: str) -> Response:
         """Get all relationships for a chunk (semantic + callers) on-demand.
