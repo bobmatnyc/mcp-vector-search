@@ -132,6 +132,14 @@ def main(
         help="Output performance metrics as JSON",
         rich_help_panel="📊 Indexing Options",
     ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        "-l",
+        help="Limit indexing to first N files (for testing)",
+        min=1,
+        rich_help_panel="🔍 Debugging",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -205,6 +213,7 @@ def main(
                 phase=phase,
                 skip_schema_check=skip_schema_check,
                 metrics_json=metrics_json,
+                limit=limit,
             )
         )
 
@@ -361,6 +370,7 @@ async def run_indexing(
     phase: str = "all",
     skip_schema_check: bool = False,
     metrics_json: bool = False,
+    limit: int | None = None,
 ) -> None:
     """Run the indexing process."""
     # Load project configuration
@@ -421,6 +431,29 @@ async def run_indexing(
         ]
         # Create a modified config copy with overridden extensions
         config = config.model_copy(update={"file_extensions": file_extensions})
+
+    # Clean up stale temp databases from incomplete previous rebuilds
+    if force_reindex:
+        import shutil
+
+        base_path = config.index_path.parent  # .mcp-vector-search directory
+        stale_paths = [
+            base_path / "lance.new",
+            base_path / "knowledge_graph.new",
+            base_path / "code_search.lance.new",
+            base_path / "chroma.sqlite3.new",
+        ]
+
+        for stale_path in stale_paths:
+            if stale_path.exists():
+                try:
+                    if stale_path.is_dir():
+                        shutil.rmtree(stale_path, ignore_errors=True)
+                    else:
+                        stale_path.unlink()
+                    logger.info(f"Cleaned up stale temp database: {stale_path.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up {stale_path}: {e}")
 
     print_info(f"Indexing project: {project_root}")
     print_info(f"File extensions: {', '.join(config.file_extensions)}")
@@ -487,6 +520,7 @@ async def run_indexing(
                     phase,
                     progress_tracker_obj,
                     metrics_json,
+                    limit,
                 )
 
     except Exception as e:
@@ -502,6 +536,7 @@ async def _run_batch_indexing(
     phase: str = "all",
     progress_tracker: ProgressTracker | None = None,
     metrics_json: bool = False,
+    limit: int | None = None,
 ) -> None:
     """Run batch indexing of all files with three-phase progress display."""
     # Initialize progress state tracking
@@ -584,6 +619,13 @@ async def _run_batch_indexing(
 
             # Get final results
             indexable_files, files_to_index = await scan_task
+
+        # Apply limit if specified
+        if limit is not None and len(files_to_index) > limit:
+            console.print(
+                f"[yellow]⚠️  Limiting to first {limit} files (out of {len(files_to_index)} total)[/yellow]"
+            )
+            files_to_index = files_to_index[:limit]
 
         total_files = len(files_to_index)
 

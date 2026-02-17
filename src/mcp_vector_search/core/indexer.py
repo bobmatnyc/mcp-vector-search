@@ -6,6 +6,7 @@ Phase 2: Embed chunks, store to vectors.lance (resumable, incremental)
 
 import asyncio
 import os
+import shutil
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -482,7 +483,9 @@ class SemanticIndexer:
 
                     # Store chunks (without embeddings) to chunks.lance
                     if chunk_dicts:
-                        count = await self.chunks_backend.add_chunks(chunk_dicts, file_hash)
+                        count = await self.chunks_backend.add_chunks(
+                            chunk_dicts, file_hash
+                        )
                         chunks_created += count
                         files_processed += 1
                         logger.debug(f"Chunked {count} chunks from {rel_path}")
@@ -566,7 +569,9 @@ class SemanticIndexer:
                     elif hasattr(self.database, "_collection") and hasattr(
                         self.database._collection, "_embedding_function"
                     ):
-                        vectors = self.database._collection._embedding_function(contents)
+                        vectors = self.database._collection._embedding_function(
+                            contents
+                        )
                     # Method 3: Use database's add_chunks which handles embedding internally
                     else:
                         logger.warning(
@@ -648,6 +653,159 @@ class SemanticIndexer:
         )
         return chunks_embedded, batches_processed
 
+    async def _atomic_rebuild_databases(self, force: bool = False) -> bool:
+        """Atomically rebuild databases when force is enabled.
+
+        Strategy:
+        1. Create new databases with .new suffix
+        2. Build index into new databases
+        3. On success: rename old to .old, rename new to final, delete .old
+        4. On failure: delete .new, keep old database intact
+
+        Args:
+            force: If True, perform atomic rebuild
+
+        Returns:
+            True if atomic rebuild was performed, False otherwise
+        """
+        if not force:
+            return False
+
+        base_path = self.project_root / ".mcp-vector-search"
+
+        # Database paths (only .new paths used in this method - others in _finalize)
+        lance_new = base_path / "lance.new"
+        kg_new = base_path / "knowledge_graph.new"
+        chroma_new = base_path / "chroma.sqlite3.new"
+        code_search_new = base_path / "code_search.lance.new"
+
+        try:
+            # Step 1: Rename existing databases to .new (build target)
+            logger.info("🔄 Atomic rebuild: preparing new database directories...")
+
+            # Remove any stale .new directories from previous interrupted rebuilds
+            for new_path in [lance_new, kg_new, code_search_new]:
+                if new_path.exists():
+                    shutil.rmtree(new_path, ignore_errors=True)
+            if chroma_new.exists():
+                chroma_new.unlink()
+
+            # Create new database directories
+            lance_new.mkdir(parents=True, exist_ok=True)
+            kg_new.mkdir(parents=True, exist_ok=True)
+
+            # Update backend paths to point to .new databases
+            self.chunks_backend = ChunksBackend(lance_new)
+            self.vectors_backend = VectorsBackend(lance_new)
+
+            # Update database path for LanceDB backend
+            # This requires modifying the database's persist_directory
+            # We'll handle this by creating a new database instance pointing to .new
+            from .embeddings import create_embedding_function
+            from .factory import create_database
+
+            # Create new database instance for .new location
+            embedding_function, _ = create_embedding_function(
+                model_name=self.config.embedding_model if self.config else "default"
+            )
+            new_db_path = base_path / "code_search.lance.new"
+            self.database = create_database(
+                persist_directory=new_db_path, embedding_function=embedding_function
+            )
+
+            logger.info("✓ New database directories prepared")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to prepare atomic rebuild: {e}")
+            # Cleanup .new directories on failure
+            for new_path in [lance_new, kg_new, code_search_new]:
+                if new_path.exists():
+                    shutil.rmtree(new_path, ignore_errors=True)
+            if chroma_new.exists():
+                chroma_new.unlink()
+            return False
+
+    async def _finalize_atomic_rebuild(self) -> None:
+        """Finalize atomic rebuild by atomically switching databases.
+
+        Called after successful indexing when force_reindex=True.
+        Performs atomic rename operations to switch from .new to final.
+        """
+        base_path = self.project_root / ".mcp-vector-search"
+
+        # Database paths
+        lance_path = base_path / "lance"
+        lance_new = base_path / "lance.new"
+        lance_old = base_path / "lance.old"
+
+        kg_path = base_path / "knowledge_graph"
+        kg_new = base_path / "knowledge_graph.new"
+        kg_old = base_path / "knowledge_graph.old"
+
+        chroma_path = base_path / "chroma.sqlite3"
+        chroma_new = base_path / "chroma.sqlite3.new"
+        chroma_old = base_path / "chroma.sqlite3.old"
+
+        code_search_path = base_path / "code_search.lance"
+        code_search_new = base_path / "code_search.lance.new"
+        code_search_old = base_path / "code_search.lance.old"
+
+        try:
+            logger.info("🔄 Atomic rebuild: finalizing database switch...")
+
+            # Step 2: Atomic switch for lance directory
+            if lance_new.exists():
+                if lance_path.exists():
+                    lance_path.rename(lance_old)
+                lance_new.rename(lance_path)
+                if lance_old.exists():
+                    shutil.rmtree(lance_old, ignore_errors=True)
+
+            # Step 3: Atomic switch for knowledge_graph directory
+            if kg_new.exists():
+                if kg_path.exists():
+                    kg_path.rename(kg_old)
+                kg_new.rename(kg_path)
+                if kg_old.exists():
+                    shutil.rmtree(kg_old, ignore_errors=True)
+
+            # Step 4: Atomic switch for code_search.lance
+            if code_search_new.exists():
+                if code_search_path.exists():
+                    code_search_path.rename(code_search_old)
+                code_search_new.rename(code_search_path)
+                if code_search_old.exists():
+                    shutil.rmtree(code_search_old, ignore_errors=True)
+
+            # Step 5: Handle chroma.sqlite3 (deprecated, but may exist)
+            if chroma_new.exists():
+                if chroma_path.exists():
+                    chroma_path.rename(chroma_old)
+                chroma_new.rename(chroma_path)
+                if chroma_old.exists():
+                    chroma_old.unlink()
+
+            logger.info("✓ Atomic rebuild complete: databases switched successfully")
+
+        except Exception as e:
+            logger.error(f"Failed to finalize atomic rebuild: {e}")
+            # Attempt to rollback
+            try:
+                logger.warning("Attempting rollback to old databases...")
+                if lance_old.exists() and not lance_path.exists():
+                    lance_old.rename(lance_path)
+                if kg_old.exists() and not kg_path.exists():
+                    kg_old.rename(kg_path)
+                if code_search_old.exists() and not code_search_path.exists():
+                    code_search_old.rename(code_search_path)
+                if chroma_old.exists() and not chroma_path.exists():
+                    chroma_old.rename(chroma_path)
+                logger.info("✓ Rollback successful, old databases restored")
+            except Exception as rollback_error:
+                logger.error(f"Rollback failed: {rollback_error}")
+            raise
+
     async def index_project(
         self,
         force_reindex: bool = False,
@@ -676,10 +834,18 @@ class SemanticIndexer:
             - Fast Phase 1 for durable chunk storage
             - Resumable Phase 2 for embedding (can restart after crash)
             - Incremental updates (skip unchanged files)
+
+            When force_reindex=True, uses atomic rebuild:
+            - Builds into new database with .new suffix
+            - Atomically switches on success
+            - Keeps old database intact on failure
         """
         logger.info(
             f"Starting indexing of project: {self.project_root} (phase: {phase})"
         )
+
+        # Perform atomic rebuild if force is enabled
+        atomic_rebuild_active = await self._atomic_rebuild_databases(force_reindex)
 
         # Initialize metrics tracker
         metrics_tracker = get_metrics_tracker()
@@ -909,6 +1075,10 @@ class SemanticIndexer:
             else:
                 # Display formatted summary table
                 metrics_tracker.log_summary()
+
+        # Finalize atomic rebuild if active
+        if atomic_rebuild_active and indexed_count > 0:
+            await self._finalize_atomic_rebuild()
 
         return indexed_count
 
