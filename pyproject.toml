@@ -27,6 +27,7 @@ requires-python = ">=3.11"
 dependencies = [
     "chromadb>=0.5.0",
     "lancedb>=0.6.0",
+    "pylance>=0.22.0",  # Required for LanceDB scanner API (performance optimization)
     "pandas>=2.0.0",
     "sentence-transformers>=5.2.0,<6.0.0",
     "transformers>=4.34.0,<5.0.0",

@@ -523,6 +523,11 @@ class LanceVectorDatabase:
             return count_df
 
         except Exception as e:
+            # Handle LanceDB "Not found" errors gracefully (file not in index)
+            error_msg = str(e).lower()
+            if "not found" in error_msg:
+                logger.debug(f"No chunks to delete for {file_path} (not in index)")
+                return 0
             logger.error(f"Failed to delete chunks for {file_path}: {e}")
             raise DatabaseError(f"Failed to delete chunks: {e}") from e
 
@@ -884,28 +889,31 @@ class LanceVectorDatabase:
             if not file_path and not language:
                 return self._table.count_rows()
 
-            # With filters, try Lance scanner first
+            # With filters, build filter expression and count via scanner
+            filter_expr = None
+            if file_path:
+                filter_expr = f"file_path = '{file_path}'"
+            if language:
+                lang_filter = f"language = '{language}'"
+                filter_expr = (
+                    f"{filter_expr} AND {lang_filter}" if filter_expr else lang_filter
+                )
+
+            # Use scanner to get filtered data and count length
+            # Note: count_rows() on filtered scanner is not supported in newer pylance
             try:
-                filter_expr = None
-                if file_path:
-                    filter_expr = f"file_path = '{file_path}'"
-                if language:
-                    lang_filter = f"language = '{language}'"
-                    filter_expr = (
-                        f"{filter_expr} AND {lang_filter}"
-                        if filter_expr
-                        else lang_filter
-                    )
-
                 lance_dataset = self._table.to_lance()
-                scanner = lance_dataset.scanner(filter=filter_expr)
-                return scanner.count_rows()
-
+                scanner = lance_dataset.scanner(
+                    filter=filter_expr,
+                    columns=[],  # Empty column list for counting only
+                )
+                result = scanner.to_table()
+                return len(result)
             except Exception as e:
-                # pylance not available, fall back to Pandas
+                # pylance not available or scanner fails, fall back to Pandas
                 error_msg = str(e).lower()
                 if "pylance" not in error_msg and "lance library" not in error_msg:
-                    # Other error - re-raise
+                    # Not a pylance error - re-raise
                     raise
 
             # Fallback: Load and filter with Pandas

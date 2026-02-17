@@ -325,9 +325,25 @@ DEFAULT_IGNORE_PATTERNS = [
     ".npm",  # npm cache
     ".nyc_output",  # Istanbul/nyc coverage
     ".yarn",  # Yarn cache
+    ".pnpm",  # pnpm cache
     "bower_components",
     "coverage",  # Jest/Mocha coverage reports
     "node_modules",
+    # Test fixtures and data (usually large, auto-generated)
+    "fixtures",  # Test fixtures
+    "__fixtures__",  # Jest fixtures
+    "__snapshots__",  # Jest snapshots
+    "__mocks__",  # Jest mocks (often large)
+    # Lock files (generated, huge, no search value)
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "poetry.lock",
+    "Gemfile.lock",
+    "Cargo.lock",
+    "composer.lock",
+    # NiFi workflow data (very large JSON files)
+    "*.nifi",  # NiFi template files
     # Build outputs
     "_build",  # Sphinx and other doc builders
     "build",
@@ -336,6 +352,12 @@ DEFAULT_IGNORE_PATTERNS = [
     "site",  # MkDocs and other static site builders
     "target",
     "wheels",  # Python wheel build artifacts
+    "out",  # Next.js and other build outputs
+    ".next",  # Next.js build directory
+    ".nuxt",  # Nuxt.js build directory
+    ".output",  # Nuxt 3 output directory
+    "public/build",  # Rails asset pipeline
+    "storybook-static",  # Storybook builds
     # Generic caches
     ".cache",
     # IDEs and editors
@@ -352,6 +374,25 @@ DEFAULT_IGNORE_PATTERNS = [
     # Tool-specific directories
     ".claude-mpm",  # Claude MPM directory
     ".mcp-vector-search",  # Our own index directory
+    # Minified and bundled files (generated, slow to parse, no search value)
+    "*.min.js",
+    "*.min.css",
+    "*.min.mjs",
+    "*.bundle.js",
+    "*.bundle.css",
+    "*.chunk.js",
+    "*.chunk.css",
+    "*.iframe.bundle.js",  # Storybook iframe bundles
+    "*.manager.bundle.js",  # Storybook manager bundles
+    # Vendor bundles (often huge, generated)
+    "vendor.js",
+    "vendors.js",
+    "vendor-*.js",
+    "vendors-*.js",
+    # Source maps (binary-ish, no search value)
+    "*.map",
+    "*.js.map",
+    "*.css.map",
 ]
 
 # File patterns to ignore
@@ -400,6 +441,23 @@ DEFAULT_IGNORE_FILES = [
     "*.log",
     "*.temp",
     "*.tmp",
+    # Minified and bundled files (generated, slow to parse, no search value)
+    "*.min.js",
+    "*.min.css",
+    "*.min.mjs",
+    "*.bundle.js",
+    "*.bundle.css",
+    "*.chunk.js",
+    "*.chunk.css",
+    # Common vendor bundles
+    "vendor.js",
+    "vendors.js",
+    "vendor.min.js",
+    "vendors.min.js",
+    # Source maps (binary-ish, no search value)
+    "*.map",
+    "*.js.map",
+    "*.css.map",
 ]
 
 

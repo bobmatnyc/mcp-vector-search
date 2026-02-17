@@ -102,6 +102,7 @@ class FileDiscovery:
         self,
         cancel_token: CancellationToken | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
+        file_limit: int | None = None,
     ) -> list[Path]:
         """Synchronous file scanning (runs in thread pool).
 
@@ -110,6 +111,7 @@ class FileDiscovery:
         Args:
             cancel_token: Optional cancellation token to interrupt scanning
             progress_callback: Optional callback(dirs_scanned, files_found) for progress updates
+            file_limit: Optional limit - stop scanning once this many files found
 
         Returns:
             List of indexable file paths
@@ -125,6 +127,13 @@ class FileDiscovery:
             # Check for cancellation periodically (every directory)
             if cancel_token:
                 cancel_token.check()
+
+            # Early exit if we've reached the file limit
+            if file_limit is not None and len(indexable_files) >= file_limit:
+                logger.debug(
+                    f"Reached file limit ({file_limit}), stopping scan at {dir_count} directories"
+                )
+                break
 
             root_path = Path(root)
             dir_count += 1
@@ -150,6 +159,9 @@ class FileDiscovery:
                 file_path = root_path / filename
                 if self.should_index_file(file_path, skip_file_check=True):
                     indexable_files.append(file_path)
+                    # Check limit inside inner loop for fast exit
+                    if file_limit is not None and len(indexable_files) >= file_limit:
+                        break
 
             # Call progress callback every 10 directories or when files found
             if progress_callback and (dir_count % 10 == 0 or len(indexable_files) > 0):
@@ -164,12 +176,14 @@ class FileDiscovery:
         self,
         cancel_token: CancellationToken | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
+        file_limit: int | None = None,
     ) -> list[Path]:
         """Find all files asynchronously without blocking event loop.
 
         Args:
             cancel_token: Optional cancellation token to interrupt scanning
             progress_callback: Optional callback(dirs_scanned, files_found) for progress updates
+            file_limit: Optional limit - stop scanning once this many files found
 
         Returns:
             List of file paths to index
@@ -179,23 +193,32 @@ class FileDiscovery:
         """
         import time
 
-        # Check cache first
-        current_time = time.time()
-        if (
-            self._indexable_files_cache is not None
-            and current_time - self._cache_timestamp < self._cache_ttl
-        ):
-            logger.debug(
-                f"Using cached indexable files ({len(self._indexable_files_cache)} files)"
-            )
-            return self._indexable_files_cache
+        # Skip cache if limit specified (to allow re-scanning with different limits)
+        if file_limit is None:
+            # Check cache first
+            current_time = time.time()
+            if (
+                self._indexable_files_cache is not None
+                and current_time - self._cache_timestamp < self._cache_ttl
+            ):
+                logger.debug(
+                    f"Using cached indexable files ({len(self._indexable_files_cache)} files)"
+                )
+                return self._indexable_files_cache
+        else:
+            current_time = time.time()
 
         # Run filesystem scan in thread pool to avoid blocking
-        logger.debug("Scanning files in background thread...")
+        logger.debug(
+            f"Scanning files in background thread{f' (limit: {file_limit})' if file_limit else ''}..."
+        )
         loop = asyncio.get_running_loop()
         with ThreadPoolExecutor(max_workers=1) as executor:
             indexable_files = await loop.run_in_executor(
-                executor, lambda: self.scan_files_sync(cancel_token, progress_callback)
+                executor,
+                lambda: self.scan_files_sync(
+                    cancel_token, progress_callback, file_limit
+                ),
             )
 
         # Update cache

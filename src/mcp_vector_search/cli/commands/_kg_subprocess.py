@@ -95,7 +95,9 @@ def main():
             return 1
 
         # Initialize knowledge graph
-        kg_path = project_root / ".mcp-vector-search" / "knowledge_graph"
+        # Check for custom KG path suffix (set by index command for atomic rebuild)
+        kg_path_suffix = os.environ.get("KG_PATH_SUFFIX", "knowledge_graph")
+        kg_path = project_root / ".mcp-vector-search" / kg_path_suffix
 
         # Force rebuild if requested
         if args.force and kg_path.exists():

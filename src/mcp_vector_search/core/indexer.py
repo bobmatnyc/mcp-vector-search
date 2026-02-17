@@ -122,13 +122,14 @@ class SemanticIndexer:
                     )
                 except ValueError:
                     logger.warning(
-                        f"Invalid batch size value: {env_batch_size}, using default 128"
+                        f"Invalid batch size value: {env_batch_size}, using default 256"
                     )
-                    self.batch_size = 128
+                    self.batch_size = 256
             else:
-                # Increased default from 32 to 128 for better throughput
-                # Larger batches = fewer overhead from spawning processes
-                self.batch_size = 128
+                # Increased default from 128 to 256 for better storage throughput
+                # Larger batches = fewer LanceDB writes = less overhead
+                # 256 files per batch is a good balance between memory and throughput
+                self.batch_size = 256
         else:
             self.batch_size = batch_size
 
@@ -225,6 +226,9 @@ class SemanticIndexer:
         self._enable_background_kg: bool = os.environ.get(
             "MCP_VECTOR_SEARCH_AUTO_KG", "false"
         ).lower() in ("true", "1", "yes")
+
+        # Track atomic rebuild state (fresh database doesn't need deletes)
+        self._atomic_rebuild_active: bool = False
 
     async def _build_kg_background(self) -> None:
         """Build knowledge graph in background (non-blocking).
@@ -422,6 +426,11 @@ class SemanticIndexer:
         metrics_tracker = get_metrics_tracker()
 
         with metrics_tracker.phase("parsing") as parsing_metrics:
+            # OPTIMIZATION: Collect files that need deletion and batch delete upfront
+            # This avoids O(n) delete_file_chunks() calls that each load the database
+            files_to_delete = []
+            files_to_process = []
+
             for file_path in files:
                 try:
                     # Compute current file hash
@@ -437,11 +446,27 @@ class SemanticIndexer:
                             logger.debug(f"Skipping unchanged file: {rel_path}")
                             continue
 
-                    # Delete old chunks for this file (if any)
-                    deleted = await self.chunks_backend.delete_file_chunks(rel_path)
-                    if deleted > 0:
-                        logger.debug(f"Deleted {deleted} old chunks for {rel_path}")
+                    # Mark file for deletion and processing
+                    files_to_delete.append(rel_path)
+                    files_to_process.append((file_path, rel_path, file_hash))
 
+                except Exception as e:
+                    logger.error(f"Failed to check file {file_path}: {e}")
+                    continue
+
+            # Batch delete old chunks for all files (skip if atomic rebuild is active)
+            if not self._atomic_rebuild_active and files_to_delete:
+                deleted_count = await self.chunks_backend.delete_files_batch(
+                    files_to_delete
+                )
+                if deleted_count > 0:
+                    logger.info(
+                        f"Batch deleted {deleted_count} old chunks for {len(files_to_delete)} files"
+                    )
+
+            # Now process files for parsing and chunking
+            for file_path, rel_path, file_hash in files_to_process:
+                try:
                     # Parse file
                     chunks = await self.chunk_processor.parse_file(file_path)
 
@@ -518,7 +543,7 @@ class SemanticIndexer:
         return ".".join(parts) if parts else ""
 
     async def _phase2_embed_chunks(
-        self, batch_size: int = 1000, checkpoint_interval: int = 10000
+        self, batch_size: int = 10000, checkpoint_interval: int = 50000
     ) -> tuple[int, int]:
         """Phase 2: Embed pending chunks, store to vectors.lance.
 
@@ -714,6 +739,8 @@ class SemanticIndexer:
             )
 
             logger.info("✓ New database directories prepared")
+            # Set flag to skip delete operations (building into fresh database)
+            self._atomic_rebuild_active = True
             return True
 
         except Exception as e:
@@ -724,6 +751,7 @@ class SemanticIndexer:
                     shutil.rmtree(new_path, ignore_errors=True)
             if chroma_new.exists():
                 chroma_new.unlink()
+            self._atomic_rebuild_active = False
             return False
 
     async def _finalize_atomic_rebuild(self) -> None:
@@ -787,6 +815,8 @@ class SemanticIndexer:
                     chroma_old.unlink()
 
             logger.info("✓ Atomic rebuild complete: databases switched successfully")
+            # Reset flag after successful finalization
+            self._atomic_rebuild_active = False
 
         except Exception as e:
             logger.error(f"Failed to finalize atomic rebuild: {e}")
@@ -804,6 +834,8 @@ class SemanticIndexer:
                 logger.info("✓ Rollback successful, old databases restored")
             except Exception as rollback_error:
                 logger.error(f"Rollback failed: {rollback_error}")
+            # Reset flag after rollback attempt
+            self._atomic_rebuild_active = False
             raise
 
     async def index_project(
@@ -843,6 +875,9 @@ class SemanticIndexer:
         logger.info(
             f"Starting indexing of project: {self.project_root} (phase: {phase})"
         )
+
+        # Track total timing for entire indexing process
+        t_start_total = time.time()
 
         # Perform atomic rebuild if force is enabled
         atomic_rebuild_active = await self._atomic_rebuild_databases(force_reindex)
@@ -889,6 +924,20 @@ class SemanticIndexer:
                 f"⏱️  TIMING: File scanning ({len(all_files)} files): {t_scan - t_start:.2f}s",
                 flush=True,
             )
+
+            # Clean up stale metadata entries (files that no longer exist)
+            if force_reindex:
+                # Clear all metadata on force reindex
+                logger.info("Force reindex: clearing all metadata entries")
+                self.metadata.save({})
+            elif all_files:
+                # Clean up stale entries for incremental index
+                valid_files = {str(f) for f in all_files}
+                removed = self.metadata.cleanup_stale_entries(valid_files)
+                if removed > 0:
+                    logger.info(
+                        f"Removed {removed} stale metadata entries for deleted files"
+                    )
 
             if not all_files:
                 logger.warning("No indexable files found")
@@ -1083,7 +1132,7 @@ class SemanticIndexer:
         return indexed_count
 
     async def _parse_and_prepare_file(
-        self, file_path: Path, force_reindex: bool = False
+        self, file_path: Path, force_reindex: bool = False, skip_delete: bool = False
     ) -> tuple[list[CodeChunk], dict[str, Any] | None]:
         """Parse file and prepare chunks with metrics (no database insertion).
 
@@ -1093,6 +1142,7 @@ class SemanticIndexer:
         Args:
             file_path: Path to the file to parse
             force_reindex: Whether to force reindexing (always deletes existing chunks)
+            skip_delete: If True, skip delete operation (used when building fresh database)
 
         Returns:
             Tuple of (chunks_with_hierarchy, chunk_metrics)
@@ -1104,9 +1154,10 @@ class SemanticIndexer:
         if not self.file_discovery.should_index_file(file_path):
             return ([], None)
 
-        # Always remove existing chunks when reindexing a file
-        # This prevents duplicate chunks and ensures consistency
-        await self.database.delete_by_file(file_path)
+        # Skip delete on force reindex with fresh database OR when atomic rebuild is active
+        # This optimization eliminates ~25k unnecessary database queries for large codebases
+        if not skip_delete and not self._atomic_rebuild_active:
+            await self.database.delete_by_file(file_path)
 
         # Parse file into chunks
         chunks = await self.chunk_processor.parse_file(file_path)
@@ -1136,7 +1187,11 @@ class SemanticIndexer:
         return (chunks_with_hierarchy, chunk_metrics)
 
     async def _process_file_batch(
-        self, file_paths: list[Path], force_reindex: bool = False
+        self,
+        file_paths: list[Path],
+        force_reindex: bool = False,
+        skip_delete: bool = False,
+        metadata_dict: dict[str, float] | None = None,
     ) -> list[bool]:
         """Process a batch of files and accumulate chunks for batch embedding.
 
@@ -1147,6 +1202,8 @@ class SemanticIndexer:
         Args:
             file_paths: List of file paths to process
             force_reindex: Whether to force reindexing
+            skip_delete: If True, skip delete operations (used when building fresh database)
+            metadata_dict: Pre-loaded metadata dict (OPTIMIZATION: pass to avoid O(n) loads per batch)
 
         Returns:
             List of success flags for each file
@@ -1160,8 +1217,8 @@ class SemanticIndexer:
         file_to_chunks_map: dict[str, tuple[int, int]] = {}
         success_flags: list[bool] = []
 
-        # Filter files that should be indexed and delete old chunks
-        # Parallelized deletion for better performance on large batches
+        # Filter files that should be indexed and delete old chunks (unless building fresh)
+        # Skip delete on force reindex with fresh database OR when atomic rebuild is active
         files_to_parse = []
         delete_tasks = []
 
@@ -1169,12 +1226,16 @@ class SemanticIndexer:
             if not self.file_discovery.should_index_file(file_path):
                 success_flags.append(True)  # Skipped file is not an error
                 continue
-            # Schedule deletion task (non-blocking)
-            delete_task = asyncio.create_task(self.database.delete_by_file(file_path))
-            delete_tasks.append(delete_task)
+
+            # Only schedule deletion if not building fresh database AND not in atomic rebuild
+            if not skip_delete and not self._atomic_rebuild_active:
+                delete_task = asyncio.create_task(
+                    self.database.delete_by_file(file_path)
+                )
+                delete_tasks.append(delete_task)
             files_to_parse.append(file_path)
 
-        # Wait for all deletions to complete
+        # Wait for all deletions to complete (if any were scheduled)
         if delete_tasks:
             await asyncio.gather(*delete_tasks, return_exceptions=True)
 
@@ -1191,8 +1252,12 @@ class SemanticIndexer:
             # Fall back to async processing (for single file or disabled multiprocessing)
             parse_results = await self.chunk_processor.parse_files_async(files_to_parse)
 
+        # OPTIMIZATION: Load metadata once per batch instead of per file
+        # This avoids O(n) json.load() calls that kill performance on large codebases (25k+ files)
+        if metadata_dict is None:
+            metadata_dict = self.metadata.load()
+
         # Accumulate chunks from all successfully parsed files
-        metadata_dict = self.metadata.load()
         for file_path, chunks, error in parse_results:
             if error:
                 logger.error(f"Failed to parse {file_path}: {error}")
@@ -1255,8 +1320,9 @@ class SemanticIndexer:
                     file_hash = compute_file_hash(file_path)
                     rel_path = str(file_path.relative_to(self.project_root))
 
-                    # Delete old chunks for this file (already done in line 829, but ensure consistency)
-                    await self.chunks_backend.delete_file_chunks(rel_path)
+                    # Delete old chunks for this file (skip if atomic rebuild is active)
+                    if not self._atomic_rebuild_active:
+                        await self.chunks_backend.delete_file_chunks(rel_path)
 
                     # Convert CodeChunk objects to dicts for storage
                     chunk_dicts = []
@@ -1325,12 +1391,14 @@ class SemanticIndexer:
         self,
         file_path: Path,
         force_reindex: bool = False,
+        skip_delete: bool = False,
     ) -> bool:
         """Index a single file.
 
         Args:
             file_path: Path to the file to index
             force_reindex: Whether to reindex if already indexed
+            skip_delete: If True, skip delete operation (used when building fresh database)
 
         Returns:
             True if file was successfully indexed
@@ -1344,9 +1412,9 @@ class SemanticIndexer:
             if not self.file_discovery.should_index_file(file_path):
                 return False
 
-            # Always remove existing chunks when reindexing a file
-            # This prevents duplicate chunks and ensures consistency
-            await self.database.delete_by_file(file_path)
+            # Skip delete on force reindex with fresh database OR when atomic rebuild is active
+            if not skip_delete and not self._atomic_rebuild_active:
+                await self.database.delete_by_file(file_path)
 
             # Parse file into chunks
             chunks = await self.chunk_processor.parse_file(file_path)
@@ -1377,8 +1445,9 @@ class SemanticIndexer:
             file_hash = compute_file_hash(file_path)
             rel_path = str(file_path.relative_to(self.project_root))
 
-            # Delete old chunks for this file (already done in line 959, but ensure consistency)
-            await self.chunks_backend.delete_file_chunks(rel_path)
+            # Delete old chunks for this file (skip if atomic rebuild is active)
+            if not self._atomic_rebuild_active:
+                await self.chunks_backend.delete_file_chunks(rel_path)
 
             # Convert CodeChunk objects to dicts for storage
             chunk_dicts = []
@@ -1659,19 +1728,22 @@ class SemanticIndexer:
         self,
         force_reindex: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
+        file_limit: int | None = None,
     ) -> tuple[list[Path], list[Path]]:
         """Get all indexable files and those that need indexing.
 
         Args:
             force_reindex: Whether to force reindex of all files
             progress_callback: Optional callback(dirs_scanned, files_found) for discovery progress
+            file_limit: Optional limit - stop scanning once this many files found
 
         Returns:
             Tuple of (all_indexable_files, files_to_index)
         """
-        # Find all indexable files (with progress callback)
+        # Find all indexable files (with progress callback and optional limit)
         all_files = await self.file_discovery.find_indexable_files_async(
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
+            file_limit=file_limit,
         )
 
         if not all_files:
@@ -1735,6 +1807,10 @@ class SemanticIndexer:
         time_embedding_total = 0.0
         time_storage_total = 0.0
 
+        # OPTIMIZATION: Load metadata once at start instead of per batch
+        # This avoids O(n) json.load() calls that kill performance on large codebases (25k+ files)
+        metadata_dict = self.metadata.load()
+
         # Process files in batches for better memory management and embedding efficiency
         batch_count = 0
         for i in range(0, len(files_to_index), self.batch_size):
@@ -1752,15 +1828,28 @@ class SemanticIndexer:
             tasks = []
             for file_path in batch:
                 task = asyncio.create_task(
-                    self._parse_and_prepare_file(file_path, force_reindex)
+                    self._parse_and_prepare_file(
+                        file_path,
+                        force_reindex,
+                        skip_delete=self._atomic_rebuild_active,
+                    )
                 )
                 tasks.append(task)
 
             parse_results = await asyncio.gather(*tasks, return_exceptions=True)
             time_parsing_total += time.time() - t_start
 
+            # OPTIMIZATION: Cache mtimes for batch to avoid repeated os.path.getmtime() calls
+            # Compute all mtimes upfront before processing results
+            batch_mtimes: dict[str, float] = {}
+            for file_path in batch:
+                try:
+                    batch_mtimes[str(file_path)] = os.path.getmtime(file_path)
+                except FileNotFoundError:
+                    pass  # File deleted during indexing
+
             # Accumulate chunks from successfully parsed files
-            metadata_dict = self.metadata.load()
+            # metadata_dict is now loaded once above, not per batch
             for file_path, result in zip(batch, parse_results, strict=True):
                 if isinstance(result, Exception):
                     error_msg = f"Failed to index file {file_path}: {type(result).__name__}: {str(result)}"
@@ -1782,20 +1871,22 @@ class SemanticIndexer:
                     if metrics:
                         all_metrics.update(metrics)
 
-                    # Update metadata for successfully parsed file
-                    try:
-                        metadata_dict[str(file_path)] = os.path.getmtime(file_path)
-                    except FileNotFoundError:
+                    # Update metadata for successfully parsed file (use cached mtime)
+                    file_path_str = str(file_path)
+                    if file_path_str in batch_mtimes:
+                        metadata_dict[file_path_str] = batch_mtimes[file_path_str]
+                    else:
                         logger.warning(
                             f"Skipping metadata update for deleted file: {file_path}"
                         )
                     file_results[file_path] = (len(chunks), True)
                     logger.debug(f"Prepared {len(chunks)} chunks from {file_path}")
                 else:
-                    # Empty file is not an error
-                    try:
-                        metadata_dict[str(file_path)] = os.path.getmtime(file_path)
-                    except FileNotFoundError:
+                    # Empty file is not an error (use cached mtime)
+                    file_path_str = str(file_path)
+                    if file_path_str in batch_mtimes:
+                        metadata_dict[file_path_str] = batch_mtimes[file_path_str]
+                    else:
                         logger.warning(
                             f"Skipping metadata update for deleted file: {file_path}"
                         )
@@ -1806,52 +1897,81 @@ class SemanticIndexer:
                 logger.info(
                     f"Batch inserting {len(all_chunks)} chunks from {len(batch)} files"
                 )
+
+                # OPTIMIZATION: Pre-compute file hashes BEFORE timing starts
+                # This avoids double file I/O (already read during parsing)
+                batch_file_hashes: dict[str, str] = {}
+                for file_path_str in file_to_chunks_map.keys():
+                    try:
+                        batch_file_hashes[file_path_str] = compute_file_hash(
+                            Path(file_path_str)
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to compute hash for {file_path_str}: {e}"
+                        )
+                        batch_file_hashes[file_path_str] = ""
+
                 t_start_storage = time.time()
                 try:
                     # Phase 1: Store chunks to chunks.lance (fast, durable)
                     # Accumulate all chunks from batch for single write
                     t_start = time.time()
+
+                    # Delete old chunks for files being re-indexed (skip if atomic rebuild)
+                    if not self._atomic_rebuild_active:
+                        for file_path_str in file_to_chunks_map.keys():
+                            rel_path = str(
+                                Path(file_path_str).relative_to(self.project_root)
+                            )
+                            await self.chunks_backend.delete_file_chunks(rel_path)
+
+                    # OPTIMIZATION: Pre-build all chunk dicts using simple loop
                     batch_chunk_dicts = []
                     for file_path_str, (
                         start_idx,
                         end_idx,
                     ) in file_to_chunks_map.items():
-                        file_path = Path(file_path_str)
-                        file_chunks = all_chunks[start_idx:end_idx]
+                        file_hash = batch_file_hashes.get(file_path_str, "")
+                        rel_path = str(
+                            Path(file_path_str).relative_to(self.project_root)
+                        )
+                        for chunk in all_chunks[start_idx:end_idx]:
+                            batch_chunk_dicts.append(
+                                {
+                                    "chunk_id": chunk.chunk_id,
+                                    "file_path": rel_path,
+                                    "file_hash": file_hash,
+                                    "content": chunk.content,
+                                    "language": chunk.language,
+                                    "start_line": chunk.start_line,
+                                    "end_line": chunk.end_line,
+                                    "start_char": 0,
+                                    "end_char": 0,
+                                    "chunk_type": chunk.chunk_type,
+                                    "name": chunk.function_name
+                                    or chunk.class_name
+                                    or "",
+                                    "parent_name": "",
+                                    "hierarchy_path": (
+                                        f"{chunk.class_name}.{chunk.function_name}"
+                                        if chunk.class_name and chunk.function_name
+                                        else (
+                                            chunk.class_name
+                                            or chunk.function_name
+                                            or ""
+                                        )
+                                    ),
+                                    "docstring": chunk.docstring or "",
+                                    "signature": "",
+                                    "complexity": int(chunk.complexity_score),
+                                    "token_count": len(chunk.content) // 5,
+                                }
+                            )
 
-                        # Compute file hash for change detection
-                        file_hash = compute_file_hash(file_path)
-                        rel_path = str(file_path.relative_to(self.project_root))
-
-                        # Delete old chunks for this file
-                        await self.chunks_backend.delete_file_chunks(rel_path)
-
-                        # Convert CodeChunk objects to dicts for storage
-                        for chunk in file_chunks:
-                            chunk_dict = {
-                                "chunk_id": chunk.chunk_id,
-                                "file_path": rel_path,
-                                "file_hash": file_hash,  # Include file_hash per chunk
-                                "content": chunk.content,
-                                "language": chunk.language,
-                                "start_line": chunk.start_line,
-                                "end_line": chunk.end_line,
-                                "start_char": 0,
-                                "end_char": 0,
-                                "chunk_type": chunk.chunk_type,
-                                "name": chunk.function_name or chunk.class_name or "",
-                                "parent_name": "",
-                                "hierarchy_path": self._build_hierarchy_path(chunk),
-                                "docstring": chunk.docstring or "",
-                                "signature": "",
-                                "complexity": int(chunk.complexity_score),
-                                "token_count": len(chunk.content.split()),
-                            }
-                            batch_chunk_dicts.append(chunk_dict)
-
-                    # Single write for entire batch (no file_hash parameter needed)
+                    # Single write for entire batch (use raw method to skip re-normalization)
                     if batch_chunk_dicts:
-                        await self.chunks_backend.add_chunks_batch(batch_chunk_dicts)
+                        await self.chunks_backend.add_chunks_raw(batch_chunk_dicts)
                     time_storage_total += time.time() - t_start
 
                     # Phase 2: Generate embeddings and store to code_search.lance

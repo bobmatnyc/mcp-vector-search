@@ -221,7 +221,7 @@ def main(
                 asyncio.run(
                     run_indexing(
                         project_root=project_root,
-                        force_reindex=False,
+                        force_reindex=force,
                         show_progress=True,
                     )
                 )
@@ -423,7 +423,7 @@ async def run_init_setup(
         try:
             await run_indexing(
                 project_root=project_root,
-                force_reindex=False,
+                force_reindex=force,
                 show_progress=True,
             )
             print_success("✅ Indexing completed!")

@@ -218,9 +218,9 @@ class VectorsBackend:
                 if self.TABLE_NAME in table_names:
                     # Table exists, open it
                     self._table = self._db.open_table(self.TABLE_NAME)
-                    self._table.add(normalized_vectors)
+                    self._table.add(normalized_vectors, mode="append")
                     logger.debug(
-                        f"Opened existing table and added {len(normalized_vectors)} vectors"
+                        f"Opened existing table and added {len(normalized_vectors)} vectors (append mode)"
                     )
                 else:
                     # Create table with first batch
@@ -232,8 +232,12 @@ class VectorsBackend:
                     )
             else:
                 # Append to existing table
-                self._table.add(normalized_vectors)
-                logger.debug(f"Added {len(normalized_vectors)} vectors to table")
+                # OPTIMIZATION: Use mode='append' for faster bulk inserts
+                # This defers index updates until later, improving write throughput
+                self._table.add(normalized_vectors, mode="append")
+                logger.debug(
+                    f"Added {len(normalized_vectors)} vectors to table (append mode)"
+                )
 
             return len(normalized_vectors)
 

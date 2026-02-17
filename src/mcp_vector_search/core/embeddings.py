@@ -399,6 +399,7 @@ class CodeBERTEmbeddingFunction:
                 )
             self.model_name = model_name
             self.timeout = timeout
+            self.device = device  # Store device for use in encode() calls
 
             # Get actual dimensions from loaded model
             actual_dims = self.model.get_sentence_embedding_dimension()
@@ -459,7 +460,14 @@ class CodeBERTEmbeddingFunction:
     def __call__(self, input: list[str]) -> list[list[float]]:
         """Generate embeddings for input texts (ChromaDB interface)."""
         try:
-            # Use ThreadPoolExecutor with timeout for embedding generation
+            # CUDA contexts are thread-bound, so run directly on CUDA to avoid
+            # GPU operations silently falling back to CPU when run in thread pool.
+            # For CPU/MPS, use ThreadPoolExecutor with timeout for safety.
+            if self.device == "cuda":
+                # Run directly on CUDA - no thread pool to avoid context issues
+                return self._generate_embeddings(input)
+
+            # For CPU/MPS, use thread pool with timeout
             from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
             with ThreadPoolExecutor(max_workers=1) as executor:
@@ -487,11 +495,14 @@ class CodeBERTEmbeddingFunction:
         """
         # Use optimal batch size for GPU throughput (5x faster with 512 vs 32)
         batch_size = _detect_optimal_batch_size()
+        # CRITICAL: Pass device to ensure input tensors are moved to GPU
+        # Without this, model weights are on GPU but inputs stay on CPU (0% GPU compute)
         embeddings = self.model.encode(
             input,
             convert_to_numpy=True,
             batch_size=batch_size,
             show_progress_bar=False,
+            device=self.device,  # Ensure inputs go to GPU
         )
         return embeddings.tolist()
 
