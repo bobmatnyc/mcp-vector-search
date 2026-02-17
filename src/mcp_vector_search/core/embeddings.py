@@ -787,14 +787,20 @@ def create_embedding_function(
 
         actual_model = model_mapping.get(model_name, model_name)
 
+        # Detect optimal device (CUDA > MPS > CPU)
+        device = _detect_device()
+
         # Suppress stdout to hide "BertModel LOAD REPORT" noise
         with suppress_stdout_stderr():
             embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
                 model_name=actual_model,
+                device=device,  # Pass device for GPU acceleration
                 trust_remote_code=True,  # Required for models with custom code (e.g., CodeXEmbed)
             )
 
-        logger.debug(f"Created embedding function with model: {actual_model}")
+        logger.info(
+            f"Created embedding function with model: {actual_model} on {device}"
+        )
 
     except Exception as e:
         logger.warning(f"Failed to create ChromaDB embedding function: {e}")
