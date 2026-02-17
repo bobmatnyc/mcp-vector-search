@@ -693,6 +693,9 @@ async def _run_batch_indexing(
             else:
                 console.print()  # Just add blank line
 
+            # Import time for throughput tracking
+            import time
+
             # Track recently indexed files for display
             recent_files = []
             current_file_name = ""
@@ -739,8 +742,6 @@ async def _run_batch_indexing(
             )
 
             # Track phase timing
-            import time
-
             phase_start_times = {
                 "phase1": time.time(),
                 "phase2": None,
