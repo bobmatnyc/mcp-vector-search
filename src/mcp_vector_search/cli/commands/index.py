@@ -942,7 +942,7 @@ async def _run_batch_indexing(
                     phase2_task,
                     total=total_chunks_created if total_chunks_created > 0 else 1,
                     completed=chunks_embedded,
-                    progress_text=f"{chunks_embedded:,} chunks • {final_chunks_per_sec:.1f}/sec • {phase_times['phase1']:.0f}s",
+                    progress_text=f"{chunks_embedded:,}/{total_chunks_created:,} chunks ({final_chunks_per_sec:.1f}/sec) • {phase_times['phase1']:.0f}s",
                 )
 
                 # Progress tracker: Phase 3 - Embedding
