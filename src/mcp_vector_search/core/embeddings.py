@@ -26,6 +26,8 @@ os.environ["TQDM_DISABLE"] = "1"
 warnings.filterwarnings("ignore", message=".*position_ids.*")
 warnings.filterwarnings("ignore", message=".*not sharded.*")
 warnings.filterwarnings("ignore", category=FutureWarning, module="transformers")
+# Suppress Pydantic warnings from lancedb embeddings
+warnings.filterwarnings("ignore", message=".*has conflict with protected namespace.*")
 
 
 @contextlib.contextmanager

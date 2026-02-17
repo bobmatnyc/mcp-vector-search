@@ -264,7 +264,9 @@ def build_kg(
     project_root: Path = typer.Option(
         ".", help="Project root directory", exists=True, file_okay=False
     ),
-    force: bool = typer.Option(False, help="Force rebuild even if graph exists"),
+    force: bool = typer.Option(
+        False, "-f", "--force", help="Force rebuild even if graph exists"
+    ),
     limit: int | None = typer.Option(
         None, help="Limit number of chunks to process (for testing)"
     ),
