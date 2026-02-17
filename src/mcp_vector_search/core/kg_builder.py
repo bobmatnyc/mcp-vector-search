@@ -1098,13 +1098,21 @@ class KGBuilder:
             except Exception as e:
                 logger.debug(f"Failed to read full file for frontmatter: {e}")
 
-        tags_from_frontmatter = []
+        tags_from_frontmatter: list[str] = []
         related_docs = []
 
         if frontmatter:
             tags_data = frontmatter.get("tags", [])
             if isinstance(tags_data, list):
-                tags_from_frontmatter = tags_data
+                # Flatten nested lists and filter to strings only
+                for tag in tags_data:
+                    if isinstance(tag, str):
+                        tags_from_frontmatter.append(tag)
+                    elif isinstance(tag, list):
+                        # Flatten nested list
+                        for t in tag:
+                            if isinstance(t, str):
+                                tags_from_frontmatter.append(t)
             elif isinstance(tags_data, str):
                 tags_from_frontmatter = [tags_data]
 
@@ -1246,14 +1254,22 @@ class KGBuilder:
             except Exception as e:
                 logger.debug(f"Failed to read full file for frontmatter: {e}")
 
-        tags_from_frontmatter = []
+        tags_from_frontmatter: list[str] = []
         related_docs = []
 
         if frontmatter:
             # Extract tags for HAS_TAG relationships
             tags = frontmatter.get("tags", [])
             if isinstance(tags, list):
-                tags_from_frontmatter = tags
+                # Flatten nested lists and filter to strings only
+                for tag in tags:
+                    if isinstance(tag, str):
+                        tags_from_frontmatter.append(tag)
+                    elif isinstance(tag, list):
+                        # Flatten nested list
+                        for t in tag:
+                            if isinstance(t, str):
+                                tags_from_frontmatter.append(t)
             elif isinstance(tags, str):
                 tags_from_frontmatter = [tags]
 
