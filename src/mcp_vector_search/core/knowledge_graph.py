@@ -12,6 +12,8 @@ Enables architectural queries like:
 - "Show me the call graph for function Z"
 """
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -166,6 +168,34 @@ class KnowledgeGraph:
         self.conn = None
         self._initialized = False
 
+        # Dedicated single-threaded executor for Kuzu operations
+        # Kuzu (Rust via PyO3) is NOT thread-safe and cannot handle ANY
+        # background threads. We isolate ALL Kuzu operations to a single
+        # dedicated thread to avoid segfaults.
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="kuzu-executor"
+        )
+
+    def _initialize_kuzu_and_schema(self, db_dir: Path):
+        """Initialize Kuzu database and schema in dedicated thread.
+
+        This method runs in the dedicated executor thread to ensure
+        the database, connection, AND schema creation all happen in
+        the SAME thread. This is critical for thread safety.
+
+        Args:
+            db_dir: Path to database directory
+        """
+        # Create database and connection in THIS thread
+        self.db = kuzu.Database(str(db_dir))
+        self.conn = kuzu.Connection(self.db)
+        logger.debug(
+            f"Kuzu database and connection created in thread {threading.current_thread().name}"
+        )
+
+        # Create schema in THIS thread (direct execute calls are safe here)
+        self._create_schema()
+
     async def initialize(self):
         """Initialize Kuzu database with schema."""
         if self._initialized:
@@ -174,15 +204,38 @@ class KnowledgeGraph:
         # Create database directory
         self.db_path.mkdir(parents=True, exist_ok=True)
 
-        # Initialize Kuzu database
+        # Initialize Kuzu database AND schema IN THE DEDICATED THREAD
+        # This is critical: db, conn, and ALL execute() calls must happen
+        # in the same dedicated thread to avoid segfaults from background
+        # threads in other libraries (gRPC, PyTorch, etc.)
         db_dir = self.db_path / "code_kg"
-        self.db = kuzu.Database(str(db_dir))
-        self.conn = kuzu.Connection(self.db)
+        future = self._executor.submit(self._initialize_kuzu_and_schema, db_dir)
+        future.result()  # Block until initialization completes
 
-        # Create schema
-        self._create_schema()
         self._initialized = True
         logger.info(f"✓ Knowledge graph initialized at {db_dir}")
+
+    def _execute_query(self, query: str, params: dict | None = None):
+        """Execute Kuzu query in dedicated thread.
+
+        Kuzu (Rust via PyO3) is NOT thread-safe and cannot handle ANY
+        background threads from other libraries (gRPC, PyTorch, etc.).
+        This method ensures ALL Kuzu operations happen in a single
+        dedicated thread, isolated from background threads.
+
+        Args:
+            query: Cypher query to execute
+            params: Optional query parameters
+
+        Returns:
+            Query result from Kuzu
+        """
+        # Submit to dedicated single-threaded executor
+        # This ensures execute() is called in the SAME thread where
+        # the connection was created, with no interference from
+        # background threads
+        future = self._executor.submit(self.conn.execute, query, params or {})
+        return future.result()  # Block until complete
 
     def _create_schema(self):
         """Create Kuzu schema for code entities, doc sections, and relationships."""
@@ -1660,7 +1713,8 @@ class KnowledgeGraph:
             """
 
             try:
-                self.conn.execute(query, {"batch": params})
+                # Thread-safe Kuzu operation via wrapper
+                self._execute_query(query, {"batch": params})
                 total += len(batch)
             except Exception as e:
                 logger.error(
@@ -2257,12 +2311,14 @@ class KnowledgeGraph:
             # Collect entities and their file paths for subproject detection
             while entity_result.has_next():
                 row = entity_result.get_next()
-                entities.append({
-                    "id": row[0],
-                    "name": row[1],
-                    "type": row[2] or "unknown",
-                    "file_path": row[3] or "",
-                })
+                entities.append(
+                    {
+                        "id": row[0],
+                        "name": row[1],
+                        "type": row[2] or "unknown",
+                        "file_path": row[3] or "",
+                    }
+                )
 
             # Detect subprojects from file paths (monorepo patterns)
             subprojects: dict[str, str] = {}  # path_prefix -> subproject_name
@@ -2298,14 +2354,16 @@ class KnowledgeGraph:
             if is_monorepo:
                 logger.debug(f"Detected monorepo with {len(subprojects)} subprojects")
                 for i, (path, name) in enumerate(subprojects.items()):
-                    nodes.append({
-                        "id": f"subproject:{name}",
-                        "name": name,
-                        "type": "subproject",
-                        "file_path": path,
-                        "color": colors[i % len(colors)],
-                        "group": 0,  # Special group for subproject roots
-                    })
+                    nodes.append(
+                        {
+                            "id": f"subproject:{name}",
+                            "name": name,
+                            "type": "subproject",
+                            "file_path": path,
+                            "color": colors[i % len(colors)],
+                            "group": 0,  # Special group for subproject roots
+                        }
+                    )
 
             # Map entity types to color groups
             type_to_group = {
@@ -2381,12 +2439,14 @@ class KnowledgeGraph:
             if is_monorepo:
                 for node in nodes:
                     if node.get("subproject") and node["type"] != "subproject":
-                        links.append({
-                            "source": f"subproject:{node['subproject']}",
-                            "target": node["id"],
-                            "type": "contains",
-                            "weight": 1.0,
-                        })
+                        links.append(
+                            {
+                                "source": f"subproject:{node['subproject']}",
+                                "target": node["id"],
+                                "type": "contains",
+                                "weight": 1.0,
+                            }
+                        )
 
             return {
                 "nodes": nodes,
@@ -2396,7 +2456,7 @@ class KnowledgeGraph:
                     "subprojects": list(subprojects.values()) if is_monorepo else [],
                     "total_nodes": len(nodes),
                     "total_links": len(links),
-                }
+                },
             }
 
         except Exception as e:
@@ -2809,10 +2869,16 @@ class KnowledgeGraph:
         return samples
 
     async def close(self):
-        """Close database connection."""
+        """Close database connection and shutdown executor."""
         if self.conn:
             self.conn = None
         if self.db:
             self.db = None
         self._initialized = False
+
+        # Shutdown the dedicated executor thread
+        if self._executor:
+            self._executor.shutdown(wait=True)
+            logger.debug("Kuzu executor thread shutdown")
+
         logger.debug("Knowledge graph connection closed")
