@@ -683,7 +683,15 @@ async def _run_batch_indexing(
                     await indexer.chunks_backend.initialize()
                 if indexer.vectors_backend._db is None:
                     await indexer.vectors_backend.initialize()
-            console.print("[green]✓[/green] [dim]Backend ready[/dim]\n")
+            console.print("[green]✓[/green] [dim]Backend ready[/dim]")
+
+            # Show temp DB indication if force_reindex
+            if force_reindex:
+                console.print(
+                    "[cyan]🔄 Building to temporary database (atomic rebuild)...[/cyan]\n"
+                )
+            else:
+                console.print()  # Just add blank line
 
             # Track recently indexed files for display
             recent_files = []
@@ -694,6 +702,7 @@ async def _run_batch_indexing(
             # Track chunk and embedding progress separately
             total_chunks_created = 0  # Total chunks created from parsing
             chunks_embedded = 0  # Chunks successfully embedded
+            embedding_start_time = time.time()  # For throughput calculation
 
             # Create progress bars for all three phases
             # NOTE: We'll dynamically update total for Phase 2 as chunks are created
@@ -825,11 +834,14 @@ async def _run_batch_indexing(
                     # Update Phase 2 progress (chunk-based)
                     # Update total to reflect chunks created so far
                     if total_chunks_created > 0:
+                        # Calculate chunks per second
+                        elapsed = time.time() - embedding_start_time
+                        chunks_per_sec = chunks_embedded / elapsed if elapsed > 0 else 0
                         progress.update(
                             phase2_task,
                             total=total_chunks_created,
                             completed=chunks_embedded,
-                            progress_text=f"{chunks_embedded:,}/{total_chunks_created:,} chunks embedded",
+                            progress_text=f"{chunks_embedded:,}/{total_chunks_created:,} chunks ({chunks_per_sec:.1f}/sec)",
                         )
 
                     # Update current file name for display
@@ -921,11 +933,15 @@ async def _run_batch_indexing(
 
                 # Phase 2 completes at the same time as Phase 1 (embedding happens during indexing)
                 phase_times["phase2"] = phase_times["phase1"]  # Same timing
+                embedding_elapsed = time.time() - embedding_start_time
+                final_chunks_per_sec = (
+                    chunks_embedded / embedding_elapsed if embedding_elapsed > 0 else 0
+                )
                 progress.update(
                     phase2_task,
                     total=total_chunks_created if total_chunks_created > 0 else 1,
                     completed=chunks_embedded,
-                    progress_text=f"{chunks_embedded:,} chunks embedded • {phase_times['phase1']:.0f}s",
+                    progress_text=f"{chunks_embedded:,} chunks • {final_chunks_per_sec:.1f}/sec • {phase_times['phase1']:.0f}s",
                 )
 
                 # Progress tracker: Phase 3 - Embedding
@@ -966,7 +982,7 @@ async def _run_batch_indexing(
                 except Exception as e:
                     logger.error(f"Failed to update directory index: {e}")
 
-                # Phase 3: Knowledge Graph building (mark relationships)
+                # Phase 3: Knowledge Graph building
                 if not skip_relationships and indexed_count > 0:
                     try:
                         # Progress tracker: Phase 4 - KG Build
@@ -975,33 +991,65 @@ async def _run_batch_indexing(
 
                         phase_start_times["phase3"] = time.time()
 
+                        # Update progress to show starting
+                        progress.update(
+                            phase3_task,
+                            progress_text="initializing...",
+                        )
+
+                        # Import and initialize KG builder
+                        from ...core.kg_builder import KGBuilder
+                        from ...core.knowledge_graph import KnowledgeGraph
+
+                        kg_path = (
+                            indexer.project_root
+                            / ".mcp-vector-search"
+                            / "knowledge_graph"
+                        )
+                        kg = KnowledgeGraph(kg_path)
+                        await kg.initialize()
+                        builder = KGBuilder(kg, indexer.project_root)
+
+                        # Get all chunks for KG building
                         all_chunks = await indexer.database.get_all_chunks()
 
                         if len(all_chunks) > 0:
-                            # Initialize KG build phase in progress state
-                            progress_manager.update_kg_build(
-                                processed_chunks_increment=len(all_chunks),
+                            # Update progress to show building
+                            progress.update(
+                                phase3_task,
+                                total=len(all_chunks),
+                                completed=0,
+                                progress_text=f"0/{len(all_chunks):,} chunks processed",
                             )
 
-                            # Mark for background computation
-                            await indexer.relationship_store.compute_and_store(
-                                all_chunks, indexer.database, background=True
+                            # Build KG (this extracts entities and relationships)
+                            await builder.build_from_database(
+                                indexer.database,
+                                show_progress=False,  # We handle progress ourselves
+                                skip_documents=False,
                             )
+
+                            # Get final KG stats
+                            kg_stats = await kg.get_stats()
+                            entities = kg_stats.get("total_entities", 0)
+                            relationships = kg_stats.get("total_relationships", 0)
 
                             # Complete Phase 3
                             phase_times["phase3"] = (
                                 time.time() - phase_start_times["phase3"]
                             )
-                            progress.update(phase3_task, completed=1)
                             progress.update(
                                 phase3_task,
-                                progress_text=f"marked • {phase_times['phase3']:.0f}s",
+                                completed=len(all_chunks),
+                                progress_text=f"{entities:,} entities, {relationships:,} relations • {phase_times['phase3']:.0f}s",
                             )
+
+                            await kg.close()
 
                             # Progress tracker update for KG build
                             if progress_tracker:
                                 progress_tracker.item(
-                                    f"Marked {len(all_chunks):,} chunks for relationship computation",
+                                    f"Built knowledge graph with {entities:,} entities and {relationships:,} relationships",
                                     done=True,
                                 )
 
@@ -1010,26 +1058,40 @@ async def _run_batch_indexing(
 
                             # Final display with total time (phase1 and phase2 overlap)
                             total_time = phase_times["phase1"] + phase_times["phase3"]
+
+                            # Add swap message if force_reindex
+                            completion_title = "[bold green]✓[/bold green] [bold]📊 Indexing Complete[/bold]"
+                            if force_reindex:
+                                completion_title += " [dim](atomic rebuild)[/dim]"
+                            completion_title += f" [dim]Total: {total_time:.0f}s[/dim]"
+
                             layout["phases"].update(
                                 Panel(
                                     progress,
-                                    title=f"[bold green]✓[/bold green] [bold]📊 Indexing Complete[/bold] [dim]Total: {total_time:.0f}s[/dim]",
+                                    title=completion_title,
                                     border_style="green",
                                 )
                             )
 
                             # Update samples panel with completion message
+                            completion_msg = "[green]✓[/green] All phases complete!\n\n"
+                            if force_reindex:
+                                completion_msg += "[green]✓ Replaced live database with new index[/green]"
+                            else:
+                                completion_msg += (
+                                    "[dim]Index updated successfully[/dim]"
+                                )
+
                             layout["samples"].update(
                                 Panel(
-                                    "[green]✓[/green] All phases complete!\n\n"
-                                    "[dim]Use 'mcp-vector-search index relationships' to compute relationships now[/dim]",
+                                    completion_msg,
                                     title="[bold]📁 Status[/bold]",
                                     border_style="green",
                                 )
                             )
 
                     except Exception as e:
-                        logger.warning(f"Failed to mark relationships: {e}")
+                        logger.warning(f"Failed to build knowledge graph: {e}")
                         progress.update(
                             phase3_task,
                             completed=1,
