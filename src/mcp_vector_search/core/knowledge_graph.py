@@ -1765,6 +1765,178 @@ class KnowledgeGraph:
 
         return total
 
+    def add_persons_batch_sync(
+        self, persons: list["Person"], batch_size: int = 500
+    ) -> int:
+        """Batch insert persons using UNWIND (synchronous).
+
+        Args:
+            persons: List of Person objects
+            batch_size: Number of persons per batch (default 500)
+
+        Returns:
+            Number of persons inserted
+        """
+        if not self._initialized:
+            raise RuntimeError(
+                "KnowledgeGraph not initialized. Call initialize_sync() first."
+            )
+
+        total = 0
+        for i in range(0, len(persons), batch_size):
+            batch = persons[i : i + batch_size]
+            params = [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "email_hash": p.email_hash,
+                    "commits_count": p.commits_count,
+                    "first_commit": p.first_commit,
+                    "last_commit": p.last_commit,
+                }
+                for p in batch
+            ]
+
+            try:
+                self._execute_query(
+                    """
+                    UNWIND $batch AS p
+                    MERGE (n:Person {id: p.id})
+                    ON CREATE SET
+                        n.name = p.name,
+                        n.email_hash = p.email_hash,
+                        n.commits_count = p.commits_count,
+                        n.first_commit = p.first_commit,
+                        n.last_commit = p.last_commit
+                    ON MATCH SET
+                        n.name = p.name,
+                        n.commits_count = p.commits_count,
+                        n.last_commit = p.last_commit
+                """,
+                    {"batch": params},
+                )
+                total += len(batch)
+            except Exception as e:
+                logger.error(f"Failed to insert persons batch: {e}")
+                raise
+
+        return total
+
+    def add_project_sync(self, project: "Project") -> None:
+        """Add or update a project (synchronous).
+
+        Args:
+            project: Project object to add/update
+        """
+        if not self._initialized:
+            raise RuntimeError(
+                "KnowledgeGraph not initialized. Call initialize_sync() first."
+            )
+
+        try:
+            self._execute_query(
+                """
+                MERGE (p:Project {id: $id})
+                ON CREATE SET
+                    p.name = $name,
+                    p.description = $description,
+                    p.repo_url = $repo_url
+                ON MATCH SET
+                    p.name = $name,
+                    p.description = $description,
+                    p.repo_url = $repo_url
+                """,
+                {
+                    "id": project.id,
+                    "name": project.name,
+                    "description": project.description or "",
+                    "repo_url": project.repo_url or "",
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to add project {project.id}: {e}")
+            raise
+
+    def add_authored_relationship_sync(
+        self,
+        person_id: str,
+        entity_id: str,
+        timestamp: str,
+        commit_sha: str,
+        lines: int,
+    ) -> None:
+        """Add an AUTHORED relationship (synchronous).
+
+        Args:
+            person_id: ID of the Person node
+            entity_id: ID of the CodeEntity node
+            timestamp: ISO timestamp of authorship
+            commit_sha: Git commit SHA
+            lines: Number of lines authored
+        """
+        if not self._initialized:
+            raise RuntimeError(
+                "KnowledgeGraph not initialized. Call initialize_sync() first."
+            )
+
+        try:
+            self._execute_query(
+                """
+                MATCH (p:Person {id: $person_id}), (e:CodeEntity {id: $entity_id})
+                CREATE (p)-[r:AUTHORED]->(e)
+                SET r.timestamp = $timestamp,
+                    r.commit_sha = $commit_sha,
+                    r.lines_authored = $lines
+                """,
+                {
+                    "person_id": person_id,
+                    "entity_id": entity_id,
+                    "timestamp": timestamp,
+                    "commit_sha": commit_sha,
+                    "lines": lines,
+                },
+            )
+        except Exception as e:
+            logger.debug(f"Failed to add AUTHORED relationship: {e}")
+
+    def add_part_of_batch_sync(
+        self, entity_ids: list[str], project_id: str, batch_size: int = 500
+    ) -> int:
+        """Batch create PART_OF relationships (synchronous).
+
+        Args:
+            entity_ids: List of CodeEntity IDs
+            project_id: Project ID to link to
+            batch_size: Number of relationships per batch (default 500)
+
+        Returns:
+            Number of relationships created
+        """
+        if not self._initialized:
+            raise RuntimeError(
+                "KnowledgeGraph not initialized. Call initialize_sync() first."
+            )
+
+        total = 0
+        for i in range(0, len(entity_ids), batch_size):
+            batch = entity_ids[i : i + batch_size]
+
+            try:
+                self._execute_query(
+                    """
+                    UNWIND $entity_ids AS entity_id
+                    MATCH (e:CodeEntity {id: entity_id}), (p:Project {id: $project_id})
+                    CREATE (e)-[:PART_OF]->(p)
+                    """,
+                    {"entity_ids": batch, "project_id": project_id},
+                )
+                total += len(batch)
+            except Exception as e:
+                logger.error(f"Failed to create PART_OF relationships batch: {e}")
+                raise
+
+        return total
+
     async def add_entities_batch(
         self, entities: list[CodeEntity], batch_size: int = 500
     ) -> int:
