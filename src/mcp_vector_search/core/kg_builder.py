@@ -10,6 +10,7 @@ import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Optional
 
 import yaml
 from loguru import logger
@@ -251,6 +252,7 @@ class KGBuilder:
         chunks: list[CodeChunk],
         show_progress: bool = True,
         skip_documents: bool = False,
+        progress_tracker: Optional["ProgressTracker"] = None,
     ) -> dict[str, int]:
         """Build graph from code chunks using batch inserts (SYNCHRONOUS, Kuzu-safe).
 
@@ -261,10 +263,14 @@ class KGBuilder:
             chunks: List of code chunks to process
             show_progress: Whether to show progress bar
             skip_documents: Skip expensive DOCUMENTS relationship extraction (default False)
+            progress_tracker: Optional ProgressTracker for clean progress output
 
         Returns:
             Statistics dictionary with counts
         """
+        import time
+
+        start_time = time.time()
         # Separate code and text chunks
         code_chunks = [
             c
@@ -306,7 +312,11 @@ class KGBuilder:
         }
 
         # PHASE 1: Collect all data in Python (thread-safe)
-        console.print("[cyan]🔍 Phase 1: Scanning chunks...[/cyan]")
+        if progress_tracker:
+            progress_tracker.start("Building Knowledge Graph", total_phases=3)
+            progress_tracker.phase("Scanning chunks")
+        else:
+            console.print("[cyan]🔍 Phase 1: Scanning chunks...[/cyan]")
 
         code_entities: list[CodeEntity] = []
         doc_sections: list[DocSection] = []
@@ -340,37 +350,67 @@ class KGBuilder:
             for rel_type, rel_list in rels.items():
                 relationships[rel_type].extend(rel_list)
 
-        console.print(f"[green]✓ Scanned {len(chunks)} chunks[/green]")
-        console.print(f"  - {len(code_entities)} code entities")
-        console.print(f"  - {len(doc_sections)} doc sections")
-        console.print(f"  - {len(tags)} tags")
         total_rels = sum(len(r) for r in relationships.values())
-        console.print(f"  - {total_rels} relationships")
+
+        if progress_tracker:
+            progress_tracker.item(f"Processed {len(chunks):,} chunks", done=True)
+            progress_tracker.item(
+                f"Found {len(code_entities):,} code entities", done=True
+            )
+            progress_tracker.item(
+                f"Found {len(doc_sections):,} doc sections", done=True
+            )
+            progress_tracker.item(f"Found {len(tags):,} tags", done=True)
+        else:
+            console.print(f"[green]✓ Scanned {len(chunks)} chunks[/green]")
+            console.print(f"  - {len(code_entities)} code entities")
+            console.print(f"  - {len(doc_sections)} doc sections")
+            console.print(f"  - {len(tags)} tags")
+            console.print(f"  - {total_rels} relationships")
 
         # PHASE 2: Serial Kuzu insertion (single-threaded, no async)
-        console.print("[cyan]🏗️  Phase 2: Inserting entities into Kuzu...[/cyan]")
+        if progress_tracker:
+            progress_tracker.phase("Inserting entities")
+        else:
+            console.print("[cyan]🏗️  Phase 2: Inserting entities into Kuzu...[/cyan]")
 
         if code_entities:
             stats["entities"] = self.kg.add_entities_batch_sync(code_entities)
-            console.print(f"  ✓ {stats['entities']} code entities")
+            if progress_tracker:
+                progress_tracker.item(f"{stats['entities']:,} code entities", done=True)
+            else:
+                console.print(f"  ✓ {stats['entities']} code entities")
 
         if doc_sections:
             stats["doc_sections"] = self.kg.add_doc_sections_batch_sync(doc_sections)
-            console.print(f"  ✓ {stats['doc_sections']} doc sections")
+            if progress_tracker:
+                progress_tracker.item(
+                    f"{stats['doc_sections']:,} doc sections", done=True
+                )
+            else:
+                console.print(f"  ✓ {stats['doc_sections']} doc sections")
 
         if tags:
             stats["tags"] = self.kg.add_tags_batch_sync(list(tags))
-            console.print(f"  ✓ {stats['tags']} tags")
+            if progress_tracker:
+                progress_tracker.item(f"{stats['tags']:,} tags", done=True)
+            else:
+                console.print(f"  ✓ {stats['tags']} tags")
 
         total_entities = len(code_entities) + len(doc_sections) + len(tags)
-        console.print(f"[green]✓ Inserted {total_entities} entities[/green]")
 
         # PHASE 3: Validate and insert relationships
-        console.print("[cyan]🔗 Phase 3: Building relationships...[/cyan]")
+        if progress_tracker:
+            progress_tracker.phase("Building relationships")
+        else:
+            console.print("[cyan]🔗 Phase 3: Building relationships...[/cyan]")
 
         # CRITICAL: Query Kuzu to get ACTUAL entity IDs that exist in database
         # Don't trust Python sets - verify with Kuzu to prevent assertion failures
-        console.print("[dim]Querying Kuzu for actual entity IDs...[/dim]")
+        if progress_tracker:
+            progress_tracker.debug("Querying Kuzu for actual entity IDs...")
+        else:
+            console.print("[dim]Querying Kuzu for actual entity IDs...[/dim]")
 
         valid_entity_ids = set()
 
@@ -381,13 +421,21 @@ class KGBuilder:
             )
             code_entity_ids = {row[0] for row in result}
             valid_entity_ids.update(code_entity_ids)
-            console.print(
-                f"[dim]Found {len(code_entity_ids)} CodeEntity IDs in Kuzu[/dim]"
-            )
+            if progress_tracker:
+                progress_tracker.debug(
+                    f"Found {len(code_entity_ids)} CodeEntity IDs in Kuzu"
+                )
+            else:
+                console.print(
+                    f"[dim]Found {len(code_entity_ids)} CodeEntity IDs in Kuzu[/dim]"
+                )
         except Exception as e:
-            console.print(
-                f"[yellow]Warning: Failed to query CodeEntity IDs: {e}[/yellow]"
-            )
+            if progress_tracker:
+                progress_tracker.warning(f"Failed to query CodeEntity IDs: {e}")
+            else:
+                console.print(
+                    f"[yellow]Warning: Failed to query CodeEntity IDs: {e}[/yellow]"
+                )
 
         # Query DocSection IDs
         try:
@@ -396,24 +444,41 @@ class KGBuilder:
             )
             doc_ids = {row[0] for row in result}
             valid_entity_ids.update(doc_ids)
-            console.print(f"[dim]Found {len(doc_ids)} DocSection IDs in Kuzu[/dim]")
+            if progress_tracker:
+                progress_tracker.debug(f"Found {len(doc_ids)} DocSection IDs in Kuzu")
+            else:
+                console.print(f"[dim]Found {len(doc_ids)} DocSection IDs in Kuzu[/dim]")
         except Exception as e:
-            console.print(
-                f"[yellow]Warning: Failed to query DocSection IDs: {e}[/yellow]"
-            )
+            if progress_tracker:
+                progress_tracker.warning(f"Failed to query DocSection IDs: {e}")
+            else:
+                console.print(
+                    f"[yellow]Warning: Failed to query DocSection IDs: {e}[/yellow]"
+                )
 
         # Query Tag IDs
         try:
             result = self.kg._execute_query("MATCH (t:Tag) RETURN t.id as id", {})
             tag_ids = {row[0] for row in result}
             valid_entity_ids.update(tag_ids)
-            console.print(f"[dim]Found {len(tag_ids)} Tag IDs in Kuzu[/dim]")
+            if progress_tracker:
+                progress_tracker.debug(f"Found {len(tag_ids)} Tag IDs in Kuzu")
+            else:
+                console.print(f"[dim]Found {len(tag_ids)} Tag IDs in Kuzu[/dim]")
         except Exception as e:
-            console.print(f"[yellow]Warning: Failed to query Tag IDs: {e}[/yellow]")
+            if progress_tracker:
+                progress_tracker.warning(f"Failed to query Tag IDs: {e}")
+            else:
+                console.print(f"[yellow]Warning: Failed to query Tag IDs: {e}[/yellow]")
 
-        console.print(
-            f"[cyan]Validating relationships against {len(valid_entity_ids)} actual entity IDs...[/cyan]"
-        )
+        if progress_tracker:
+            progress_tracker.debug(
+                f"Validating relationships against {len(valid_entity_ids)} actual entity IDs..."
+            )
+        else:
+            console.print(
+                f"[cyan]Validating relationships against {len(valid_entity_ids)} actual entity IDs...[/cyan]"
+            )
 
         # CRITICAL: Use very small batch size (50) to avoid Kuzu assertion failures
         # Kuzu's Rust bindings have bugs that cause assertion failures in csr_node_group.cpp
@@ -439,10 +504,13 @@ class KGBuilder:
                         skipped += 1
                         if (
                             skipped <= 5
-                        ):  # Log first 5 invalid relationships for debugging
-                            console.print(
-                                f"[dim]  ⚠️ Skipping {rel_type}: {rel.source_id} -> {rel.target_id} "
-                                f"(source_ok={source_ok}, target_ok={target_ok})[/dim]"
+                            and progress_tracker
+                            and progress_tracker.verbose
+                        ):
+                            # Log first 5 invalid relationships for debugging
+                            progress_tracker.debug(
+                                f"Skipping {rel_type}: {rel.source_id} -> {rel.target_id} "
+                                f"(source_ok={source_ok}, target_ok={target_ok})"
                             )
 
                 if valid_rels:
@@ -451,38 +519,59 @@ class KGBuilder:
                     )
                     stats[rel_type.lower()] = count
                     total_inserted += count
-                    console.print(f"  ✓ {count} {rel_type.lower()} relations")
+                    if progress_tracker:
+                        progress_tracker.item(
+                            f"{count:,} {rel_type.lower()}", done=True
+                        )
+                    else:
+                        console.print(f"  ✓ {count} {rel_type.lower()} relations")
 
                 if skipped > 0:
                     total_skipped += skipped
-                    console.print(
-                        f"  [yellow]⚠️ Skipped {skipped} {rel_type.lower()} with missing nodes[/yellow]"
-                    )
+                    if progress_tracker:
+                        progress_tracker.warning(
+                            f"Skipped {skipped} {rel_type.lower()} with missing nodes"
+                        )
+                    else:
+                        console.print(
+                            f"  [yellow]⚠️ Skipped {skipped} {rel_type.lower()} with missing nodes[/yellow]"
+                        )
 
-        if total_skipped > 0:
-            console.print(
-                f"[yellow]⚠️ Total skipped: {total_skipped} relationships with invalid node references[/yellow]"
+        if total_skipped > 0 and progress_tracker:
+            progress_tracker.warning(
+                f"Total skipped: {total_skipped} relationships with invalid node references"
             )
-
-        console.print(f"[green]✓ Built {total_inserted} valid relationships[/green]")
 
         # PHASE 4: Skip DOCUMENTS extraction in sync version (too complex)
         if not skip_documents and text_chunks and code_chunks:
-            console.print(
-                "[yellow]⚠ Skipping DOCUMENTS extraction in synchronous mode[/yellow]"
-            )
-            console.print("  (use async version or run manually for full graph)")
+            if progress_tracker:
+                progress_tracker.warning(
+                    "Skipping DOCUMENTS extraction in synchronous mode"
+                )
+            else:
+                console.print(
+                    "[yellow]⚠ Skipping DOCUMENTS extraction in synchronous mode[/yellow]"
+                )
+                console.print("  (use async version or run manually for full graph)")
 
         # Save metadata
         processed_chunk_ids = {c.chunk_id or c.id for c in chunks}
-        build_duration = 0.0  # TODO: add timer
+        build_duration = time.time() - start_time
         self._save_metadata(
             source_chunk_count=len(chunks),
             source_chunk_ids=processed_chunk_ids,
             entities_created=total_entities,
-            relationships_created=total_rels,
+            relationships_created=total_inserted,
             build_duration_seconds=build_duration,
         )
+
+        # Show completion message
+        if progress_tracker:
+            progress_tracker.complete(
+                f"Knowledge graph built successfully! "
+                f"Total: {total_entities:,} entities, {total_inserted:,} relationships",
+                time_taken=build_duration,
+            )
 
         return stats
 

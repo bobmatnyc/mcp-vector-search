@@ -278,6 +278,12 @@ def build_kg(
         "--incremental",
         help="Only process new chunks not in previous build (incremental build)",
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose debug output (shows detailed progress)",
+    ),
 ):
     """Build knowledge graph from indexed chunks.
 
@@ -320,7 +326,10 @@ def build_kg(
                 )
                 raise typer.Exit(1)
 
-            console.print(f"[cyan]Loading {chunk_count} chunks from database...[/cyan]")
+            if verbose:
+                console.print(
+                    f"[cyan]Loading {chunk_count} chunks from database...[/cyan]"
+                )
 
             # Load chunks based on incremental mode
             processed_chunk_ids = set()
@@ -338,9 +347,10 @@ def build_kg(
                         processed_chunk_ids = set(
                             metadata.get("processed_chunk_ids", [])
                         )
-                console.print(
-                    f"[yellow]Incremental mode: {len(processed_chunk_ids)} chunks already processed[/yellow]"
-                )
+                if verbose:
+                    console.print(
+                        f"[yellow]Incremental mode: {len(processed_chunk_ids)} chunks already processed[/yellow]"
+                    )
 
             # Load all chunks
             chunks = []
@@ -366,14 +376,16 @@ def build_kg(
                 )
                 raise typer.Exit(0)
 
-            console.print(f"[green]✓ Loaded {len(chunks)} chunks[/green]")
+            if verbose:
+                console.print(f"[green]✓ Loaded {len(chunks)} chunks[/green]")
 
             # Serialize chunks to temp JSON file (inside async with to ensure DB is open)
             import sys
             from dataclasses import asdict
 
-            console.print("[dim]Serializing chunks to temp file...[/dim]")
-            sys.stdout.flush()  # Force flush
+            if verbose:
+                console.print("[dim]Serializing chunks to temp file...[/dim]")
+                sys.stdout.flush()  # Force flush
             temp_fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="kg_chunks_")
             try:
                 with open(temp_path, "w") as f:
@@ -383,29 +395,34 @@ def build_kg(
                     for chunk_dict in chunks_data:
                         chunk_dict["file_path"] = str(chunk_dict["file_path"])
                     json.dump(chunks_data, f)
-                console.print(f"[dim]Saved chunks to {temp_path}[/dim]")
-                sys.stdout.flush()  # Force flush
+                if verbose:
+                    console.print(f"[dim]Saved chunks to {temp_path}[/dim]")
+                    sys.stdout.flush()  # Force flush
             finally:
                 import os
 
                 os.close(temp_fd)
 
         # Return temp_path AFTER database is properly closed
-        console.print("[dim]Closing database...[/dim]")
-        sys.stdout.flush()  # Force flush
+        if verbose:
+            console.print("[dim]Closing database...[/dim]")
+            sys.stdout.flush()  # Force flush
 
         # CRITICAL: Explicitly close database and await cleanup
         # This ensures the async context manager has fully released resources
         await database.close()
-        console.print("[dim]Database closed explicitly[/dim]")
-        sys.stdout.flush()
+        if verbose:
+            console.print("[dim]Database closed explicitly[/dim]")
+            sys.stdout.flush()
 
         return temp_path
 
     # Load chunks in parent process (before spawning subprocess)
-    console.print("[cyan]Loading chunks in parent process...[/cyan]")
+    if verbose:
+        console.print("[cyan]Loading chunks in parent process...[/cyan]")
     chunks_file = asyncio.run(_load_and_prepare_chunks())
-    console.print(f"[green]✓ Chunks saved to {chunks_file}[/green]")
+    if verbose:
+        console.print(f"[green]✓ Chunks saved to {chunks_file}[/green]")
 
     # CRITICAL: Force cleanup of asyncio resources and background threads
     # LanceDB creates a persistent "LanceDBBackgroundEventLoop" daemon thread
@@ -414,7 +431,8 @@ def build_kg(
     import threading
     import time
 
-    console.print("[dim]Forcing cleanup of async resources...[/dim]")
+    if verbose:
+        console.print("[dim]Forcing cleanup of async resources...[/dim]")
 
     # Force garbage collection to cleanup lingering asyncio resources
     gc.collect()
@@ -424,7 +442,8 @@ def build_kg(
         loop = asyncio.get_event_loop()
         if loop and not loop.is_closed():
             loop.close()
-            console.print("[dim]Closed asyncio event loop[/dim]")
+            if verbose:
+                console.print("[dim]Closed asyncio event loop[/dim]")
     except RuntimeError:
         pass  # No event loop in current thread
 
@@ -435,34 +454,37 @@ def build_kg(
     max_wait = 3.0  # Wait up to 3 seconds
     start_time = time.time()
     threads = threading.enumerate()
-    console.print(f"[dim]Initial threads: {[t.name for t in threads]}[/dim]")
+    if verbose:
+        console.print(f"[dim]Initial threads: {[t.name for t in threads]}[/dim]")
 
     while len(threads) > 1 and (time.time() - start_time) < max_wait:
         time.sleep(0.2)
         gc.collect()  # Keep collecting
         threads = threading.enumerate()
 
-    # Final check
+    # Final check - only warn in verbose mode or if there are actual problematic threads
     threads = threading.enumerate()
     if len(threads) > 1:
         background = [t for t in threads if t != threading.main_thread()]
-        console.print(
-            f"[yellow]⚠ Warning: {len(background)} background thread(s) still active:[/yellow]"
-        )
-        for t in background:
-            console.print(f"  - {t.name} (daemon={t.daemon})")
-        console.print()
-        console.print(
-            "[yellow]These daemon threads will be inherited by subprocess.[/yellow]"
-        )
-        console.print(
-            "[yellow]Subprocess will fail with segfault if threads interfere with Kuzu.[/yellow]"
-        )
-        console.print()
+        if verbose:
+            console.print(
+                f"[yellow]⚠ Warning: {len(background)} background thread(s) still active:[/yellow]"
+            )
+            for t in background:
+                console.print(f"  - {t.name} (daemon={t.daemon})")
+            console.print()
+            console.print(
+                "[yellow]These daemon threads will be inherited by subprocess.[/yellow]"
+            )
+            console.print(
+                "[yellow]Subprocess will fail with segfault if threads interfere with Kuzu.[/yellow]"
+            )
+            console.print()
     else:
-        console.print(
-            "[green]✓ No background threads, safe to spawn subprocess[/green]"
-        )
+        if verbose:
+            console.print(
+                "[green]✓ No background threads, safe to spawn subprocess[/green]"
+            )
 
     # Run in completely isolated subprocess using subprocess.run()
     # This is necessary because Kuzu (Rust-based) segfaults with background threads
@@ -470,7 +492,8 @@ def build_kg(
     # because multiprocessing can inherit module state including LanceDB threads
     import subprocess
 
-    console.print("[dim]Starting completely isolated subprocess...[/dim]")
+    if verbose:
+        console.print("[dim]Starting completely isolated subprocess...[/dim]")
 
     # Build command to execute the isolated subprocess script
     # CRITICAL: Use the SAME Python interpreter that's running mcp-vector-search
@@ -490,7 +513,8 @@ def build_kg(
     else:
         python_executable = sys.executable
 
-    console.print(f"[dim]Using Python: {python_executable}[/dim]")
+    if verbose:
+        console.print(f"[dim]Using Python: {python_executable}[/dim]")
 
     subprocess_script = Path(__file__).parent / "_kg_subprocess.py"
     cmd = [
@@ -503,8 +527,11 @@ def build_kg(
         cmd.append("--force")
     if skip_documents:
         cmd.append("--skip-documents")
+    if verbose:
+        cmd.append("--verbose")
 
-    console.print(f"[dim]Command: {' '.join(cmd)}[/dim]")
+    if verbose:
+        console.print(f"[dim]Command: {' '.join(cmd)}[/dim]")
 
     # Run subprocess with inherited stdout/stderr for live output
     result = subprocess.run(
@@ -514,7 +541,10 @@ def build_kg(
         stderr=None,  # Inherit stderr (shows in console)
     )
 
-    console.print(f"[dim]Subprocess finished with exitcode: {result.returncode}[/dim]")
+    if verbose:
+        console.print(
+            f"[dim]Subprocess finished with exitcode: {result.returncode}[/dim]"
+        )
 
     if result.returncode != 0:
         console.print(f"[red]✗ Build failed with exit code {result.returncode}[/red]")
@@ -525,7 +555,8 @@ def build_kg(
             pass
         raise typer.Exit(result.returncode)
 
-    console.print("[green]✓ Build completed successfully in subprocess[/green]")
+    if verbose:
+        console.print("[green]✓ Build completed successfully in subprocess[/green]")
 
 
 @kg_app.command("query")

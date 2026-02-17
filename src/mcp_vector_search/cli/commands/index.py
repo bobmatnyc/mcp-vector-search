@@ -16,6 +16,7 @@ from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
 from ...core.factory import create_database
 from ...core.indexer import SemanticIndexer
+from ...core.progress import ProgressTracker
 from ...core.project import ProjectManager
 from ..output import (
     console,
@@ -92,6 +93,13 @@ def main(
         "--debug",
         "-d",
         help="Enable debug output (shows hierarchy building details)",
+        rich_help_panel="🔍 Debugging",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show verbose progress output with phase tracking",
         rich_help_panel="🔍 Debugging",
     ),
     skip_relationships: bool = typer.Option(
@@ -185,6 +193,7 @@ def main(
                 batch_size=batch_size,
                 show_progress=True,
                 debug=debug,
+                verbose=verbose,
                 skip_relationships=skip_relationships,
                 auto_optimize=auto_optimize,
                 phase=phase,
@@ -339,6 +348,7 @@ async def run_indexing(
     batch_size: int = 32,
     show_progress: bool = True,
     debug: bool = False,
+    verbose: bool = False,
     skip_relationships: bool = False,
     auto_optimize: bool = True,
     phase: str = "all",
@@ -451,13 +461,23 @@ async def run_indexing(
             )
             console.print("[dim]   Use --force to reindex everything[/dim]\n")
 
+    # Create progress tracker if verbose mode enabled
+    progress_tracker_obj = None
+    if verbose:
+        progress_tracker_obj = ProgressTracker(console, verbose=verbose)
+
     try:
         async with database:
             if watch:
                 await _run_watch_mode(indexer, show_progress)
             else:
                 await _run_batch_indexing(
-                    indexer, force_reindex, show_progress, skip_relationships, phase
+                    indexer,
+                    force_reindex,
+                    show_progress,
+                    skip_relationships,
+                    phase,
+                    progress_tracker_obj,
                 )
 
     except Exception as e:
@@ -471,6 +491,7 @@ async def _run_batch_indexing(
     show_progress: bool,
     skip_relationships: bool = False,
     phase: str = "all",
+    progress_tracker: ProgressTracker | None = None,
 ) -> None:
     """Run batch indexing of all files with three-phase progress display."""
     # Initialize progress state tracking
@@ -478,6 +499,12 @@ async def _run_batch_indexing(
 
     progress_manager = ProgressStateManager(indexer.project_root)
     progress_manager.reset()  # Start fresh tracking
+
+    # Start progress tracking if verbose mode enabled
+    if progress_tracker:
+        progress_tracker.start(
+            f"Indexing project: {indexer.project_root}", total_phases=4
+        )
 
     if show_progress:
         # Import enhanced progress utilities
@@ -501,6 +528,10 @@ async def _run_batch_indexing(
         from ..output import console
 
         console.print()  # Add blank line before progress
+
+        # Phase 1: File discovery
+        if progress_tracker:
+            progress_tracker.phase("Discovering files")
 
         # Track discovery progress
         dirs_scanned = 0
@@ -546,6 +577,18 @@ async def _run_batch_indexing(
 
         total_files = len(files_to_index)
 
+        # Progress tracker update for file discovery
+        if progress_tracker:
+            progress_tracker.item(
+                f"Found {len(indexable_files)} total files", done=True
+            )
+            if total_files < len(indexable_files):
+                progress_tracker.item(
+                    f"{total_files} files need indexing (incremental update)", done=True
+                )
+            else:
+                progress_tracker.item(f"{total_files} files to index", done=True)
+
         # Initialize progress state with total files
         progress_manager.update_chunking(total_files=total_files)
 
@@ -557,6 +600,12 @@ async def _run_batch_indexing(
             )
             console.print("[dim]   No new or modified files to index[/dim]\n")
             indexed_count = 0
+
+            # Complete progress tracker if enabled
+            if progress_tracker:
+                progress_tracker.complete(
+                    "All files up to date, no indexing needed", time_taken=0
+                )
         elif total_files == len(indexable_files):
             # Full indexing (first run or force)
             console.print(
@@ -673,6 +722,10 @@ async def _run_batch_indexing(
                     border_style="dim",
                 )
             )
+
+            # Progress tracker: Phase 2 - Parsing & Chunking
+            if progress_tracker:
+                progress_tracker.phase("Parsing & chunking")
 
             # Create live display
             with Live(layout, console=console, refresh_per_second=4):
@@ -794,6 +847,13 @@ async def _run_batch_indexing(
                 # Phase 1 & 2 complete (they happen together in current implementation)
                 phase_times["phase1"] = time.time() - phase_start_times["phase1"]
 
+                # Progress tracker update for parsing/chunking completion
+                if progress_tracker:
+                    progress_tracker.item(f"Parsed {indexed_count} files", done=True)
+                    progress_tracker.item(
+                        f"Generated {total_chunks_created:,} chunks", done=True
+                    )
+
                 # Include existing files in completion message
                 final_total = existing_count + indexed_count
                 if existing_count > 0:
@@ -815,6 +875,13 @@ async def _run_batch_indexing(
                     completed=chunks_embedded,
                     progress_text=f"{chunks_embedded:,} chunks embedded • {phase_times['phase1']:.0f}s",
                 )
+
+                # Progress tracker: Phase 3 - Embedding
+                if progress_tracker:
+                    progress_tracker.phase("Generating embeddings")
+                    progress_tracker.item(
+                        f"Embedded {chunks_embedded:,} chunks", done=True
+                    )
 
                 # Update display
                 layout["phases"].update(
@@ -850,6 +917,10 @@ async def _run_batch_indexing(
                 # Phase 3: Knowledge Graph building (mark relationships)
                 if not skip_relationships and indexed_count > 0:
                     try:
+                        # Progress tracker: Phase 4 - KG Build
+                        if progress_tracker:
+                            progress_tracker.phase("Building knowledge graph")
+
                         phase_start_times["phase3"] = time.time()
 
                         all_chunks = await indexer.database.get_all_chunks()
@@ -874,6 +945,13 @@ async def _run_batch_indexing(
                                 phase3_task,
                                 progress_text=f"marked • {phase_times['phase3']:.0f}s",
                             )
+
+                            # Progress tracker update for KG build
+                            if progress_tracker:
+                                progress_tracker.item(
+                                    f"Marked {len(all_chunks):,} chunks for relationship computation",
+                                    done=True,
+                                )
 
                             # Mark indexing as complete in progress state
                             progress_manager.mark_complete()
@@ -922,6 +1000,14 @@ async def _run_batch_indexing(
                 else:
                     # If relationships were skipped, still mark as complete
                     progress_manager.mark_complete()
+
+            # Progress tracker completion
+            if progress_tracker:
+                total_time = phase_times["phase1"] + phase_times.get("phase3", 0)
+                progress_tracker.complete(
+                    f"Indexing complete! Files: {indexed_count}, Chunks: {total_chunks_created:,}",
+                    time_taken=total_time,
+                )
 
             # Final progress summary
             console.print()

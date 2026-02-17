@@ -21,20 +21,31 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 def main():
     """Entry point for subprocess KG build."""
     import argparse
+    import sys
 
+    from loguru import logger
     from rich.console import Console
     from rich.table import Table
 
     from mcp_vector_search.core.kg_builder import KGBuilder
     from mcp_vector_search.core.knowledge_graph import KnowledgeGraph
     from mcp_vector_search.core.models import CodeChunk
+    from mcp_vector_search.core.progress import ProgressTracker
 
     parser = argparse.ArgumentParser()
     parser.add_argument("project_root", type=str)
     parser.add_argument("chunks_file", type=str)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--skip-documents", action="store_true")
+    parser.add_argument(
+        "--verbose", action="store_true", help="Enable verbose debug output"
+    )
     args = parser.parse_args()
+
+    # Suppress DEBUG logs unless --verbose
+    if not args.verbose:
+        logger.remove()
+        logger.add(sys.stderr, level="WARNING")
 
     console = Console()
     project_root = Path(args.project_root)
@@ -42,9 +53,10 @@ def main():
 
     # Check threads immediately
     threads = threading.enumerate()
-    console.print(f"[cyan]🔍 Thread check: {len(threads)} thread(s) active[/cyan]")
-    for t in threads:
-        console.print(f"  - {t.name} (daemon={t.daemon})")
+    if args.verbose:
+        console.print(f"[cyan]🔍 Thread check: {len(threads)} thread(s) active[/cyan]")
+        for t in threads:
+            console.print(f"  - {t.name} (daemon={t.daemon})")
 
     if len(threads) > 1:
         background_threads = [t for t in threads if t != threading.main_thread()]
@@ -62,7 +74,8 @@ def main():
 
     try:
         # Load chunks from JSON file (no database access!)
-        console.print(f"[cyan]Loading chunks from {chunks_file.name}...[/cyan]")
+        if args.verbose:
+            console.print(f"[cyan]Loading chunks from {chunks_file.name}...[/cyan]")
         with open(chunks_file) as f:
             chunks_data = json.load(f)
 
@@ -71,7 +84,9 @@ def main():
         for chunk_dict in chunks_data:
             chunk_dict["file_path"] = Path(chunk_dict["file_path"])
             chunks.append(CodeChunk(**chunk_dict))
-        console.print(f"[green]✓ Loaded {len(chunks)} chunks[/green]")
+
+        if args.verbose:
+            console.print(f"[green]✓ Loaded {len(chunks)} chunks[/green]")
 
         if len(chunks) == 0:
             console.print(
@@ -84,7 +99,10 @@ def main():
 
         # Force rebuild if requested
         if args.force and kg_path.exists():
-            console.print("[yellow]🗑️  Force rebuild: removing existing KG...[/yellow]")
+            if args.verbose:
+                console.print(
+                    "[yellow]🗑️  Force rebuild: removing existing KG...[/yellow]"
+                )
             import shutil
 
             for item in kg_path.iterdir():
@@ -93,7 +111,8 @@ def main():
                         shutil.rmtree(item)
                     else:
                         item.unlink()
-            console.print("[green]✓ Old KG files removed[/green]")
+            if args.verbose:
+                console.print("[green]✓ Old KG files removed[/green]")
 
         kg = KnowledgeGraph(kg_path)
         kg.initialize_sync()
@@ -115,14 +134,19 @@ def main():
 
         # Override batch size for relationship insertion
         safe_batch_size = 100  # Smaller batches to avoid segfaults
-        console.print(
-            f"[dim]Using batch size: {safe_batch_size} for relationship insertion[/dim]"
-        )
+        if args.verbose:
+            console.print(
+                f"[dim]Using batch size: {safe_batch_size} for relationship insertion[/dim]"
+            )
+
+        # Create progress tracker
+        progress_tracker = ProgressTracker(console, verbose=args.verbose)
 
         build_stats = builder.build_from_chunks_sync(
             chunks,
             show_progress=True,
             skip_documents=args.skip_documents,
+            progress_tracker=progress_tracker,
         )
 
         # Show results
