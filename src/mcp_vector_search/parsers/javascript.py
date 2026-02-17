@@ -13,12 +13,18 @@ class JavaScriptParser(BaseParser):
     """JavaScript parser with tree-sitter AST support and fallback regex parsing."""
 
     def __init__(self, language: str = "javascript") -> None:
-        """Initialize JavaScript parser."""
+        """Initialize JavaScript parser with lazy grammar loading."""
         super().__init__(language)
         self._parser = None
         self._language = None
         self._use_tree_sitter = False
-        self._initialize_parser()
+        self._initialized = False
+
+    def _ensure_parser_initialized(self) -> None:
+        """Ensure tree-sitter parser is initialized (lazy loading)."""
+        if not self._initialized:
+            self._initialize_parser()
+            self._initialized = True
 
     def _initialize_parser(self) -> None:
         """Initialize Tree-sitter parser for JavaScript."""
@@ -52,6 +58,9 @@ class JavaScriptParser(BaseParser):
         if not content.strip():
             return []
 
+        # Lazy load parser on first use
+        self._ensure_parser_initialized()
+
         if self._use_tree_sitter:
             try:
                 tree = self._parser.parse(content.encode("utf-8"))
@@ -61,6 +70,50 @@ class JavaScriptParser(BaseParser):
                 return await self._regex_parse(content, file_path)
         else:
             return await self._regex_parse(content, file_path)
+
+    def parse_file_sync(self, file_path: Path) -> list[CodeChunk]:
+        """Parse file synchronously (optimized for multiprocessing workers)."""
+        try:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            return self._parse_content_sync(content, file_path)
+        except Exception as e:
+            logger.error(f"Failed to read file {file_path}: {e}")
+            return []
+
+    def _parse_content_sync(self, content: str, file_path: Path) -> list[CodeChunk]:
+        """Parse content synchronously without async overhead."""
+        if not content.strip():
+            return []
+
+        # Lazy load parser on first use
+        self._ensure_parser_initialized()
+
+        if self._use_tree_sitter:
+            try:
+                tree = self._parser.parse(content.encode("utf-8"))
+                return self._extract_chunks_from_tree(tree, content, file_path)
+            except Exception as e:
+                logger.warning(f"Tree-sitter parsing failed for {file_path}: {e}")
+                # Fallback to regex parse (need to run async in sync context)
+                import asyncio
+
+                loop = asyncio.new_event_loop()
+                try:
+                    return loop.run_until_complete(
+                        self._regex_parse(content, file_path)
+                    )
+                finally:
+                    loop.close()
+        else:
+            # Use regex parse fallback
+            import asyncio
+
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(self._regex_parse(content, file_path))
+            finally:
+                loop.close()
 
     def _extract_chunks_from_tree(
         self, tree, content: str, file_path: Path

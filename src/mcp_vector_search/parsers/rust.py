@@ -18,7 +18,7 @@ class RustParser(BaseParser):
         self._parser = None
         self._language = None
         self._use_tree_sitter = False
-        self._initialize_parser()
+        self._initialized = False
 
     def _initialize_parser(self) -> None:
         """Initialize Tree-sitter parser for Rust."""
@@ -37,6 +37,12 @@ class RustParser(BaseParser):
             logger.debug(f"tree-sitter-language-pack failed: {e}, using regex fallback")
             self._use_tree_sitter = False
 
+    def _ensure_parser_initialized(self) -> None:
+        """Ensure tree-sitter parser is initialized (lazy loading)."""
+        if not self._initialized:
+            self._initialize_parser()
+            self._initialized = True
+
     async def parse_file(self, file_path: Path) -> list[CodeChunk]:
         """Parse a Rust file and extract code chunks."""
         try:
@@ -51,6 +57,9 @@ class RustParser(BaseParser):
         """Parse Rust content and extract code chunks."""
         if not content.strip():
             return []
+
+        # Lazy load parser on first use
+        self._ensure_parser_initialized()
 
         if self._use_tree_sitter:
             try:
@@ -662,6 +671,48 @@ class RustParser(BaseParser):
             pos += 1
 
         return None, 0
+
+    def parse_file_sync(self, file_path: Path) -> list[CodeChunk]:
+        """Parse file synchronously (optimized for multiprocessing workers)."""
+        try:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            return self._parse_content_sync(content, file_path)
+        except Exception as e:
+            logger.error(f"Failed to read file {file_path}: {e}")
+            return []
+
+    def _parse_content_sync(self, content: str, file_path: Path) -> list[CodeChunk]:
+        """Parse content synchronously without async overhead."""
+        if not content.strip():
+            return []
+
+        # Lazy load parser on first use
+        self._ensure_parser_initialized()
+
+        if self._use_tree_sitter:
+            try:
+                tree = self._parser.parse(content.encode("utf-8"))
+                return self._extract_chunks_from_tree(tree, content, file_path)
+            except Exception as e:
+                logger.warning(f"Tree-sitter parsing failed for {file_path}: {e}")
+                import asyncio
+
+                loop = asyncio.new_event_loop()
+                try:
+                    return loop.run_until_complete(
+                        self._regex_parse(content, file_path)
+                    )
+                finally:
+                    loop.close()
+        else:
+            import asyncio
+
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(self._regex_parse(content, file_path))
+            finally:
+                loop.close()
 
     def get_supported_extensions(self) -> list[str]:
         """Get supported file extensions."""

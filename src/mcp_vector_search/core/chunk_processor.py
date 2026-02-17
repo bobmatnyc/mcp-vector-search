@@ -116,6 +116,9 @@ def _parse_file_standalone(
     This function must be at module level (not a method) to be picklable for
     multiprocessing. It creates its own parser registry to avoid serialization issues.
 
+    OPTIMIZATION: Uses synchronous parse_file_sync() to avoid async overhead,
+    since tree-sitter operations are CPU-bound and synchronous anyway.
+
     Args:
         args: Tuple of (file_path, subproject_info_json)
             - file_path: Path to the file to parse
@@ -130,26 +133,15 @@ def _parse_file_standalone(
     file_path, subproject_info_json = args
 
     try:
-        # Create parser registry in this process
+        # Create parser registry in this process (lazy loading, only creates needed parser)
         parser_registry = get_parser_registry()
 
-        # Get appropriate parser
+        # Get appropriate parser (lazy instantiation)
         parser = parser_registry.get_parser_for_file(file_path)
 
-        # Parse file synchronously (tree-sitter is synchronous anyway)
-        # We need to use the synchronous version of parse_file
-        # Since parsers may have async methods, we'll read and parse directly
-        import asyncio
-
-        # Create event loop for this process if needed
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        # Run the async parse_file in this process's event loop
-        chunks = loop.run_until_complete(parser.parse_file(file_path))
+        # Parse file synchronously - no async/event loop overhead!
+        # Parser grammar is loaded lazily on first actual parse
+        chunks = parser.parse_file_sync(file_path)
 
         # Filter out empty chunks
         valid_chunks = [chunk for chunk in chunks if chunk.content.strip()]

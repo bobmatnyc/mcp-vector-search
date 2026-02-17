@@ -22,17 +22,23 @@ class PythonParser(BaseParser):
     """
 
     def __init__(self) -> None:
-        """Initialize Python parser."""
+        """Initialize Python parser with lazy grammar loading."""
         super().__init__("python")
         self._parser = None
         self._language = None
-        self._initialize_parser()
+        self._initialized = False
 
-        # Initialize extractors
+        # Initialize extractors (lightweight, no tree-sitter dependency)
         self._function_extractor = FunctionExtractor(self)
         self._class_extractor = ClassExtractor(self)
         self._module_extractor = ModuleExtractor(self)
         self._fallback_parser = RegexFallbackParser(self)
+
+    def _ensure_parser_initialized(self) -> None:
+        """Ensure tree-sitter parser is initialized (lazy loading)."""
+        if not self._initialized:
+            self._initialize_parser()
+            self._initialized = True
 
     def _initialize_parser(self) -> None:
         """Initialize Tree-sitter parser for Python."""
@@ -97,6 +103,9 @@ class PythonParser(BaseParser):
         if not content.strip():
             return []
 
+        # Lazy load parser on first use
+        self._ensure_parser_initialized()
+
         # If Tree-sitter is not available, fall back to simple parsing
         if not self._parser:
             return await self._fallback_parser.parse(content, file_path)
@@ -108,6 +117,56 @@ class PythonParser(BaseParser):
         except Exception as e:
             logger.warning(f"Tree-sitter parsing failed for {file_path}: {e}")
             return await self._fallback_parser.parse(content, file_path)
+
+    def parse_file_sync(self, file_path: Path) -> list[CodeChunk]:
+        """Parse file synchronously (optimized for multiprocessing workers).
+
+        This avoids async overhead by directly calling synchronous tree-sitter.
+        """
+        try:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            return self._parse_content_sync(content, file_path)
+        except Exception as e:
+            logger.error(f"Failed to read file {file_path}: {e}")
+            return []
+
+    def _parse_content_sync(self, content: str, file_path: Path) -> list[CodeChunk]:
+        """Parse content synchronously without async overhead."""
+        if not content.strip():
+            return []
+
+        # Lazy load parser on first use
+        self._ensure_parser_initialized()
+
+        # If Tree-sitter is not available, fall back to simple parsing
+        if not self._parser:
+            # Use synchronous fallback
+            import asyncio
+
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(
+                    self._fallback_parser.parse(content, file_path)
+                )
+            finally:
+                loop.close()
+
+        try:
+            # Parse with Tree-sitter (synchronous)
+            tree = self._parser.parse(content.encode("utf-8"))
+            return self._extract_chunks_from_tree(tree, content, file_path)
+        except Exception as e:
+            logger.warning(f"Tree-sitter parsing failed for {file_path}: {e}")
+            import asyncio
+
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(
+                    self._fallback_parser.parse(content, file_path)
+                )
+            finally:
+                loop.close()
 
     def _extract_chunks_from_tree(
         self, tree, content: str, file_path: Path
