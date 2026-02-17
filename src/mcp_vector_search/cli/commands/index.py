@@ -1108,9 +1108,16 @@ async def _run_batch_indexing(
 
                             # Suggest next steps
                             completion_msg += (
-                                "[dim]Next steps:[/dim]\n"
-                                "  • [cyan]mcp-vector-search search <query>[/cyan] - Search your code\n"
-                                "  • [cyan]mcp-vector-search index relationships[/cyan] - Compute semantic relationships"
+                                "[bold]Search/Chat:[/bold]\n"
+                                "  [cyan]mcp-vector-search search '<query>'[/cyan] - Semantic search\n"
+                                "  [cyan]mcp-vector-search chat '<question>'[/cyan] - Ask AI about code\n"
+                                "  [cyan]mcp-vector-search status[/cyan] - View statistics\n\n"
+                                "[bold]Knowledge Graph:[/bold]\n"
+                                "  [cyan]mcp-vector-search kg stats[/cyan] - Graph statistics\n"
+                                "  [cyan]mcp-vector-search kg query '<entity>'[/cyan] - Find related\n"
+                                "  [cyan]mcp-vector-search kg calls '<func>'[/cyan] - Call graph\n\n"
+                                "[bold]Visualization:[/bold]\n"
+                                "  [cyan]mcp-vector-search visualize[/cyan] - Interactive explorer"
                             )
 
                             layout["samples"].update(
