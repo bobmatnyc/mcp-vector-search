@@ -542,17 +542,38 @@ class KGBuilder:
                 f"Total skipped: {total_skipped} relationships with invalid node references"
             )
 
-        # PHASE 4: Skip DOCUMENTS extraction in sync version (too complex)
+        # PHASE 4: Extract work entities from git (persons, project, authorship)
+        if progress_tracker:
+            progress_tracker.phase("Extracting git metadata")
+        else:
+            console.print("[cyan]👤 Phase 4: Extracting git metadata...[/cyan]")
+
+        # Extract persons from git log
+        persons = self._extract_git_authors_sync(stats, progress_tracker)
+
+        # Extract project info
+        project = self._extract_project_info_sync(stats, progress_tracker)
+
+        # Extract AUTHORED relationships
+        if code_entities and persons:
+            self._extract_authorship_sync(
+                code_entities, persons, stats, progress_tracker
+            )
+
+        # Extract PART_OF relationships
+        if code_entities and project:
+            self._extract_part_of_sync(code_entities, project, stats, progress_tracker)
+
+        # PHASE 5: Skip DOCUMENTS extraction in sync version (too expensive)
         if not skip_documents and text_chunks and code_chunks:
             if progress_tracker:
                 progress_tracker.warning(
-                    "Skipping DOCUMENTS extraction in synchronous mode"
+                    "Skipping DOCUMENTS extraction (computationally expensive)"
                 )
             else:
                 console.print(
-                    "[yellow]⚠ Skipping DOCUMENTS extraction in synchronous mode[/yellow]"
+                    "[yellow]⚠ Skipping DOCUMENTS extraction (computationally expensive)[/yellow]"
                 )
-                console.print("  (use async version or run manually for full graph)")
 
         # Save metadata
         processed_chunk_ids = {c.chunk_id or c.id for c in chunks}
@@ -1723,6 +1744,80 @@ class KGBuilder:
 
         return persons
 
+    def _extract_git_authors_sync(
+        self, stats: dict, progress_tracker: Optional["ProgressTracker"] = None
+    ) -> dict[str, "Person"]:
+        """Extract Person entities from git log (synchronous).
+
+        Args:
+            stats: Statistics dictionary to update
+            progress_tracker: Optional progress tracker for status updates
+
+        Returns:
+            Dictionary mapping person_id to Person
+        """
+        persons = {}
+
+        try:
+            # Get all commits with author info
+            result = subprocess.run(
+                ["git", "log", "--format=%H|%an|%ae|%aI", "--all"],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            )
+
+            for line in result.stdout.strip().split("\n"):
+                if not line:
+                    continue
+                parts = line.split("|")
+                if len(parts) < 4:
+                    continue
+
+                commit_sha, name, email, timestamp = parts[:4]
+                email_hash = self._hash_email(email)
+                person_id = f"person:{email_hash}"
+
+                if person_id not in persons:
+                    persons[person_id] = Person(
+                        id=person_id,
+                        name=name,
+                        email_hash=email_hash,
+                        commits_count=1,
+                        first_commit=timestamp,
+                        last_commit=timestamp,
+                    )
+                else:
+                    persons[person_id].commits_count += 1
+                    if timestamp > persons[person_id].last_commit:
+                        persons[person_id].last_commit = timestamp
+                    if timestamp < persons[person_id].first_commit:
+                        persons[person_id].first_commit = timestamp
+
+            # Add persons to KG (batch sync)
+            if persons:
+                person_list = list(persons.values())
+                stats["persons"] = self.kg.add_persons_batch_sync(person_list)
+                if progress_tracker:
+                    progress_tracker.item(
+                        f"{stats['persons']:,} persons from git", done=True
+                    )
+                else:
+                    logger.info(f"✓ Extracted {len(persons)} person entities from git")
+
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Git log failed: {e}")
+        except subprocess.TimeoutExpired:
+            logger.warning("Git log timed out after 30 seconds")
+        except FileNotFoundError:
+            logger.debug("Git not found, skipping git author extraction")
+        except Exception as e:
+            logger.debug(f"Failed to extract git authors: {e}")
+
+        return persons
+
     async def _extract_project_info(self, stats: dict) -> Project | None:
         """Extract Project entity from repo metadata.
 
@@ -1774,6 +1869,67 @@ class KGBuilder:
         await self.kg.add_project(project)
         stats["projects"] = 1
         logger.info(f"✓ Extracted project: {project_name}")
+
+        return project
+
+    def _extract_project_info_sync(
+        self, stats: dict, progress_tracker: Optional["ProgressTracker"] = None
+    ) -> Optional["Project"]:
+        """Extract Project entity from repo metadata (synchronous).
+
+        Args:
+            stats: Statistics dictionary to update
+            progress_tracker: Optional progress tracker for status updates
+
+        Returns:
+            Project entity or None if extraction fails
+        """
+        project_name = self.project_root.name
+        description = ""
+        repo_url = ""
+
+        # Try to get repo URL
+        try:
+            result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                repo_url = result.stdout.strip()
+        except Exception:
+            pass
+
+        # Try to get description from pyproject.toml
+        pyproject = self.project_root / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                import tomllib
+
+                with open(pyproject, "rb") as f:
+                    data = tomllib.load(f)
+                if "project" in data:
+                    project_name = data["project"].get("name", project_name)
+                    description = data["project"].get("description", "")
+            except Exception as e:
+                logger.debug(f"Failed to parse pyproject.toml: {e}")
+
+        project = Project(
+            id=f"project:{project_name}",
+            name=project_name,
+            description=description,
+            repo_url=repo_url,
+        )
+
+        # Add project to KG (sync)
+        self.kg.add_project_sync(project)
+        stats["projects"] = 1
+        if progress_tracker:
+            progress_tracker.item(f"project: {project_name}", done=True)
+        else:
+            logger.info(f"✓ Extracted project: {project_name}")
 
         return project
 
@@ -2974,6 +3130,133 @@ class KGBuilder:
 
         stats["authored"] = authored_count
         logger.info(f"✓ Created {authored_count} AUTHORED relationships")
+
+    def _extract_authorship_sync(
+        self,
+        code_entities: list["CodeEntity"],
+        persons: dict[str, "Person"],
+        stats: dict,
+        progress_tracker: Optional["ProgressTracker"] = None,
+    ) -> None:
+        """Extract AUTHORED relationships using git log (synchronous).
+
+        Args:
+            code_entities: List of CodeEntity objects
+            persons: Dictionary of person entities
+            stats: Statistics dictionary to update
+            progress_tracker: Optional progress tracker for status updates
+        """
+        authored_count = 0
+
+        # Build file -> entity mapping
+        file_to_entities: dict[str, list[str]] = {}
+        for entity in code_entities:
+            if not entity.file_path:
+                continue
+            # Normalize to relative path
+            try:
+                rel_path = Path(entity.file_path).relative_to(self.project_root)
+            except ValueError:
+                rel_path = Path(entity.file_path)
+            rel_str = str(rel_path)
+
+            if rel_str not in file_to_entities:
+                file_to_entities[rel_str] = []
+            file_to_entities[rel_str].append(entity.id)
+
+        # Get file -> author mapping from git log (single command, very fast)
+        file_author_map: dict[str, tuple[str, str, str]] = {}
+
+        try:
+            # Get commits with files in one command
+            result = subprocess.run(
+                ["git", "log", "--format=%H|%an|%ae|%aI", "--name-only", "-n", "500"],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0:
+                logger.warning("git log failed")
+                return
+
+            current_commit = None
+            current_email = None
+            current_time = None
+
+            for line in result.stdout.split("\n"):
+                if "|" in line and line.count("|") == 3:
+                    # Commit line: sha|name|email|time
+                    parts = line.split("|")
+                    current_commit = parts[0]
+                    _ = parts[1]  # author name (unused, we use email)
+                    current_email = parts[2]
+                    current_time = parts[3]
+                elif line.strip() and current_email:
+                    # File line
+                    file_path = line.strip()
+                    if file_path not in file_author_map:
+                        # First (most recent) author for this file
+                        email_hash = self._hash_email(current_email)
+                        person_id = f"person:{email_hash}"
+                        file_author_map[file_path] = (
+                            person_id,
+                            current_time,
+                            current_commit,
+                        )
+
+        except subprocess.TimeoutExpired:
+            logger.warning("git log timed out")
+            return
+        except Exception as e:
+            logger.warning(f"git log failed: {e}")
+            return
+
+        # Create AUTHORED relationships (sync - called per entity)
+        for file_path, entity_ids in file_to_entities.items():
+            if file_path in file_author_map:
+                person_id, timestamp, commit_sha = file_author_map[file_path]
+
+                if person_id in persons:
+                    for entity_id in entity_ids[:5]:  # Limit per file
+                        # Add relationship using sync method
+                        self.kg.add_authored_relationship_sync(
+                            person_id, entity_id, timestamp, commit_sha, 0
+                        )
+                        authored_count += 1
+
+        stats["authored"] = authored_count
+        if progress_tracker:
+            progress_tracker.item(f"{authored_count:,} authored", done=True)
+        else:
+            logger.info(f"✓ Created {authored_count} AUTHORED relationships")
+
+    def _extract_part_of_sync(
+        self,
+        code_entities: list["CodeEntity"],
+        project: "Project",
+        stats: dict,
+        progress_tracker: Optional["ProgressTracker"] = None,
+    ) -> None:
+        """Create PART_OF relationships linking code entities to project (synchronous).
+
+        Args:
+            code_entities: List of CodeEntity objects
+            project: Project entity
+            stats: Statistics dictionary to update
+            progress_tracker: Optional progress tracker for status updates
+        """
+        try:
+            entity_ids = [e.id for e in code_entities]
+            part_of_count = self.kg.add_part_of_batch_sync(entity_ids, project.id)
+            stats["part_of"] = part_of_count
+            if progress_tracker:
+                progress_tracker.item(f"{part_of_count:,} part_of", done=True)
+            else:
+                logger.info(f"✓ Created {part_of_count} PART_OF relationships")
+        except Exception as e:
+            logger.debug(f"Failed to create PART_OF relationships: {e}")
 
     async def _extract_authorship_from_blame_detailed(
         self,
