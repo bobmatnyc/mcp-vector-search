@@ -26,6 +26,7 @@ from .directory_index import DirectoryIndex
 from .exceptions import ParsingError
 from .file_discovery import FileDiscovery
 from .index_metadata import IndexMetadata
+from .metrics import get_metrics_tracker
 from .metrics_collector import IndexerMetricsCollector
 from .models import CodeChunk, IndexStats
 from .relationships import RelationshipStore
@@ -416,98 +417,92 @@ class SemanticIndexer:
             f"📄 Phase 1: Chunking {len(files)} files (parsing and extracting code structure)..."
         )
 
-        # TIMING: Track time spent in different operations
-        time_hash_check = 0.0
-        time_parsing = 0.0
-        time_hierarchy = 0.0
-        time_storage = 0.0
+        # Get metrics tracker
+        metrics_tracker = get_metrics_tracker()
 
-        for file_path in files:
-            try:
-                # Compute current file hash
-                t_start = time.time()
-                file_hash = compute_file_hash(file_path)
-                rel_path = str(file_path.relative_to(self.project_root))
+        with metrics_tracker.phase("parsing") as parsing_metrics:
+            for file_path in files:
+                try:
+                    # Compute current file hash
+                    file_hash = compute_file_hash(file_path)
+                    rel_path = str(file_path.relative_to(self.project_root))
 
-                # Check if file changed (skip if unchanged and not forcing)
-                if not force:
-                    file_changed = await self.chunks_backend.file_changed(
-                        rel_path, file_hash
-                    )
-                    if not file_changed:
-                        logger.debug(f"Skipping unchanged file: {rel_path}")
+                    # Check if file changed (skip if unchanged and not forcing)
+                    if not force:
+                        file_changed = await self.chunks_backend.file_changed(
+                            rel_path, file_hash
+                        )
+                        if not file_changed:
+                            logger.debug(f"Skipping unchanged file: {rel_path}")
+                            continue
+
+                    # Delete old chunks for this file (if any)
+                    deleted = await self.chunks_backend.delete_file_chunks(rel_path)
+                    if deleted > 0:
+                        logger.debug(f"Deleted {deleted} old chunks for {rel_path}")
+
+                    # Parse file
+                    chunks = await self.chunk_processor.parse_file(file_path)
+
+                    if not chunks:
+                        logger.debug(f"No chunks extracted from {file_path}")
                         continue
 
-                # Delete old chunks for this file (if any)
-                deleted = await self.chunks_backend.delete_file_chunks(rel_path)
-                if deleted > 0:
-                    logger.debug(f"Deleted {deleted} old chunks for {rel_path}")
-                time_hash_check += time.time() - t_start
+                    # Build hierarchical relationships
+                    chunks_with_hierarchy = self.chunk_processor.build_chunk_hierarchy(
+                        chunks
+                    )
 
-                # Parse and chunk
-                t_start = time.time()
-                chunks = await self.chunk_processor.parse_file(file_path)
-                time_parsing += time.time() - t_start
+                    # Convert CodeChunk objects to dicts for storage
+                    chunk_dicts = []
+                    for chunk in chunks_with_hierarchy:
+                        chunk_dict = {
+                            "chunk_id": chunk.chunk_id,
+                            "file_path": rel_path,
+                            "content": chunk.content,
+                            "language": chunk.language,
+                            "start_line": chunk.start_line,
+                            "end_line": chunk.end_line,
+                            "start_char": 0,  # Not tracked in CodeChunk
+                            "end_char": 0,  # Not tracked in CodeChunk
+                            "chunk_type": chunk.chunk_type,
+                            "name": chunk.function_name
+                            or chunk.class_name
+                            or "",  # Primary name
+                            "parent_name": "",  # Could derive from parent_chunk_id if needed
+                            "hierarchy_path": self._build_hierarchy_path(
+                                chunk
+                            ),  # e.g., "MyClass.my_method"
+                            "docstring": chunk.docstring or "",
+                            "signature": "",  # Not directly in CodeChunk, could build from params
+                            "complexity": int(chunk.complexity_score),
+                            "token_count": len(chunk.content.split()),  # Rough estimate
+                        }
+                        chunk_dicts.append(chunk_dict)
 
-                if not chunks:
-                    logger.debug(f"No chunks extracted from {file_path}")
+                    # Store chunks (without embeddings) to chunks.lance
+                    if chunk_dicts:
+                        count = await self.chunks_backend.add_chunks(chunk_dicts, file_hash)
+                        chunks_created += count
+                        files_processed += 1
+                        logger.debug(f"Chunked {count} chunks from {rel_path}")
+
+                except Exception as e:
+                    logger.error(f"Failed to chunk file {file_path}: {e}")
                     continue
 
-                # Build hierarchical relationships
-                t_start = time.time()
-                chunks_with_hierarchy = self.chunk_processor.build_chunk_hierarchy(
-                    chunks
-                )
-                time_hierarchy += time.time() - t_start
+            # Update metrics
+            parsing_metrics.item_count = files_processed
 
-                # Convert CodeChunk objects to dicts for storage
-                t_start = time.time()
-                chunk_dicts = []
-                for chunk in chunks_with_hierarchy:
-                    chunk_dict = {
-                        "chunk_id": chunk.chunk_id,
-                        "file_path": rel_path,
-                        "content": chunk.content,
-                        "language": chunk.language,
-                        "start_line": chunk.start_line,
-                        "end_line": chunk.end_line,
-                        "start_char": 0,  # Not tracked in CodeChunk
-                        "end_char": 0,  # Not tracked in CodeChunk
-                        "chunk_type": chunk.chunk_type,
-                        "name": chunk.function_name
-                        or chunk.class_name
-                        or "",  # Primary name
-                        "parent_name": "",  # Could derive from parent_chunk_id if needed
-                        "hierarchy_path": self._build_hierarchy_path(
-                            chunk
-                        ),  # e.g., "MyClass.my_method"
-                        "docstring": chunk.docstring or "",
-                        "signature": "",  # Not directly in CodeChunk, could build from params
-                        "complexity": int(chunk.complexity_score),
-                        "token_count": len(chunk.content.split()),  # Rough estimate
-                    }
-                    chunk_dicts.append(chunk_dict)
-
-                # Store chunks (without embeddings) to chunks.lance
-                if chunk_dicts:
-                    count = await self.chunks_backend.add_chunks(chunk_dicts, file_hash)
-                    time_storage += time.time() - t_start
-                    chunks_created += count
-                    files_processed += 1
-                    logger.debug(f"Chunked {count} chunks from {rel_path}")
-
-            except Exception as e:
-                logger.error(f"Failed to chunk file {file_path}: {e}")
-                continue
+        # Track chunking separately
+        with metrics_tracker.phase("chunking") as chunking_metrics:
+            chunking_metrics.item_count = chunks_created
+            # Note: Duration will be minimal since actual work was done in parsing phase
+            # This is just for tracking the chunk count
 
         logger.info(
             f"✓ Phase 1 complete: {files_processed} files processed, {chunks_created} chunks created"
         )
-        print("\n⏱️  TIMING: Phase 1 breakdown:", flush=True)
-        print(f"  - Hash check/change detection: {time_hash_check:.2f}s", flush=True)
-        print(f"  - File parsing: {time_parsing:.2f}s", flush=True)
-        print(f"  - Hierarchy building: {time_hierarchy:.2f}s", flush=True)
-        print(f"  - LanceDB storage: {time_storage:.2f}s\n", flush=True)
         return files_processed, chunks_created
 
     def _build_hierarchy_path(self, chunk: CodeChunk) -> str:
@@ -542,145 +537,115 @@ class SemanticIndexer:
             "🧠 Phase 2: Embedding pending chunks (GPU processing for semantic search)..."
         )
 
-        # TIMING: Track time spent in different operations
-        time_fetch_pending = 0.0
-        time_embedding = 0.0
-        time_vector_storage = 0.0
-        time_status_update = 0.0
+        # Get metrics tracker
+        metrics_tracker = get_metrics_tracker()
 
-        while True:
-            # Get pending chunks from chunks.lance
-            t_start = time.time()
-            pending = await self.chunks_backend.get_pending_chunks(batch_size)
-            time_fetch_pending += time.time() - t_start
-            if not pending:
-                logger.info("No more pending chunks to embed")
-                break
+        with metrics_tracker.phase("embedding") as embedding_metrics:
+            while True:
+                # Get pending chunks from chunks.lance
+                pending = await self.chunks_backend.get_pending_chunks(batch_size)
+                if not pending:
+                    logger.info("No more pending chunks to embed")
+                    break
 
-            # Mark as processing (for crash recovery)
-            t_start = time.time()
-            chunk_ids = [c["chunk_id"] for c in pending]
-            await self.chunks_backend.mark_chunks_processing(chunk_ids, batch_id)
-            time_status_update += time.time() - t_start
+                # Mark as processing (for crash recovery)
+                chunk_ids = [c["chunk_id"] for c in pending]
+                await self.chunks_backend.mark_chunks_processing(chunk_ids, batch_id)
 
-            try:
-                # Generate embeddings using database's embedding function
-                # For two-phase architecture, we need direct access to embedding generation
-                # ChromaDB wraps embedding function, we need to extract it
+                try:
+                    # Generate embeddings using database's embedding function
+                    contents = [c["content"] for c in pending]
 
-                contents = [c["content"] for c in pending]
+                    # Generate embeddings in batch
+                    vectors = None
 
-                # Generate embeddings in batch
-                # Try multiple ways to access embedding function
-                t_start = time.time()
-                vectors = None
-
-                # Method 1: Check for _embedding_function (ChromaDB)
-                if hasattr(self.database, "_embedding_function"):
-                    vectors = self.database._embedding_function(contents)
-                    time_embedding += time.time() - t_start
-                # Method 2: Check for _collection and its embedding function
-                elif hasattr(self.database, "_collection") and hasattr(
-                    self.database._collection, "_embedding_function"
-                ):
-                    vectors = self.database._collection._embedding_function(contents)
-                    time_embedding += time.time() - t_start
-                # Method 3: Use database's add_chunks which handles embedding internally
-                # This is a fallback but defeats the purpose of two-phase architecture
-                # We'll need to refactor database to expose embedding publicly
-                else:
-                    t_start = time.time()
-                    logger.warning(
-                        "Cannot access embedding function directly, "
-                        "falling back to database.add_chunks()"
-                    )
-                    # Convert chunk dicts back to CodeChunk objects for database.add_chunks
-                    temp_chunks = []
-                    for chunk in pending:
-                        code_chunk = CodeChunk(
-                            content=chunk["content"],
-                            file_path=Path(chunk["file_path"]),
-                            start_line=chunk["start_line"],
-                            end_line=chunk["end_line"],
-                            language=chunk["language"],
-                            chunk_type=chunk["chunk_type"],
-                            chunk_id=chunk["chunk_id"],
+                    # Method 1: Check for _embedding_function (ChromaDB)
+                    if hasattr(self.database, "_embedding_function"):
+                        vectors = self.database._embedding_function(contents)
+                    # Method 2: Check for _collection and its embedding function
+                    elif hasattr(self.database, "_collection") and hasattr(
+                        self.database._collection, "_embedding_function"
+                    ):
+                        vectors = self.database._collection._embedding_function(contents)
+                    # Method 3: Use database's add_chunks which handles embedding internally
+                    else:
+                        logger.warning(
+                            "Cannot access embedding function directly, "
+                            "falling back to database.add_chunks()"
                         )
-                        if chunk["name"]:
-                            # Assign name to appropriate field based on chunk_type
-                            if chunk["chunk_type"] == "class":
-                                code_chunk.class_name = chunk["name"]
-                            elif chunk["chunk_type"] in ("function", "method"):
-                                code_chunk.function_name = chunk["name"]
-                        temp_chunks.append(code_chunk)
+                        # Convert chunk dicts back to CodeChunk objects
+                        temp_chunks = []
+                        for chunk in pending:
+                            code_chunk = CodeChunk(
+                                content=chunk["content"],
+                                file_path=Path(chunk["file_path"]),
+                                start_line=chunk["start_line"],
+                                end_line=chunk["end_line"],
+                                language=chunk["language"],
+                                chunk_type=chunk["chunk_type"],
+                                chunk_id=chunk["chunk_id"],
+                            )
+                            if chunk["name"]:
+                                if chunk["chunk_type"] == "class":
+                                    code_chunk.class_name = chunk["name"]
+                                elif chunk["chunk_type"] in ("function", "method"):
+                                    code_chunk.function_name = chunk["name"]
+                            temp_chunks.append(code_chunk)
 
-                    # Use database to add chunks (which will generate embeddings)
-                    await self.database.add_chunks(temp_chunks)
-                    time_embedding += time.time() - t_start
+                        # Use database to add chunks
+                        await self.database.add_chunks(temp_chunks)
+                        await self.chunks_backend.mark_chunks_complete(chunk_ids)
+                        chunks_embedded += len(pending)
+                        batches_processed += 1
+                        continue
 
-                    # Mark as complete - embeddings were generated via database
-                    t_start = time.time()
+                    if vectors is None:
+                        raise ValueError("Failed to generate embeddings")
+
+                    # Add to vectors table with embeddings
+                    chunks_with_vectors = []
+                    for chunk, vec in zip(pending, vectors, strict=True):
+                        chunk_with_vec = {
+                            "chunk_id": chunk["chunk_id"],
+                            "vector": vec,
+                            "file_path": chunk["file_path"],
+                            "content": chunk["content"],
+                            "language": chunk["language"],
+                            "start_line": chunk["start_line"],
+                            "end_line": chunk["end_line"],
+                            "chunk_type": chunk["chunk_type"],
+                            "name": chunk["name"],
+                            "hierarchy_path": chunk["hierarchy_path"],
+                        }
+                        chunks_with_vectors.append(chunk_with_vec)
+
+                    # Store vectors to vectors.lance
+                    await self.vectors_backend.add_vectors(chunks_with_vectors)
+
+                    # Mark as complete in chunks.lance
                     await self.chunks_backend.mark_chunks_complete(chunk_ids)
-                    time_status_update += time.time() - t_start
+
                     chunks_embedded += len(pending)
                     batches_processed += 1
 
-                    # Skip vector storage since database already stored them
+                    # Checkpoint logging
+                    if chunks_embedded % checkpoint_interval == 0:
+                        logger.info(f"Checkpoint: {chunks_embedded} chunks embedded")
+
+                except Exception as e:
+                    logger.error(f"Embedding batch failed: {e}")
+                    # Mark chunks as error in chunks.lance
+                    error_msg = f"{type(e).__name__}: {str(e)}"
+                    await self.chunks_backend.mark_chunks_error(chunk_ids, error_msg)
+                    # Continue with next batch instead of crashing
                     continue
 
-                if vectors is None:
-                    raise ValueError("Failed to generate embeddings")
-
-                # Add to vectors table with embeddings
-                t_start = time.time()
-                chunks_with_vectors = []
-                for chunk, vec in zip(pending, vectors, strict=True):
-                    chunk_with_vec = {
-                        "chunk_id": chunk["chunk_id"],
-                        "vector": vec,
-                        "file_path": chunk["file_path"],
-                        "content": chunk["content"],
-                        "language": chunk["language"],
-                        "start_line": chunk["start_line"],
-                        "end_line": chunk["end_line"],
-                        "chunk_type": chunk["chunk_type"],
-                        "name": chunk["name"],
-                        "hierarchy_path": chunk["hierarchy_path"],
-                    }
-                    chunks_with_vectors.append(chunk_with_vec)
-
-                # Store vectors to vectors.lance
-                await self.vectors_backend.add_vectors(chunks_with_vectors)
-                time_vector_storage += time.time() - t_start
-
-                # Mark as complete in chunks.lance
-                t_start = time.time()
-                await self.chunks_backend.mark_chunks_complete(chunk_ids)
-                time_status_update += time.time() - t_start
-
-                chunks_embedded += len(pending)
-                batches_processed += 1
-
-                # Checkpoint logging
-                if chunks_embedded % checkpoint_interval == 0:
-                    logger.info(f"Checkpoint: {chunks_embedded} chunks embedded")
-
-            except Exception as e:
-                logger.error(f"Embedding batch failed: {e}")
-                # Mark chunks as error in chunks.lance
-                error_msg = f"{type(e).__name__}: {str(e)}"
-                await self.chunks_backend.mark_chunks_error(chunk_ids, error_msg)
-                # Continue with next batch instead of crashing
-                continue
+            # Update metrics
+            embedding_metrics.item_count = chunks_embedded
 
         logger.info(
             f"✓ Phase 2 complete: {chunks_embedded} chunks embedded in {batches_processed} batches"
         )
-        print("\n⏱️  TIMING: Phase 2 breakdown:", flush=True)
-        print(f"  - Fetching pending chunks: {time_fetch_pending:.2f}s", flush=True)
-        print(f"  - Embedding generation: {time_embedding:.2f}s", flush=True)
-        print(f"  - Vector storage: {time_vector_storage:.2f}s", flush=True)
-        print(f"  - Status updates: {time_status_update:.2f}s\n", flush=True)
         return chunks_embedded, batches_processed
 
     async def index_project(
@@ -689,6 +654,7 @@ class SemanticIndexer:
         show_progress: bool = True,
         skip_relationships: bool = False,
         phase: str = "all",
+        metrics_json: bool = False,
     ) -> int:
         """Index all files in the project using two-phase architecture.
 
@@ -700,6 +666,7 @@ class SemanticIndexer:
                 - "all": Run both phases (default, backward compatible)
                 - "chunk": Only Phase 1 (parse and chunk, no embedding)
                 - "embed": Only Phase 2 (embed pending chunks)
+            metrics_json: Output metrics as JSON to stdout
 
         Returns:
             Number of files indexed (for backward compatibility)
@@ -714,9 +681,9 @@ class SemanticIndexer:
             f"Starting indexing of project: {self.project_root} (phase: {phase})"
         )
 
-        # TIMING: Start overall indexing timer
-        t_start_total = time.time()
-        print("\n🚀 Starting indexing with timing instrumentation...\n", flush=True)
+        # Initialize metrics tracker
+        metrics_tracker = get_metrics_tracker()
+        metrics_tracker.reset()
 
         # Initialize backends
         t_start = time.time()
@@ -933,6 +900,15 @@ class SemanticIndexer:
             logger.info(
                 "🔗 Phase 3: Knowledge graph building in background (search available now)"
             )
+
+        # Log metrics summary
+        if indexed_count > 0:
+            if metrics_json:
+                # Output JSON metrics to stdout
+                print(metrics_tracker.metrics.to_json())
+            else:
+                # Display formatted summary table
+                metrics_tracker.log_summary()
 
         return indexed_count
 

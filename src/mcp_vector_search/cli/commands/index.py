@@ -126,6 +126,12 @@ def main(
         help="Skip schema compatibility check (use with caution - may cause errors if schema is incompatible)",
         rich_help_panel="⚙️  Advanced Options",
     ),
+    metrics_json: bool = typer.Option(
+        False,
+        "--metrics-json",
+        help="Output performance metrics as JSON",
+        rich_help_panel="📊 Indexing Options",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -198,6 +204,7 @@ def main(
                 auto_optimize=auto_optimize,
                 phase=phase,
                 skip_schema_check=skip_schema_check,
+                metrics_json=metrics_json,
             )
         )
 
@@ -353,6 +360,7 @@ async def run_indexing(
     auto_optimize: bool = True,
     phase: str = "all",
     skip_schema_check: bool = False,
+    metrics_json: bool = False,
 ) -> None:
     """Run the indexing process."""
     # Load project configuration
@@ -478,6 +486,7 @@ async def run_indexing(
                     skip_relationships,
                     phase,
                     progress_tracker_obj,
+                    metrics_json,
                 )
 
     except Exception as e:
@@ -492,6 +501,7 @@ async def _run_batch_indexing(
     skip_relationships: bool = False,
     phase: str = "all",
     progress_tracker: ProgressTracker | None = None,
+    metrics_json: bool = False,
 ) -> None:
     """Run batch indexing of all files with three-phase progress display."""
     # Initialize progress state tracking
@@ -1029,6 +1039,7 @@ async def _run_batch_indexing(
             show_progress=show_progress,
             skip_relationships=skip_relationships,
             phase=phase,
+            metrics_json=metrics_json,
         )
 
     # Show statistics
