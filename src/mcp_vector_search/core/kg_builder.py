@@ -14,13 +14,6 @@ from pathlib import Path
 import yaml
 from loguru import logger
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-)
 
 from .knowledge_graph import (
     Branch,
@@ -252,6 +245,246 @@ class KGBuilder:
             return True
 
         return False
+
+    def build_from_chunks_sync(
+        self,
+        chunks: list[CodeChunk],
+        show_progress: bool = True,
+        skip_documents: bool = False,
+    ) -> dict[str, int]:
+        """Build graph from code chunks using batch inserts (SYNCHRONOUS, Kuzu-safe).
+
+        This is a fully synchronous version that avoids any asyncio/threading
+        which can cause segfaults with Kuzu's Rust bindings.
+
+        Args:
+            chunks: List of code chunks to process
+            show_progress: Whether to show progress bar
+            skip_documents: Skip expensive DOCUMENTS relationship extraction (default False)
+
+        Returns:
+            Statistics dictionary with counts
+        """
+        # Separate code and text chunks
+        code_chunks = [
+            c
+            for c in chunks
+            if c.chunk_type in ["function", "method", "class", "module"]
+        ]
+
+        text_chunks = [
+            c
+            for c in chunks
+            if c.language == "text" or str(c.file_path).endswith(".md")
+        ]
+
+        if not show_progress:
+            logger.info(
+                f"Building knowledge graph from {len(code_chunks)} code chunks "
+                f"and {len(text_chunks)} text chunks ({len(chunks)} total)..."
+            )
+
+        stats = {
+            "entities": 0,
+            "doc_sections": 0,
+            "tags": 0,
+            "calls": 0,
+            "imports": 0,
+            "inherits": 0,
+            "contains": 0,
+            "references": 0,
+            "documents": 0,
+            "follows": 0,
+            "has_tag": 0,
+            "demonstrates": 0,
+            "links_to": 0,
+            "persons": 0,
+            "projects": 0,
+            "authored": 0,
+            "modified": 0,
+            "part_of": 0,
+        }
+
+        # PHASE 1: Collect all data in Python (thread-safe)
+        console.print("[cyan]🔍 Phase 1: Scanning chunks...[/cyan]")
+
+        code_entities: list[CodeEntity] = []
+        doc_sections: list[DocSection] = []
+        tags: set[str] = set()
+        relationships: dict[str, list[CodeRelationship]] = {
+            "CALLS": [],
+            "IMPORTS": [],
+            "INHERITS": [],
+            "CONTAINS": [],
+            "REFERENCES": [],
+            "DOCUMENTS": [],
+            "FOLLOWS": [],
+            "HAS_TAG": [],
+            "DEMONSTRATES": [],
+            "LINKS_TO": [],
+        }
+
+        # Extract from code chunks
+        for chunk in code_chunks:
+            entity, rels = self._extract_code_entity(chunk)
+            if entity:
+                code_entities.append(entity)
+                for rel_type, rel_list in rels.items():
+                    relationships[rel_type].extend(rel_list)
+
+        # Extract from text chunks
+        for chunk in text_chunks:
+            docs, chunk_tags, rels = self._extract_doc_sections(chunk)
+            doc_sections.extend(docs)
+            tags.update(chunk_tags)
+            for rel_type, rel_list in rels.items():
+                relationships[rel_type].extend(rel_list)
+
+        console.print(f"[green]✓ Scanned {len(chunks)} chunks[/green]")
+        console.print(f"  - {len(code_entities)} code entities")
+        console.print(f"  - {len(doc_sections)} doc sections")
+        console.print(f"  - {len(tags)} tags")
+        total_rels = sum(len(r) for r in relationships.values())
+        console.print(f"  - {total_rels} relationships")
+
+        # PHASE 2: Serial Kuzu insertion (single-threaded, no async)
+        console.print("[cyan]🏗️  Phase 2: Inserting entities into Kuzu...[/cyan]")
+
+        if code_entities:
+            stats["entities"] = self.kg.add_entities_batch_sync(code_entities)
+            console.print(f"  ✓ {stats['entities']} code entities")
+
+        if doc_sections:
+            stats["doc_sections"] = self.kg.add_doc_sections_batch_sync(doc_sections)
+            console.print(f"  ✓ {stats['doc_sections']} doc sections")
+
+        if tags:
+            stats["tags"] = self.kg.add_tags_batch_sync(list(tags))
+            console.print(f"  ✓ {stats['tags']} tags")
+
+        total_entities = len(code_entities) + len(doc_sections) + len(tags)
+        console.print(f"[green]✓ Inserted {total_entities} entities[/green]")
+
+        # PHASE 3: Validate and insert relationships
+        console.print("[cyan]🔗 Phase 3: Building relationships...[/cyan]")
+
+        # CRITICAL: Query Kuzu to get ACTUAL entity IDs that exist in database
+        # Don't trust Python sets - verify with Kuzu to prevent assertion failures
+        console.print("[dim]Querying Kuzu for actual entity IDs...[/dim]")
+
+        valid_entity_ids = set()
+
+        # Query CodeEntity IDs
+        try:
+            result = self.kg._execute_query(
+                "MATCH (c:CodeEntity) RETURN c.id as id", {}
+            )
+            code_entity_ids = {row[0] for row in result}
+            valid_entity_ids.update(code_entity_ids)
+            console.print(
+                f"[dim]Found {len(code_entity_ids)} CodeEntity IDs in Kuzu[/dim]"
+            )
+        except Exception as e:
+            console.print(
+                f"[yellow]Warning: Failed to query CodeEntity IDs: {e}[/yellow]"
+            )
+
+        # Query DocSection IDs
+        try:
+            result = self.kg._execute_query(
+                "MATCH (d:DocSection) RETURN d.id as id", {}
+            )
+            doc_ids = {row[0] for row in result}
+            valid_entity_ids.update(doc_ids)
+            console.print(f"[dim]Found {len(doc_ids)} DocSection IDs in Kuzu[/dim]")
+        except Exception as e:
+            console.print(
+                f"[yellow]Warning: Failed to query DocSection IDs: {e}[/yellow]"
+            )
+
+        # Query Tag IDs
+        try:
+            result = self.kg._execute_query("MATCH (t:Tag) RETURN t.id as id", {})
+            tag_ids = {row[0] for row in result}
+            valid_entity_ids.update(tag_ids)
+            console.print(f"[dim]Found {len(tag_ids)} Tag IDs in Kuzu[/dim]")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Failed to query Tag IDs: {e}[/yellow]")
+
+        console.print(
+            f"[cyan]Validating relationships against {len(valid_entity_ids)} actual entity IDs...[/cyan]"
+        )
+
+        # CRITICAL: Use very small batch size (50) to avoid Kuzu assertion failures
+        # Kuzu's Rust bindings have bugs that cause assertion failures in csr_node_group.cpp
+        # Smaller batches reduce the risk of hitting the bug
+        safe_batch_size = 50
+
+        total_inserted = 0
+        total_skipped = 0
+
+        for rel_type, rels in relationships.items():
+            if rels:
+                # Filter relationships to only those with valid source and target IDs
+                valid_rels = []
+                skipped = 0
+
+                for rel in rels:
+                    source_ok = rel.source_id in valid_entity_ids
+                    target_ok = rel.target_id in valid_entity_ids
+
+                    if source_ok and target_ok:
+                        valid_rels.append(rel)
+                    else:
+                        skipped += 1
+                        if (
+                            skipped <= 5
+                        ):  # Log first 5 invalid relationships for debugging
+                            console.print(
+                                f"[dim]  ⚠️ Skipping {rel_type}: {rel.source_id} -> {rel.target_id} "
+                                f"(source_ok={source_ok}, target_ok={target_ok})[/dim]"
+                            )
+
+                if valid_rels:
+                    count = self.kg.add_relationships_batch_sync(
+                        valid_rels, batch_size=safe_batch_size
+                    )
+                    stats[rel_type.lower()] = count
+                    total_inserted += count
+                    console.print(f"  ✓ {count} {rel_type.lower()} relations")
+
+                if skipped > 0:
+                    total_skipped += skipped
+                    console.print(
+                        f"  [yellow]⚠️ Skipped {skipped} {rel_type.lower()} with missing nodes[/yellow]"
+                    )
+
+        if total_skipped > 0:
+            console.print(
+                f"[yellow]⚠️ Total skipped: {total_skipped} relationships with invalid node references[/yellow]"
+            )
+
+        console.print(f"[green]✓ Built {total_inserted} valid relationships[/green]")
+
+        # PHASE 4: Skip DOCUMENTS extraction in sync version (too complex)
+        if not skip_documents and text_chunks and code_chunks:
+            console.print(
+                "[yellow]⚠ Skipping DOCUMENTS extraction in synchronous mode[/yellow]"
+            )
+            console.print("  (use async version or run manually for full graph)")
+
+        # Save metadata
+        processed_chunk_ids = {c.chunk_id or c.id for c in chunks}
+        build_duration = 0.0  # TODO: add timer
+        self._save_metadata(
+            source_chunk_count=len(chunks),
+            source_chunk_ids=processed_chunk_ids,
+            entities_created=total_entities,
+            relationships_created=total_rels,
+            build_duration_seconds=build_duration,
+        )
+
+        return stats
 
     async def build_from_chunks(
         self,
@@ -2740,7 +2973,9 @@ class KGBuilder:
         if show_progress:
             # NOTE: Rich Progress bars cause segfaults with Kuzu (thread safety)
             # Using simple console prints instead
-            console.print(f"[cyan]Loading {total_chunks} chunks from database...[/cyan]")
+            console.print(
+                f"[cyan]Loading {total_chunks} chunks from database...[/cyan]"
+            )
 
             chunks = []
             for batch in database.iter_chunks_batched(batch_size=5000):

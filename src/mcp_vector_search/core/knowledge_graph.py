@@ -13,7 +13,6 @@ Enables architectural queries like:
 """
 
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -168,60 +167,66 @@ class KnowledgeGraph:
         self.conn = None
         self._initialized = False
 
-        # Dedicated single-threaded executor for Kuzu operations
-        # Kuzu (Rust via PyO3) is NOT thread-safe and cannot handle ANY
-        # background threads. We isolate ALL Kuzu operations to a single
-        # dedicated thread to avoid segfaults.
-        self._executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="kuzu-executor"
-        )
+        # Thread lock for Kuzu operations safety
+        # We run Kuzu operations synchronously on the main asyncio thread
+        # but use a lock to prevent any potential concurrent access
+        self._kuzu_lock = threading.Lock()
 
-    def _initialize_kuzu_and_schema(self, db_dir: Path):
-        """Initialize Kuzu database and schema in dedicated thread.
+    def initialize_sync(self):
+        """Initialize Kuzu database with schema (synchronous, thread-safe version)."""
+        if self._initialized:
+            return
 
-        This method runs in the dedicated executor thread to ensure
-        the database, connection, AND schema creation all happen in
-        the SAME thread. This is critical for thread safety.
+        # Ensure parent directory exists, but let Kuzu create the db directory
+        self.db_path.mkdir(parents=True, exist_ok=True)
 
-        Args:
-            db_dir: Path to database directory
-        """
-        # Create database and connection in THIS thread
-        self.db = kuzu.Database(str(db_dir))
-        self.conn = kuzu.Connection(self.db)
-        logger.debug(
-            f"Kuzu database and connection created in thread {threading.current_thread().name}"
-        )
+        # Initialize Kuzu database and schema synchronously
+        # CRITICAL: This must run in a single-threaded environment
+        # Kuzu's Rust bindings are not thread-safe
+        db_dir = self.db_path / "code_kg"
+        with self._kuzu_lock:
+            self.db = kuzu.Database(str(db_dir))
+            self.conn = kuzu.Connection(self.db)
+            logger.debug(
+                f"Kuzu database and connection created in thread {threading.current_thread().name}"
+            )
 
-        # Create schema in THIS thread (direct execute calls are safe here)
-        self._create_schema()
+            # Create schema directly
+            self._create_schema()
+
+        self._initialized = True
+        logger.info(f"✓ Knowledge graph initialized at {db_dir}")
 
     async def initialize(self):
         """Initialize Kuzu database with schema."""
         if self._initialized:
             return
 
-        # Create database directory
+        # Ensure parent directory exists, but let Kuzu create the db directory
         self.db_path.mkdir(parents=True, exist_ok=True)
 
-        # Initialize Kuzu database AND schema IN THE DEDICATED THREAD
-        # This is critical: db, conn, and ALL execute() calls must happen
-        # in the same dedicated thread to avoid segfaults from background
-        # threads in other libraries (gRPC, PyTorch, etc.)
+        # Initialize Kuzu database and schema synchronously
+        # Run directly on the main asyncio thread with lock for safety
         db_dir = self.db_path / "code_kg"
-        future = self._executor.submit(self._initialize_kuzu_and_schema, db_dir)
-        future.result()  # Block until initialization completes
+        with self._kuzu_lock:
+            self.db = kuzu.Database(str(db_dir))
+            self.conn = kuzu.Connection(self.db)
+            logger.debug(
+                f"Kuzu database and connection created in thread {threading.current_thread().name}"
+            )
+
+            # Create schema directly
+            self._create_schema()
 
         self._initialized = True
         logger.info(f"✓ Knowledge graph initialized at {db_dir}")
 
     def _execute_query(self, query: str, params: dict | None = None):
-        """Execute Kuzu query in dedicated thread.
+        """Execute Kuzu query synchronously with thread lock.
 
-        Kuzu (Rust via PyO3) is NOT thread-safe and cannot handle ANY
-        background threads from other libraries (gRPC, PyTorch, etc.).
-        This method ensures ALL Kuzu operations happen in a single
-        dedicated thread, isolated from background threads.
+        Runs Kuzu operations directly on the calling thread (main asyncio thread)
+        with a lock to prevent concurrent access. This eliminates the multi-threading
+        complexity that may cause segfaults.
 
         Args:
             query: Cypher query to execute
@@ -230,12 +235,8 @@ class KnowledgeGraph:
         Returns:
             Query result from Kuzu
         """
-        # Submit to dedicated single-threaded executor
-        # This ensures execute() is called in the SAME thread where
-        # the connection was created, with no interference from
-        # background threads
-        future = self._executor.submit(self.conn.execute, query, params or {})
-        return future.result()  # Block until complete
+        with self._kuzu_lock:
+            return self.conn.execute(query, params or {})
 
     def _create_schema(self):
         """Create Kuzu schema for code entities, doc sections, and relationships."""
@@ -1490,6 +1491,280 @@ class KnowledgeGraph:
             logger.error(f"Failed to add BELONGS_TO relationship: {e}")
             raise
 
+    def add_entities_batch_sync(
+        self, entities: list[CodeEntity], batch_size: int = 500
+    ) -> int:
+        """Batch insert code entities using UNWIND (synchronous version for Kuzu safety).
+
+        This is a synchronous version that avoids asyncio event loop threads
+        which can cause segfaults with Kuzu's Rust bindings.
+
+        Args:
+            entities: List of CodeEntity objects
+            batch_size: Number of entities per batch (default 500)
+
+        Returns:
+            Number of entities inserted
+        """
+        if not self._initialized:
+            raise RuntimeError(
+                "KnowledgeGraph not initialized. Call initialize_sync() first."
+            )
+
+        total = 0
+        for i in range(0, len(entities), batch_size):
+            batch = entities[i : i + batch_size]
+            params = [
+                {
+                    "id": e.id,
+                    "name": e.name,
+                    "entity_type": e.entity_type,
+                    "file_path": e.file_path or "",
+                    "commit_sha": e.commit_sha or "",
+                }
+                for e in batch
+            ]
+
+            try:
+                self._execute_query(
+                    """
+                    UNWIND $batch AS e
+                    MERGE (n:CodeEntity {id: e.id})
+                    ON CREATE SET n.name = e.name,
+                                  n.entity_type = e.entity_type,
+                                  n.file_path = e.file_path,
+                                  n.commit_sha = e.commit_sha
+                    ON MATCH SET n.name = e.name,
+                                 n.entity_type = e.entity_type,
+                                 n.file_path = e.file_path,
+                                 n.commit_sha = e.commit_sha
+                """,
+                    {"batch": params},
+                )
+                total += len(batch)
+            except Exception as e:
+                logger.error(f"Failed to insert entity batch: {e}")
+                raise
+
+        return total
+
+    def add_doc_sections_batch_sync(
+        self, docs: list[DocSection], batch_size: int = 500
+    ) -> int:
+        """Batch insert doc sections using UNWIND (synchronous).
+
+        Args:
+            docs: List of DocSection objects
+            batch_size: Number of doc sections per batch (default 500)
+
+        Returns:
+            Number of doc sections inserted
+        """
+        if not self._initialized:
+            raise RuntimeError(
+                "KnowledgeGraph not initialized. Call initialize_sync() first."
+            )
+
+        total = 0
+        for i in range(0, len(docs), batch_size):
+            batch = docs[i : i + batch_size]
+            params = [
+                {
+                    "id": d.id,
+                    "name": d.name,
+                    "doc_type": d.doc_type,
+                    "file_path": d.file_path,
+                    "level": d.level,
+                    "line_start": d.line_start,
+                    "line_end": d.line_end,
+                    "commit_sha": d.commit_sha or "",
+                }
+                for d in batch
+            ]
+
+            try:
+                self._execute_query(
+                    """
+                    UNWIND $batch AS d
+                    MERGE (n:DocSection {id: d.id})
+                    ON CREATE SET n.name = d.name,
+                                  n.doc_type = d.doc_type,
+                                  n.file_path = d.file_path,
+                                  n.level = d.level,
+                                  n.line_start = d.line_start,
+                                  n.line_end = d.line_end,
+                                  n.commit_sha = d.commit_sha
+                    ON MATCH SET n.name = d.name,
+                                 n.doc_type = d.doc_type,
+                                 n.file_path = d.file_path,
+                                 n.level = d.level,
+                                 n.line_start = d.line_start,
+                                 n.line_end = d.line_end,
+                                 n.commit_sha = d.commit_sha
+                """,
+                    {"batch": params},
+                )
+                total += len(batch)
+            except Exception as e:
+                logger.error(f"Failed to insert doc sections batch: {e}")
+                raise
+
+        return total
+
+    def add_tags_batch_sync(self, tag_names: list[str], batch_size: int = 500) -> int:
+        """Batch insert tags using UNWIND (synchronous).
+
+        Args:
+            tag_names: List of tag names
+            batch_size: Number of tags per batch (default 500)
+
+        Returns:
+            Number of tags inserted
+        """
+        if not self._initialized:
+            raise RuntimeError(
+                "KnowledgeGraph not initialized. Call initialize_sync() first."
+            )
+
+        total = 0
+        for i in range(0, len(tag_names), batch_size):
+            batch = tag_names[i : i + batch_size]
+            params = [{"id": f"tag:{name}", "name": name} for name in batch]
+
+            try:
+                self._execute_query(
+                    """
+                    UNWIND $batch AS t
+                    MERGE (n:Tag {id: t.id})
+                    ON CREATE SET n.name = t.name
+                    ON MATCH SET n.name = t.name
+                """,
+                    {"batch": params},
+                )
+                total += len(batch)
+            except Exception as e:
+                logger.error(f"Failed to insert tags batch: {e}")
+                raise
+
+        return total
+
+    def add_relationships_batch_sync(
+        self, relationships: list[CodeRelationship], batch_size: int = 500
+    ) -> int:
+        """Batch insert relationships using UNWIND (synchronous).
+
+        Groups relationships by type and inserts each type in batches.
+
+        Args:
+            relationships: List of CodeRelationship objects
+            batch_size: Number of relationships per batch (default 500)
+
+        Returns:
+            Number of relationships inserted
+        """
+        if not self._initialized:
+            raise RuntimeError(
+                "KnowledgeGraph not initialized. Call initialize_sync() first."
+            )
+
+        # Group by relationship type
+        by_type: dict[str, list[CodeRelationship]] = {}
+        for rel in relationships:
+            rel_type = rel.relationship_type.upper()
+            if rel_type not in by_type:
+                by_type[rel_type] = []
+            by_type[rel_type].append(rel)
+
+        total = 0
+        for rel_type, rels in by_type.items():
+            total += self._add_relationships_batch_by_type_sync(
+                rels, rel_type, batch_size
+            )
+
+        return total
+
+    def _add_relationships_batch_by_type_sync(
+        self, relationships: list[CodeRelationship], rel_type: str, batch_size: int
+    ) -> int:
+        """Batch insert relationships of a specific type (synchronous).
+
+        Args:
+            relationships: List of CodeRelationship objects
+            rel_type: Relationship type (CALLS, IMPORTS, etc.)
+            batch_size: Number of relationships per batch
+
+        Returns:
+            Number of relationships inserted
+        """
+        total = 0
+
+        # Determine node types based on relationship type
+        if rel_type in ["CALLS", "IMPORTS", "INHERITS", "CONTAINS"]:
+            source_label = "CodeEntity"
+            target_label = "CodeEntity"
+        elif rel_type == "FOLLOWS":
+            source_label = "DocSection"
+            target_label = "DocSection"
+        elif rel_type in ["REFERENCES", "DOCUMENTS"]:
+            source_label = "DocSection"
+            target_label = "CodeEntity"
+        elif rel_type in ["HAS_TAG", "DEMONSTRATES"]:
+            source_label = "DocSection"
+            target_label = "Tag"
+        elif rel_type == "LINKS_TO":
+            source_label = "DocSection"
+            target_label = "DocSection"
+        else:
+            logger.warning(f"Unknown relationship type: {rel_type}")
+            return 0
+
+        # Insert in batches
+        for i in range(0, len(relationships), batch_size):
+            batch = relationships[i : i + batch_size]
+            params = [
+                {
+                    "source_id": r.source_id,
+                    "target_id": r.target_id,
+                    "weight": r.weight,
+                    "commit_sha": r.commit_sha or "",
+                }
+                for r in batch
+            ]
+
+            try:
+                # CRITICAL: Use CREATE instead of MERGE to avoid Kuzu CSR bug
+                # Kuzu 0.11.3 has assertion failures in csr_node_group.cpp with MERGE
+                # We accept duplicate relationships rather than crash
+                query = f"""
+                    UNWIND $batch AS r
+                    MATCH (a:{source_label} {{id: r.source_id}}),
+                          (b:{target_label} {{id: r.target_id}})
+                    CREATE (a)-[rel:{rel_type}]->(b)
+                    SET rel.weight = r.weight,
+                        rel.commit_sha = r.commit_sha
+                """
+                self._execute_query(query, {"batch": params})
+                total += len(batch)
+            except Exception as e:
+                error_msg = str(e)
+                logger.debug(f"Batch insert failed for {rel_type}: {error_msg}")
+
+                # CRITICAL: If Kuzu assertion failure detected, STOP immediately
+                # Continuing after assertion failure causes database corruption and crash
+                if "KU_UNREACHABLE" in error_msg or "Assertion failed" in error_msg:
+                    logger.error(
+                        f"FATAL: Kuzu assertion failure in {rel_type} insertion. "
+                        "This is a Kuzu bug. Stopping to prevent corruption."
+                    )
+                    raise RuntimeError(
+                        f"Kuzu assertion failure during {rel_type} insertion: {error_msg}"
+                    )
+
+                # For other exceptions, skip this batch
+                pass
+
+        return total
+
     async def add_entities_batch(
         self, entities: list[CodeEntity], batch_size: int = 500
     ) -> int:
@@ -2654,6 +2929,79 @@ class KnowledgeGraph:
                 "error": str(e),
             }
 
+    def get_stats_sync(self) -> dict[str, Any]:
+        """Get knowledge graph statistics (synchronous).
+
+        Returns:
+            Dictionary with entity counts and relationship counts
+        """
+        if not self._initialized:
+            raise RuntimeError(
+                "KnowledgeGraph not initialized. Call initialize_sync() first."
+            )
+
+        try:
+            # Count code entities
+            entity_result = self._execute_query(
+                "MATCH (e:CodeEntity) RETURN count(e) AS count"
+            )
+            entity_count = (
+                entity_result.get_next()[0] if entity_result.has_next() else 0
+            )
+
+            # Count doc sections
+            doc_result = self._execute_query(
+                "MATCH (d:DocSection) RETURN count(d) AS count"
+            )
+            doc_count = doc_result.get_next()[0] if doc_result.has_next() else 0
+
+            # Count tags
+            tag_result = self._execute_query("MATCH (t:Tag) RETURN count(t) AS count")
+            tag_count = tag_result.get_next()[0] if tag_result.has_next() else 0
+
+            # Total entities
+            total_entities = entity_count + doc_count + tag_count
+
+            # Get relationship counts
+            relationships = {}
+            for rel_type in [
+                "CALLS",
+                "IMPORTS",
+                "INHERITS",
+                "CONTAINS",
+                "REFERENCES",
+                "DOCUMENTS",
+                "FOLLOWS",
+                "HAS_TAG",
+                "DEMONSTRATES",
+                "LINKS_TO",
+            ]:
+                rel_result = self._execute_query(
+                    f"MATCH ()-[r:{rel_type}]->() RETURN count(r) AS count"
+                )
+                count = rel_result.get_next()[0] if rel_result.has_next() else 0
+                relationships[rel_type.lower()] = count
+
+            return {
+                "total_entities": total_entities,
+                "code_entities": entity_count,
+                "doc_sections": doc_count,
+                "tags": tag_count,
+                "relationships": relationships,
+                "database_path": str(self.db_path / "code_kg"),
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get stats: {e}")
+            return {
+                "total_entities": 0,
+                "code_entities": 0,
+                "doc_sections": 0,
+                "tags": 0,
+                "relationships": {},
+                "database_path": str(self.db_path / "code_kg"),
+            }
+
     async def get_stats(self) -> dict[str, Any]:
         """Get knowledge graph statistics.
 
@@ -2868,17 +3216,24 @@ class KnowledgeGraph:
 
         return samples
 
-    async def close(self):
-        """Close database connection and shutdown executor."""
-        if self.conn:
-            self.conn = None
-        if self.db:
-            self.db = None
-        self._initialized = False
+    def close_sync(self):
+        """Close database connection (synchronous)."""
+        with self._kuzu_lock:
+            if self.conn:
+                self.conn = None
+            if self.db:
+                self.db = None
+            self._initialized = False
 
-        # Shutdown the dedicated executor thread
-        if self._executor:
-            self._executor.shutdown(wait=True)
-            logger.debug("Kuzu executor thread shutdown")
+        logger.debug("Knowledge graph connection closed")
+
+    async def close(self):
+        """Close database connection."""
+        with self._kuzu_lock:
+            if self.conn:
+                self.conn = None
+            if self.db:
+                self.db = None
+            self._initialized = False
 
         logger.debug("Knowledge graph connection closed")

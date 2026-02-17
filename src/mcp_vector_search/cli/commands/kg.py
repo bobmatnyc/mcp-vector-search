@@ -22,87 +22,177 @@ console = Console()
 kg_app = typer.Typer(name="kg", help="📊 Knowledge graph operations")
 
 
-@kg_app.command("build")
-def build_kg(
-    project_root: Path = typer.Option(
-        ".", help="Project root directory", exists=True, file_okay=False
-    ),
-    force: bool = typer.Option(False, help="Force rebuild even if graph exists"),
-    limit: int | None = typer.Option(
-        None, help="Limit number of chunks to process (for testing)"
-    ),
-    skip_documents: bool = typer.Option(
-        False,
-        "--skip-documents",
-        help="Skip expensive DOCUMENTS relationship extraction (faster build)",
-    ),
-    incremental: bool = typer.Option(
-        False,
-        "--incremental",
-        help="Only process new chunks not in previous build (incremental build)",
-    ),
-):
-    """Build knowledge graph from indexed chunks.
+def _build_kg_in_subprocess(
+    project_root_str: str,
+    chunks_file_str: str,
+    force: bool,
+    skip_documents: bool,
+) -> int:
+    """Run KG build in isolated subprocess from pre-loaded chunks.
 
-    This command extracts entities and relationships from your indexed
-    codebase and builds a queryable knowledge graph.
+    This function is the subprocess entry point. It builds the KG from
+    chunks loaded by the parent process, avoiding any database access
+    that would create background threads (LanceDB) conflicting with Kuzu.
 
-    Example:
-        mcp-vector-search kg build
-        mcp-vector-search kg build --force
-        mcp-vector-search kg build --limit 100  # Test with 100 chunks
-        mcp-vector-search kg build --skip-documents  # Faster build for large repos
-        mcp-vector-search kg build --incremental  # Only process new chunks
+    Args:
+        project_root_str: Project root directory path as string
+        chunks_file_str: Path to JSON file containing serialized chunks
+        force: Force rebuild even if graph exists
+        skip_documents: Skip expensive DOCUMENTS relationship extraction
+
+    Returns:
+        Exit code (0 for success, 1 for error)
     """
-    project_root = project_root.resolve()
+    # CRITICAL: Set environment variables BEFORE any imports
+    # This prevents background threads from being created
+    import os
 
-    console.print(
-        Panel.fit(
-            f"[bold cyan]Building Knowledge Graph[/bold cyan]\nProject: {project_root}",
-            border_style="cyan",
-        )
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    # CRITICAL: Prevent LanceDB from creating background event loop
+    os.environ["LANCE_BYPASS_FORK_CHECK"] = "1"
+
+    # Import everything fresh in the subprocess
+    # CRITICAL: DO NOT import asyncio - it may trigger LanceDB background thread!
+    import json
+    import threading
+    from pathlib import Path
+
+    # Check threads immediately after basic imports
+    print(
+        f"[DEBUG] Threads after basic imports: {[t.name for t in threading.enumerate()]}",
+        flush=True,
     )
 
-    async def _build():
-        # Initialize components
-        components = await ComponentFactory.create_standard_components(
-            project_root, use_pooling=False
-        )
-        database = components.database
+    from rich.console import Console
+    from rich.table import Table
 
-        # Use context manager to properly open database
-        async with database:
-            # Check if index exists (use chunk count instead of is_indexed)
-            chunk_count = database.get_chunk_count()
-            if chunk_count == 0:
+    print(
+        f"[DEBUG] Threads after Rich imports: {[t.name for t in threading.enumerate()]}",
+        flush=True,
+    )
+
+    from ...core.knowledge_graph import KnowledgeGraph
+    from ...core.models import CodeChunk
+
+    print(
+        f"[DEBUG] Threads after core imports: {[t.name for t in threading.enumerate()]}",
+        flush=True,
+    )
+
+    console = Console()
+    project_root = Path(project_root_str)
+    chunks_file = Path(chunks_file_str)
+
+    def _do_build_sync() -> int:
+        """Perform the actual build logic (SYNCHRONOUS, no asyncio).
+
+        CRITICAL: This function must be completely synchronous to avoid
+        background threads that cause segfaults with Kuzu's Rust bindings.
+        """
+        try:
+            # CRITICAL: Import threading here to check for background threads
+            import threading
+
+            # Load chunks from JSON file (no database access needed!)
+            console.print(f"[cyan]Loading chunks from {chunks_file.name}...[/cyan]")
+            with open(chunks_file) as f:
+                chunks_data = json.load(f)
+
+            # Deserialize chunks (CodeChunk is a dataclass, not Pydantic)
+            chunks = []
+            for chunk_dict in chunks_data:
+                # Convert file_path string back to Path
+                chunk_dict["file_path"] = Path(chunk_dict["file_path"])
+                # Create CodeChunk from dict
+                chunks.append(CodeChunk(**chunk_dict))
+            console.print(f"[green]✓ Loaded {len(chunks)} chunks[/green]")
+
+            if len(chunks) == 0:
                 console.print(
-                    "[red]✗[/red] No index found. Run 'mcp-vector-search index' first."
+                    "[red]✗[/red] No chunks found. Run 'mcp-vector-search index' first."
                 )
-                raise typer.Exit(1)
+                return 1
 
-            # Initialize knowledge graph
+            # CRITICAL: Check for background threads before Kuzu operations
+            # Kuzu's Rust bindings are not thread-safe and will segfault if
+            # ANY background threads are running (including daemon threads!)
+            threads = threading.enumerate()
+            console.print(
+                f"[cyan]🔍 Thread check: {len(threads)} thread(s) active[/cyan]"
+            )
+            for t in threads:
+                console.print(f"  - {t.name} (daemon={t.daemon})")
+
+            if len(threads) > 1:
+                # CRITICAL: Even daemon threads cause segfaults with Kuzu!
+                # The LanceDBBackgroundEventLoop daemon thread MUST be stopped
+                background_threads = [
+                    t for t in threads if t != threading.main_thread()
+                ]
+
+                if background_threads:
+                    console.print(
+                        f"[red]✗ ERROR: {len(background_threads)} background thread(s) detected![/red]"
+                    )
+                    console.print(
+                        "[red]Kuzu requires single-threaded execution. Background threads (even daemons) "
+                        "cause segfaults during relationship insertion.[/red]"
+                    )
+                    console.print()
+                    console.print("[yellow]Background threads detected:[/yellow]")
+                    for t in background_threads:
+                        console.print(f"  - {t.name} (daemon={t.daemon})")
+                    console.print()
+                    console.print(
+                        "[yellow]Solution: Ensure database connections are fully closed before subprocess spawn.[/yellow]"
+                    )
+                    console.print(
+                        "[yellow]The parent process may not have properly closed the LanceDB connection.[/yellow]"
+                    )
+                    return 1
+
+            # Initialize knowledge graph (synchronous!)
             kg_path = project_root / ".mcp-vector-search" / "knowledge_graph"
-            kg = KnowledgeGraph(kg_path)
-            await kg.initialize()
 
-            # Check if graph already exists
-            stats = await kg.get_stats()
-            if stats["total_entities"] > 0 and not force:
+            # If force rebuild, delete existing database
+            if force and kg_path.exists():
                 console.print(
-                    f"[yellow]⚠[/yellow] Knowledge graph already exists "
-                    f"({stats['total_entities']} entities). "
-                    "Use --force to rebuild."
+                    "[yellow]🗑️  Force rebuild: removing existing KG...[/yellow]"
                 )
-                raise typer.Exit(0)
+                import shutil
 
-            # Build graph
+                for item in kg_path.iterdir():
+                    if item.name.startswith("code_kg"):
+                        if item.is_dir():
+                            shutil.rmtree(item)
+                        else:
+                            item.unlink()
+                console.print("[green]✓ Old KG files removed[/green]")
+
+            kg = KnowledgeGraph(kg_path)
+            kg.initialize_sync()  # Use synchronous initialization
+
+            # Check if graph already exists (only if not force)
+            if not force:
+                stats = kg.get_stats_sync()
+                if stats["total_entities"] > 0:
+                    console.print(
+                        f"[yellow]⚠[/yellow] Knowledge graph already exists "
+                        f"({stats['total_entities']} entities). "
+                        "Use --force to rebuild."
+                    )
+                    kg.close_sync()
+                    return 0
+
+            # Build graph from chunks (synchronous!)
             builder = KGBuilder(kg, project_root)
-            build_stats = await builder.build_from_database(
-                database,
+            build_stats = builder.build_from_chunks_sync(
+                chunks,
                 show_progress=True,
-                limit=limit,
                 skip_documents=skip_documents,
-                incremental=incremental,
             )
 
             # Show results
@@ -146,11 +236,296 @@ def build_kg(
             console.print(table)
             console.print("[green]✓[/green] Knowledge graph built successfully!")
 
-        # Close connections
-        await kg.close()
-        await database.close()
+            # Close KG connection
+            kg.close_sync()
 
-    asyncio.run(_build())
+            return 0
+
+        except Exception as e:
+            console.print(f"[red]✗ Build failed: {e}[/red]")
+            import traceback
+
+            traceback.print_exc()
+            return 1
+        finally:
+            # Clean up temporary chunks file
+            try:
+                chunks_file.unlink()
+            except Exception:
+                pass
+
+    # CRITICAL: Call synchronously (no asyncio.run!)
+    # asyncio.run() creates background threads that segfault with Kuzu
+    return _do_build_sync()
+
+
+@kg_app.command("build")
+def build_kg(
+    project_root: Path = typer.Option(
+        ".", help="Project root directory", exists=True, file_okay=False
+    ),
+    force: bool = typer.Option(False, help="Force rebuild even if graph exists"),
+    limit: int | None = typer.Option(
+        None, help="Limit number of chunks to process (for testing)"
+    ),
+    skip_documents: bool = typer.Option(
+        False,
+        "--skip-documents",
+        help="Skip expensive DOCUMENTS relationship extraction (faster build)",
+    ),
+    incremental: bool = typer.Option(
+        False,
+        "--incremental",
+        help="Only process new chunks not in previous build (incremental build)",
+    ),
+):
+    """Build knowledge graph from indexed chunks.
+
+    This command extracts entities and relationships from your indexed
+    codebase and builds a queryable knowledge graph.
+
+    Example:
+        mcp-vector-search kg build
+        mcp-vector-search kg build --force
+        mcp-vector-search kg build --limit 100  # Test with 100 chunks
+        mcp-vector-search kg build --skip-documents  # Faster build for large repos
+        mcp-vector-search kg build --incremental  # Only process new chunks
+    """
+    project_root = project_root.resolve()
+
+    console.print(
+        Panel.fit(
+            f"[bold cyan]Building Knowledge Graph[/bold cyan]\nProject: {project_root}",
+            border_style="cyan",
+        )
+    )
+
+    async def _load_and_prepare_chunks():
+        """Load chunks from database and save to temp file for subprocess."""
+        import tempfile
+
+        # Initialize database to load chunks
+        components = await ComponentFactory.create_standard_components(
+            project_root, use_pooling=False
+        )
+        database = components.database
+
+        temp_path = None
+        async with database:
+            # Check if index exists
+            chunk_count = database.get_chunk_count()
+            if chunk_count == 0:
+                console.print(
+                    "[red]✗[/red] No index found. Run 'mcp-vector-search index' first."
+                )
+                raise typer.Exit(1)
+
+            console.print(f"[cyan]Loading {chunk_count} chunks from database...[/cyan]")
+
+            # Load chunks based on incremental mode
+            processed_chunk_ids = set()
+            if incremental:
+                # Load processed chunk IDs from KG metadata
+                metadata_path = (
+                    project_root
+                    / ".mcp-vector-search"
+                    / "knowledge_graph"
+                    / "kg_metadata.json"
+                )
+                if metadata_path.exists():
+                    with open(metadata_path) as f:
+                        metadata = json.load(f)
+                        processed_chunk_ids = set(
+                            metadata.get("processed_chunk_ids", [])
+                        )
+                console.print(
+                    f"[yellow]Incremental mode: {len(processed_chunk_ids)} chunks already processed[/yellow]"
+                )
+
+            # Load all chunks
+            chunks = []
+            for batch in database.iter_chunks_batched(batch_size=5000):
+                # Filter out already processed chunks in incremental mode
+                if incremental:
+                    batch = [
+                        c
+                        for c in batch
+                        if (c.chunk_id or c.id) not in processed_chunk_ids
+                    ]
+
+                chunks.extend(batch)
+
+                # Apply limit if specified
+                if limit and len(chunks) >= limit:
+                    chunks = chunks[:limit]
+                    break
+
+            if incremental and len(chunks) == 0:
+                console.print(
+                    "[green]✓ No new chunks to process in incremental mode[/green]"
+                )
+                raise typer.Exit(0)
+
+            console.print(f"[green]✓ Loaded {len(chunks)} chunks[/green]")
+
+            # Serialize chunks to temp JSON file (inside async with to ensure DB is open)
+            import sys
+            from dataclasses import asdict
+
+            console.print("[dim]Serializing chunks to temp file...[/dim]")
+            sys.stdout.flush()  # Force flush
+            temp_fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="kg_chunks_")
+            try:
+                with open(temp_path, "w") as f:
+                    # Serialize chunks to JSON (use asdict for dataclasses)
+                    chunks_data = [asdict(chunk) for chunk in chunks]
+                    # Convert Path objects to strings for JSON serialization
+                    for chunk_dict in chunks_data:
+                        chunk_dict["file_path"] = str(chunk_dict["file_path"])
+                    json.dump(chunks_data, f)
+                console.print(f"[dim]Saved chunks to {temp_path}[/dim]")
+                sys.stdout.flush()  # Force flush
+            finally:
+                import os
+
+                os.close(temp_fd)
+
+        # Return temp_path AFTER database is properly closed
+        console.print("[dim]Closing database...[/dim]")
+        sys.stdout.flush()  # Force flush
+
+        # CRITICAL: Explicitly close database and await cleanup
+        # This ensures the async context manager has fully released resources
+        await database.close()
+        console.print("[dim]Database closed explicitly[/dim]")
+        sys.stdout.flush()
+
+        return temp_path
+
+    # Load chunks in parent process (before spawning subprocess)
+    console.print("[cyan]Loading chunks in parent process...[/cyan]")
+    chunks_file = asyncio.run(_load_and_prepare_chunks())
+    console.print(f"[green]✓ Chunks saved to {chunks_file}[/green]")
+
+    # CRITICAL: Force cleanup of asyncio resources and background threads
+    # LanceDB creates a persistent "LanceDBBackgroundEventLoop" daemon thread
+    # that MUST be terminated before spawning subprocess (causes Kuzu segfaults)
+    import gc
+    import threading
+    import time
+
+    console.print("[dim]Forcing cleanup of async resources...[/dim]")
+
+    # Force garbage collection to cleanup lingering asyncio resources
+    gc.collect()
+
+    # Close all asyncio event loops
+    try:
+        loop = asyncio.get_event_loop()
+        if loop and not loop.is_closed():
+            loop.close()
+            console.print("[dim]Closed asyncio event loop[/dim]")
+    except RuntimeError:
+        pass  # No event loop in current thread
+
+    # Set new event loop policy to ensure clean state
+    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+
+    # Give background threads time to terminate
+    max_wait = 3.0  # Wait up to 3 seconds
+    start_time = time.time()
+    threads = threading.enumerate()
+    console.print(f"[dim]Initial threads: {[t.name for t in threads]}[/dim]")
+
+    while len(threads) > 1 and (time.time() - start_time) < max_wait:
+        time.sleep(0.2)
+        gc.collect()  # Keep collecting
+        threads = threading.enumerate()
+
+    # Final check
+    threads = threading.enumerate()
+    if len(threads) > 1:
+        background = [t for t in threads if t != threading.main_thread()]
+        console.print(
+            f"[yellow]⚠ Warning: {len(background)} background thread(s) still active:[/yellow]"
+        )
+        for t in background:
+            console.print(f"  - {t.name} (daemon={t.daemon})")
+        console.print()
+        console.print(
+            "[yellow]These daemon threads will be inherited by subprocess.[/yellow]"
+        )
+        console.print(
+            "[yellow]Subprocess will fail with segfault if threads interfere with Kuzu.[/yellow]"
+        )
+        console.print()
+    else:
+        console.print(
+            "[green]✓ No background threads, safe to spawn subprocess[/green]"
+        )
+
+    # Run in completely isolated subprocess using subprocess.run()
+    # This is necessary because Kuzu (Rust-based) segfaults with background threads
+    # CRITICAL: We use subprocess.run() instead of multiprocessing.Process()
+    # because multiprocessing can inherit module state including LanceDB threads
+    import subprocess
+
+    console.print("[dim]Starting completely isolated subprocess...[/dim]")
+
+    # Build command to execute the isolated subprocess script
+    # CRITICAL: Use the SAME Python interpreter that's running mcp-vector-search
+    # Not sys.executable, which might be a different tool's Python (like claude-mpm)
+    import shutil
+
+    # Find mcp-vector-search command and extract its Python interpreter
+    mcp_cmd = shutil.which("mcp-vector-search")
+    if mcp_cmd:
+        # Read shebang from mcp-vector-search to get correct Python
+        with open(mcp_cmd) as f:
+            shebang = f.readline().strip()
+            if shebang.startswith("#!"):
+                python_executable = shebang[2:].strip()
+            else:
+                python_executable = sys.executable
+    else:
+        python_executable = sys.executable
+
+    console.print(f"[dim]Using Python: {python_executable}[/dim]")
+
+    subprocess_script = Path(__file__).parent / "_kg_subprocess.py"
+    cmd = [
+        python_executable,
+        str(subprocess_script),
+        str(project_root.absolute()),
+        chunks_file,
+    ]
+    if force:
+        cmd.append("--force")
+    if skip_documents:
+        cmd.append("--skip-documents")
+
+    console.print(f"[dim]Command: {' '.join(cmd)}[/dim]")
+
+    # Run subprocess with inherited stdout/stderr for live output
+    result = subprocess.run(
+        cmd,
+        check=False,
+        stdout=None,  # Inherit stdout (shows in console)
+        stderr=None,  # Inherit stderr (shows in console)
+    )
+
+    console.print(f"[dim]Subprocess finished with exitcode: {result.returncode}[/dim]")
+
+    if result.returncode != 0:
+        console.print(f"[red]✗ Build failed with exit code {result.returncode}[/red]")
+        # Clean up temp file
+        try:
+            Path(chunks_file).unlink()
+        except Exception:
+            pass
+        raise typer.Exit(result.returncode)
+
+    console.print("[green]✓ Build completed successfully in subprocess[/green]")
 
 
 @kg_app.command("query")

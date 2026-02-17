@@ -128,6 +128,7 @@ class DimensionChecker:
         Returns:
             Collection count, or None if operation failed/timed out
         """
+        result_queue = None
         try:
             # Create a queue for result communication
             ctx = multiprocessing.get_context("spawn")
@@ -182,6 +183,15 @@ class DimensionChecker:
         except Exception as e:
             logger.debug(f"Error in safe collection count: {e}")
             return None
+        finally:
+            # Clean up queue to prevent semaphore leak
+            if result_queue is not None:
+                try:
+                    result_queue.close()
+                    result_queue.join_thread()
+                except Exception:
+                    # Ignore cleanup errors
+                    pass
 
     @staticmethod
     async def check_compatibility(collection: Any, embedding_function: Any) -> None:
