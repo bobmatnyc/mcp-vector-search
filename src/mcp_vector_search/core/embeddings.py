@@ -107,12 +107,31 @@ def _detect_device() -> str:
         logger.info("Using Apple Silicon MPS backend for GPU acceleration")
         return "mps"
 
-    # Check for NVIDIA CUDA
+    # Check for NVIDIA CUDA with detailed diagnostics
     if torch.cuda.is_available():
-        logger.info("Using CUDA backend for GPU acceleration")
+        gpu_count = torch.cuda.device_count()
+        gpu_name = torch.cuda.get_device_name(0) if gpu_count > 0 else "unknown"
+        logger.info(
+            f"Using CUDA backend for GPU acceleration ({gpu_count} GPU(s): {gpu_name})"
+        )
         return "cuda"
 
-    logger.info("Using CPU backend")
+    # Log why CUDA isn't available (helps debug AWS/cloud issues)
+    cuda_built = (
+        torch.backends.cuda.is_built() if hasattr(torch.backends, "cuda") else False
+    )
+    if not cuda_built:
+        logger.debug(
+            "CUDA not available: PyTorch installed without CUDA support. "
+            "Install with: pip install torch --index-url https://download.pytorch.org/whl/cu121"
+        )
+    else:
+        logger.debug(
+            "CUDA not available: PyTorch has CUDA support but no GPU detected. "
+            "Check: nvidia-smi, NVIDIA drivers, and GPU instance type."
+        )
+
+    logger.info("Using CPU backend (no GPU acceleration)")
     return "cpu"
 
 
@@ -756,25 +775,17 @@ def create_embedding_function(
         # Logging suppression is handled at module level
         from chromadb.utils import embedding_functions
 
-        # Map legacy model names to current defaults
-        # This ensures backward compatibility with old config files
+        # Only map shorthand aliases to full model names
+        # DO NOT auto-migrate models - respect user's choice for speed vs quality
         model_mapping = {
-            # Legacy CodeBERT models (deprecated, never existed in sentence-transformers)
-            "microsoft/codebert-base": "Salesforce/SFR-Embedding-Code-400M_R",
-            "microsoft/unixcoder-base": "Salesforce/SFR-Embedding-Code-400M_R",
-            # Maintain existing mappings for smooth migration
-            "codebert": "Salesforce/SFR-Embedding-Code-400M_R",
-            "unixcoder": "Salesforce/SFR-Embedding-Code-400M_R",
+            # Shorthand aliases only
+            "codebert": "microsoft/codebert-base",
+            "unixcoder": "microsoft/unixcoder-base",
+            "sfr-400m": "Salesforce/SFR-Embedding-Code-400M_R",
+            "sfr-2b": "Salesforce/SFR-Embedding-Code-2B_R",
         }
 
         actual_model = model_mapping.get(model_name, model_name)
-
-        # Log migration warning if model was remapped
-        if actual_model != model_name:
-            logger.warning(
-                f"Model '{model_name}' is deprecated. Automatically using '{actual_model}' instead. "
-                f"Please update your configuration to use the new model explicitly."
-            )
 
         # Suppress stdout to hide "BertModel LOAD REPORT" noise
         with suppress_stdout_stderr():
@@ -783,7 +794,7 @@ def create_embedding_function(
                 trust_remote_code=True,  # Required for models with custom code (e.g., CodeXEmbed)
             )
 
-        logger.debug(f"Created ChromaDB embedding function with model: {actual_model}")
+        logger.debug(f"Created embedding function with model: {actual_model}")
 
     except Exception as e:
         logger.warning(f"Failed to create ChromaDB embedding function: {e}")
