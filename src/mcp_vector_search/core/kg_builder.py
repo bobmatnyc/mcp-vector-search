@@ -1020,8 +1020,16 @@ class KGBuilder:
             "REFERENCES": [],
         }
 
-        # Extract frontmatter metadata
-        frontmatter = self._extract_frontmatter(chunk.content)
+        # Extract frontmatter metadata from FULL file (not chunk content)
+        # This is necessary because chunking can split frontmatter across multiple chunks
+        frontmatter = None
+        if chunk.file_path and Path(chunk.file_path).exists():
+            try:
+                full_content = Path(chunk.file_path).read_text()
+                frontmatter = self._extract_frontmatter(full_content)
+            except Exception as e:
+                logger.debug(f"Failed to read full file for frontmatter: {e}")
+
         tags_from_frontmatter = []
         related_docs = []
 
@@ -1049,11 +1057,22 @@ class KGBuilder:
         # Extract markdown headers
         headers = self._extract_headers(chunk.content, chunk.start_line)
 
+        # If no headers, still add tags from frontmatter and code blocks
         if not headers:
+            # Add frontmatter tags even without sections
+            for tag in tags_from_frontmatter:
+                tags.add(tag)
+
+            # Add language tags
+            for lang in languages:
+                tags.add(f"lang:{lang}")
+
             return doc_sections, tags, relationships
 
         # Create doc sections and relationships
         prev_section_id = None
+        first_section = True  # Track first section for tag attachment
+
         for header in headers:
             section_id = f"doc:{chunk.chunk_id}:{header['line']}"
 
@@ -1068,27 +1087,30 @@ class KGBuilder:
             )
             doc_sections.append(doc_section)
 
-            # Add frontmatter tags
-            for tag in tags_from_frontmatter:
-                tags.add(tag)
-                relationships["HAS_TAG"].append(
-                    CodeRelationship(
-                        source_id=section_id,
-                        target_id=f"tag:{tag}",
-                        relationship_type="has_tag",
+            # Add frontmatter tags to FIRST section only (not every section)
+            if first_section:
+                for tag in tags_from_frontmatter:
+                    tags.add(tag)
+                    relationships["HAS_TAG"].append(
+                        CodeRelationship(
+                            source_id=section_id,
+                            target_id=f"tag:{tag}",
+                            relationship_type="has_tag",
+                        )
                     )
-                )
 
-            # Add language tags for code blocks
-            for lang in languages:
-                tags.add(f"lang:{lang}")
-                relationships["DEMONSTRATES"].append(
-                    CodeRelationship(
-                        source_id=section_id,
-                        target_id=f"tag:lang:{lang}",
-                        relationship_type="demonstrates",
+                # Add language tags for code blocks (to first section)
+                for lang in languages:
+                    tags.add(f"lang:{lang}")
+                    relationships["DEMONSTRATES"].append(
+                        CodeRelationship(
+                            source_id=section_id,
+                            target_id=f"tag:lang:{lang}",
+                            relationship_type="demonstrates",
+                        )
                     )
-                )
+
+                first_section = False
 
             # Add LINKS_TO relationships
             for rel_doc in related_docs:
@@ -1146,8 +1168,16 @@ class KGBuilder:
             chunk: Text chunk to process
             stats: Statistics dictionary to update
         """
-        # Extract frontmatter metadata
-        frontmatter = self._extract_frontmatter(chunk.content)
+        # Extract frontmatter metadata from FULL file (not chunk content)
+        # This is necessary because chunking can split frontmatter across multiple chunks
+        frontmatter = None
+        if chunk.file_path and Path(chunk.file_path).exists():
+            try:
+                full_content = Path(chunk.file_path).read_text()
+                frontmatter = self._extract_frontmatter(full_content)
+            except Exception as e:
+                logger.debug(f"Failed to read full file for frontmatter: {e}")
+
         tags_from_frontmatter = []
         related_docs = []
 

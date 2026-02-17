@@ -769,6 +769,41 @@ class ChromaVectorDatabase(VectorDatabase):
             self._collection, skip_stats
         )
 
+    def get_chunk_count(
+        self, file_path: str | None = None, language: str | None = None
+    ) -> int:
+        """Get total chunk count using ChromaDB's native count method.
+
+        Args:
+            file_path: Optional filter by file path
+            language: Optional filter by language
+
+        Returns:
+            Total number of chunks matching the filter criteria
+        """
+        if not self._collection:
+            raise DatabaseNotInitializedError("Database not initialized")
+
+        # Build where clause if filters provided
+        where = None
+        if file_path or language:
+            where_conditions = []
+            if file_path:
+                where_conditions.append({"file_path": file_path})
+            if language:
+                where_conditions.append({"language": language})
+
+            # Combine conditions with AND if multiple
+            if len(where_conditions) == 1:
+                where = where_conditions[0]
+            else:
+                where = {"$and": where_conditions}
+
+        # Use ChromaDB's native count() method
+        return (
+            self._collection.count(where=where) if where else self._collection.count()
+        )
+
     async def reset(self) -> None:
         """Reset the database."""
         if self._client:
