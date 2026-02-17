@@ -336,11 +336,13 @@ class KGBuilder:
 
         # Extract from code chunks
         for chunk in code_chunks:
-            entity, rels = self._extract_code_entity(chunk)
+            entity, rels, modules = self._extract_code_entity(chunk)
             if entity:
                 code_entities.append(entity)
                 for rel_type, rel_list in rels.items():
                     relationships[rel_type].extend(rel_list)
+            # Add module entities (deduplicated later)
+            code_entities.extend(modules)
 
         # Extract from text chunks
         for chunk in text_chunks:
@@ -375,7 +377,15 @@ class KGBuilder:
             console.print("[cyan]🏗️  Phase 2: Inserting entities into Kuzu...[/cyan]")
 
         if code_entities:
-            stats["entities"] = self.kg.add_entities_batch_sync(code_entities)
+            # Deduplicate entities by ID (modules may appear multiple times)
+            seen_ids = set()
+            unique_entities = []
+            for entity in code_entities:
+                if entity.id not in seen_ids:
+                    unique_entities.append(entity)
+                    seen_ids.add(entity.id)
+
+            stats["entities"] = self.kg.add_entities_batch_sync(unique_entities)
             if progress_tracker:
                 progress_tracker.item(f"{stats['entities']:,} code entities", done=True)
             else:
@@ -675,11 +685,13 @@ class KGBuilder:
 
             # Extract from code chunks
             for chunk in code_chunks:
-                entity, rels = self._extract_code_entity(chunk)
+                entity, rels, modules = self._extract_code_entity(chunk)
                 if entity:
                     code_entities.append(entity)
                     for rel_type, rel_list in rels.items():
                         relationships[rel_type].extend(rel_list)
+                # Add module entities (deduplicated later)
+                code_entities.extend(modules)
 
             # Extract from text chunks
             for chunk in text_chunks:
@@ -750,11 +762,13 @@ class KGBuilder:
 
             # Extract from code chunks
             for chunk in code_chunks:
-                entity, rels = self._extract_code_entity(chunk)
+                entity, rels, modules = self._extract_code_entity(chunk)
                 if entity:
                     code_entities.append(entity)
                     for rel_type, rel_list in rels.items():
                         relationships[rel_type].extend(rel_list)
+                # Add module entities (deduplicated later)
+                code_entities.extend(modules)
 
             # Extract from text chunks
             for chunk in text_chunks:
@@ -811,22 +825,59 @@ class KGBuilder:
 
     def _extract_code_entity(
         self, chunk: CodeChunk
-    ) -> tuple[CodeEntity | None, dict[str, list[CodeRelationship]]]:
+    ) -> tuple[CodeEntity | None, dict[str, list[CodeRelationship]], list[CodeEntity]]:
         """Extract entity and relationships from code chunk (no DB writes).
 
         Args:
             chunk: Code chunk to process
 
         Returns:
-            Tuple of (entity, relationships_by_type)
+            Tuple of (entity, relationships_by_type, module_entities)
         """
         chunk_id = chunk.chunk_id or chunk.id
         name = chunk.function_name or chunk.class_name or "module"
 
-        # Skip generic entity names
+        # Extract module entities from imports FIRST (before potentially skipping)
+        # This ensures import relationships are created even for generic entities
+        module_entities: list[CodeEntity] = []
+        import_relationships: list[CodeRelationship] = []
+
+        if hasattr(chunk, "imports") and chunk.imports:
+            for imp in chunk.imports:
+                # Extract module name directly from AST dict structure
+                # AST provides: {"module": "os", "names": ["path"], "alias": None}
+                if isinstance(imp, dict):
+                    module_name = imp.get("module")
+                else:
+                    # Fallback for legacy string format (shouldn't happen with tree-sitter)
+                    module_name = str(imp).split(".")[0] if imp else None
+
+                # Skip relative imports (., .., etc.) and empty modules
+                if module_name and not module_name.startswith("."):
+                    module_id = f"module:{module_name}"
+
+                    # Create module entity
+                    module_entity = CodeEntity(
+                        id=module_id,
+                        name=module_name,
+                        entity_type="module",
+                        file_path="",  # External module
+                    )
+                    module_entities.append(module_entity)
+
+                    # Create import relationship
+                    import_relationships.append(
+                        CodeRelationship(
+                            source_id=chunk_id,
+                            target_id=module_id,
+                            relationship_type="imports",
+                        )
+                    )
+
+        # Skip generic entity names but still return module entities
         if self._is_generic_entity(name):
             logger.debug(f"Skipping generic entity: {name}")
-            return None, {}
+            return None, {"IMPORTS": import_relationships}, module_entities
 
         entity = CodeEntity(
             id=chunk_id,
@@ -840,10 +891,11 @@ class KGBuilder:
 
         relationships: dict[str, list[CodeRelationship]] = {
             "CALLS": [],
-            "IMPORTS": [],
+            "IMPORTS": import_relationships,  # Already extracted above
             "INHERITS": [],
             "CONTAINS": [],
         }
+        # module_entities already populated above
 
         # Process function calls
         if hasattr(chunk, "calls") and chunk.calls:
@@ -871,20 +923,9 @@ class KGBuilder:
                         )
                     )
 
-        # Process imports (create module entities)
-        if hasattr(chunk, "imports") and chunk.imports:
-            for imp in chunk.imports:
-                module = imp.get("module", "") if isinstance(imp, dict) else str(imp)
-                if module:
-                    module_id = f"module:{module}"
-                    # Module entities will be added separately
-                    relationships["IMPORTS"].append(
-                        CodeRelationship(
-                            source_id=chunk_id,
-                            target_id=module_id,
-                            relationship_type="imports",
-                        )
-                    )
+        # NOTE: Import processing already done at the start of this method
+        # (before the generic entity check) to ensure modules are extracted
+        # even for generic entities like "module"
 
         # Process parent-child (contains) relationships
         if hasattr(chunk, "parent_chunk_id") and chunk.parent_chunk_id:
@@ -896,7 +937,7 @@ class KGBuilder:
                 )
             )
 
-        return entity, relationships
+        return entity, relationships, module_entities
 
     async def _process_chunk(self, chunk: CodeChunk, stats: dict[str, int]):
         """Extract entities and relationships from a chunk.
@@ -963,10 +1004,16 @@ class KGBuilder:
             # Process imports (create module entities if needed)
             if hasattr(chunk, "imports") and chunk.imports:
                 for imp in chunk.imports:
-                    module = (
-                        imp.get("module", "") if isinstance(imp, dict) else str(imp)
-                    )
-                    if module:
+                    # Extract module name directly from AST dict structure
+                    # AST provides: {"module": "os", "names": ["path"], "alias": None}
+                    if isinstance(imp, dict):
+                        module = imp.get("module")
+                    else:
+                        # Fallback for legacy string format (shouldn't happen with tree-sitter)
+                        module = str(imp).split(".")[0] if imp else None
+
+                    # Skip relative imports (., .., etc.) and empty modules
+                    if module and not module.startswith("."):
                         # Create module entity if it doesn't exist
                         module_id = f"module:{module}"
                         module_entity = CodeEntity(
