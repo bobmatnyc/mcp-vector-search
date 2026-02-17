@@ -326,11 +326,20 @@ def print_kg_stats(stats: dict[str, Any]) -> None:
     total_entities = stats.get("total_entities", 0)
     code_entities = stats.get("code_entities", 0)
     doc_sections = stats.get("doc_sections", 0)
+    tags = stats.get("tags", 0)
+    persons = stats.get("persons", 0)
+    projects = stats.get("projects", 0)
 
     table.add_row("Total Entities", f"{total_entities:,}")
     table.add_row("  Code Entities", f"{code_entities:,}")
     if doc_sections > 0:
         table.add_row("  Doc Sections", f"{doc_sections:,}")
+    if tags > 0:
+        table.add_row("  Tags", f"{tags:,}")
+    if persons > 0:
+        table.add_row("  Persons", f"{persons:,}")
+    if projects > 0:
+        table.add_row("  Projects", f"{projects:,}")
 
     # Relationship counts
     relationships = stats.get("relationships", {})
@@ -339,10 +348,17 @@ def print_kg_stats(stats: dict[str, Any]) -> None:
         table.add_row("Total Relationships", f"{total_rels:,}")
 
         # Show major relationship types
-        for rel_type in ["calls", "imports", "inherits", "contains"]:
+        for rel_type in [
+            "calls",
+            "imports",
+            "inherits",
+            "contains",
+            "has_tag",
+            "authored",
+        ]:
             count = relationships.get(rel_type, 0)
             if count > 0:
-                table.add_row(f"  {rel_type.capitalize()}", f"{count:,}")
+                table.add_row(f"  {rel_type.replace('_', ' ').title()}", f"{count:,}")
 
     console.print(table)
 

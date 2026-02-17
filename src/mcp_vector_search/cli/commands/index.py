@@ -1007,6 +1007,16 @@ async def _run_batch_indexing(
                             / ".mcp-vector-search"
                             / "knowledge_graph"
                         )
+
+                        # Clear existing KG on force rebuild
+                        if force_reindex and kg_path.exists():
+                            import shutil
+
+                            logger.info(
+                                "Clearing existing knowledge graph for rebuild..."
+                            )
+                            shutil.rmtree(kg_path, ignore_errors=True)
+
                         kg = KnowledgeGraph(kg_path)
                         await kg.initialize()
                         builder = KGBuilder(kg, indexer.project_root)
@@ -1077,11 +1087,18 @@ async def _run_batch_indexing(
                             # Update samples panel with completion message
                             completion_msg = "[green]✓[/green] All phases complete!\n\n"
                             if force_reindex:
-                                completion_msg += "[green]✓ Replaced live database with new index[/green]"
+                                completion_msg += "[green]✓ Replaced live database with new index[/green]\n\n"
                             else:
                                 completion_msg += (
-                                    "[dim]Index updated successfully[/dim]"
+                                    "[dim]Index updated successfully[/dim]\n\n"
                                 )
+
+                            # Suggest next steps
+                            completion_msg += (
+                                "[dim]Next steps:[/dim]\n"
+                                "  • [cyan]mcp-vector-search search <query>[/cyan] - Search your code\n"
+                                "  • [cyan]mcp-vector-search index relationships[/cyan] - Compute semantic relationships"
+                            )
 
                             layout["samples"].update(
                                 Panel(
