@@ -858,17 +858,22 @@ async def _run_batch_indexing(
                     if len(recent_files) > 5:
                         recent_files.pop(0)
 
-                    # Calculate phase timings
+                    # Calculate phase timings and throughput
                     phase1_elapsed = time.time() - phase_start_times["phase1"]
+                    current_chunks_per_sec = (
+                        total_chunks_created / phase1_elapsed
+                        if phase1_elapsed > 0
+                        else 0
+                    )
 
                     # Update phases panel with existing files context
                     current_total = existing_count + indexed_count
                     if existing_count > 0:
                         # Show both new and existing files
-                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({current_total:,}/{total_files_including_cached:,} files • {indexed_count} new + {existing_count:,} cached • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]"
+                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({current_total:,}/{total_files_including_cached:,} files • {indexed_count} new + {existing_count:,} cached • {total_chunks_created:,} chunks @ {current_chunks_per_sec:.0f}/sec • {phase1_elapsed:.0f}s)[/dim]"
                     else:
                         # First-time indexing, no cached files
-                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({current_total:,}/{total_files_including_cached:,} files • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]"
+                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({current_total:,}/{total_files_including_cached:,} files • {total_chunks_created:,} chunks @ {current_chunks_per_sec:.0f}/sec • {phase1_elapsed:.0f}s)[/dim]"
 
                     layout["phases"].update(
                         Panel(
