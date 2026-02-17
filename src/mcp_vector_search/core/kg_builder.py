@@ -310,128 +310,81 @@ class KGBuilder:
         }
 
         if show_progress:
-            # Use Rich progress bars for visual feedback
-            # IMPORTANT: Disable auto-refresh to avoid thread safety issues with Kuzu
-            # The background refresh thread (default 4Hz) causes segfaults when
-            # accessing Kuzu connection from multiple threads
-            with (
-                Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(bar_width=40),
-                    TaskProgressColumn(),
-                    console=console,
-                    auto_refresh=False,  # CRITICAL: Disable background thread entirely
-                ) as progress
-            ):
-                # Phase 1: Extract entities and relationships
-                task1 = progress.add_task(
-                    "[cyan]🔍 Scanning chunks...",
-                    total=len(code_chunks) + len(text_chunks),
-                )
+            # NOTE: Rich Progress bars cause segfaults with Kuzu (thread safety)
+            # Using simple console prints instead for KG builds
+            console.print("[cyan]🔍 Scanning chunks...[/cyan]")
 
-                code_entities: list[CodeEntity] = []
-                doc_sections: list[DocSection] = []
-                tags: set[str] = set()
-                relationships: dict[str, list[CodeRelationship]] = {
-                    "CALLS": [],
-                    "IMPORTS": [],
-                    "INHERITS": [],
-                    "CONTAINS": [],
-                    "REFERENCES": [],
-                    "DOCUMENTS": [],
-                    "FOLLOWS": [],
-                    "HAS_TAG": [],
-                    "DEMONSTRATES": [],
-                    "LINKS_TO": [],
-                }
+            code_entities: list[CodeEntity] = []
+            doc_sections: list[DocSection] = []
+            tags: set[str] = set()
+            relationships: dict[str, list[CodeRelationship]] = {
+                "CALLS": [],
+                "IMPORTS": [],
+                "INHERITS": [],
+                "CONTAINS": [],
+                "REFERENCES": [],
+                "DOCUMENTS": [],
+                "FOLLOWS": [],
+                "HAS_TAG": [],
+                "DEMONSTRATES": [],
+                "LINKS_TO": [],
+            }
 
-                # Extract from code chunks
-                for chunk in code_chunks:
-                    entity, rels = self._extract_code_entity(chunk)
-                    if entity:
-                        code_entities.append(entity)
-                        for rel_type, rel_list in rels.items():
-                            relationships[rel_type].extend(rel_list)
-                    progress.update(task1, advance=1)
-                    progress.refresh()  # Manual refresh (no background thread)
-
-                # Extract from text chunks
-                for chunk in text_chunks:
-                    docs, chunk_tags, rels = self._extract_doc_sections(chunk)
-                    doc_sections.extend(docs)
-                    tags.update(chunk_tags)
+            # Extract from code chunks
+            for chunk in code_chunks:
+                entity, rels = self._extract_code_entity(chunk)
+                if entity:
+                    code_entities.append(entity)
                     for rel_type, rel_list in rels.items():
                         relationships[rel_type].extend(rel_list)
-                    progress.update(task1, advance=1)
-                    progress.refresh()  # Manual refresh (no background thread)
 
-                progress.update(
-                    task1,
-                    description=f"[green]✓ Scanned {len(chunks)} chunks",
-                    completed=len(chunks),
+            # Extract from text chunks
+            for chunk in text_chunks:
+                docs, chunk_tags, rels = self._extract_doc_sections(chunk)
+                doc_sections.extend(docs)
+                tags.update(chunk_tags)
+                for rel_type, rel_list in rels.items():
+                    relationships[rel_type].extend(rel_list)
+
+            console.print(f"[green]✓ Scanned {len(chunks)} chunks[/green]")
+
+            # Phase 2: Insert entities
+            console.print("[cyan]🏗️  Inserting entities...[/cyan]")
+
+            if code_entities:
+                stats["entities"] = await self.kg.add_entities_batch(code_entities)
+                console.print(f"  ✓ {stats['entities']} code entities")
+
+            if doc_sections:
+                stats["doc_sections"] = await self.kg.add_doc_sections_batch(
+                    doc_sections
                 )
-                progress.refresh()
+                console.print(f"  ✓ {stats['doc_sections']} doc sections")
 
-                # Phase 2: Insert entities
-                total_entities = len(code_entities) + len(doc_sections) + len(tags)
-                task2 = progress.add_task(
-                    "[cyan]🏗️  Extracting entities...", total=total_entities
+            if tags:
+                stats["tags"] = await self.kg.add_tags_batch(list(tags))
+                console.print(f"  ✓ {stats['tags']} tags")
+
+            total_entities = len(code_entities) + len(doc_sections) + len(tags)
+            console.print(f"[green]✓ Inserted {total_entities} entities[/green]")
+
+            # Phase 3: Insert relationships
+            console.print("[cyan]🔗 Building relations...[/cyan]")
+
+            for rel_type, rels in relationships.items():
+                if rels:
+                    count = await self.kg.add_relationships_batch(rels)
+                    stats[rel_type.lower()] = count
+
+            total_rels = sum(len(r) for r in relationships.values())
+            console.print(f"[green]✓ Built {total_rels} relations[/green]")
+
+            # Phase 4: Extract DOCUMENTS relationships (optional)
+            if not skip_documents and text_chunks and code_chunks:
+                console.print("[cyan]📄 Extracting DOCUMENTS...[/cyan]")
+                await self._extract_documents_relationships(
+                    text_chunks, stats, progress_task=None, progress_obj=None
                 )
-
-                if code_entities:
-                    stats["entities"] = await self.kg.add_entities_batch(code_entities)
-                    progress.update(task2, advance=len(code_entities))
-                    progress.refresh()
-
-                if doc_sections:
-                    stats["doc_sections"] = await self.kg.add_doc_sections_batch(
-                        doc_sections
-                    )
-                    progress.update(task2, advance=len(doc_sections))
-                    progress.refresh()
-
-                if tags:
-                    stats["tags"] = await self.kg.add_tags_batch(list(tags))
-                    progress.update(task2, advance=len(tags))
-                    progress.refresh()
-
-                progress.update(
-                    task2,
-                    description=f"[green]✓ Extracted {total_entities} entities",
-                    completed=total_entities,
-                )
-                progress.refresh()
-
-                # Phase 3: Insert relationships
-                total_rels = sum(len(r) for r in relationships.values())
-                task3 = progress.add_task(
-                    "[cyan]🔗 Building relations...", total=total_rels
-                )
-
-                for rel_type, rels in relationships.items():
-                    if rels:
-                        count = await self.kg.add_relationships_batch(rels)
-                        stats[rel_type.lower()] = count
-                        progress.update(task3, advance=len(rels))
-                        progress.refresh()
-
-                progress.update(
-                    task3,
-                    description=f"[green]✓ Built {total_rels} relations",
-                    completed=total_rels,
-                )
-                progress.refresh()
-
-                # Phase 4: Extract DOCUMENTS relationships (optional)
-                if not skip_documents and text_chunks and code_chunks:
-                    task4 = progress.add_task(
-                        "[cyan]📄 Extracting DOCUMENTS...",
-                        total=len(text_chunks) * len(code_chunks),
-                    )
-                    await self._extract_documents_relationships(
-                        text_chunks, stats, progress_task=task4, progress_obj=progress
-                    )
 
         else:
             # No progress bars - original implementation
@@ -2785,39 +2738,28 @@ class KGBuilder:
 
         # Load chunks with progress reporting
         if show_progress:
-            # IMPORTANT: Disable auto-refresh to avoid thread safety issues with Kuzu
-            with (
-                Progress(
-                    SpinnerColumn(),
-                    TextColumn("[cyan]Loading chunks from database...[/cyan]"),
-                    BarColumn(bar_width=40),
-                    TaskProgressColumn(),
-                    console=console,
-                    auto_refresh=False,  # CRITICAL: Disable background thread entirely
-                ) as progress
-            ):
-                task = progress.add_task("loading", total=total_chunks)
+            # NOTE: Rich Progress bars cause segfaults with Kuzu (thread safety)
+            # Using simple console prints instead
+            console.print(f"[cyan]Loading {total_chunks} chunks from database...[/cyan]")
 
-                chunks = []
-                for batch in database.iter_chunks_batched(batch_size=5000):
-                    # Filter out already processed chunks in incremental mode
-                    if incremental:
-                        batch = [
-                            c
-                            for c in batch
-                            if (c.chunk_id or c.id) not in processed_chunk_ids
-                        ]
+            chunks = []
+            for batch in database.iter_chunks_batched(batch_size=5000):
+                # Filter out already processed chunks in incremental mode
+                if incremental:
+                    batch = [
+                        c
+                        for c in batch
+                        if (c.chunk_id or c.id) not in processed_chunk_ids
+                    ]
 
-                    chunks.extend(batch)
-                    progress.update(task, advance=len(batch))
-                    progress.refresh()  # Manual refresh (no background thread)
+                chunks.extend(batch)
 
-                    # Apply limit if specified
-                    if limit and len(chunks) >= limit:
-                        chunks = chunks[:limit]
-                        progress.update(task, completed=total_chunks)
-                        progress.refresh()
-                        break
+                # Apply limit if specified
+                if limit and len(chunks) >= limit:
+                    chunks = chunks[:limit]
+                    break
+
+            console.print(f"[green]✓ Loaded {len(chunks)} chunks[/green]")
         else:
             logger.info("Loading chunks from database...")
             chunks = []
