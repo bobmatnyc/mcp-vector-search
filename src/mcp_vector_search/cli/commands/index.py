@@ -1026,10 +1026,11 @@ async def _run_batch_indexing(
             samples_table.add_row("[dim]Starting indexing...[/dim]")
 
             # Create layout with initial content to avoid debug output
+            # Use exact sizes matching panel heights to prevent blank line padding
             layout = Layout()
             layout.split_column(
-                Layout(name="phases", size=8),
-                Layout(name="samples", size=7),
+                Layout(name="phases", size=5),  # 3 progress lines + 2 border
+                Layout(name="samples", size=7),  # 5 content lines + 2 border
             )
 
             # Initialize panels with actual content BEFORE Live display
@@ -1039,6 +1040,7 @@ async def _run_batch_indexing(
                     progress,
                     title="[bold]📊 Indexing Progress[/bold]",
                     border_style="blue",
+                    height=5,  # Force exact height: 3 progress lines + 2 border
                 )
             )
 
@@ -1047,6 +1049,7 @@ async def _run_batch_indexing(
                     samples_table,
                     title="[bold]📁 Recently Processed[/bold]",
                     border_style="dim",
+                    height=7,  # 5 content lines + 2 border
                 )
             )
 
@@ -1166,6 +1169,7 @@ async def _run_batch_indexing(
                             progress,
                             title=title_text,
                             border_style="blue",
+                            height=5,  # 3 progress lines + 2 border
                         )
                     )
 
@@ -1197,6 +1201,7 @@ async def _run_batch_indexing(
                             samples_table,
                             title="[bold]📁 Recently Processed[/bold]",
                             border_style="dim",
+                            height=7,  # 5 content lines + 2 border
                         )
                     )
 
@@ -1256,6 +1261,7 @@ async def _run_batch_indexing(
                         progress,
                         title="[bold]📊 Indexing Progress[/bold]",
                         border_style="blue",
+                        height=5,  # 3 progress lines + 2 border
                     )
                 )
 
@@ -1483,6 +1489,7 @@ async def _run_batch_indexing(
                                     progress,
                                     title=completion_title,
                                     border_style="green",
+                                    height=5,  # 3 progress lines + 2 border
                                 )
                             )
 
@@ -1541,6 +1548,7 @@ async def _run_batch_indexing(
                                 progress,
                                 title=f"[bold yellow]⚠[/bold yellow] [bold]📊 Indexing Complete[/bold] [dim]Total: {total_time:.0f}s[/dim]",
                                 border_style="yellow",
+                                height=5,  # 3 progress lines + 2 border
                             )
                         )
                         # Still mark as complete even if KG build failed
