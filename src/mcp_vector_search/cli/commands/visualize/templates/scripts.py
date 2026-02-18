@@ -1764,7 +1764,12 @@ function handleNodeClick(event, d) {
 
     if (nodeData.type === 'directory') {
         // Check if needs progressive loading (not yet fetched)
-        if (nodeData.expandable && !nodeData.expanded && !nodeData.children && !nodeData._children) {
+        // Node needs loading if: expandable=true, not yet expanded, and has no children loaded
+        // Check for EMPTY arrays, not just absence of arrays (buildTreeStructure adds empty [])
+        const hasLoadedChildren = (nodeData.children && nodeData.children.length > 0) ||
+                                   (nodeData._children && nodeData._children.length > 0);
+
+        if (nodeData.expandable && !nodeData.expanded && !hasLoadedChildren) {
             // First time expansion - fetch from server
             console.log('Progressive loading: fetching children from server');
             expandNode(nodeData.id);
