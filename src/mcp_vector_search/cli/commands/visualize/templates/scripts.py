@@ -281,26 +281,22 @@ async function loadGraphDataActual() {
         console.log('Node type counts:', typeCounts);
         console.log('=== END SAMPLE NODE STRUCTURE ===');
 
-        // Build initial tree structure
+        // Mark nodes with autoExpand=true as having children already loaded
+        // This prevents fetching when clicked - children are already in allNodes
+        // But do NOT add to expandedNodes - keep them visually COLLAPSED
+        allNodes.forEach(node => {
+            if (node.autoExpand === true) {
+                // Mark as expanded so click handler doesn't fetch (data is preloaded)
+                node.expanded = true;
+                // Do NOT add to expandedNodes - let them be visually collapsed
+                console.log(`Marked ${node.name} as preloaded (children in initial data, visually collapsed)`);
+            }
+        });
+
+        // Build tree structure - this will use links to create parent-child relationships
+        // Nodes with expanded=true but NOT in expandedNodes will be collapsed but have children ready
         buildTreeStructure();
         renderVisualization();
-
-        // Auto-expand directories marked with autoExpand flag (depth 0-1)
-        // Do this AFTER initial render so user sees something immediately
-        const nodesToAutoExpand = allNodes.filter(node =>
-            node.type === 'directory' && node.autoExpand === true && !expandedNodes.has(node.id)
-        );
-        if (nodesToAutoExpand.length > 0) {
-            console.log(`Auto-expanding ${nodesToAutoExpand.length} directories for 2-level view...`);
-            for (const node of nodesToAutoExpand) {
-                console.log(`Auto-expanding: ${node.name} (${node.id})`);
-                try {
-                    await expandNode(node.id);
-                } catch (err) {
-                    console.warn(`Failed to auto-expand ${node.name}:`, err);
-                }
-            }
-        }
     } catch (error) {
         console.error('Failed to load graph data:', error);
         document.body.innerHTML =
