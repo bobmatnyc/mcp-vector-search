@@ -639,55 +639,44 @@ async def run_indexing(
 
             # Check for updates unless explicitly skipped
             if not skip_vendor_update:
-                with console.status(
-                    "[dim]Checking for vendor pattern updates...[/dim]", spinner="dots"
-                ):
-                    try:
-                        update_available = await vendor_manager.check_for_updates(
-                            timeout=10.0
-                        )
+                # Use simple print instead of console.status to avoid cursor manipulation issues
+                try:
+                    update_available = await vendor_manager.check_for_updates(
+                        timeout=10.0
+                    )
 
-                        if update_available:
-                            # Download new version
-                            logger.info(
-                                "Vendor pattern update available, downloading..."
-                            )
-                            await vendor_manager.download_vendor_yml(timeout=30.0)
+                    if update_available:
+                        # Download new version
+                        logger.info("Vendor pattern update available, downloading...")
+                        await vendor_manager.download_vendor_yml(timeout=30.0)
 
-                            metadata = vendor_manager.get_metadata()
-                            source_info = ""
-                            if metadata and "source_url" in metadata:
-                                source_info = f" from {metadata['source_url']}"
+                        metadata = vendor_manager.get_metadata()
+                        source_info = ""
+                        if metadata and "source_url" in metadata:
+                            source_info = f" from {metadata['source_url']}"
 
-                            console.print(
-                                f"[green]✓[/green] [dim]Updated vendor patterns{source_info}[/dim]"
-                            )
-                        else:
-                            logger.debug("Vendor patterns are up to date")
-
-                    except Exception as e:
-                        # Network errors are non-fatal - fall back to cache
-                        logger.warning(
-                            f"Failed to check for vendor pattern updates: {e}"
-                        )
                         console.print(
-                            "[yellow]⚠[/yellow] [dim]Could not check for updates, using cached patterns[/dim]"
+                            f"[green]✓[/green] [dim]Updated vendor patterns{source_info}[/dim]"
                         )
-                _reset_cursor()
+                    else:
+                        logger.debug("Vendor patterns are up to date")
+
+                except Exception as e:
+                    # Network errors are non-fatal - fall back to cache
+                    logger.warning(f"Failed to check for vendor pattern updates: {e}")
+                    console.print(
+                        "[yellow]⚠[/yellow] [dim]Could not check for updates, using cached patterns[/dim]"
+                    )
 
             # Load patterns (from fresh or cached file)
-            with console.status(
-                "[dim]Loading vendor patterns...[/dim]", spinner="dots"
-            ):
-                vendor_patterns = await vendor_manager.get_vendor_patterns()
-                vendor_patterns_count = len(vendor_patterns)
-                vendor_patterns_set = set(vendor_patterns)
+            vendor_patterns = await vendor_manager.get_vendor_patterns()
+            vendor_patterns_count = len(vendor_patterns)
+            vendor_patterns_set = set(vendor_patterns)
 
-                logger.info(
-                    f"Loaded {vendor_patterns_count} vendor patterns for ignore filtering"
-                )
+            logger.info(
+                f"Loaded {vendor_patterns_count} vendor patterns for ignore filtering"
+            )
 
-            _reset_cursor()
             console.print(
                 f"[green]✓[/green] [dim]Loaded {vendor_patterns_count} vendor patterns[/dim]"
             )
@@ -703,36 +692,33 @@ async def run_indexing(
         get_default_cache_path(project_root) if config.cache_embeddings else None
     )
 
-    # Show progress for model loading (can take 1-30 seconds for ~1.5GB model)
-    with console.status("[dim]Loading embedding model...[/dim]", spinner="dots"):
-        embedding_function, cache = create_embedding_function(
-            model_name=config.embedding_model,
-            cache_dir=cache_dir,
-            cache_size=config.max_cache_size,
-        )
-    _reset_cursor()
+    # Load embedding model (can take 1-30 seconds for ~1.5GB model)
+    # Using simple print to avoid cursor manipulation issues with console.status()
+    embedding_function, cache = create_embedding_function(
+        model_name=config.embedding_model,
+        cache_dir=cache_dir,
+        cache_size=config.max_cache_size,
+    )
     console.print("[green]✓[/green] [dim]Embedding model ready[/dim]")
 
-    # Setup database and indexer with progress feedback
-    with console.status("[dim]Initializing indexing backend...[/dim]", spinner="dots"):
-        database = create_database(
-            persist_directory=config.index_path,
-            embedding_function=embedding_function,
-        )
+    # Setup database and indexer
+    database = create_database(
+        persist_directory=config.index_path,
+        embedding_function=embedding_function,
+    )
 
-        indexer = SemanticIndexer(
-            database=database,
-            project_root=project_root,
-            config=config,
-            debug=debug,
-            batch_size=batch_size,
-            auto_optimize=auto_optimize,
-            ignore_patterns=vendor_patterns_set,
-        )
-        # Set cancellation flag for graceful shutdown
-        if cancellation_flag:
-            indexer.cancellation_flag = cancellation_flag
-    _reset_cursor()
+    indexer = SemanticIndexer(
+        database=database,
+        project_root=project_root,
+        config=config,
+        debug=debug,
+        batch_size=batch_size,
+        auto_optimize=auto_optimize,
+        ignore_patterns=vendor_patterns_set,
+    )
+    # Set cancellation flag for graceful shutdown
+    if cancellation_flag:
+        indexer.cancellation_flag = cancellation_flag
     console.print("[green]✓[/green] [dim]Backend ready[/dim]")
 
     # Check if database has existing data for incremental update message
@@ -821,7 +807,6 @@ async def _run_batch_indexing(
 
         # Pre-scan to get total file count with live progress display
         from rich.table import Table
-        from rich.text import Text
 
         from ..output import console
 
@@ -840,41 +825,17 @@ async def _run_batch_indexing(
             dirs_scanned = dirs
             files_found = files
 
-        # Create live-updating progress display
-        progress_text = Text()
-        progress_text.append("📂 ", style="cyan")
-        progress_text.append("Scanning directories... ", style="dim")
-
-        with Live(
-            progress_text, console=console, refresh_per_second=10
-        ) as live_display:
-
-            async def scan_with_progress():
-                return await indexer.get_files_to_index(
-                    force_reindex=force_reindex,
-                    progress_callback=update_discovery_progress,
-                    file_limit=limit,  # Early exit from discovery when limit reached
-                )
-
-            # Poll progress while scanning
-            scan_task = asyncio.create_task(scan_with_progress())
-
-            # Update display every 100ms while scanning
-            while not scan_task.done():
-                progress_text = Text()
-                progress_text.append("📂 ", style="cyan")
-                progress_text.append("Scanning... ", style="dim")
-                progress_text.append(
-                    f"{dirs_scanned:,} dirs, {files_found:,} files found",
-                    style="cyan",
-                )
-                live_display.update(progress_text)
-                await asyncio.sleep(0.1)
-
-            # Get final results
-            indexable_files, files_to_index = await scan_task
-
-        _reset_cursor()
+        # Scan for files (without Live display to avoid cursor manipulation issues)
+        console.print("[cyan]📂[/cyan] [dim]Scanning directories...[/dim]", end="")
+        indexable_files, files_to_index = await indexer.get_files_to_index(
+            force_reindex=force_reindex,
+            progress_callback=update_discovery_progress,
+            file_limit=limit,  # Early exit from discovery when limit reached
+        )
+        # Print final count on same line
+        console.print(
+            f"\r[cyan]📂[/cyan] [dim]Scanned {dirs_scanned:,} dirs, found {files_found:,} files[/dim]"
+        )
 
         # Clean up stale metadata entries (files that no longer exist)
         if indexable_files:
@@ -954,15 +915,11 @@ async def _run_batch_indexing(
 
         if total_files > 0:
             # Pre-initialize backends before progress display
-            with console.status(
-                "[dim]Initializing indexing backend...[/dim]", spinner="dots"
-            ):
-                # Initialize the backends here so the progress display starts with tasks already added
-                if indexer.chunks_backend._db is None:
-                    await indexer.chunks_backend.initialize()
-                if indexer.vectors_backend._db is None:
-                    await indexer.vectors_backend.initialize()
-            _reset_cursor()
+            # Initialize the backends here so the progress display starts with tasks already added
+            if indexer.chunks_backend._db is None:
+                await indexer.chunks_backend.initialize()
+            if indexer.vectors_backend._db is None:
+                await indexer.vectors_backend.initialize()
             console.print("[green]✓[/green] [dim]Backend ready[/dim]")
 
             # Show temp DB indication if force_reindex

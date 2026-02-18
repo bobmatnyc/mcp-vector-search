@@ -21,6 +21,8 @@ from rich.table import Table
 from ..core.models import ProjectInfo, SearchResult
 
 # Global console instance
+# Note: Using default Console to support status spinners and Live displays
+# The _reset_cursor() function in index.py handles cursor position cleanup
 console = Console()
 
 
