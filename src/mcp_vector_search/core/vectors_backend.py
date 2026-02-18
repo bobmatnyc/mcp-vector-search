@@ -23,27 +23,41 @@ from .exceptions import (
     SearchError,
 )
 
-# PyArrow schema for vectors table
-VECTORS_SCHEMA = pa.schema(
-    [
-        # Identity (links to chunks table)
-        pa.field("chunk_id", pa.string()),
-        # Vector embedding (384-dimensional for all-MiniLM-L6-v2)
-        pa.field("vector", pa.list_(pa.float32(), 384)),
-        # Denormalized fields for search (avoid JOINs)
-        pa.field("file_path", pa.string()),
-        pa.field("content", pa.string()),
-        pa.field("language", pa.string()),
-        pa.field("start_line", pa.int32()),
-        pa.field("end_line", pa.int32()),
-        pa.field("chunk_type", pa.string()),
-        pa.field("name", pa.string()),
-        pa.field("hierarchy_path", pa.string()),
-        # Metadata
-        pa.field("embedded_at", pa.string()),  # ISO timestamp
-        pa.field("model_version", pa.string()),  # Embedding model used
-    ]
-)
+
+# PyArrow schema for vectors table (dynamic dimension)
+def _create_vectors_schema(vector_dim: int) -> pa.Schema:
+    """Create vectors schema with dynamic vector dimension.
+
+    Args:
+        vector_dim: Embedding vector dimension (e.g., 384 for MiniLM, 768 for CodeBERT)
+
+    Returns:
+        PyArrow schema for vectors table
+    """
+    return pa.schema(
+        [
+            # Identity (links to chunks table)
+            pa.field("chunk_id", pa.string()),
+            # Vector embedding (dimension varies by model)
+            pa.field("vector", pa.list_(pa.float32(), vector_dim)),
+            # Denormalized fields for search (avoid JOINs)
+            pa.field("file_path", pa.string()),
+            pa.field("content", pa.string()),
+            pa.field("language", pa.string()),
+            pa.field("start_line", pa.int32()),
+            pa.field("end_line", pa.int32()),
+            pa.field("chunk_type", pa.string()),
+            pa.field("name", pa.string()),
+            pa.field("hierarchy_path", pa.string()),
+            # Metadata
+            pa.field("embedded_at", pa.string()),  # ISO timestamp
+            pa.field("model_version", pa.string()),  # Embedding model used
+        ]
+    )
+
+
+# Default schema for backward compatibility (384-dimensional for all-MiniLM-L6-v2)
+VECTORS_SCHEMA = _create_vectors_schema(384)
 
 
 class VectorsBackend:
@@ -78,17 +92,20 @@ class VectorsBackend:
     """
 
     TABLE_NAME = "vectors"
-    VECTOR_DIMENSION = 384  # all-MiniLM-L6-v2
+    DEFAULT_VECTOR_DIMENSION = 384  # all-MiniLM-L6-v2
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, vector_dim: int | None = None) -> None:
         """Initialize vectors backend.
 
         Args:
             db_path: Directory for LanceDB database (same as chunks backend)
+            vector_dim: Expected vector dimension (auto-detected if not provided)
         """
         self.db_path = Path(db_path) if isinstance(db_path, str) else db_path
         self._db = None
         self._table = None
+        # Vector dimension is auto-detected from first batch or set explicitly
+        self.vector_dim = vector_dim
 
     async def initialize(self) -> None:
         """Create table if not exists with proper schema and vector index.
@@ -175,12 +192,17 @@ class VectorsBackend:
                 if "vector" not in chunk:
                     raise ValueError(f"Missing vector for chunk: {chunk['chunk_id']}")
 
-                # Validate vector dimensions
+                # Auto-detect vector dimension from first vector
                 vector = chunk["vector"]
-                if len(vector) != self.VECTOR_DIMENSION:
+                if self.vector_dim is None:
+                    self.vector_dim = len(vector)
+                    logger.debug(f"Auto-detected vector dimension: {self.vector_dim}")
+
+                # Validate vector dimensions match detected/expected dimension
+                if len(vector) != self.vector_dim:
                     raise ValueError(
                         f"Invalid vector dimension for chunk {chunk['chunk_id']}: "
-                        f"expected {self.VECTOR_DIMENSION}, got {len(vector)}"
+                        f"expected {self.vector_dim}, got {len(vector)}"
                     )
 
                 # Required fields
@@ -223,12 +245,13 @@ class VectorsBackend:
                         f"Opened existing table and added {len(normalized_vectors)} vectors (append mode)"
                     )
                 else:
-                    # Create table with first batch
+                    # Create table with first batch using detected dimension
+                    schema = _create_vectors_schema(self.vector_dim)
                     self._table = self._db.create_table(
-                        self.TABLE_NAME, normalized_vectors, schema=VECTORS_SCHEMA
+                        self.TABLE_NAME, normalized_vectors, schema=schema
                     )
                     logger.debug(
-                        f"Created vectors table with {len(normalized_vectors)} vectors"
+                        f"Created vectors table with {len(normalized_vectors)} vectors (dimension: {self.vector_dim})"
                     )
             else:
                 # Append to existing table
@@ -290,11 +313,11 @@ class VectorsBackend:
             # Empty database - return empty results
             return []
 
-        # Validate query vector dimensions
-        if len(query_vector) != self.VECTOR_DIMENSION:
+        # Validate query vector dimensions (if dimension is known)
+        if self.vector_dim is not None and len(query_vector) != self.vector_dim:
             raise SearchError(
                 f"Invalid query vector dimension: "
-                f"expected {self.VECTOR_DIMENSION}, got {len(query_vector)}"
+                f"expected {self.vector_dim}, got {len(query_vector)}"
             )
 
         try:

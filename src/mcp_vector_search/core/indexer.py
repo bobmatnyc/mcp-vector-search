@@ -602,33 +602,16 @@ class SemanticIndexer:
                         vectors = self.database._collection._embedding_function(
                             contents
                         )
-                    # Method 3: Use database's add_chunks which handles embedding internally
-                    else:
-                        logger.warning(
-                            "Cannot access embedding function directly, "
-                            "falling back to database.add_chunks()"
+                    # Method 3: Use database.embedding_function (proper API)
+                    elif hasattr(self.database, "embedding_function"):
+                        vectors = self.database.embedding_function.embed_documents(
+                            contents
                         )
-                        # Convert chunk dicts back to CodeChunk objects
-                        temp_chunks = []
-                        for chunk in pending:
-                            code_chunk = CodeChunk(
-                                content=chunk["content"],
-                                file_path=Path(chunk["file_path"]),
-                                start_line=chunk["start_line"],
-                                end_line=chunk["end_line"],
-                                language=chunk["language"],
-                                chunk_type=chunk["chunk_type"],
-                                chunk_id=chunk["chunk_id"],
-                            )
-                            if chunk["name"]:
-                                if chunk["chunk_type"] == "class":
-                                    code_chunk.class_name = chunk["name"]
-                                elif chunk["chunk_type"] in ("function", "method"):
-                                    code_chunk.function_name = chunk["name"]
-                            temp_chunks.append(code_chunk)
-
-                        # Use database to add chunks
-                        await self.database.add_chunks(temp_chunks)
+                    else:
+                        logger.error(
+                            "Cannot access embedding function from database, "
+                            "skipping batch embedding"
+                        )
                         await self.chunks_backend.mark_chunks_complete(chunk_ids)
                         chunks_embedded += len(pending)
                         batches_processed += 1
@@ -1185,7 +1168,7 @@ class SemanticIndexer:
         )
 
         # Collect metrics for chunks (if collectors are enabled)
-        chunk_metrics = self.metrics_collector.collect_metrics_for_chunks(
+        _ = self.metrics_collector.collect_metrics_for_chunks(
             chunks_with_hierarchy, file_path
         )
 
@@ -1276,7 +1259,7 @@ class SemanticIndexer:
                 )
 
                 # Collect metrics if enabled
-                chunk_metrics = self.metrics_collector.collect_metrics_for_chunks(
+                _ = self.metrics_collector.collect_metrics_for_chunks(
                     chunks_with_hierarchy, file_path
                 )
 
@@ -1356,8 +1339,34 @@ class SemanticIndexer:
                     if chunk_dicts:
                         await self.chunks_backend.add_chunks(chunk_dicts, file_hash)
 
-                # Phase 2: Generate embeddings and store to code_search.lance
-                await self.database.add_chunks(all_chunks, metrics=all_metrics)
+                # Phase 2: Generate embeddings and store to vectors.lance
+                if all_chunks:
+                    # Extract content for embedding generation
+                    contents = [chunk.content for chunk in all_chunks]
+
+                    # Generate embeddings using database's embedding function
+                    # Use __call__() which is the universal interface for all embedding functions
+                    embeddings = self.database.embedding_function(contents)
+
+                    # Prepare chunks with vectors for vectors_backend
+                    chunks_with_vectors = []
+                    for chunk, embedding in zip(all_chunks, embeddings, strict=True):
+                        chunk_dict = {
+                            "chunk_id": chunk.chunk_id or chunk.id,
+                            "vector": embedding,
+                            "file_path": str(chunk.file_path),
+                            "content": chunk.content,
+                            "language": chunk.language,
+                            "start_line": chunk.start_line,
+                            "end_line": chunk.end_line,
+                            "chunk_type": chunk.chunk_type,
+                            "name": chunk.class_name or chunk.function_name or "",
+                            "hierarchy_path": getattr(chunk, "hierarchy_path", ""),
+                        }
+                        chunks_with_vectors.append(chunk_dict)
+
+                    # Store vectors to vectors.lance
+                    await self.vectors_backend.add_vectors(chunks_with_vectors)
 
                 batch_elapsed = time.perf_counter() - batch_start
                 logger.info(
@@ -1442,7 +1451,7 @@ class SemanticIndexer:
             )
 
             # Collect metrics for chunks (if collectors are enabled)
-            chunk_metrics = self.metrics_collector.collect_metrics_for_chunks(
+            _ = self.metrics_collector.collect_metrics_for_chunks(
                 chunks_with_hierarchy, file_path
             )
 
@@ -1481,8 +1490,36 @@ class SemanticIndexer:
             if chunk_dicts:
                 await self.chunks_backend.add_chunks(chunk_dicts, file_hash)
 
-            # Phase 2: Generate embeddings and add chunks to database with metrics
-            await self.database.add_chunks(chunks_with_hierarchy, metrics=chunk_metrics)
+            # Phase 2: Generate embeddings and store to vectors.lance
+            if chunks_with_hierarchy:
+                # Extract content for embedding generation
+                contents = [chunk.content for chunk in chunks_with_hierarchy]
+
+                # Generate embeddings using database's embedding function
+                # Use __call__() which is the universal interface for all embedding functions
+                embeddings = self.database.embedding_function(contents)
+
+                # Prepare chunks with vectors for vectors_backend
+                chunks_with_vectors = []
+                for chunk, embedding in zip(
+                    chunks_with_hierarchy, embeddings, strict=True
+                ):
+                    chunk_dict = {
+                        "chunk_id": chunk.chunk_id or chunk.id,
+                        "vector": embedding,
+                        "file_path": str(chunk.file_path),
+                        "content": chunk.content,
+                        "language": chunk.language,
+                        "start_line": chunk.start_line,
+                        "end_line": chunk.end_line,
+                        "chunk_type": chunk.chunk_type,
+                        "name": chunk.class_name or chunk.function_name or "",
+                        "hierarchy_path": self._build_hierarchy_path(chunk),
+                    }
+                    chunks_with_vectors.append(chunk_dict)
+
+                # Store vectors to vectors.lance
+                await self.vectors_backend.add_vectors(chunks_with_vectors)
 
             # Update metadata after successful indexing
             metadata_dict = self.metadata.load()
@@ -1979,10 +2016,42 @@ class SemanticIndexer:
                         await self.chunks_backend.add_chunks_raw(batch_chunk_dicts)
                     time_storage_total += time.time() - t_start
 
-                    # Phase 2: Generate embeddings and store to code_search.lance
+                    # Phase 2: Generate embeddings and store to vectors.lance
                     # This enables search functionality
                     t_start = time.time()
-                    await self.database.add_chunks(all_chunks, metrics=all_metrics)
+                    if all_chunks:
+                        # Extract content for embedding generation
+                        contents = [chunk.content for chunk in all_chunks]
+
+                        # Generate embeddings using database's embedding function
+                        # Use __call__() which is the universal interface for all embedding functions
+                        embeddings = self.database.embedding_function(contents)
+
+                        # Prepare chunks with vectors for vectors_backend
+                        chunks_with_vectors = []
+                        for chunk, embedding in zip(
+                            all_chunks, embeddings, strict=True
+                        ):
+                            chunk_dict = {
+                                "chunk_id": chunk.chunk_id or chunk.id,
+                                "vector": embedding,
+                                "file_path": str(chunk.file_path),
+                                "content": chunk.content,
+                                "language": chunk.language,
+                                "start_line": chunk.start_line,
+                                "end_line": chunk.end_line,
+                                "chunk_type": chunk.chunk_type,
+                                "name": chunk.class_name or chunk.function_name or "",
+                                "hierarchy_path": (
+                                    f"{chunk.class_name}.{chunk.function_name}"
+                                    if chunk.class_name and chunk.function_name
+                                    else chunk.class_name or chunk.function_name or ""
+                                ),
+                            }
+                            chunks_with_vectors.append(chunk_dict)
+
+                        # Store vectors to vectors.lance
+                        await self.vectors_backend.add_vectors(chunks_with_vectors)
                     time_embedding_total += time.time() - t_start
 
                     logger.debug(
