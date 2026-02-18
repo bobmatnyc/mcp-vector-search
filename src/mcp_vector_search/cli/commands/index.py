@@ -36,6 +36,17 @@ _cancellation_flag = threading.Event()
 _esc_listener_thread: threading.Thread | None = None
 
 
+def _reset_cursor() -> None:
+    """Reset cursor to column 0 after Rich status/Live displays.
+
+    Rich's status and Live displays use ANSI escape sequences for
+    cursor positioning, but don't always reset properly on exit.
+    This forces cursor to column 0 for clean subsequent output.
+    """
+    sys.stdout.write("\r")
+    sys.stdout.flush()
+
+
 def _start_esc_listener() -> None:
     """Start background thread to listen for ESC key press.
 
@@ -662,6 +673,7 @@ async def run_indexing(
                         console.print(
                             "[yellow]⚠[/yellow] [dim]Could not check for updates, using cached patterns[/dim]"
                         )
+                _reset_cursor()
 
             # Load patterns (from fresh or cached file)
             with console.status(
@@ -675,6 +687,7 @@ async def run_indexing(
                     f"Loaded {vendor_patterns_count} vendor patterns for ignore filtering"
                 )
 
+            _reset_cursor()
             console.print(
                 f"[green]✓[/green] [dim]Loaded {vendor_patterns_count} vendor patterns[/dim]"
             )
@@ -697,6 +710,7 @@ async def run_indexing(
             cache_dir=cache_dir,
             cache_size=config.max_cache_size,
         )
+    _reset_cursor()
     console.print("[green]✓[/green] [dim]Embedding model ready[/dim]")
 
     # Setup database and indexer with progress feedback
@@ -718,6 +732,7 @@ async def run_indexing(
         # Set cancellation flag for graceful shutdown
         if cancellation_flag:
             indexer.cancellation_flag = cancellation_flag
+    _reset_cursor()
     console.print("[green]✓[/green] [dim]Backend ready[/dim]")
 
     # Check if database has existing data for incremental update message
@@ -859,6 +874,8 @@ async def _run_batch_indexing(
             # Get final results
             indexable_files, files_to_index = await scan_task
 
+        _reset_cursor()
+
         # Clean up stale metadata entries (files that no longer exist)
         if indexable_files:
             valid_files = {str(f) for f in indexable_files}
@@ -945,6 +962,7 @@ async def _run_batch_indexing(
                     await indexer.chunks_backend.initialize()
                 if indexer.vectors_backend._db is None:
                     await indexer.vectors_backend.initialize()
+            _reset_cursor()
             console.print("[green]✓[/green] [dim]Backend ready[/dim]")
 
             # Show temp DB indication if force_reindex
