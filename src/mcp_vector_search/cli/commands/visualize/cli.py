@@ -301,7 +301,26 @@ def serve(
 
     # Check if KG data exists, if not export it
     kg_graph_file = viz_dir / "kg-graph.json"
-    if not kg_graph_file.exists():
+    kg_db_path = (
+        project_manager.project_root
+        / ".mcp-vector-search"
+        / "knowledge_graph"
+        / "code_kg"
+    )
+
+    needs_kg_regeneration = not kg_graph_file.exists()
+
+    # Check if KG database is newer than graph file (stale detection)
+    if kg_graph_file.exists() and kg_db_path.exists():
+        graph_mtime = kg_graph_file.stat().st_mtime
+        kg_mtime = kg_db_path.stat().st_mtime
+        if kg_mtime > graph_mtime:
+            console.print(
+                "[yellow]Knowledge graph has changed since visualization was generated. Regenerating...[/yellow]"
+            )
+            needs_kg_regeneration = True
+
+    if needs_kg_regeneration:
         console.print("[yellow]Exporting KG data for visualization...[/yellow]")
         asyncio.run(_export_kg_data(viz_dir))
 

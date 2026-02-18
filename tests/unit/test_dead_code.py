@@ -614,3 +614,104 @@ if __name__ == "__main__":
             analyzer = DeadCodeAnalyzer(min_confidence=Confidence.LOW)
             report = analyzer.analyze(tmppath, chunks)
             assert len(report.findings) == 3  # All three
+
+    def test_is_special_method_dunder_methods(self):
+        """Test that dunder methods are recognized as special."""
+        analyzer = DeadCodeAnalyzer()
+
+        dunder_methods = [
+            "__init__",
+            "__str__",
+            "__repr__",
+            "__eq__",
+            "__new__",
+            "__post_init__",
+            "__hash__",
+            "__len__",
+            "__getitem__",
+            "__setitem__",
+        ]
+
+        for method_name in dunder_methods:
+            chunk = {"function_name": method_name, "decorators": []}
+            assert analyzer._is_special_method(method_name, chunk) is True
+
+    def test_is_special_method_property_decorators(self):
+        """Test that property-decorated methods are recognized as special."""
+        analyzer = DeadCodeAnalyzer()
+
+        test_cases = [
+            (["@property"], True, "property decorator"),
+            (["@cached_property"], True, "cached_property decorator"),
+            (["@functools.cached_property"], True, "qualified cached_property"),
+            (["@foo.setter"], True, "property setter"),
+            (["@bar.deleter"], True, "property deleter"),
+        ]
+
+        for decorators, expected, description in test_cases:
+            chunk = {"function_name": "my_method", "decorators": decorators}
+            result = analyzer._is_special_method("my_method", chunk)
+            assert result == expected, f"Failed for {description}"
+
+    def test_is_special_method_regular_methods(self):
+        """Test that regular methods are NOT recognized as special."""
+        analyzer = DeadCodeAnalyzer()
+
+        regular_methods = [
+            ("regular_method", []),
+            ("_private_method", []),  # Single underscore is not dunder
+            ("public_method", []),
+            ("with_decorator", ["@staticmethod"]),
+            ("with_decorator", ["@classmethod"]),
+            ("with_decorator", ["@app.route"]),
+        ]
+
+        for method_name, decorators in regular_methods:
+            chunk = {"function_name": method_name, "decorators": decorators}
+            assert analyzer._is_special_method(method_name, chunk) is False
+
+    def test_find_dead_code_skips_special_methods(self):
+        """Test that special methods are not flagged as dead code."""
+        chunks = [
+            {
+                "type": "method",
+                "function_name": "__init__",
+                "file_path": "module.py",
+                "start_line": 1,
+                "end_line": 5,
+                "decorators": [],
+            },
+            {
+                "type": "method",
+                "function_name": "__str__",
+                "file_path": "module.py",
+                "start_line": 7,
+                "end_line": 10,
+                "decorators": [],
+            },
+            {
+                "type": "method",
+                "function_name": "my_property",
+                "file_path": "module.py",
+                "start_line": 12,
+                "end_line": 15,
+                "decorators": ["@property"],
+            },
+            {
+                "type": "function",
+                "function_name": "regular_unused",
+                "file_path": "module.py",
+                "start_line": 17,
+                "end_line": 20,
+                "decorators": [],
+            },
+        ]
+
+        reachable = set()  # Nothing is reachable
+
+        analyzer = DeadCodeAnalyzer()
+        findings = analyzer._find_dead_code(chunks, reachable)
+
+        # Only regular_unused should be flagged
+        assert len(findings) == 1
+        assert findings[0].function_name == "regular_unused"
