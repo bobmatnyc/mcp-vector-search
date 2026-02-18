@@ -297,11 +297,24 @@ class KGBuilder:
         import time
 
         start_time = time.time()
+
         # Separate code and text chunks
+        # Include all valid code chunk types from parsers:
+        # - Python/JS/Java: function, method, class, module
+        # - Rust: struct, enum, trait, impl
+        # - Go/PHP/TS: interface
+        # - Dart: widget, mixin
+        # - Generic: code, imports
+        CODE_CHUNK_TYPES = {
+            "function", "method", "class", "module",  # Universal
+            "struct", "enum", "trait", "impl",         # Rust
+            "interface", "mixin", "widget",            # Go/PHP/TS/Dart
+            "code", "imports", "constructor",          # Generic/Dart
+        }
         code_chunks = [
             c
             for c in chunks
-            if c.chunk_type in ["function", "method", "class", "module"]
+            if c.chunk_type in CODE_CHUNK_TYPES
         ]
 
         text_chunks = [
@@ -649,10 +662,17 @@ class KGBuilder:
             Statistics dictionary with counts
         """
         # Separate code and text chunks
+        # Include all valid code chunk types from parsers
+        CODE_CHUNK_TYPES = {
+            "function", "method", "class", "module",  # Universal
+            "struct", "enum", "trait", "impl",         # Rust
+            "interface", "mixin", "widget",            # Go/PHP/TS/Dart
+            "code", "imports", "constructor",          # Generic/Dart
+        }
         code_chunks = [
             c
             for c in chunks
-            if c.chunk_type in ["function", "method", "class", "module"]
+            if c.chunk_type in CODE_CHUNK_TYPES
         ]
 
         text_chunks = [
