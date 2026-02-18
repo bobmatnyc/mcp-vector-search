@@ -2,6 +2,8 @@
 
 import json
 import os
+import re
+import time
 from unittest.mock import patch
 
 import pytest
@@ -521,3 +523,67 @@ class TestCLICommands:
 
         assert result.exit_code == 0
         assert search_time < 5.0, f"Search took too long: {search_time:.3f}s"
+
+    def test_chunking_performance_metrics(self, cli_runner, temp_project_dir):
+        """Test chunking and embedding performance metrics."""
+        # 1. Create multiple Python files to ensure meaningful chunking
+        for i in range(5):
+            file_path = temp_project_dir / f"module_{i}.py"
+            file_path.write_text(
+                f'''
+"""Module {i} for performance testing."""
+
+def function_{i}_a(x: int, y: int) -> int:
+    """Add two numbers."""
+    return x + y
+
+def function_{i}_b(items: list) -> list:
+    """Process items."""
+    return [item * 2 for item in items]
+
+class Handler_{i}:
+    """Handler class {i}."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def process(self, data: dict) -> dict:
+        """Process data."""
+        return {{"result": data.get("input", "")}}
+'''
+            )
+
+        # 2. Initialize and index - mock auto-index prompt
+        with patch(
+            "mcp_vector_search.cli.commands.init.confirm_action", return_value=False
+        ):
+            result = cli_runner.invoke(
+                app,
+                [
+                    "init",
+                    "--extensions",
+                    ".py",
+                    "--embedding-model",
+                    "sentence-transformers/all-MiniLM-L6-v2",
+                    "--force",
+                ],
+            )
+            assert result.exit_code == 0
+
+        start_time = time.time()
+        result = cli_runner.invoke(app, ["index"])
+        indexing_time = time.time() - start_time
+
+        # 3. Validate performance
+        assert result.exit_code == 0, f"Indexing failed with: {result.output}"
+        assert indexing_time < 30.0, f"Indexing took too long: {indexing_time:.2f}s"
+
+        # 4. Check for performance output (if logged)
+        output = result.stdout + (result.stderr or "")
+        # Look for throughput metrics in output
+        if "chunks/sec" in output.lower():
+            # Extract and validate throughput
+            match = re.search(r"(\d+\.?\d*)\s*chunks/sec", output, re.IGNORECASE)
+            if match:
+                throughput = float(match.group(1))
+                assert throughput > 1.0, f"Throughput too low: {throughput} chunks/sec"

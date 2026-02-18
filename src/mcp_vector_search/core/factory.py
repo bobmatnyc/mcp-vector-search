@@ -130,7 +130,7 @@ class ComponentFactory:
     def create_search_engine(
         database: VectorDatabase,
         project_root: Path,
-        similarity_threshold: float = 0.7,
+        similarity_threshold: float = 0.3,
         auto_indexer: AutoIndexer | None = None,
         enable_auto_reindex: bool = True,
     ) -> SemanticSearchEngine:
@@ -164,7 +164,7 @@ class ComponentFactory:
         use_pooling: bool = True,  # Enable pooling by default for performance
         include_search_engine: bool = False,
         include_auto_indexer: bool = False,
-        similarity_threshold: float = 0.7,
+        similarity_threshold: float = 0.3,
         auto_reindex_threshold: int = 5,
         **pool_kwargs,
     ) -> ComponentBundle:
