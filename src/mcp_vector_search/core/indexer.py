@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import shutil
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -110,6 +111,9 @@ class SemanticIndexer:
         self.config = config
         self.auto_optimize = auto_optimize
         self._applied_optimizations: dict[str, Any] | None = None
+        self.cancellation_flag: threading.Event | None = (
+            None  # Set externally for cancellation support
+        )
 
         # Set batch size with environment variable override
         if batch_size is None:
@@ -1876,6 +1880,11 @@ class SemanticIndexer:
         # Process files in batches for better memory management and embedding efficiency
         batch_count = 0
         for i in range(0, len(files_to_index), self.batch_size):
+            # Check for cancellation at the start of each batch
+            if self.cancellation_flag and self.cancellation_flag.is_set():
+                logger.info("Indexing cancelled by user")
+                return
+
             batch = files_to_index[i : i + self.batch_size]
             batch_count += 1
 

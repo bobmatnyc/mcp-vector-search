@@ -3,9 +3,11 @@
 import asyncio
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import typer
@@ -28,6 +30,97 @@ from ..output import (
     print_tip,
     print_warning,
 )
+
+# Global cancellation flag for graceful shutdown
+_cancellation_flag = threading.Event()
+_esc_listener_thread: threading.Thread | None = None
+
+
+def _start_esc_listener() -> None:
+    """Start background thread to listen for ESC key press.
+
+    This runs in a separate thread to avoid blocking the main indexing loop.
+    Sets the global cancellation flag when ESC is pressed.
+    """
+
+    def listen_for_esc():
+        try:
+            import sys
+            import termios
+            import tty
+
+            # Only works on Unix-like systems with terminal support
+            if not sys.stdin.isatty():
+                return
+
+            # Save original terminal settings
+            old_settings = termios.tcgetattr(sys.stdin)
+            try:
+                tty.setraw(sys.stdin.fileno())
+                while not _cancellation_flag.is_set():
+                    # Check for available input without blocking
+                    import select
+
+                    ready, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if ready:
+                        char = sys.stdin.read(1)
+                        # ESC key is ASCII 27 (\x1b)
+                        if char == "\x1b":
+                            _cancellation_flag.set()
+                            break
+            finally:
+                # Restore terminal settings
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+        except (ImportError, AttributeError, OSError):
+            # Not on Unix or no terminal - ESC listening not available
+            pass
+
+    global _esc_listener_thread
+    _esc_listener_thread = threading.Thread(target=listen_for_esc, daemon=True)
+    _esc_listener_thread.start()
+
+
+def _stop_esc_listener() -> None:
+    """Stop the ESC listener thread."""
+    global _esc_listener_thread
+    if _esc_listener_thread and _esc_listener_thread.is_alive():
+        _cancellation_flag.set()
+        _esc_listener_thread.join(timeout=1.0)
+        _esc_listener_thread = None
+
+
+def _reset_cancellation_flag() -> None:
+    """Reset the cancellation flag for a new indexing operation."""
+    global _cancellation_flag
+    _cancellation_flag.clear()
+
+
+def _restore_index_from_backup(cache_path: Path, backup_path: Path | None) -> None:
+    """Restore index from backup after cancellation.
+
+    Args:
+        cache_path: Path to the current index
+        backup_path: Path to the backup (if created)
+    """
+    if not backup_path or not backup_path.exists():
+        return
+
+    try:
+        # Remove partial index
+        if cache_path.exists():
+            shutil.rmtree(cache_path)
+
+        # Restore from backup
+        shutil.copytree(backup_path, cache_path)
+        logger.info(f"Restored index from backup at {backup_path}")
+
+        # Clean up backup
+        shutil.rmtree(backup_path)
+        logger.debug("Removed backup after restoration")
+    except (OSError, shutil.Error) as e:
+        logger.error(f"Failed to restore from backup: {e}")
+        print_error(f"Warning: Could not restore index from backup: {e}")
+
 
 # Create index subcommand app with callback for direct usage
 index_app = typer.Typer(
@@ -211,32 +304,66 @@ def main(
             print_error(f"Invalid phase: {phase}. Must be 'all', 'chunk', or 'embed'")
             raise typer.Exit(1)
 
-        # Run async indexing
-        asyncio.run(
-            run_indexing(
-                project_root=project_root,
-                watch=watch,
-                incremental=incremental,
-                extensions=extensions,
-                force_reindex=force,
-                batch_size=batch_size,
-                show_progress=True,
-                debug=debug,
-                verbose=verbose,
-                skip_relationships=skip_relationships,
-                auto_optimize=auto_optimize,
-                phase=phase,
-                skip_schema_check=skip_schema_check,
-                metrics_json=metrics_json,
-                limit=limit,
-                no_vendor_patterns=no_vendor_patterns,
+        # Reset cancellation flag and start ESC listener
+        _reset_cancellation_flag()
+        _start_esc_listener()
+
+        # Create backup of index if it exists (for safe cancellation)
+        cache_path = get_default_cache_path()
+        backup_path: Path | None = None
+        if cache_path.exists():
+            backup_path = cache_path.parent / f"{cache_path.name}.backup"
+            try:
+                if backup_path.exists():
+                    shutil.rmtree(backup_path)
+                shutil.copytree(cache_path, backup_path)
+                logger.debug(f"Created index backup at {backup_path}")
+            except (OSError, shutil.Error) as e:
+                logger.warning(f"Could not create backup: {e}")
+                backup_path = None
+
+        try:
+            # Show cancellation hint
+            print_tip("Press ESC or Ctrl+C to cancel indexing")
+
+            # Run async indexing
+            asyncio.run(
+                run_indexing(
+                    project_root=project_root,
+                    watch=watch,
+                    incremental=incremental,
+                    extensions=extensions,
+                    force_reindex=force,
+                    batch_size=batch_size,
+                    show_progress=True,
+                    debug=debug,
+                    verbose=verbose,
+                    skip_relationships=skip_relationships,
+                    auto_optimize=auto_optimize,
+                    phase=phase,
+                    skip_schema_check=skip_schema_check,
+                    metrics_json=metrics_json,
+                    limit=limit,
+                    no_vendor_patterns=no_vendor_patterns,
+                    cancellation_flag=_cancellation_flag,
+                )
             )
-        )
+
+            # Indexing completed successfully - remove backup
+            if backup_path and backup_path.exists():
+                try:
+                    shutil.rmtree(backup_path)
+                    logger.debug("Removed index backup after successful indexing")
+                except (OSError, shutil.Error) as e:
+                    logger.warning(f"Could not remove backup: {e}")
+        finally:
+            # Stop ESC listener
+            _stop_esc_listener()
 
     except KeyboardInterrupt:
-        print_info("\nIndexing interrupted by user")
-        print_info("Progress has been saved. Check status with:")
-        print_info("  [cyan]mcp-vector-search progress[/cyan]")
+        print_warning("\n⚠️  Indexing cancelled by user")
+        _restore_index_from_backup(cache_path, backup_path)
+        print_success("✓ Original index preserved (no changes made)")
         raise typer.Exit(0)
     except Exception as e:
         logger.error(f"Indexing failed: {e}")
@@ -375,8 +502,13 @@ async def run_indexing(
     metrics_json: bool = False,
     limit: int | None = None,
     no_vendor_patterns: bool = False,
+    cancellation_flag: threading.Event | None = None,
 ) -> None:
-    """Run the indexing process."""
+    """Run the indexing process.
+
+    Args:
+        cancellation_flag: Event that signals cancellation (set by ESC or Ctrl+C)
+    """
     # Load project configuration
     project_manager = ProjectManager(project_root)
 
@@ -580,6 +712,9 @@ async def run_indexing(
             auto_optimize=auto_optimize,
             ignore_patterns=vendor_patterns_set,
         )
+        # Set cancellation flag for graceful shutdown
+        if cancellation_flag:
+            indexer.cancellation_flag = cancellation_flag
     console.print("[green]✓[/green] [dim]Backend ready[/dim]")
 
     # Check if database has existing data for incremental update message
@@ -922,6 +1057,11 @@ async def _run_batch_indexing(
                     chunks_added,
                     success,
                 ) in indexer.index_files_with_progress(files_to_index, force_reindex):
+                    # Check for cancellation
+                    if cancellation_flag and cancellation_flag.is_set():
+                        print_warning("\n⚠️  Indexing cancelled by user")
+                        raise KeyboardInterrupt()
+
                     # Update counts
                     if success:
                         indexed_count += 1
