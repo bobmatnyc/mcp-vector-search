@@ -263,6 +263,12 @@ def main(
         help="Use simple text progress output instead of fancy TUI (fixes display issues on some terminals)",
         rich_help_panel="🔍 Debugging",
     ),
+    enable_blame: bool = typer.Option(
+        False,
+        "--blame",
+        help="Enable git blame tracking for per-line authorship (slower, disabled by default)",
+        rich_help_panel="⚡ Performance",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -367,6 +373,7 @@ def main(
                     skip_vendor_update=skip_vendor_update,
                     cancellation_flag=_cancellation_flag,
                     simple_progress=simple_progress,
+                    skip_blame=not enable_blame,
                 )
             )
 
@@ -527,6 +534,7 @@ async def run_indexing(
     skip_vendor_update: bool = False,
     cancellation_flag: threading.Event | None = None,
     simple_progress: bool = False,
+    skip_blame: bool = False,
 ) -> None:
     """Run the indexing process.
 
@@ -534,6 +542,7 @@ async def run_indexing(
         skip_vendor_update: Skip checking for vendor pattern updates
         cancellation_flag: Event that signals cancellation (set by ESC or Ctrl+C)
         simple_progress: Use simple text progress instead of fancy TUI
+        skip_blame: Skip git blame tracking for faster indexing
     """
     # Load project configuration
     project_manager = ProjectManager(project_root)
@@ -719,6 +728,21 @@ async def run_indexing(
         embedding_function=embedding_function,
     )
 
+    # Check environment variable for enabling blame (CLI flag takes precedence)
+    # Blame is disabled by default for faster indexing
+    env_enable_blame = os.environ.get("MCP_VECTOR_SEARCH_ENABLE_BLAME", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    # skip_blame=True means blame is disabled (the default)
+    # If env says enable, override skip_blame to False
+    if env_enable_blame:
+        skip_blame = False
+
+    if not skip_blame:
+        console.print("[cyan]📝[/cyan] [dim]Git blame tracking enabled (per-line authorship)[/dim]")
+
     indexer = SemanticIndexer(
         database=database,
         project_root=project_root,
@@ -727,6 +751,7 @@ async def run_indexing(
         batch_size=batch_size,
         auto_optimize=auto_optimize,
         ignore_patterns=vendor_patterns_set,
+        skip_blame=skip_blame,
     )
     # Set cancellation flag for graceful shutdown
     if cancellation_flag:

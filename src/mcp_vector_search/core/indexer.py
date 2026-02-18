@@ -87,6 +87,7 @@ class SemanticIndexer:
         use_multiprocessing: bool = True,
         auto_optimize: bool = True,
         ignore_patterns: set[str] | None = None,
+        skip_blame: bool = False,
     ) -> None:
         """Initialize semantic indexer.
 
@@ -102,9 +103,11 @@ class SemanticIndexer:
             use_multiprocessing: Enable multiprocess parallel parsing (default: True, disable for debugging)
             auto_optimize: Enable automatic optimization based on codebase profile (default: True)
             ignore_patterns: Additional patterns to ignore (merged with defaults, e.g., vendor patterns)
+            skip_blame: Skip git blame tracking for faster indexing (default: False)
 
         Environment Variables:
             MCP_VECTOR_SEARCH_BATCH_SIZE: Override batch size (default: 32)
+            MCP_VECTOR_SEARCH_SKIP_BLAME: Skip git blame tracking (true/1/yes)
         """
         self.database = database
         self.project_root = project_root
@@ -198,13 +201,17 @@ class SemanticIndexer:
                     f"Auto-configured {max_workers} workers based on available memory and CPU cores"
                 )
 
+        # Conditionally enable git blame based on skip_blame flag
+        # When skip_blame=True, pass repo_root=None to disable GitBlameCache
+        repo_root_for_blame = None if skip_blame else project_root
+
         self.chunk_processor = ChunkProcessor(
             parser_registry=self.parser_registry,
             monorepo_detector=self.monorepo_detector,
             max_workers=max_workers,
             use_multiprocessing=use_multiprocessing,
             debug=debug,
-            repo_root=project_root,  # Enable git blame tracking
+            repo_root=repo_root_for_blame,  # Enable git blame only if not skipped
         )
 
         # Store use_multiprocessing for _process_file_batch
