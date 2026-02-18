@@ -2727,6 +2727,373 @@ class KnowledgeGraph:
             logger.error(f"Failed to get doc references for {entity_name}: {e}")
             return []
 
+    async def get_initial_visualization_data(
+        self, max_nodes: int = 100
+    ) -> dict[str, Any]:
+        """Get initial KG view with entry points and top entities only.
+
+        Returns limited graph for fast initial render:
+        - Project node
+        - Person nodes
+        - Top N most-connected CodeEntities
+        - Aggregation placeholders for collapsed groups
+
+        Args:
+            max_nodes: Maximum number of initial nodes to return
+
+        Returns:
+            Dictionary with nodes, links, and metadata
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        nodes = []
+        links = []
+
+        # 1. Project node
+        project_result = self.conn.execute(
+            "MATCH (p:Project) RETURN p.id, p.name LIMIT 1"
+        )
+        if project_result.has_next():
+            row = project_result.get_next()
+            nodes.append(
+                {
+                    "id": row[0],
+                    "name": row[1],
+                    "type": "project",
+                    "group": 8,
+                    "expandable": False,
+                }
+            )
+
+        # 2. Person nodes (all - usually small)
+        person_result = self.conn.execute("MATCH (p:Person) RETURN p.id, p.name")
+        while person_result.has_next():
+            row = person_result.get_next()
+            nodes.append(
+                {
+                    "id": row[0],
+                    "name": row[1],
+                    "type": "person",
+                    "group": 7,
+                    "expandable": True,
+                }
+            )
+
+        # 3. Top connected CodeEntities (by degree)
+        # Count incoming + outgoing relationships
+        top_entities_result = self.conn.execute("""
+            MATCH (e:CodeEntity)
+            WITH e,
+                 size((e)-[]-()) as degree
+            ORDER BY degree DESC
+            LIMIT 50
+            RETURN e.id, e.name, e.entity_type, e.file_path, degree
+        """)
+        type_to_group = {"file": 1, "module": 2, "class": 3, "function": 4, "method": 4}
+        while top_entities_result.has_next():
+            row = top_entities_result.get_next()
+            nodes.append(
+                {
+                    "id": row[0],
+                    "name": row[1],
+                    "type": row[2] or "unknown",
+                    "file_path": row[3] or "",
+                    "group": type_to_group.get(row[2], 0),
+                    "degree": row[4],
+                    "expandable": row[4] > 0,
+                }
+            )
+
+        # 4. Aggregation nodes for collapsed groups
+        # Count entities by type that aren't in top 50
+        type_counts_result = self.conn.execute("""
+            MATCH (e:CodeEntity)
+            WITH e.entity_type as type, count(e) as cnt
+            RETURN type, cnt
+        """)
+        while type_counts_result.has_next():
+            row = type_counts_result.get_next()
+            entity_type, count = row[0], row[1]
+            if count > 50:  # Only aggregate large groups
+                nodes.append(
+                    {
+                        "id": f"aggregate:{entity_type}",
+                        "name": f"{entity_type.title()}s ({count})",
+                        "type": "aggregate",
+                        "group": 9,
+                        "expandable": True,
+                        "aggregated_type": entity_type,
+                        "aggregated_count": count,
+                    }
+                )
+
+        # Count DocSections
+        doc_count = await self._count_entities("DocSection")
+        if doc_count > 0:
+            nodes.append(
+                {
+                    "id": "aggregate:doc_section",
+                    "name": f"Doc Sections ({doc_count})",
+                    "type": "aggregate",
+                    "group": 9,
+                    "expandable": True,
+                    "aggregated_type": "doc_section",
+                    "aggregated_count": doc_count,
+                }
+            )
+
+        # 5. Get links only between visible nodes
+        node_ids = [n["id"] for n in nodes if not n["id"].startswith("aggregate:")]
+        if node_ids:
+            # Get links between visible nodes
+            for rel_type in [
+                "CALLS",
+                "IMPORTS",
+                "INHERITS",
+                "CONTAINS",
+                "AUTHORED",
+                "PART_OF",
+            ]:
+                try:
+                    # Query all relationships of this type and filter in Python
+                    rel_result = self.conn.execute(f"""
+                        MATCH (a)-[r:{rel_type}]->(b)
+                        RETURN a.id, b.id
+                    """)
+                    node_ids_set = set(node_ids)
+                    while rel_result.has_next():
+                        row = rel_result.get_next()
+                        source_id, target_id = row[0], row[1]
+                        # Only include links where both nodes are visible
+                        if source_id in node_ids_set and target_id in node_ids_set:
+                            links.append(
+                                {
+                                    "source": source_id,
+                                    "target": target_id,
+                                    "type": rel_type.lower(),
+                                }
+                            )
+                except Exception as e:
+                    logger.debug(f"Skipping {rel_type} relationships: {e}")
+                    continue
+
+        total_code = await self._count_entities("CodeEntity")
+
+        return {
+            "nodes": nodes,
+            "links": links,
+            "metadata": {
+                "initial_view": True,
+                "total_code_entities": total_code,
+                "total_doc_sections": doc_count,
+                "max_nodes": max_nodes,
+            },
+        }
+
+    async def _count_entities(self, label: str) -> int:
+        """Count entities with given label."""
+        try:
+            result = self.conn.execute(f"MATCH (n:{label}) RETURN count(n)")
+            return result.get_next()[0] if result.has_next() else 0
+        except Exception:
+            return 0
+
+    async def get_node_neighbors(
+        self, node_id: str, hops: int = 1, max_per_type: int = 30
+    ) -> dict:
+        """Get neighboring nodes and edges for expansion.
+
+        Args:
+            node_id: ID of node to expand
+            hops: Number of relationship hops (default 1)
+            max_per_type: Max neighbors per type before aggregating
+
+        Returns:
+            {"nodes": [...], "links": [...], "aggregations": [...]}
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        nodes = []
+        links = []
+        aggregations = []
+
+        # Handle aggregate node expansion
+        if node_id.startswith("aggregate:"):
+            entity_type = node_id.split(":", 1)[1]
+            # Return sample of this type
+            if entity_type == "doc_section":
+                result = self.conn.execute(f"""
+                    MATCH (d:DocSection)
+                    RETURN d.id, d.name, d.file_path
+                    LIMIT {max_per_type}
+                """)
+                while result.has_next():
+                    row = result.get_next()
+                    nodes.append(
+                        {
+                            "id": row[0],
+                            "name": row[1] or "untitled",
+                            "type": "doc_section",
+                            "file_path": row[2] or "",
+                            "group": 5,
+                            "expandable": True,
+                        }
+                    )
+            else:
+                result = self.conn.execute(f"""
+                    MATCH (e:CodeEntity)
+                    WHERE e.entity_type = '{entity_type}'
+                    RETURN e.id, e.name, e.entity_type, e.file_path
+                    LIMIT {max_per_type}
+                """)
+                type_to_group = {
+                    "file": 1,
+                    "module": 2,
+                    "class": 3,
+                    "function": 4,
+                    "method": 4,
+                }
+                while result.has_next():
+                    row = result.get_next()
+                    nodes.append(
+                        {
+                            "id": row[0],
+                            "name": row[1],
+                            "type": row[2],
+                            "file_path": row[3] or "",
+                            "group": type_to_group.get(row[2], 0),
+                            "expandable": True,
+                        }
+                    )
+            return {"nodes": nodes, "links": [], "aggregations": []}
+
+        # Get neighbors by relationship type
+        neighbor_counts = {}  # type -> count
+        neighbor_samples = {}  # type -> [nodes]
+
+        # Escape single quotes in node_id
+        safe_node_id = node_id.replace("'", "\\'")
+
+        for rel_type in [
+            "CALLS",
+            "IMPORTS",
+            "INHERITS",
+            "CONTAINS",
+            "FOLLOWS",
+            "REFERENCES",
+            "AUTHORED",
+            "PART_OF",
+        ]:
+            try:
+                # Outgoing relationships
+                result = self.conn.execute(f"""
+                    MATCH (a {{id: '{safe_node_id}'}})-[r:{rel_type}]->(b)
+                    RETURN b.id, b.name, labels(b)[0] as label
+                    LIMIT 100
+                """)
+                while result.has_next():
+                    row = result.get_next()
+                    neighbor_type = row[2].lower() if row[2] else "unknown"
+                    if neighbor_type not in neighbor_counts:
+                        neighbor_counts[neighbor_type] = 0
+                        neighbor_samples[neighbor_type] = []
+                    neighbor_counts[neighbor_type] += 1
+                    if len(neighbor_samples[neighbor_type]) < max_per_type:
+                        type_to_group = {
+                            "codeentity": 0,
+                            "file": 1,
+                            "module": 2,
+                            "class": 3,
+                            "function": 4,
+                            "method": 4,
+                            "docsection": 5,
+                            "tag": 6,
+                            "person": 7,
+                            "project": 8,
+                        }
+                        neighbor_samples[neighbor_type].append(
+                            {
+                                "id": row[0],
+                                "name": row[1] or row[0],
+                                "type": neighbor_type,
+                                "group": type_to_group.get(neighbor_type, 0),
+                                "expandable": True,
+                            }
+                        )
+                        links.append(
+                            {
+                                "source": node_id,
+                                "target": row[0],
+                                "type": rel_type.lower(),
+                            }
+                        )
+
+                # Incoming relationships
+                result = self.conn.execute(f"""
+                    MATCH (a)-[r:{rel_type}]->(b {{id: '{safe_node_id}'}})
+                    RETURN a.id, a.name, labels(a)[0] as label
+                    LIMIT 100
+                """)
+                while result.has_next():
+                    row = result.get_next()
+                    neighbor_type = row[2].lower() if row[2] else "unknown"
+                    if neighbor_type not in neighbor_counts:
+                        neighbor_counts[neighbor_type] = 0
+                        neighbor_samples[neighbor_type] = []
+                    neighbor_counts[neighbor_type] += 1
+                    if len(neighbor_samples[neighbor_type]) < max_per_type:
+                        type_to_group = {
+                            "codeentity": 0,
+                            "file": 1,
+                            "module": 2,
+                            "class": 3,
+                            "function": 4,
+                            "method": 4,
+                            "docsection": 5,
+                            "tag": 6,
+                            "person": 7,
+                            "project": 8,
+                        }
+                        neighbor_samples[neighbor_type].append(
+                            {
+                                "id": row[0],
+                                "name": row[1] or row[0],
+                                "type": neighbor_type,
+                                "group": type_to_group.get(neighbor_type, 0),
+                                "expandable": True,
+                            }
+                        )
+                        links.append(
+                            {
+                                "source": row[0],
+                                "target": node_id,
+                                "type": rel_type.lower(),
+                            }
+                        )
+            except Exception as e:
+                logger.debug(f"Skipping {rel_type} relationships for {node_id}: {e}")
+                continue
+
+        # Build nodes list, aggregate if needed
+        for ntype, count in neighbor_counts.items():
+            if count > max_per_type:
+                # Add samples + aggregation info
+                nodes.extend(neighbor_samples[ntype])
+                aggregations.append(
+                    {
+                        "type": ntype,
+                        "shown": len(neighbor_samples[ntype]),
+                        "total": count,
+                        "hidden": count - len(neighbor_samples[ntype]),
+                    }
+                )
+            else:
+                nodes.extend(neighbor_samples[ntype])
+
+        return {"nodes": nodes, "links": links, "aggregations": aggregations}
+
     async def get_visualization_data(self) -> dict[str, Any]:
         """Export knowledge graph data for D3.js visualization with monorepo support.
 
@@ -2764,6 +3131,71 @@ class KnowledgeGraph:
                         "name": row[1],
                         "type": row[2] or "unknown",
                         "file_path": row[3] or "",
+                    }
+                )
+
+            # Add DocSection nodes
+            doc_result = self.conn.execute(
+                """
+                MATCH (d:DocSection)
+                RETURN d.id AS id,
+                       d.name AS name,
+                       d.file_path AS file_path
+                """
+            )
+            while doc_result.has_next():
+                row = doc_result.get_next()
+                entities.append(
+                    {
+                        "id": row[0],
+                        "name": row[1] or "untitled",
+                        "type": "doc_section",
+                        "file_path": row[2] or "",
+                    }
+                )
+
+            # Add Tag nodes
+            tag_result = self.conn.execute(
+                "MATCH (t:Tag) RETURN t.id AS id, t.name AS name"
+            )
+            while tag_result.has_next():
+                row = tag_result.get_next()
+                entities.append(
+                    {
+                        "id": row[0],
+                        "name": row[1],
+                        "type": "tag",
+                        "file_path": "",
+                    }
+                )
+
+            # Add Person nodes
+            person_result = self.conn.execute(
+                "MATCH (p:Person) RETURN p.id AS id, p.name AS name"
+            )
+            while person_result.has_next():
+                row = person_result.get_next()
+                entities.append(
+                    {
+                        "id": row[0],
+                        "name": row[1],
+                        "type": "person",
+                        "file_path": "",
+                    }
+                )
+
+            # Add Project nodes
+            project_result = self.conn.execute(
+                "MATCH (p:Project) RETURN p.id AS id, p.name AS name"
+            )
+            while project_result.has_next():
+                row = project_result.get_next()
+                entities.append(
+                    {
+                        "id": row[0],
+                        "name": row[1],
+                        "type": "project",
+                        "file_path": "",
                     }
                 )
 
@@ -2819,6 +3251,10 @@ class KnowledgeGraph:
                 "class": 3,
                 "function": 4,
                 "method": 4,
+                "doc_section": 5,
+                "tag": 6,
+                "person": 7,
+                "project": 8,
             }
 
             # Create entity nodes with subproject assignment
@@ -2855,9 +3291,10 @@ class KnowledgeGraph:
 
             # Get all relationships as links
             links = []
-            relationship_types = ["CALLS", "IMPORTS", "INHERITS", "CONTAINS"]
 
-            for rel_type in relationship_types:
+            # Code relationships (CodeEntity -> CodeEntity)
+            code_relationship_types = ["CALLS", "IMPORTS", "INHERITS", "CONTAINS"]
+            for rel_type in code_relationship_types:
                 try:
                     rel_result = self.conn.execute(
                         f"""
@@ -2881,6 +3318,134 @@ class KnowledgeGraph:
                 except Exception as e:
                     logger.debug(f"No {rel_type} relationships found: {e}")
                     continue
+
+            # Documentation relationships (DocSection -> DocSection)
+            try:
+                follows_result = self.conn.execute(
+                    """
+                    MATCH (a:DocSection)-[r:FOLLOWS]->(b:DocSection)
+                    RETURN a.id AS source, b.id AS target
+                    """
+                )
+                while follows_result.has_next():
+                    row = follows_result.get_next()
+                    links.append(
+                        {
+                            "source": row[0],
+                            "target": row[1],
+                            "type": "follows",
+                            "weight": 1.0,
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"No FOLLOWS relationships found: {e}")
+
+            # Documentation -> Code references
+            try:
+                references_result = self.conn.execute(
+                    """
+                    MATCH (a:DocSection)-[r:REFERENCES]->(b:CodeEntity)
+                    RETURN a.id AS source, b.id AS target
+                    """
+                )
+                while references_result.has_next():
+                    row = references_result.get_next()
+                    links.append(
+                        {
+                            "source": row[0],
+                            "target": row[1],
+                            "type": "references",
+                            "weight": 1.0,
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"No REFERENCES relationships found: {e}")
+
+            # Documentation -> Code demonstrations
+            try:
+                demonstrates_result = self.conn.execute(
+                    """
+                    MATCH (a:DocSection)-[r:DEMONSTRATES]->(b:CodeEntity)
+                    RETURN a.id AS source, b.id AS target
+                    """
+                )
+                while demonstrates_result.has_next():
+                    row = demonstrates_result.get_next()
+                    links.append(
+                        {
+                            "source": row[0],
+                            "target": row[1],
+                            "type": "demonstrates",
+                            "weight": 1.0,
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"No DEMONSTRATES relationships found: {e}")
+
+            # Tag relationships (DocSection/CodeEntity -> Tag)
+            try:
+                has_tag_result = self.conn.execute(
+                    """
+                    MATCH (a)-[r:HAS_TAG]->(t:Tag)
+                    WHERE a:DocSection OR a:CodeEntity
+                    RETURN a.id AS source, t.id AS target
+                    """
+                )
+                while has_tag_result.has_next():
+                    row = has_tag_result.get_next()
+                    links.append(
+                        {
+                            "source": row[0],
+                            "target": row[1],
+                            "type": "has_tag",
+                            "weight": 1.0,
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"No HAS_TAG relationships found: {e}")
+
+            # Person relationships (AUTHORED)
+            try:
+                authored_result = self.conn.execute(
+                    """
+                    MATCH (p:Person)-[r:AUTHORED]->(e)
+                    WHERE e:CodeEntity OR e:DocSection
+                    RETURN p.id AS source, e.id AS target
+                    """
+                )
+                while authored_result.has_next():
+                    row = authored_result.get_next()
+                    links.append(
+                        {
+                            "source": row[0],
+                            "target": row[1],
+                            "type": "authored",
+                            "weight": 1.0,
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"No AUTHORED relationships found: {e}")
+
+            # Part of relationships (various -> Project)
+            try:
+                part_of_result = self.conn.execute(
+                    """
+                    MATCH (a)-[r:PART_OF]->(p:Project)
+                    RETURN a.id AS source, p.id AS target
+                    """
+                )
+                while part_of_result.has_next():
+                    row = part_of_result.get_next()
+                    links.append(
+                        {
+                            "source": row[0],
+                            "target": row[1],
+                            "type": "part_of",
+                            "weight": 1.0,
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"No PART_OF relationships found: {e}")
 
             # Add links from subproject roots to entities in monorepo
             if is_monorepo:

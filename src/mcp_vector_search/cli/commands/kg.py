@@ -1223,7 +1223,7 @@ def visualize_kg(
 
         # Export visualization data
         console.print("[cyan]Exporting knowledge graph data...[/cyan]")
-        viz_data = await kg.get_visualization_data()
+        viz_data = await kg.get_initial_visualization_data(max_nodes=100)
 
         # Save to JSON
         with open(output, "w") as f:
@@ -1397,6 +1397,21 @@ def _create_kg_html_template(output_path: Path):
             display: inline-block;
         }
 
+        #status {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(42, 42, 42, 0.95);
+            padding: 20px 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 2000;
+            display: none;
+            color: #60a5fa;
+            font-size: 14px;
+        }
+
         svg {
             width: 100vw;
             height: 100vh;
@@ -1412,6 +1427,16 @@ def _create_kg_html_template(output_path: Path):
         .node:hover {
             stroke: #60a5fa;
             stroke-width: 3px;
+        }
+
+        .node.aggregate {
+            stroke: #fbbf24;
+            stroke-width: 2px;
+        }
+
+        .node.expanded {
+            stroke: #10b981;
+            stroke-width: 2px;
         }
 
         .link {
@@ -1435,10 +1460,22 @@ def _create_kg_html_template(output_path: Path):
 <body>
     <div id="controls">
         <h3>Filters</h3>
+        <h4 style="margin: 10px 0 5px 0; color: #9ca3af; font-size: 12px;">Code Relationships</h4>
         <label><input type="checkbox" id="show-calls" checked> Calls</label>
         <label><input type="checkbox" id="show-imports" checked> Imports</label>
         <label><input type="checkbox" id="show-inherits" checked> Inherits</label>
         <label><input type="checkbox" id="show-contains" checked> Contains</label>
+        <h4 style="margin: 10px 0 5px 0; color: #9ca3af; font-size: 12px;">Documentation</h4>
+        <label><input type="checkbox" id="show-follows" checked> Follows</label>
+        <label><input type="checkbox" id="show-references" checked> References</label>
+        <label><input type="checkbox" id="show-demonstrates" checked> Demonstrates</label>
+        <label><input type="checkbox" id="show-has_tag" checked> Has Tag</label>
+        <h4 style="margin: 10px 0 5px 0; color: #9ca3af; font-size: 12px;">Other</h4>
+        <label><input type="checkbox" id="show-authored" checked> Authored</label>
+        <label><input type="checkbox" id="show-part_of" checked> Part Of</label>
+        <p style="margin-top: 15px; font-size: 11px; color: #9ca3af; border-top: 1px solid #374151; padding-top: 10px;">
+            <strong>Tip:</strong> Double-click nodes to expand
+        </p>
     </div>
 
     <div id="info" style="display: none;">
@@ -1447,7 +1484,10 @@ def _create_kg_html_template(output_path: Path):
         <p><span class="label">Type:</span> <span id="info-type"></span></p>
         <p><span class="label">File:</span> <span id="info-file"></span></p>
         <p><span class="label">Connections:</span> <span id="info-connections"></span></p>
+        <p><span class="label">Status:</span> <span id="info-status"></span></p>
     </div>
+
+    <div id="status">Loading...</div>
 
     <div id="legend">
         <h4>Node Types</h4>
@@ -1467,6 +1507,26 @@ def _create_kg_html_template(output_path: Path):
             <span class="legend-color" style="background: #10b981;"></span>
             <span>Function/Method</span>
         </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background: #22d3ee;"></span>
+            <span>Doc Section</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background: #a855f7;"></span>
+            <span>Tag</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background: #f97316;"></span>
+            <span>Person</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background: #14b8a6;"></span>
+            <span>Project</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background: #fbbf24;"></span>
+            <span>Aggregate (unexpanded)</span>
+        </div>
         <h4 style="margin-top: 15px;">Relationships</h4>
         <div class="legend-item">
             <span class="legend-color" style="background: #f59e0b;"></span>
@@ -1484,6 +1544,30 @@ def _create_kg_html_template(output_path: Path):
             <span class="legend-color" style="background: #6b7280;"></span>
             <span>Contains</span>
         </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background: #84cc16;"></span>
+            <span>Follows</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background: #06b6d4;"></span>
+            <span>References</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background: #a855f7;"></span>
+            <span>Demonstrates</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background: #f472b6;"></span>
+            <span>Has Tag</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background: #fb923c;"></span>
+            <span>Authored</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background: #4ade80;"></span>
+            <span>Part Of</span>
+        </div>
     </div>
 
     <svg id="graph"></svg>
@@ -1494,15 +1578,26 @@ def _create_kg_html_template(output_path: Path):
             1: '#6366f1',  // file - indigo
             2: '#8b5cf6',  // module - purple
             3: '#ec4899',  // class - pink
-            4: '#10b981',  // function - green
+            4: '#10b981',  // function/method - green
+            5: '#22d3ee',  // doc_section - cyan
+            6: '#a855f7',  // tag - purple
+            7: '#f97316',  // person - orange
+            8: '#14b8a6',  // project - teal
+            9: '#fbbf24',  // aggregate - amber
             0: '#6b7280'   // unknown - gray
         };
 
         const linkColors = {
-            'calls': '#f59e0b',      // orange
-            'imports': '#3b82f6',    // blue
-            'inherits': '#ef4444',   // red
-            'contains': '#6b7280'    // gray
+            'calls': '#f59e0b',        // orange
+            'imports': '#3b82f6',      // blue
+            'inherits': '#ef4444',     // red
+            'contains': '#6b7280',     // gray
+            'follows': '#84cc16',      // lime
+            'references': '#06b6d4',   // cyan
+            'demonstrates': '#a855f7', // purple
+            'has_tag': '#f472b6',      // pink
+            'authored': '#fb923c',     // orange
+            'part_of': '#4ade80'       // green
         };
 
         // Load graph data
@@ -1516,10 +1611,15 @@ def _create_kg_html_template(output_path: Path):
                 alert('Failed to load knowledge graph data');
             });
 
-        function initGraph(nodes, links) {
+        function initGraph(initialNodes, initialLinks) {
             const svg = d3.select('#graph');
             const width = window.innerWidth;
             const height = window.innerHeight;
+
+            // Mutable graph state
+            let nodes = [...initialNodes];
+            let links = [...initialLinks];
+            const expandedNodes = new Set();
 
             // Add zoom behavior
             const g = svg.append('g');
@@ -1540,61 +1640,20 @@ def _create_kg_html_template(output_path: Path):
                 .force('collision', d3.forceCollide()
                     .radius(30));
 
-            // Create links
-            const link = g.append('g')
-                .selectAll('line')
-                .data(links)
-                .join('line')
-                .attr('class', 'link')
-                .attr('stroke', d => linkColors[d.type] || '#6b7280')
-                .attr('stroke-width', d => Math.sqrt(d.weight || 1));
+            // Create link group
+            let linkGroup = g.append('g');
+            let link = linkGroup.selectAll('line');
 
-            // Create nodes
-            const node = g.append('g')
-                .selectAll('circle')
-                .data(nodes)
-                .join('circle')
-                .attr('class', 'node')
-                .attr('r', 8)
-                .attr('fill', d => nodeColors[d.group] || nodeColors[0])
-                .on('click', (event, d) => showInfo(d, links))
-                .call(d3.drag()
-                    .on('start', dragStarted)
-                    .on('drag', dragged)
-                    .on('end', dragEnded));
+            // Create node group
+            let nodeGroup = g.append('g');
+            let node = nodeGroup.selectAll('circle');
 
-            // Create labels
-            const label = g.append('g')
-                .selectAll('text')
-                .data(nodes)
-                .join('text')
-                .attr('class', 'node-label')
-                .attr('dy', -12)
-                .text(d => d.name || d.id);
+            // Create label group
+            let labelGroup = g.append('g');
+            let label = labelGroup.selectAll('text');
 
-            // Update positions on tick
-            simulation.on('tick', () => {
-                link
-                    .attr('x1', d => d.source.x)
-                    .attr('y1', d => d.source.y)
-                    .attr('x2', d => d.target.x)
-                    .attr('y2', d => d.target.y);
-
-                node
-                    .attr('cx', d => d.x)
-                    .attr('cy', d => d.y);
-
-                label
-                    .attr('x', d => d.x)
-                    .attr('y', d => d.y);
-            });
-
-            // Filter controls
-            ['calls', 'imports', 'inherits', 'contains'].forEach(type => {
-                document.getElementById(`show-${type}`).addEventListener('change', (e) => {
-                    filterLinks(link, e.target.checked, type);
-                });
-            });
+            // Initial render
+            updateGraph();
 
             // Drag functions
             function dragStarted(event, d) {
@@ -1613,6 +1672,169 @@ def _create_kg_html_template(output_path: Path):
                 d.fx = null;
                 d.fy = null;
             }
+
+            // Expand node on double-click
+            async function expandNode(event, d) {
+                event.stopPropagation();
+
+                if (d.expandable === false) return;
+
+                if (expandedNodes.has(d.id)) {
+                    console.log('Node already expanded:', d.id);
+                    return;
+                }
+
+                // Show loading indicator
+                const statusDiv = document.getElementById('status');
+                statusDiv.textContent = `Expanding ${d.name}...`;
+                statusDiv.style.display = 'block';
+
+                try {
+                    const response = await fetch(`/api/kg-expand/${encodeURIComponent(d.id)}`);
+                    const data = await response.json();
+
+                    if (data.error) {
+                        console.error('Expand error:', data.error);
+                        statusDiv.textContent = `Error: ${data.error}`;
+                        setTimeout(() => statusDiv.style.display = 'none', 3000);
+                        return;
+                    }
+
+                    if (data.nodes && data.nodes.length > 0) {
+                        // Add new nodes
+                        data.nodes.forEach(newNode => {
+                            if (!nodes.find(n => n.id === newNode.id)) {
+                                // Position near parent with some randomness
+                                newNode.x = d.x + (Math.random() - 0.5) * 200;
+                                newNode.y = d.y + (Math.random() - 0.5) * 200;
+                                nodes.push(newNode);
+                            }
+                        });
+
+                        // Add new links
+                        data.links.forEach(newLink => {
+                            const linkKey = `${newLink.source}-${newLink.target}`;
+                            const reverseKey = `${newLink.target}-${newLink.source}`;
+                            const exists = links.some(l => {
+                                const lSource = typeof l.source === 'object' ? l.source.id : l.source;
+                                const lTarget = typeof l.target === 'object' ? l.target.id : l.target;
+                                const lKey = `${lSource}-${lTarget}`;
+                                const lReverse = `${lTarget}-${lSource}`;
+                                return lKey === linkKey || lReverse === reverseKey;
+                            });
+                            if (!exists) {
+                                links.push(newLink);
+                            }
+                        });
+
+                        // Update visualization
+                        updateGraph();
+
+                        expandedNodes.add(d.id);
+
+                        // Mark node as expanded
+                        d3.selectAll('.node')
+                            .filter(n => n.id === d.id)
+                            .classed('expanded', true);
+
+                        statusDiv.textContent = `Expanded ${d.name}: +${data.nodes.length} nodes`;
+
+                        // Show aggregation info if any
+                        if (data.aggregations && data.aggregations.length > 0) {
+                            const aggText = data.aggregations.map(a =>
+                                `${a.type}: showing ${a.shown}/${a.total}`
+                            ).join(', ');
+                            console.log('Aggregated:', aggText);
+                        }
+                    } else {
+                        statusDiv.textContent = `No neighbors found for ${d.name}`;
+                    }
+
+                    setTimeout(() => statusDiv.style.display = 'none', 2000);
+                } catch (error) {
+                    console.error('Expand failed:', error);
+                    statusDiv.textContent = `Failed to expand: ${error.message}`;
+                    setTimeout(() => statusDiv.style.display = 'none', 3000);
+                }
+            }
+
+            function updateGraph() {
+                // Update links
+                link = link.data(links, d => {
+                    const sourceId = typeof d.source === 'object' ? d.source.id : d.source;
+                    const targetId = typeof d.target === 'object' ? d.target.id : d.target;
+                    return `${sourceId}-${targetId}`;
+                });
+                link.exit().remove();
+                link = link.enter()
+                    .append('line')
+                    .attr('class', 'link')
+                    .attr('stroke', d => linkColors[d.type] || '#6b7280')
+                    .attr('stroke-width', 1)
+                    .merge(link);
+
+                // Update nodes
+                node = node.data(nodes, d => d.id);
+                node.exit().remove();
+                const nodeEnter = node.enter()
+                    .append('circle')
+                    .attr('class', d => d.type === 'aggregate' ? 'node aggregate' : 'node')
+                    .attr('r', d => d.type === 'aggregate' ? 12 : 8)
+                    .attr('fill', d => nodeColors[d.group] || nodeColors[0])
+                    .on('click', (event, d) => {
+                        event.stopPropagation();
+                        showInfo(d, links, nodes, node, link, label, expandedNodes);
+                    })
+                    .on('dblclick', expandNode)
+                    .call(d3.drag()
+                        .on('start', dragStarted)
+                        .on('drag', dragged)
+                        .on('end', dragEnded));
+                node = nodeEnter.merge(node);
+
+                // Update labels
+                label = label.data(nodes, d => d.id);
+                label.exit().remove();
+                label = label.enter()
+                    .append('text')
+                    .attr('class', 'node-label')
+                    .attr('dy', -12)
+                    .text(d => d.name || d.id)
+                    .merge(label);
+
+                // Update simulation
+                simulation.nodes(nodes);
+                simulation.force('link').links(links);
+                simulation.alpha(0.3).restart();
+
+                // Update tick handler
+                simulation.on('tick', () => {
+                    link
+                        .attr('x1', d => d.source.x)
+                        .attr('y1', d => d.source.y)
+                        .attr('x2', d => d.target.x)
+                        .attr('y2', d => d.target.y);
+
+                    node
+                        .attr('cx', d => d.x)
+                        .attr('cy', d => d.y);
+
+                    label
+                        .attr('x', d => d.x)
+                        .attr('y', d => d.y);
+                });
+            }
+
+            // Filter controls
+            ['calls', 'imports', 'inherits', 'contains', 'follows', 'references',
+             'demonstrates', 'has_tag', 'authored', 'part_of'].forEach(type => {
+                const element = document.getElementById(`show-${type}`);
+                if (element) {
+                    element.addEventListener('change', (e) => {
+                        filterLinks(link, e.target.checked, type);
+                    });
+                }
+            });
         }
 
         function filterLinks(link, show, type) {
@@ -1624,24 +1846,51 @@ def _create_kg_html_template(output_path: Path):
             });
         }
 
-        function showInfo(node, links) {
+        function showInfo(node, links, allNodes, nodeElements, linkElements, labelElements, expandedNodes) {
             const info = document.getElementById('info');
             document.getElementById('info-name').textContent = node.name || node.id;
             document.getElementById('info-type').textContent = node.type || 'unknown';
             document.getElementById('info-file').textContent = node.file_path || 'N/A';
 
+            // Find connected node IDs
+            const connectedNodes = new Set([node.id]);
+            links.forEach(link => {
+                const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+                const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+                if (sourceId === node.id) connectedNodes.add(targetId);
+                if (targetId === node.id) connectedNodes.add(sourceId);
+            });
+
             // Count connections
-            const connections = links.filter(l =>
-                l.source.id === node.id || l.target.id === node.id
-            ).length;
-            document.getElementById('info-connections').textContent = connections;
+            document.getElementById('info-connections').textContent = connectedNodes.size - 1;
+
+            // Show expansion status
+            const statusText = expandedNodes && expandedNodes.has(node.id) ? 'Expanded' :
+                              (node.expandable === false ? 'Not expandable' : 'Not expanded (double-click to expand)');
+            document.getElementById('info-status').textContent = statusText;
+
+            // Dim unconnected nodes
+            nodeElements.style('opacity', d => connectedNodes.has(d.id) ? 1 : 0.1);
+            labelElements.style('opacity', d => connectedNodes.has(d.id) ? 1 : 0.1);
+
+            // Dim unconnected edges
+            linkElements.style('opacity', d => {
+                const sourceId = typeof d.source === 'object' ? d.source.id : d.source;
+                const targetId = typeof d.target === 'object' ? d.target.id : d.target;
+                return (sourceId === node.id || targetId === node.id) ? 0.8 : 0.05;
+            });
 
             info.style.display = 'block';
         }
 
-        // Close info on background click
-        document.querySelector('svg').addEventListener('click', (e) => {
-            if (e.target.tagName === 'svg') {
+        // Close info on background click and reset view
+        const svg = d3.select('#graph');
+        svg.on('click', (event) => {
+            if (event.target === svg.node() || event.target.tagName === 'svg') {
+                // Reset all opacities
+                d3.selectAll('.node').style('opacity', 1);
+                d3.selectAll('.node-label').style('opacity', 1);
+                d3.selectAll('.link').style('opacity', 0.6);
                 document.getElementById('info').style.display = 'none';
             }
         });

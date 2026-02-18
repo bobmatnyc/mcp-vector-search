@@ -193,6 +193,44 @@ def create_app(viz_dir: Path) -> FastAPI:
                 media_type="application/json",
             )
 
+    @app.get("/api/kg-expand/{node_id}")
+    async def expand_kg_node(node_id: str, hops: int = 1) -> Response:
+        """Get neighbors of a node for on-demand expansion.
+
+        Returns nodes within N hops and their connecting edges.
+        Aggregates if > 30 children of same type.
+
+        Args:
+            node_id: ID of node to expand
+            hops: Number of relationship hops
+
+        Returns:
+            JSON response with neighbors and links
+        """
+        from ....core.knowledge_graph import KnowledgeGraph
+
+        # Get project root from viz_dir path
+        kg_path = viz_dir.parent / "knowledge_graph"
+
+        try:
+            kg = KnowledgeGraph(kg_path)
+            await kg.initialize()
+
+            neighbors = await kg.get_node_neighbors(node_id, hops=hops, max_per_type=30)
+
+            await kg.close()
+
+            return Response(
+                content=orjson.dumps(neighbors), media_type="application/json"
+            )
+        except Exception as e:
+            logger.error(f"Failed to expand node {node_id}: {e}")
+            return Response(
+                content=orjson.dumps({"error": str(e), "nodes": [], "links": []}),
+                status_code=500,
+                media_type="application/json",
+            )
+
     @app.get("/api/relationships/{chunk_id}")
     async def get_chunk_relationships(chunk_id: str) -> Response:
         """Get all relationships for a chunk (semantic + callers) on-demand.
