@@ -271,9 +271,29 @@ async def build_graph_data(
         console.print(
             f"[cyan]Detected monorepo with {len(subprojects)} subprojects[/cyan]"
         )
+
+        # Create monorepo root node (actual directory name)
+        monorepo_root_id = (
+            f"monorepo_{hash(str(project_manager.project_root)) & 0xFFFFFFFF:08x}"
+        )
+        monorepo_root_node = {
+            "id": monorepo_root_id,
+            "name": project_manager.project_root.name,
+            "type": "monorepo",
+            "file_path": str(project_manager.project_root),
+            "start_line": 0,
+            "end_line": 0,
+            "complexity": 0,
+            "depth": 0,
+            "collapsed_children_count": len(subprojects),
+        }
+        nodes.append(monorepo_root_node)
+
+        # Add subproject nodes at depth 1
         for sp_name, sp_data in subprojects.items():
+            subproject_id = f"subproject_{sp_name}"
             node = {
-                "id": f"subproject_{sp_name}",
+                "id": subproject_id,
                 "name": sp_name,
                 "type": "subproject",
                 "file_path": sp_data["path"] or "",
@@ -281,9 +301,18 @@ async def build_graph_data(
                 "end_line": 0,
                 "complexity": 0,
                 "color": sp_data["color"],
-                "depth": 0,
+                "depth": 1,  # Subprojects are children of monorepo root
             }
             nodes.append(node)
+
+            # Add containment link from monorepo root to subproject
+            links.append(
+                {
+                    "source": monorepo_root_id,
+                    "target": subproject_id,
+                    "type": "monorepo_containment",
+                }
+            )
 
     # Load directory index for enhanced directory metadata
     console.print("[cyan]Loading directory index...[/cyan]")

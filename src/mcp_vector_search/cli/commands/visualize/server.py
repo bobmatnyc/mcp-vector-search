@@ -186,13 +186,19 @@ def create_app(viz_dir: Path) -> FastAPI:
             initial_nodes = []
             initial_node_ids = set()
 
-            # 1. Include subproject nodes (monorepo roots)
+            # 1. Include monorepo root node (if exists)
+            for node in all_nodes:
+                if node.get("type") == "monorepo":
+                    initial_nodes.append(node)
+                    initial_node_ids.add(node["id"])
+
+            # 2. Include subproject nodes (children of monorepo root)
             for node in all_nodes:
                 if node.get("type") == "subproject":
                     initial_nodes.append(node)
                     initial_node_ids.add(node["id"])
 
-            # 2. Include top-level directories (depth 0-2 for 2-level initial view)
+            # 3. Include top-level directories (depth 0-2 for 2-level initial view)
             for node in all_nodes:
                 if node.get("type") == "directory":
                     depth = node.get("depth", 0)
@@ -207,7 +213,7 @@ def create_app(viz_dir: Path) -> FastAPI:
                         initial_nodes.append(node_copy)
                         initial_node_ids.add(node["id"])
 
-            # 3. Create aggregation nodes for collapsed directories
+            # 4. Create aggregation nodes for collapsed directories
             # Count children that are NOT shown
             dir_children_count = {}
             for link in all_links:
@@ -233,7 +239,7 @@ def create_app(viz_dir: Path) -> FastAPI:
                     node["collapsed_children_count"] = count
                     node["expandable"] = count > 0
 
-            # 4. Filter links to only those between initial nodes
+            # 5. Filter links to only those between initial nodes
             initial_links = [
                 link
                 for link in all_links
@@ -314,6 +320,7 @@ def create_app(viz_dir: Path) -> FastAPI:
                 if link["source"] == node_id and link.get("type") in (
                     "dir_containment",
                     "file_containment",
+                    "monorepo_containment",
                     "subproject_containment",
                 ):
                     child_ids.add(link["target"])

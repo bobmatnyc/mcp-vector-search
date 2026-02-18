@@ -281,17 +281,11 @@ async function loadGraphDataActual() {
         console.log('Node type counts:', typeCounts);
         console.log('=== END SAMPLE NODE STRUCTURE ===');
 
-        // Mark nodes with autoExpand=true as having children already loaded
-        // This prevents fetching when clicked - children are already in allNodes
-        // But do NOT add to expandedNodes - keep them visually COLLAPSED
-        allNodes.forEach(node => {
-            if (node.autoExpand === true) {
-                // Mark as expanded so click handler doesn't fetch (data is preloaded)
-                node.expanded = true;
-                // Do NOT add to expandedNodes - let them be visually collapsed
-                console.log(`Marked ${node.name} as preloaded (children in initial data, visually collapsed)`);
-            }
-        });
+        // REMOVED: Previously marked autoExpand nodes as expanded=true
+        // This caused a bug where combined nodes (e.g., src/mcp_vector_search/cli)
+        // with collapsed_children_count > 0 couldn't expand because they were
+        // incorrectly marked as already expanded. Now all nodes start with
+        // expanded=false and only get marked expanded after successful fetch.
 
         // Build tree structure - this will use links to create parent-child relationships
         // Nodes with expanded=true but NOT in expandedNodes will be collapsed but have children ready
@@ -729,6 +723,13 @@ function buildTreeStructure() {
     checkFilesRecursive(treeData);
     console.log(`Checked ${filesChecked} files, ${filesWithChunks} have chunks`);
     console.log('=== END POST-COLLAPSE FILE CHECK ===');
+}
+
+// Rebuild tree data after adding new nodes (for progressive loading)
+function rebuildTreeData() {
+    console.log('Rebuilding tree structure with newly loaded nodes...');
+    buildTreeStructure();
+    console.log('Tree rebuild complete');
 }
 
 // ============================================================================
@@ -1275,12 +1276,24 @@ function getNodeRadius(d) {
     const nodeData = d.data;
 
     // Size configuration based on node type
+    const monorepoRadius = 18;  // Fixed size for monorepo root (larger)
+    const subprojectRadius = 14; // Fixed size for subprojects
     const dirMinRadius = 8;   // Min for directories
     const dirMaxRadius = 40;  // Max for directories
     const fileMinRadius = 6;  // Min for files
     const fileMaxRadius = 30; // Max for files
     const chunkMinRadius = sizeConfig.chunkMinRadius;  // From config
     const chunkMaxRadius = sizeConfig.chunkMaxRadius;  // From config
+
+    // Monorepo root: fixed large size
+    if (nodeData.type === 'monorepo') {
+        return monorepoRadius;
+    }
+
+    // Subproject: fixed medium-large size
+    if (nodeData.type === 'subproject') {
+        return subprojectRadius;
+    }
 
     // Directory nodes: size by file_count (logarithmic scale)
     if (nodeData.type === 'directory') {
@@ -4860,19 +4873,16 @@ function toggleGroupingMode() {
 // HIERARCHY TRANSFORMATION FUNCTIONS
 // ============================================================================
 
-function buildFileHierarchy() {
-    // Return cached version if available
-    if (cachedFileHierarchy) {
-        console.log('Using cached file hierarchy');
-        return cachedFileHierarchy;
-    }
-
+function buildFileHierarchy(maxDepth = 3, includeAllForNodeId = null) {
+    // includeAllForNodeId: if provided, include all children for this specific node ID
+    // This allows progressive loading: start with depth 3, then expand specific nodes
     console.time('buildFileHierarchy');
 
     // Build hierarchy from treeData (already structured by file/directory)
     // We need to ensure it's in D3-compatible format with value for sizing
+    // maxDepth: limit depth for progressive loading (default 3)
 
-    function processNode(node) {
+    function processNode(node, currentDepth = 0) {
         // Extract only needed properties (avoid full object cloning)
         const result = {
             name: node.name,
@@ -4885,25 +4895,35 @@ function buildFileHierarchy() {
             end_line: node.end_line,
             content: node.content,
             docstring: node.docstring,
-            language: node.language
+            language: node.language,
+            depth: currentDepth
         };
 
         const children = node.children || node._children || [];
-        if (children.length > 0) {
-            result.children = children.map(child => processNode(child));
+
+        // Progressive loading: stop at maxDepth UNLESS this is the node being expanded
+        const shouldIncludeChildren = currentDepth < maxDepth || node.id === includeAllForNodeId;
+
+        if (shouldIncludeChildren && children.length > 0) {
+            result.children = children.map(child => processNode(child, currentDepth + 1));
+        } else if (children.length > 0) {
+            // At max depth with children - mark as expandable
+            result.collapsed_children_count = children.length;
+            result.expandable = true;
         }
 
         return result;
     }
 
+    let result;
     if (!treeData) {
-        cachedFileHierarchy = { name: 'root', children: [] };
+        result = { name: 'root', children: [] };
     } else {
-        cachedFileHierarchy = processNode(treeData);
+        result = processNode(treeData, 0);
     }
 
     console.timeEnd('buildFileHierarchy');
-    return cachedFileHierarchy;
+    return result;
 }
 
 function buildASTHierarchy() {
@@ -5035,6 +5055,8 @@ function getNodeColor(d) {
 
     // Color by node type for non-leaf nodes
     const typeColors = {
+        'monorepo': '#8957e5',     // Purple for monorepo root
+        'subproject': '#1f6feb',   // Blue for subprojects
         'directory': '#79c0ff',
         'file': '#58a6ff',
         'language': '#8957e5',
@@ -5169,6 +5191,21 @@ function renderTreemap() {
         .style('font-size', '9px')
         .style('pointer-events', 'none');
 
+    // Add expand indicator (⊕) for nodes with collapsed children
+    cell.filter(d => d.data.collapsed_children_count > 0 && (d.x1 - d.x0) > 30 && (d.y1 - d.y0) > 30)
+        .append('text')
+        .attr('class', 'treemap-expand-indicator')
+        .attr('x', d => (d.x1 - d.x0) - 16)
+        .attr('y', d => (d.y1 - d.y0) - 8)
+        .text('⊕')
+        .style('fill', '#fff')
+        .style('font-size', '16px')
+        .style('font-weight', 'bold')
+        .style('pointer-events', 'none')
+        .style('opacity', 0.8)
+        .append('title')
+        .text(d => `Click to load ${d.data.collapsed_children_count} more children`);
+
     // Create tooltip element if it doesn't exist
     ensureVizTooltip();
 
@@ -5176,8 +5213,58 @@ function renderTreemap() {
     console.log(`Rendered ${displayRoot.descendants().length} treemap cells`);
 }
 
-function handleTreemapClick(event, d) {
+async function handleTreemapClick(event, d) {
     event.stopPropagation();
+
+    // Check if node has collapsed children (progressive loading indicator)
+    const hasCollapsedChildren = d.data.collapsed_children_count > 0;
+
+    // If it's a leaf node with collapsed children, expand it
+    if (hasCollapsedChildren && (!d.children || d.children.length === 0)) {
+        console.log(`Progressive loading: expanding ${d.data.name} (${d.data.collapsed_children_count} children)`);
+        showLoadingIndicator(`Loading children of ${d.data.name}...`);
+
+        try {
+            // Fetch children from server
+            const response = await fetch(`/api/graph-expand/${encodeURIComponent(d.data.id)}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            const newNodes = data.nodes || [];
+            console.log(`Received ${newNodes.length} children for ${d.data.name}`);
+
+            // Add new nodes to global arrays
+            const existingNodeIds = new Set(allNodes.map(n => n.id));
+            newNodes.forEach(node => {
+                if (!existingNodeIds.has(node.id)) {
+                    allNodes.push(node);
+                }
+            });
+
+            // Rebuild tree data with new nodes
+            rebuildTreeData();
+
+            // Clear cached hierarchies so they rebuild
+            cachedFileHierarchy = null;
+            cachedASTHierarchy = null;
+
+            // Re-render visualization
+            renderVisualization();
+
+            hideLoadingIndicator();
+        } catch (err) {
+            console.error('Failed to expand node:', err);
+            alert(`Failed to expand ${d.data.name}: ${err.message}`);
+            hideLoadingIndicator();
+        }
+        return;
+    }
 
     // If it's a leaf node (code chunk), show the content
     if (!d.children || d.children.length === 0) {
@@ -5212,6 +5299,10 @@ function handleTreemapHover(event, d) {
     if (d.data.file_path) {
         const shortPath = d.data.file_path.split('/').slice(-2).join('/');
         html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">File:</span> ${escapeHtml(shortPath)}</div>`;
+    }
+
+    if (d.data.collapsed_children_count > 0) {
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Hidden:</span> ${d.data.collapsed_children_count} children (click to load)</div>`;
     }
 
     tooltip.innerHTML = html;
@@ -5424,6 +5515,34 @@ function renderSunburst() {
             }
         });
 
+    // Add expand indicators (⊕) for arcs with collapsed children
+    const expandableArcs = displayRoot.descendants().filter(d => {
+        const angle = d.x1 - d.x0;
+        const radius = (d.y0 + d.y1) / 2;
+        const arcLength = angle * radius;
+        return d.data.collapsed_children_count > 0 && arcLength > 25 && (d.y1 - d.y0) > 15;
+    });
+
+    g.selectAll('text.sunburst-expand-indicator')
+        .data(expandableArcs)
+        .join('text')
+        .attr('class', 'sunburst-expand-indicator')
+        .attr('transform', d => {
+            const x = (d.x0 + d.x1) / 2 * 180 / Math.PI;
+            const y = d.y1 - 8;  // Position near outer edge
+            return `rotate(${x - 90}) translate(${y}, 0) rotate(${x < 180 ? 0 : 180})`;
+        })
+        .attr('dy', '0.35em')
+        .attr('text-anchor', 'middle')
+        .text('⊕')
+        .style('fill', '#fff')
+        .style('font-size', '14px')
+        .style('font-weight', 'bold')
+        .style('pointer-events', 'none')
+        .style('opacity', 0.9)
+        .append('title')
+        .text(d => `Click to load ${d.data.collapsed_children_count} more children`);
+
     // Create tooltip element if it doesn't exist
     ensureVizTooltip();
 
@@ -5431,8 +5550,58 @@ function renderSunburst() {
     console.log(`Rendered ${displayRoot.descendants().length} sunburst arcs`);
 }
 
-function handleSunburstClick(event, d) {
+async function handleSunburstClick(event, d) {
     event.stopPropagation();
+
+    // Check if node has collapsed children (progressive loading indicator)
+    const hasCollapsedChildren = d.data.collapsed_children_count > 0;
+
+    // If it's a leaf node with collapsed children, expand it
+    if (hasCollapsedChildren && (!d.children || d.children.length === 0)) {
+        console.log(`Progressive loading: expanding ${d.data.name} (${d.data.collapsed_children_count} children)`);
+        showLoadingIndicator(`Loading children of ${d.data.name}...`);
+
+        try {
+            // Fetch children from server
+            const response = await fetch(`/api/graph-expand/${encodeURIComponent(d.data.id)}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            const newNodes = data.nodes || [];
+            console.log(`Received ${newNodes.length} children for ${d.data.name}`);
+
+            // Add new nodes to global arrays
+            const existingNodeIds = new Set(allNodes.map(n => n.id));
+            newNodes.forEach(node => {
+                if (!existingNodeIds.has(node.id)) {
+                    allNodes.push(node);
+                }
+            });
+
+            // Rebuild tree data with new nodes
+            rebuildTreeData();
+
+            // Clear cached hierarchies so they rebuild
+            cachedFileHierarchy = null;
+            cachedASTHierarchy = null;
+
+            // Re-render visualization
+            renderVisualization();
+
+            hideLoadingIndicator();
+        } catch (err) {
+            console.error('Failed to expand node:', err);
+            alert(`Failed to expand ${d.data.name}: ${err.message}`);
+            hideLoadingIndicator();
+        }
+        return;
+    }
 
     // If it's a leaf node (code chunk), show the content
     if (!d.children || d.children.length === 0) {
@@ -5465,6 +5634,10 @@ function handleSunburstHover(event, d) {
     if (d.data.file_path) {
         const shortPath = d.data.file_path.split('/').slice(-2).join('/');
         html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">File:</span> ${escapeHtml(shortPath)}</div>`;
+    }
+
+    if (d.data.collapsed_children_count > 0) {
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Hidden:</span> ${d.data.collapsed_children_count} children (click to load)</div>`;
     }
 
     tooltip.innerHTML = html;
