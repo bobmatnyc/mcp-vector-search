@@ -16,6 +16,7 @@ import uvicorn
 from fastapi import FastAPI, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
 
@@ -119,7 +120,7 @@ def create_app(viz_dir: Path) -> FastAPI:
 
     @app.get("/api/graph")
     async def get_graph_data() -> Response:
-        """Get graph data for D3 tree visualization.
+        """Get graph data for D3 tree visualization (legacy full load).
 
         Returns:
             JSON response with nodes and links
@@ -149,6 +150,220 @@ def create_app(viz_dir: Path) -> FastAPI:
             console.print(f"[red]Error loading graph data: {e}[/red]")
             return Response(
                 content='{"error": "Failed to load graph data", "nodes": [], "links": []}',
+                status_code=500,
+                media_type="application/json",
+            )
+
+    @app.get("/api/graph-initial")
+    async def get_graph_initial() -> Response:
+        """Get initial view of graph with top-level nodes only.
+
+        Progressive loading: Returns entry points for fast initial render.
+        - Root directories (depth 0-1)
+        - Aggregation nodes for collapsed groups
+        - Limited to ~100-200 nodes
+
+        Returns:
+            JSON response with initial nodes and links
+        """
+        graph_file = viz_dir / "chunk-graph.json"
+
+        if not graph_file.exists():
+            return Response(
+                content='{"error": "Graph data not found", "nodes": [], "links": []}',
+                status_code=404,
+                media_type="application/json",
+            )
+
+        try:
+            with open(graph_file, "rb") as f:
+                data = orjson.loads(f.read())
+
+            all_nodes = data.get("nodes", [])
+            all_links = data.get("links", [])
+
+            # Filter to top-level nodes only
+            initial_nodes = []
+            initial_node_ids = set()
+
+            # 1. Include subproject nodes (monorepo roots)
+            for node in all_nodes:
+                if node.get("type") == "subproject":
+                    initial_nodes.append(node)
+                    initial_node_ids.add(node["id"])
+
+            # 2. Include top-level directories (depth 0-1 only)
+            for node in all_nodes:
+                if node.get("type") == "directory":
+                    depth = node.get("depth", 0)
+                    if depth <= 1:  # Root and first-level subdirectories
+                        # Mark as expandable if it has children
+                        node_copy = node.copy()
+                        node_copy["expandable"] = True
+                        node_copy["expanded"] = False
+                        initial_nodes.append(node_copy)
+                        initial_node_ids.add(node["id"])
+
+            # 3. Create aggregation nodes for collapsed directories
+            # Count children that are NOT shown
+            dir_children_count = {}
+            for link in all_links:
+                if link.get("type") == "dir_containment":
+                    parent_id = link["source"]
+                    if parent_id in initial_node_ids:
+                        child_id = link["target"]
+                        # Count if child is directory/file but NOT in initial view
+                        child_node = next(
+                            (n for n in all_nodes if n["id"] == child_id), None
+                        )
+                        if child_node and child_id not in initial_node_ids:
+                            child_type = child_node.get("type")
+                            if child_type in ("directory", "file"):
+                                if parent_id not in dir_children_count:
+                                    dir_children_count[parent_id] = 0
+                                dir_children_count[parent_id] += 1
+
+            # Add aggregation metadata to nodes
+            for node in initial_nodes:
+                if node["id"] in dir_children_count:
+                    count = dir_children_count[node["id"]]
+                    node["collapsed_children_count"] = count
+                    node["expandable"] = count > 0
+
+            # 4. Filter links to only those between initial nodes
+            initial_links = [
+                link
+                for link in all_links
+                if link["source"] in initial_node_ids
+                and link["target"] in initial_node_ids
+            ]
+
+            console.print(
+                f"[green]✓[/green] Initial view: {len(initial_nodes)} nodes, {len(initial_links)} links"
+            )
+
+            return Response(
+                content=orjson.dumps(
+                    {
+                        "nodes": initial_nodes,
+                        "links": initial_links,
+                        "metadata": {
+                            "initial_view": True,
+                            "total_nodes": len(all_nodes),
+                            "total_links": len(all_links),
+                        },
+                    }
+                ),
+                media_type="application/json",
+                headers={"Cache-Control": "no-cache"},
+            )
+        except Exception as e:
+            console.print(f"[red]Error loading initial graph data: {e}[/red]")
+            return Response(
+                content='{"error": "Failed to load initial graph data", "nodes": [], "links": []}',
+                status_code=500,
+                media_type="application/json",
+            )
+
+    @app.get("/api/graph-expand/{node_id}")
+    async def expand_graph_node(node_id: str) -> Response:
+        """Expand a node to show its children (progressive loading).
+
+        Returns children of the specified node:
+        - For directories: subdirectories and files
+        - For files: code chunks
+        - For aggregation nodes: sample of items
+
+        Args:
+            node_id: ID of node to expand
+
+        Returns:
+            JSON response with child nodes and links
+        """
+        graph_file = viz_dir / "chunk-graph.json"
+
+        if not graph_file.exists():
+            return Response(
+                content='{"error": "Graph data not found", "nodes": [], "links": []}',
+                status_code=404,
+                media_type="application/json",
+            )
+
+        try:
+            with open(graph_file, "rb") as f:
+                data = orjson.loads(f.read())
+
+            all_nodes = data.get("nodes", [])
+            all_links = data.get("links", [])
+
+            # Find the node being expanded
+            node = next((n for n in all_nodes if n["id"] == node_id), None)
+            if not node:
+                return Response(
+                    content='{"error": "Node not found", "nodes": [], "links": []}',
+                    status_code=404,
+                    media_type="application/json",
+                )
+
+            # Find direct children via containment links
+            child_ids = set()
+            for link in all_links:
+                if link["source"] == node_id and link.get("type") in (
+                    "dir_containment",
+                    "file_containment",
+                    "subproject_containment",
+                ):
+                    child_ids.add(link["target"])
+
+            # Get child nodes
+            child_nodes = []
+            for child_id in child_ids:
+                child_node = next((n for n in all_nodes if n["id"] == child_id), None)
+                if child_node:
+                    child_copy = child_node.copy()
+                    # Mark as expandable if it has children
+                    child_copy["expandable"] = False
+                    child_copy["expanded"] = False
+
+                    # Check if this node has children
+                    for link in all_links:
+                        if link["source"] == child_id and link.get("type") in (
+                            "dir_containment",
+                            "file_containment",
+                            "chunk_hierarchy",
+                        ):
+                            child_copy["expandable"] = True
+                            break
+
+                    child_nodes.append(child_copy)
+
+            # Get links connecting children to parent and among children
+            child_links = []
+            for link in all_links:
+                if link["source"] == node_id and link["target"] in child_ids:
+                    child_links.append(link)
+                elif link["source"] in child_ids and link["target"] in child_ids:
+                    child_links.append(link)
+
+            console.print(
+                f"[green]✓[/green] Expanded {node_id}: {len(child_nodes)} children, {len(child_links)} links"
+            )
+
+            return Response(
+                content=orjson.dumps(
+                    {
+                        "nodes": child_nodes,
+                        "links": child_links,
+                        "parent_id": node_id,
+                    }
+                ),
+                media_type="application/json",
+                headers={"Cache-Control": "max-age=300"},
+            )
+        except Exception as e:
+            console.print(f"[red]Error expanding node {node_id}: {e}[/red]")
+            return Response(
+                content='{"error": "Failed to expand node", "nodes": [], "links": []}',
                 status_code=500,
                 media_type="application/json",
             )

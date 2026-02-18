@@ -232,7 +232,8 @@ async function loadGraphData() {
 
 async function loadGraphDataActual() {
     try {
-        const response = await fetch('/api/graph');
+        // Use progressive loading - fetch initial view only
+        const response = await fetch('/api/graph-initial');
         const data = await response.json();
 
         // Check if we got an error response
@@ -245,13 +246,19 @@ async function loadGraphDataActual() {
         allNodes = data.nodes || [];
         allLinks = data.links || [];
 
+        // Store metadata for progressive loading
+        window.graphMetadata = data.metadata || {};
+        if (window.graphMetadata.total_nodes) {
+            console.log(`Progressive loading: Loaded ${allNodes.length}/${window.graphMetadata.total_nodes} nodes initially`);
+        }
+
         // Store trend data globally for visualization
         window.graphTrendData = data.trends || null;
         if (window.graphTrendData) {
             console.log(`Loaded trend data: ${window.graphTrendData.entries_count} entries`);
         }
 
-        console.log(`Loaded ${allNodes.length} nodes and ${allLinks.length} links`);
+        console.log(`Loaded ${allNodes.length} nodes and ${allLinks.length} links (initial view)`);
 
         // Performance optimization: Initialize caches
         initializeCaches();
@@ -280,6 +287,80 @@ async function loadGraphDataActual() {
         console.error('Failed to load graph data:', error);
         document.body.innerHTML =
             '<div style="color: red; padding: 20px; font-family: Arial;">Error loading visualization data. Check console for details.</div>';
+    }
+}
+
+// ============================================================================
+// PROGRESSIVE LOADING - NODE EXPANSION
+// ============================================================================
+
+// Track expanded nodes to prevent duplicate fetches
+const expandedNodes = new Set();
+
+async function expandNode(nodeId) {
+    // Prevent duplicate expansions
+    if (expandedNodes.has(nodeId)) {
+        console.log(`Node ${nodeId} already expanded`);
+        return;
+    }
+
+    console.log(`Expanding node: ${nodeId}`);
+
+    try {
+        // Show loading indicator
+        showLoadingIndicator(`Loading children of ${nodeId}...`);
+
+        // Fetch children from server
+        const response = await fetch(`/api/graph-expand/${encodeURIComponent(nodeId)}`);
+        const data = await response.json();
+
+        if (data.error) {
+            console.error('Failed to expand node:', data.error);
+            hideLoadingIndicator();
+            return;
+        }
+
+        const newNodes = data.nodes || [];
+        const newLinks = data.links || [];
+
+        console.log(`Received ${newNodes.length} new nodes and ${newLinks.length} new links`);
+
+        // Add new nodes to global arrays (avoid duplicates)
+        const existingNodeIds = new Set(allNodes.map(n => n.id));
+        newNodes.forEach(node => {
+            if (!existingNodeIds.has(node.id)) {
+                allNodes.push(node);
+                existingNodeIds.add(node.id);
+            }
+        });
+
+        // Add new links to global arrays (avoid duplicates)
+        const existingLinks = new Set(allLinks.map(l => `${l.source}-${l.target}-${l.type}`));
+        newLinks.forEach(link => {
+            const linkKey = `${link.source}-${link.target}-${link.type}`;
+            if (!existingLinks.has(linkKey)) {
+                allLinks.push(link);
+                existingLinks.add(linkKey);
+            }
+        });
+
+        // Mark node as expanded
+        expandedNodes.add(nodeId);
+        const node = allNodes.find(n => n.id === nodeId);
+        if (node) {
+            node.expanded = true;
+        }
+
+        // Rebuild tree structure with new nodes
+        buildTreeStructure();
+
+        // Re-render visualization
+        renderVisualization();
+
+        hideLoadingIndicator();
+    } catch (error) {
+        console.error('Error expanding node:', error);
+        hideLoadingIndicator();
     }
 }
 
@@ -1414,6 +1495,30 @@ function renderLinearTree() {
             return classes.join(' ');
         });
 
+    // Add expansion indicator for expandable nodes (not yet loaded)
+    nodes.each(function(d) {
+        const node = d3.select(this);
+        const nodeData = d.data;
+
+        // Show "+" indicator for expandable nodes that haven't been expanded yet
+        if (nodeData.expandable && !nodeData.expanded && !nodeData.children && !nodeData._children) {
+            const radius = getNodeRadius(d);
+            node.append('text')
+                .attr('class', 'expand-indicator')
+                .attr('x', 0)
+                .attr('y', 0)
+                .attr('text-anchor', 'middle')
+                .attr('dominant-baseline', 'central')
+                .attr('fill', '#58a6ff')
+                .attr('font-size', '16px')
+                .attr('font-weight', 'bold')
+                .attr('pointer-events', 'none')
+                .text('+')
+                .append('title')
+                .text('Click to load children');
+        }
+    });
+
     // Add external call arrow indicators (only for chunk nodes)
     nodes.each(function(d) {
         const node = d3.select(this);
@@ -1639,8 +1744,17 @@ function handleNodeClick(event, d) {
     console.log(`Clicked node: ${nodeData.name} (type: ${nodeData.type}, id: ${nodeData.id})`);
     console.log(`Has children: ${nodeData.children ? nodeData.children.length : 0}`);
     console.log(`Has _children: ${nodeData._children ? nodeData._children.length : 0}`);
+    console.log(`Expandable: ${nodeData.expandable}, Expanded: ${nodeData.expanded}`);
 
     if (nodeData.type === 'directory') {
+        // Check if needs progressive loading (not yet fetched)
+        if (nodeData.expandable && !nodeData.expanded && !nodeData.children && !nodeData._children) {
+            // First time expansion - fetch from server
+            console.log('Progressive loading: fetching children from server');
+            expandNode(nodeData.id);
+            return;
+        }
+
         // Toggle directory: swap children <-> _children
         if (nodeData.children) {
             // Currently expanded - collapse it
@@ -1659,6 +1773,14 @@ function handleNodeClick(event, d) {
 
         // Don't auto-open viewer panel for directories - just expand/collapse
     } else if (nodeData.type === 'file') {
+        // Check if needs progressive loading (not yet fetched)
+        if (nodeData.expandable && !nodeData.expanded && !nodeData.children && !nodeData._children) {
+            // First time expansion - fetch chunks from server
+            console.log('Progressive loading: fetching file chunks from server');
+            expandNode(nodeData.id);
+            return;
+        }
+
         // Check if this file has a collapsed chunk (single chunk with no children)
         if (nodeData.collapsed_chunk) {
             console.log(`Collapsed file+chunk: ${nodeData.name}, showing content directly`);
