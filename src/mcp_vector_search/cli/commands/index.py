@@ -141,6 +141,18 @@ def main(
         min=1,
         rich_help_panel="🔍 Debugging",
     ),
+    no_vendor_patterns: bool = typer.Option(
+        False,
+        "--no-vendor-patterns",
+        help="Skip vendor patterns from GitHub Linguist (use only default ignore patterns)",
+        rich_help_panel="📁 Configuration",
+    ),
+    skip_vendor_update: bool = typer.Option(
+        False,
+        "--skip-vendor-update",
+        help="Skip checking for vendor pattern updates (use cached patterns only)",
+        rich_help_panel="📁 Configuration",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -217,6 +229,7 @@ def main(
                 skip_schema_check=skip_schema_check,
                 metrics_json=metrics_json,
                 limit=limit,
+                no_vendor_patterns=no_vendor_patterns,
             )
         )
 
@@ -361,6 +374,7 @@ async def run_indexing(
     skip_schema_check: bool = False,
     metrics_json: bool = False,
     limit: int | None = None,
+    no_vendor_patterns: bool = False,
 ) -> None:
     """Run the indexing process."""
     # Load project configuration
@@ -468,6 +482,74 @@ async def run_indexing(
     print_info(f"File extensions: {', '.join(config.file_extensions)}")
     print_info(f"Embedding model: {config.embedding_model}")
 
+    # Load vendor patterns if not disabled
+    vendor_patterns_set: set[str] | None = None
+    vendor_patterns_count = 0
+    if not no_vendor_patterns:
+        try:
+            from ...config.vendor_patterns import VendorPatternsManager
+
+            vendor_manager = VendorPatternsManager(project_root)
+
+            # Check for updates unless explicitly skipped
+            if not skip_vendor_update:
+                with console.status(
+                    "[dim]Checking for vendor pattern updates...[/dim]", spinner="dots"
+                ):
+                    try:
+                        update_available = await vendor_manager.check_for_updates(
+                            timeout=10.0
+                        )
+
+                        if update_available:
+                            # Download new version
+                            logger.info(
+                                "Vendor pattern update available, downloading..."
+                            )
+                            await vendor_manager.download_vendor_yml(timeout=30.0)
+
+                            metadata = vendor_manager.get_metadata()
+                            source_info = ""
+                            if metadata and "source_url" in metadata:
+                                source_info = f" from {metadata['source_url']}"
+
+                            console.print(
+                                f"[green]✓[/green] [dim]Updated vendor patterns{source_info}[/dim]"
+                            )
+                        else:
+                            logger.debug("Vendor patterns are up to date")
+
+                    except Exception as e:
+                        # Network errors are non-fatal - fall back to cache
+                        logger.warning(
+                            f"Failed to check for vendor pattern updates: {e}"
+                        )
+                        console.print(
+                            "[yellow]⚠[/yellow] [dim]Could not check for updates, using cached patterns[/dim]"
+                        )
+
+            # Load patterns (from fresh or cached file)
+            with console.status(
+                "[dim]Loading vendor patterns...[/dim]", spinner="dots"
+            ):
+                vendor_patterns = await vendor_manager.get_vendor_patterns()
+                vendor_patterns_count = len(vendor_patterns)
+                vendor_patterns_set = set(vendor_patterns)
+
+                logger.info(
+                    f"Loaded {vendor_patterns_count} vendor patterns for ignore filtering"
+                )
+
+            console.print(
+                f"[green]✓[/green] [dim]Loaded {vendor_patterns_count} vendor patterns[/dim]"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load vendor patterns: {e}")
+            print_warning(f"⚠️  Could not load vendor patterns: {e}")
+            print_info("Continuing with default ignore patterns only")
+    else:
+        print_info("Vendor patterns disabled (using default ignore patterns only)")
+
     # Setup embedding function and cache with progress feedback
     cache_dir = (
         get_default_cache_path(project_root) if config.cache_embeddings else None
@@ -496,6 +578,7 @@ async def run_indexing(
             debug=debug,
             batch_size=batch_size,
             auto_optimize=auto_optimize,
+            ignore_patterns=vendor_patterns_set,
         )
     console.print("[green]✓[/green] [dim]Backend ready[/dim]")
 

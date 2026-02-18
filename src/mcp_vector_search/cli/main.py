@@ -133,6 +133,7 @@ from .commands.search import search_app, search_main  # noqa: E402, F401
 from .commands.setup import setup_app  # noqa: E402
 from .commands.status import main as status_main  # noqa: E402
 from .commands.uninstall import uninstall_app  # noqa: E402
+from .commands.vendor_patterns import app as vendor_patterns_app  # noqa: E402
 from .commands.visualize import app as visualize_app  # noqa: E402
 from .commands.wiki import wiki_app  # noqa: E402
 
@@ -205,6 +206,13 @@ app.add_typer(reset_app, name="reset", help="🔄 Reset and recovery operations"
 
 # 10.6. MIGRATE - Database migrations
 app.add_typer(migrate_app, name="migrate", help="🔄 Database migration operations")
+
+# 10.7. VENDOR PATTERNS - Vendor pattern management
+app.add_typer(
+    vendor_patterns_app,
+    name="vendor-patterns",
+    help="🔖 Manage vendor patterns for ignore filtering",
+)
 
 # 11. ANALYZE - Code complexity analysis
 app.add_typer(

@@ -85,6 +85,7 @@ class SemanticIndexer:
         collectors: list[MetricCollector] | None = None,
         use_multiprocessing: bool = True,
         auto_optimize: bool = True,
+        ignore_patterns: set[str] | None = None,
     ) -> None:
         """Initialize semantic indexer.
 
@@ -99,6 +100,7 @@ class SemanticIndexer:
             collectors: Metric collectors to run during indexing (defaults to all complexity collectors)
             use_multiprocessing: Enable multiprocess parallel parsing (default: True, disable for debugging)
             auto_optimize: Enable automatic optimization based on codebase profile (default: True)
+            ignore_patterns: Additional patterns to ignore (merged with defaults, e.g., vendor patterns)
 
         Environment Variables:
             MCP_VECTOR_SEARCH_BATCH_SIZE: Override batch size (default: 32)
@@ -147,6 +149,7 @@ class SemanticIndexer:
             project_root=project_root,
             file_extensions=file_extensions_set,
             config=config,
+            ignore_patterns=ignore_patterns,
         )
 
         self.metadata = IndexMetadata(project_root)
