@@ -309,7 +309,7 @@ def main(
         _start_esc_listener()
 
         # Create backup of index if it exists (for safe cancellation)
-        cache_path = get_default_cache_path()
+        cache_path = get_default_cache_path(project_root)
         backup_path: Path | None = None
         if cache_path.exists():
             backup_path = cache_path.parent / f"{cache_path.name}.backup"
@@ -345,6 +345,7 @@ def main(
                     metrics_json=metrics_json,
                     limit=limit,
                     no_vendor_patterns=no_vendor_patterns,
+                    skip_vendor_update=skip_vendor_update,
                     cancellation_flag=_cancellation_flag,
                 )
             )
@@ -502,11 +503,13 @@ async def run_indexing(
     metrics_json: bool = False,
     limit: int | None = None,
     no_vendor_patterns: bool = False,
+    skip_vendor_update: bool = False,
     cancellation_flag: threading.Event | None = None,
 ) -> None:
     """Run the indexing process.
 
     Args:
+        skip_vendor_update: Skip checking for vendor pattern updates
         cancellation_flag: Event that signals cancellation (set by ESC or Ctrl+C)
     """
     # Load project configuration
@@ -749,6 +752,7 @@ async def run_indexing(
                     metrics_json,
                     limit,
                     verbose,
+                    cancellation_flag,
                 )
 
     except Exception as e:
@@ -766,6 +770,7 @@ async def _run_batch_indexing(
     metrics_json: bool = False,
     limit: int | None = None,
     verbose: bool = False,
+    cancellation_flag: threading.Event | None = None,
 ) -> None:
     """Run batch indexing of all files with three-phase progress display."""
     # Initialize progress state tracking
