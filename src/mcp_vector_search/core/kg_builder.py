@@ -247,6 +247,32 @@ class KGBuilder:
 
         return False
 
+    def _get_entity_name(self, chunk: CodeChunk) -> str:
+        """Get meaningful entity name from chunk.
+
+        For chunks with explicit function/class names, use those.
+        For module-level chunks, use the module filename (without extension).
+
+        Args:
+            chunk: Code chunk to extract name from
+
+        Returns:
+            Entity name (never returns generic "module")
+        """
+        # Prefer explicit names
+        if chunk.function_name:
+            return chunk.function_name
+        if chunk.class_name:
+            return chunk.class_name
+
+        # For module-level chunks, use filename as module name
+        # e.g., "src/app/models.py" -> "models"
+        if chunk.file_path:
+            return Path(chunk.file_path).stem
+
+        # Fallback (should never happen in practice)
+        return f"unnamed_{chunk.chunk_type}"
+
     def build_from_chunks_sync(
         self,
         chunks: list[CodeChunk],
@@ -835,7 +861,7 @@ class KGBuilder:
             Tuple of (entity, relationships_by_type, module_entities)
         """
         chunk_id = chunk.chunk_id or chunk.id
-        name = chunk.function_name or chunk.class_name or "module"
+        name = self._get_entity_name(chunk)
 
         # Extract module entities from imports FIRST (before potentially skipping)
         # This ensures import relationships are created even for generic entities
@@ -951,7 +977,7 @@ class KGBuilder:
         """
         # Create entity for this chunk
         chunk_id = chunk.chunk_id or chunk.id
-        name = chunk.function_name or chunk.class_name or "module"
+        name = self._get_entity_name(chunk)
 
         # Skip generic entity names
         if self._is_generic_entity(name):
