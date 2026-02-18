@@ -508,6 +508,13 @@ class SemanticIndexer:
                             "last_author": chunk.last_author or "",
                             "last_modified": chunk.last_modified or "",
                             "commit_hash": chunk.commit_hash or "",
+                            # Code relationships (for KG)
+                            "calls": chunk.calls or [],
+                            "imports": [
+                                str(imp) if not isinstance(imp, str) else imp
+                                for imp in (chunk.imports or [])
+                            ],
+                            "inherits_from": chunk.inherits_from or [],
                         }
                         chunk_dicts.append(chunk_dict)
 
@@ -1327,6 +1334,13 @@ class SemanticIndexer:
                             "signature": "",
                             "complexity": int(chunk.complexity_score),
                             "token_count": len(chunk.content.split()),
+                            # Code relationships (for KG)
+                            "calls": chunk.calls or [],
+                            "imports": [
+                                str(imp) if not isinstance(imp, str) else imp
+                                for imp in (chunk.imports or [])
+                            ],
+                            "inherits_from": chunk.inherits_from or [],
                         }
                         chunk_dicts.append(chunk_dict)
 
@@ -1478,6 +1492,10 @@ class SemanticIndexer:
                     "signature": "",
                     "complexity": int(chunk.complexity_score),
                     "token_count": len(chunk.content.split()),
+                    # Code relationships (for KG)
+                    "calls": chunk.calls or [],
+                    "imports": chunk.imports or [],
+                    "inherits_from": chunk.inherits_from or [],
                 }
                 chunk_dicts.append(chunk_dict)
 
@@ -2003,6 +2021,10 @@ class SemanticIndexer:
                                     "signature": "",
                                     "complexity": int(chunk.complexity_score),
                                     "token_count": len(chunk.content) // 5,
+                                    # Code relationships (for KG)
+                                    "calls": chunk.calls or [],
+                                    "imports": chunk.imports or [],
+                                    "inherits_from": chunk.inherits_from or [],
                                 }
                             )
 

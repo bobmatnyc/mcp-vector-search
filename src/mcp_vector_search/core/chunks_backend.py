@@ -65,6 +65,10 @@ CHUNKS_SCHEMA = pa.schema(
         pa.field("signature", pa.string()),
         pa.field("complexity", pa.int32()),
         pa.field("token_count", pa.int32()),
+        # Code relationships (for KG)
+        pa.field("calls", pa.list_(pa.string())),  # Function/method calls
+        pa.field("imports", pa.list_(pa.string())),  # Import statements (JSON strings)
+        pa.field("inherits_from", pa.list_(pa.string())),  # Base classes
         # Git blame metadata
         pa.field("last_author", pa.string()),
         pa.field("last_modified", pa.string()),
@@ -221,6 +225,11 @@ class ChunksBackend:
                 normalized["last_modified"] = chunk.get("last_modified", "")
                 normalized["commit_hash"] = chunk.get("commit_hash", "")
 
+                # Code relationships (for KG) with defaults
+                normalized["calls"] = chunk.get("calls", [])
+                normalized["imports"] = chunk.get("imports", [])
+                normalized["inherits_from"] = chunk.get("inherits_from", [])
+
                 # Phase tracking
                 normalized["embedding_status"] = "pending"
                 normalized["embedding_batch_id"] = 0
@@ -336,6 +345,11 @@ class ChunksBackend:
                 normalized["last_author"] = chunk.get("last_author", "")
                 normalized["last_modified"] = chunk.get("last_modified", "")
                 normalized["commit_hash"] = chunk.get("commit_hash", "")
+
+                # Code relationships (for KG) with defaults
+                normalized["calls"] = chunk.get("calls", [])
+                normalized["imports"] = chunk.get("imports", [])
+                normalized["inherits_from"] = chunk.get("inherits_from", [])
 
                 # Phase tracking
                 normalized["embedding_status"] = "pending"
