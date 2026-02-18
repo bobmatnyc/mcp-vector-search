@@ -1,11 +1,11 @@
-"""LanceDB vector database backend - simpler, more stable alternative to ChromaDB.
+"""LanceDB vector database backend.
 
 LanceDB provides:
 - Serverless architecture (no separate server process)
 - Built on Apache Arrow for fast columnar operations
 - Native support for vector search with ANN indices
-- Simple file-based storage (no complex HNSW corruption issues)
-- Better performance for large-scale operations
+- Simple file-based storage with excellent data integrity
+- High performance for large-scale operations
 """
 
 import hashlib
@@ -154,15 +154,12 @@ def _detect_optimal_write_buffer_size() -> int:
 class LanceVectorDatabase:
     """LanceDB implementation of vector database.
 
-    This class provides a drop-in replacement for ChromaVectorDatabase
-    with the same async interface and methods.
-
     Features:
     - Async context manager support (__aenter__, __aexit__)
     - Vector similarity search with metadata filtering
     - Automatic schema inference from first batch
-    - File-based persistence (no corruption issues like ChromaDB)
-    - Simple migration path from ChromaDB
+    - File-based persistence with excellent data integrity
+    - High performance for large datasets
 
     Example:
         async with LanceVectorDatabase(persist_directory, embedding_function) as db:
@@ -182,7 +179,7 @@ class LanceVectorDatabase:
         Args:
             persist_directory: Directory to persist database
             embedding_function: Function to generate embeddings
-            collection_name: Name of the table (equivalent to ChromaDB collection)
+            collection_name: Name of the table
             vector_dim: Vector dimension (auto-detected if not provided)
         """
         self.persist_directory = (

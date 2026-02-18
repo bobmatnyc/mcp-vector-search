@@ -1,7 +1,6 @@
 """Component factory for creating commonly used objects."""
 
 import functools
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +12,7 @@ from loguru import logger
 from ..cli.output import print_error
 from ..config.settings import ProjectConfig
 from .auto_indexer import AutoIndexer
-from .database import ChromaVectorDatabase, PooledChromaVectorDatabase, VectorDatabase
+from .database import VectorDatabase
 from .embeddings import CodeBERTEmbeddingFunction, create_embedding_function
 from .indexer import SemanticIndexer
 from .lancedb_backend import LanceVectorDatabase
@@ -62,58 +61,29 @@ class ComponentFactory:
     def create_database(
         config: ProjectConfig,
         embedding_function: CodeBERTEmbeddingFunction,
-        use_pooling: bool = True,  # Enable pooling by default for 13.6% performance boost
-        backend: str | None = None,  # "chromadb" or "lancedb"
+        use_pooling: bool = True,  # Kept for backward compatibility (ignored)
+        backend: str | None = None,  # Kept for backward compatibility (ignored)
         **pool_kwargs,
     ) -> VectorDatabase:
-        """Create vector database.
+        """Create vector database (LanceDB).
 
         Args:
             config: Project configuration
             embedding_function: Embedding function
-            use_pooling: Whether to use connection pooling (ChromaDB only)
-            backend: Database backend ("chromadb" or "lancedb", defaults to env var or "chromadb")
-            **pool_kwargs: Additional pool configuration for ChromaDB
+            use_pooling: DEPRECATED - kept for backward compatibility
+            backend: DEPRECATED - kept for backward compatibility
+            **pool_kwargs: DEPRECATED - kept for backward compatibility
 
         Returns:
-            Vector database instance
+            LanceDB vector database instance
         """
-        # Get backend from parameter, environment, or default to chromadb
-        if backend is None:
-            backend = os.environ.get("MCP_VECTOR_SEARCH_BACKEND", "lancedb")
-
-        if backend == "lancedb":
-            # LanceDB backend (no pooling support yet)
-            logger.info("Using LanceDB backend")
-            return LanceVectorDatabase(
-                persist_directory=config.index_path / "lance",
-                embedding_function=embedding_function,
-                collection_name="chunks",  # Match ChunksBackend.TABLE_NAME
-            )
-        else:
-            # ChromaDB backend (default)
-            logger.debug(f"Using ChromaDB backend with pooling={use_pooling}")
-            if use_pooling:
-                # Set default pool parameters if not provided
-                pool_defaults = {
-                    "max_connections": 10,
-                    "min_connections": 2,
-                    "max_idle_time": 300.0,
-                }
-                pool_defaults.update(pool_kwargs)
-
-                return PooledChromaVectorDatabase(
-                    persist_directory=config.index_path,
-                    embedding_function=embedding_function,
-                    collection_name="code_search",
-                    **pool_defaults,
-                )
-            else:
-                return ChromaVectorDatabase(
-                    persist_directory=config.index_path,
-                    embedding_function=embedding_function,
-                    collection_name="code_search",
-                )
+        # Always use LanceDB backend
+        logger.debug("Using LanceDB backend")
+        return LanceVectorDatabase(
+            persist_directory=config.index_path / "lance",
+            embedding_function=embedding_function,
+            collection_name="chunks",  # Standard table name
+        )
 
     @staticmethod
     def create_indexer(
@@ -161,7 +131,7 @@ class ComponentFactory:
     @staticmethod
     async def create_standard_components(
         project_root: Path,
-        use_pooling: bool = True,  # Enable pooling by default for performance
+        use_pooling: bool = True,  # DEPRECATED - kept for backward compatibility
         include_search_engine: bool = False,
         include_auto_indexer: bool = False,
         similarity_threshold: float = 0.3,
@@ -172,12 +142,12 @@ class ComponentFactory:
 
         Args:
             project_root: Project root directory
-            use_pooling: Whether to use connection pooling
+            use_pooling: DEPRECATED - kept for backward compatibility
             include_search_engine: Whether to create search engine
             include_auto_indexer: Whether to create auto-indexer
             similarity_threshold: Default similarity threshold for search
             auto_reindex_threshold: Max files to auto-reindex
-            **pool_kwargs: Additional arguments for connection pool
+            **pool_kwargs: DEPRECATED - kept for backward compatibility
 
         Returns:
             ComponentBundle with requested components
@@ -297,27 +267,26 @@ def handle_cli_errors(operation_name: str) -> Callable[[F], F]:
 
 def create_database(
     persist_directory: str | Path,
-    collection_name: str = "code_search",
+    collection_name: str = "chunks",
     embedding_function: CodeBERTEmbeddingFunction | None = None,
-    use_pooling: bool = True,
-    backend: str | None = None,
+    use_pooling: bool = True,  # DEPRECATED - kept for backward compatibility
+    backend: str | None = None,  # DEPRECATED - kept for backward compatibility
     **pool_kwargs,
 ) -> VectorDatabase:
-    """Create vector database instance (convenience function).
+    """Create vector database instance (LanceDB).
 
-    This is a standalone convenience function that wraps ComponentFactory.create_database()
-    for simple use cases where you don't need the full component factory.
+    This is a standalone convenience function for creating a LanceDB instance.
 
     Args:
         persist_directory: Directory to persist database
-        collection_name: Name of the collection (default: "code_search")
-        embedding_function: Embedding function to use (required unless using with context manager)
-        use_pooling: Whether to use connection pooling (ChromaDB only, default: True)
-        backend: Database backend ("chromadb" or "lancedb", defaults to env var or "chromadb")
-        **pool_kwargs: Additional pool configuration for ChromaDB
+        collection_name: Name of the collection (default: "chunks")
+        embedding_function: Embedding function to use (required)
+        use_pooling: DEPRECATED - kept for backward compatibility
+        backend: DEPRECATED - kept for backward compatibility
+        **pool_kwargs: DEPRECATED - kept for backward compatibility
 
     Returns:
-        Vector database instance
+        LanceDB vector database instance
 
     Example:
         >>> from mcp_vector_search.core.factory import create_database
@@ -327,50 +296,18 @@ def create_database(
         >>> async with create_database("./index", embedding_function=embedding_fn) as db:
         ...     await db.add_chunk(...)
     """
-    # Get backend from parameter, environment, or default to chromadb
-    if backend is None:
-        backend = os.environ.get("MCP_VECTOR_SEARCH_BACKEND", "lancedb")
-
     # Convert persist_directory to string
     persist_dir_str = str(persist_directory)
 
-    if backend == "lancedb":
-        # LanceDB backend (no pooling support yet)
-        logger.info("Using LanceDB backend")
-        if embedding_function is None:
-            raise ValueError("embedding_function is required for LanceDB")
-        return LanceVectorDatabase(
-            persist_directory=persist_dir_str,
-            embedding_function=embedding_function,
-            collection_name=collection_name,
-        )
-    else:
-        # ChromaDB backend (default)
-        logger.debug(f"Using ChromaDB backend with pooling={use_pooling}")
-        if embedding_function is None:
-            raise ValueError("embedding_function is required for ChromaDB")
-
-        if use_pooling:
-            # Set default pool parameters if not provided
-            pool_defaults = {
-                "max_connections": 10,
-                "min_connections": 2,
-                "max_idle_time": 300.0,
-            }
-            pool_defaults.update(pool_kwargs)
-
-            return PooledChromaVectorDatabase(
-                persist_directory=persist_dir_str,
-                embedding_function=embedding_function,
-                collection_name=collection_name,
-                **pool_defaults,
-            )
-        else:
-            return ChromaVectorDatabase(
-                persist_directory=persist_dir_str,
-                embedding_function=embedding_function,
-                collection_name=collection_name,
-            )
+    # Always use LanceDB backend
+    logger.debug("Using LanceDB backend")
+    if embedding_function is None:
+        raise ValueError("embedding_function is required")
+    return LanceVectorDatabase(
+        persist_directory=persist_dir_str,
+        embedding_function=embedding_function,
+        collection_name=collection_name,
+    )
 
 
 class ConfigurationService:

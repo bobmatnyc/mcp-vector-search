@@ -782,42 +782,9 @@ def create_embedding_function(
     Returns:
         Tuple of (embedding_function, cache)
     """
-    try:
-        # Use ChromaDB's built-in sentence transformer function
-        # Logging suppression is handled at module level
-        from chromadb.utils import embedding_functions
-
-        # Only map shorthand aliases to full model names
-        # DO NOT auto-migrate models - respect user's choice for speed vs quality
-        model_mapping = {
-            # Shorthand aliases only
-            "codebert": "microsoft/codebert-base",
-            "unixcoder": "microsoft/unixcoder-base",
-            "sfr-400m": "Salesforce/SFR-Embedding-Code-400M_R",
-            "sfr-2b": "Salesforce/SFR-Embedding-Code-2B_R",
-        }
-
-        actual_model = model_mapping.get(model_name, model_name)
-
-        # Detect optimal device (CUDA > MPS > CPU)
-        device = _detect_device()
-
-        # Suppress stdout to hide "BertModel LOAD REPORT" noise
-        with suppress_stdout_stderr():
-            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=actual_model,
-                device=device,  # Pass device for GPU acceleration
-                trust_remote_code=True,  # Required for models with custom code (e.g., CodeXEmbed)
-            )
-
-        logger.info(
-            f"Created embedding function with model: {actual_model} on {device}"
-        )
-
-    except Exception as e:
-        logger.warning(f"Failed to create ChromaDB embedding function: {e}")
-        # Fallback to our custom implementation
-        embedding_function = CodeBERTEmbeddingFunction(model_name)
+    # Use our native CodeBERTEmbeddingFunction which supports GPU (MPS/CUDA)
+    # and doesn't require ChromaDB (which has Python 3.14 compatibility issues)
+    embedding_function = CodeBERTEmbeddingFunction(model_name)
 
     cache = None
     if cache_dir:

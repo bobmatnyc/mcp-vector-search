@@ -1,4 +1,8 @@
-"""Metadata conversion between CodeChunk and ChromaDB formats."""
+"""Metadata conversion for vector database (DEPRECATED - legacy code).
+
+DEPRECATION NOTICE: This module is retained for backward compatibility but is
+no longer actively used with LanceDB, which handles metadata conversion directly.
+"""
 
 from pathlib import Path
 from typing import Any
@@ -9,10 +13,10 @@ from .models import CodeChunk
 
 
 class MetadataConverter:
-    """Converts between CodeChunk objects and ChromaDB metadata format.
+    """DEPRECATED: Converts between CodeChunk objects and vector database metadata format.
 
-    Handles serialization of complex fields (lists, dicts) to JSON strings
-    for ChromaDB storage and deserialization back to Python objects.
+    This class is retained for backward compatibility but is no longer actively used
+    with LanceDB.
     """
 
     @staticmethod

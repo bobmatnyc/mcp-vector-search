@@ -1,4 +1,8 @@
-"""Corruption detection and recovery for ChromaDB indices."""
+"""Corruption detection and recovery for vector database indices (legacy).
+
+DEPRECATION NOTICE: This module is retained for backward compatibility but is
+no longer needed with LanceDB, which has better corruption resistance than ChromaDB.
+"""
 
 import pickle  # nosec B403 # Trusted internal index files only
 import shutil
@@ -12,12 +16,10 @@ from .exceptions import IndexCorruptionError
 
 
 class CorruptionRecovery:
-    """Handles detection and recovery from ChromaDB index corruption.
+    """DEPRECATED: Handles detection and recovery from vector database corruption.
 
-    Implements multi-layer corruption detection:
-    - Layer 1: SQLite database integrity checks (pre-initialization)
-    - Layer 2: HNSW pickle file validation
-    - Layer 3: Rust panic pattern detection during operations
+    This class is retained for backward compatibility but is no longer needed with
+    LanceDB, which does not have the same corruption issues as ChromaDB's HNSW indices.
     """
 
     def __init__(self, persist_directory: Path) -> None:

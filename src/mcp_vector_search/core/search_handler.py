@@ -1,4 +1,8 @@
-"""Search operations handler for ChromaDB vector database."""
+"""Search operations handler for vector database (legacy).
+
+DEPRECATION NOTICE: This module is retained for backward compatibility but is
+no longer actively used with LanceDB, which has its own search implementation.
+"""
 
 from pathlib import Path
 from typing import Any
@@ -11,13 +15,10 @@ from .models import SearchResult
 
 
 class SearchHandler:
-    """Handles search operations and result processing for ChromaDB.
+    """DEPRECATED: Handles search operations and result processing.
 
-    Responsible for:
-    - Executing vector similarity searches
-    - Converting distances to similarity scores
-    - Parsing metadata and quality metrics
-    - Filtering results by similarity threshold
+    This class is retained for backward compatibility but is no longer actively
+    used with LanceDB, which has integrated search functionality.
     """
 
     @staticmethod
@@ -30,7 +31,7 @@ class SearchHandler:
         """Execute a search query on the collection.
 
         Args:
-            collection: ChromaDB collection instance
+            collection: Vector database collection instance
             query: Search query text
             limit: Maximum number of results
             where_clause: Optional filter conditions
@@ -62,7 +63,7 @@ class SearchHandler:
         """Process raw search results into SearchResult objects.
 
         Args:
-            results: Raw search results from ChromaDB
+            results: Raw search results from vector database
             query: Original query string (for logging)
             similarity_threshold: Minimum similarity score
 
@@ -97,13 +98,13 @@ class SearchHandler:
 
     @staticmethod
     def _distance_to_similarity(distance: float) -> float:
-        """Convert ChromaDB cosine distance to similarity score.
+        """Convert cosine distance to similarity score.
 
-        ChromaDB returns cosine distances. This converts them to a
-        0-1 similarity score where lower distances = higher similarity.
+        Converts cosine distance to a 0-1 similarity score where
+        lower distances = higher similarity.
 
         Args:
-            distance: Cosine distance from ChromaDB
+            distance: Cosine distance from vector database
 
         Returns:
             Similarity score between 0 and 1

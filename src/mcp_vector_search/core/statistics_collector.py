@@ -1,4 +1,8 @@
-"""Statistics collection for ChromaDB vector database."""
+"""Statistics collection for vector database (legacy).
+
+DEPRECATION NOTICE: This module is retained for backward compatibility but is
+no longer actively used with LanceDB, which has its own statistics methods.
+"""
 
 import asyncio
 from pathlib import Path
@@ -10,12 +14,10 @@ from .models import IndexStats
 
 
 class StatisticsCollector:
-    """Collects and aggregates statistics from ChromaDB collections.
+    """DEPRECATED: Collects and aggregates statistics from vector database.
 
-    Handles large databases efficiently by:
-    - Processing data in chunks to avoid memory issues
-    - Detecting and skipping stats for very large databases (>500MB)
-    - Yielding to event loop to prevent blocking
+    This class is retained for backward compatibility but is no longer actively
+    used with LanceDB, which has its own statistics collection methods.
     """
 
     def __init__(
@@ -27,7 +29,7 @@ class StatisticsCollector:
         """Initialize statistics collector.
 
         Args:
-            persist_directory: Path to ChromaDB persistence directory
+            persist_directory: Path to vector database persistence directory
             batch_size: Number of records to process per batch
             large_db_threshold_mb: Database size threshold for skipping stats
         """
@@ -41,7 +43,7 @@ class StatisticsCollector:
         """Collect database statistics with optimized chunked queries.
 
         Args:
-            collection: ChromaDB collection instance
+            collection: Vector database collection instance
             skip_stats: If True, skip detailed statistics collection
 
         Returns:

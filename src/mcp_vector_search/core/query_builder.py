@@ -1,17 +1,17 @@
-"""Query builder for ChromaDB where clauses."""
+"""Query builder for vector database (DEPRECATED - legacy code).
+
+DEPRECATION NOTICE: This module is retained for backward compatibility but is
+no longer actively used with LanceDB, which has its own query syntax.
+"""
 
 from typing import Any
 
 
 class QueryBuilder:
-    """Builds ChromaDB where clauses from filter dictionaries.
+    """DEPRECATED: Query builder for vector database filters.
 
-    Supports various filter patterns:
-    - Equality: {"language": "python"}
-    - Negation: {"language": "!javascript"}
-    - List (IN): {"language": ["python", "typescript"]}
-    - Operators: {"cognitive_complexity": {"$gte": 10}}
-    - Compound: {"$and": [...], "$or": [...]}
+    This class is retained for backward compatibility but is no longer actively
+    used with LanceDB.
     """
 
     @staticmethod

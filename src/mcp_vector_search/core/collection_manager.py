@@ -1,4 +1,8 @@
-"""Collection management for ChromaDB vector database."""
+"""Collection management (DEPRECATED - legacy ChromaDB code).
+
+DEPRECATION NOTICE: This module is retained for backward compatibility but is
+no longer needed with LanceDB, which handles collection management internally.
+"""
 
 from pathlib import Path
 from typing import Any
@@ -7,10 +11,10 @@ from loguru import logger
 
 
 class CollectionManager:
-    """Manages ChromaDB collection lifecycle and operations.
+    """DEPRECATED: Collection management (legacy ChromaDB code).
 
-    Handles collection creation, configuration, and access with
-    optimized HNSW parameters for code search.
+    This class is retained for backward compatibility but is no longer needed
+    with LanceDB.
     """
 
     def __init__(self, collection_name: str = "code_search") -> None:

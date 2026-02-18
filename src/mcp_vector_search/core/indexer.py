@@ -29,6 +29,7 @@ from .directory_index import DirectoryIndex
 from .exceptions import ParsingError
 from .file_discovery import FileDiscovery
 from .index_metadata import IndexMetadata
+from .memory_monitor import MemoryMonitor
 from .metrics import get_metrics_tracker
 from .metrics_collector import IndexerMetricsCollector
 from .models import CodeChunk, IndexStats
@@ -245,6 +246,9 @@ class SemanticIndexer:
 
         # Track atomic rebuild state (fresh database doesn't need deletes)
         self._atomic_rebuild_active: bool = False
+
+        # Initialize memory monitor
+        self.memory_monitor = MemoryMonitor()
 
     async def _build_kg_background(self) -> None:
         """Build knowledge graph in background (non-blocking).
@@ -481,7 +485,18 @@ class SemanticIndexer:
                     )
 
             # Now process files for parsing and chunking
-            for file_path, rel_path, file_hash in files_to_process:
+            for idx, (file_path, rel_path, file_hash) in enumerate(files_to_process):
+                # Check memory periodically (every 100 files)
+                if idx > 0 and idx % 100 == 0:
+                    is_ok, usage_pct, status = self.memory_monitor.check_memory_limit()
+                    if not is_ok:
+                        logger.warning(
+                            "Memory limit exceeded during chunking, waiting for memory to free up..."
+                        )
+                        self.memory_monitor.wait_for_memory_available(
+                            target_pct=self.memory_monitor.warn_threshold
+                        )
+
                 try:
                     # Parse file
                     chunks = await self.chunk_processor.parse_file(file_path)
@@ -555,6 +570,8 @@ class SemanticIndexer:
             # Note: Duration will be minimal since actual work was done in parsing phase
             # This is just for tracking the chunk count
 
+        # Log memory summary after Phase 1
+        self.memory_monitor.log_memory_summary()
         logger.info(
             f"✓ Phase 1 complete: {files_processed} files processed, {chunks_created} chunks created"
         )
@@ -597,6 +614,29 @@ class SemanticIndexer:
 
         with metrics_tracker.phase("embedding") as embedding_metrics:
             while True:
+                # Check memory before fetching next batch
+                is_ok, usage_pct, status = self.memory_monitor.check_memory_limit()
+
+                if not is_ok:
+                    # Memory limit exceeded - apply backpressure
+                    logger.warning(
+                        "Memory limit exceeded during embedding, waiting for memory to free up..."
+                    )
+                    self.memory_monitor.wait_for_memory_available(
+                        target_pct=self.memory_monitor.warn_threshold
+                    )
+
+                # Adjust batch size based on memory pressure
+                adjusted_batch_size = self.memory_monitor.get_adjusted_batch_size(
+                    batch_size, min_batch_size=100
+                )
+                if adjusted_batch_size != batch_size:
+                    logger.info(
+                        f"Adjusted embedding batch size: {batch_size} → {adjusted_batch_size} "
+                        f"(memory usage: {usage_pct * 100:.1f}%)"
+                    )
+                    batch_size = adjusted_batch_size
+
                 # Get pending chunks from chunks.lance
                 pending = await self.chunks_backend.get_pending_chunks(batch_size)
                 if not pending:
@@ -668,9 +708,13 @@ class SemanticIndexer:
                     chunks_embedded += len(pending)
                     batches_processed += 1
 
-                    # Checkpoint logging
+                    # Checkpoint logging with memory status
                     if chunks_embedded % checkpoint_interval == 0:
+                        self.memory_monitor.log_memory_summary()
                         logger.info(f"Checkpoint: {chunks_embedded} chunks embedded")
+
+                    # Check memory after each batch and clear references
+                    del pending, chunk_ids, contents, vectors, chunks_with_vectors
 
                 except Exception as e:
                     logger.error(f"Embedding batch failed: {e}")
@@ -683,6 +727,8 @@ class SemanticIndexer:
             # Update metrics
             embedding_metrics.item_count = chunks_embedded
 
+        # Log memory summary after Phase 2
+        self.memory_monitor.log_memory_summary()
         logger.info(
             f"✓ Phase 2 complete: {chunks_embedded} chunks embedded in {batches_processed} batches"
         )
@@ -886,9 +932,6 @@ class SemanticIndexer:
             f"Starting indexing of project: {self.project_root} (phase: {phase})"
         )
 
-        # Track total timing for entire indexing process
-        t_start_total = time.time()
-
         # Perform atomic rebuild if force is enabled
         atomic_rebuild_active = await self._atomic_rebuild_databases(force_reindex)
 
@@ -897,16 +940,13 @@ class SemanticIndexer:
         metrics_tracker.reset()
 
         # Initialize backends
-        t_start = time.time()
         await self.chunks_backend.initialize()
         await self.vectors_backend.initialize()
 
         # Check and run pending migrations automatically
-        t_start = time.time()
         await self._run_auto_migrations()
 
         # Apply auto-optimizations before indexing
-        t_start = time.time()
         if self.auto_optimize:
             self.apply_auto_optimizations()
 
@@ -921,7 +961,6 @@ class SemanticIndexer:
         # Phase 1: Chunk files (if requested)
         if phase in ("all", "chunk"):
             # Find all indexable files
-            t_start = time.time()
             all_files = self.file_discovery.find_indexable_files()
 
             # Clean up stale metadata entries (files that no longer exist)
@@ -944,7 +983,6 @@ class SemanticIndexer:
                     return 0
             else:
                 # Filter files that need indexing
-                t_start = time.time()
                 files_to_index = all_files
                 if not force_reindex:
                     # Use chunks_backend for change detection instead of metadata
@@ -973,7 +1011,6 @@ class SemanticIndexer:
 
                 if files_to_index:
                     # Run Phase 1
-                    t_start = time.time()
                     indexed_count, chunks_created = await self._phase1_chunk_files(
                         files_to_index, force=force_reindex
                     )
@@ -997,14 +1034,9 @@ class SemanticIndexer:
         # Phase 2: Embed chunks (if requested)
         if phase in ("all", "embed"):
             # Run Phase 2 on pending chunks
-            t_start = time.time()
             chunks_embedded, _ = await self._phase2_embed_chunks(
                 batch_size=self.batch_size
             )
-
-        # Log summary with total timing
-        t_end_total = time.time()
-        total_time = t_end_total - t_start_total
         if phase == "all":
             logger.info(
                 f"✓ Two-phase indexing complete: {indexed_count} files, "
@@ -1836,7 +1868,6 @@ class SemanticIndexer:
         )
 
         # Initialize backends if not already initialized
-        t_start = time.time()
         if self.chunks_backend._db is None:
             await self.chunks_backend.initialize()
         if self.vectors_backend._db is None:
@@ -1948,14 +1979,16 @@ class SemanticIndexer:
                         file_results[file_path] = (0, True)
 
                 # Put parsed batch into queue (blocks if queue is full - backpressure)
-                await chunk_queue.put({
-                    'batch': batch,
-                    'batch_num': batch_count,
-                    'all_chunks': all_chunks,
-                    'file_to_chunks_map': file_to_chunks_map,
-                    'file_results': file_results,
-                    'parse_time': parse_time,
-                })
+                await chunk_queue.put(
+                    {
+                        "batch": batch,
+                        "batch_num": batch_count,
+                        "all_chunks": all_chunks,
+                        "file_to_chunks_map": file_to_chunks_map,
+                        "file_results": file_results,
+                        "parse_time": parse_time,
+                    }
+                )
 
             # Signal completion
             await chunk_queue.put(None)
@@ -1978,12 +2011,11 @@ class SemanticIndexer:
                     break
 
                 # Extract batch data
-                batch = batch_data['batch']
-                batch_num = batch_data['batch_num']
-                all_chunks = batch_data['all_chunks']
-                file_to_chunks_map = batch_data['file_to_chunks_map']
-                file_results = batch_data['file_results']
-                parse_time = batch_data['parse_time']
+                batch = batch_data["batch"]
+                all_chunks = batch_data["all_chunks"]
+                file_to_chunks_map = batch_data["file_to_chunks_map"]
+                file_results = batch_data["file_results"]
+                parse_time = batch_data["parse_time"]
 
                 # Track parsing time
                 time_parsing_total += parse_time
@@ -2008,7 +2040,6 @@ class SemanticIndexer:
                             )
                             batch_file_hashes[file_path_str] = ""
 
-                    t_start_storage = time.time()
                     try:
                         # Phase 1: Store chunks to chunks.lance (fast, durable)
                         # Accumulate all chunks from batch for single write
@@ -2104,11 +2135,15 @@ class SemanticIndexer:
                                     "start_line": chunk.start_line,
                                     "end_line": chunk.end_line,
                                     "chunk_type": chunk.chunk_type,
-                                    "name": chunk.class_name or chunk.function_name or "",
+                                    "name": chunk.class_name
+                                    or chunk.function_name
+                                    or "",
                                     "hierarchy_path": (
                                         f"{chunk.class_name}.{chunk.function_name}"
                                         if chunk.class_name and chunk.function_name
-                                        else chunk.class_name or chunk.function_name or ""
+                                        else chunk.class_name
+                                        or chunk.function_name
+                                        or ""
                                     ),
                                 }
                                 chunks_with_vectors.append(chunk_dict)
@@ -2156,7 +2191,9 @@ class SemanticIndexer:
         # Calculate pipeline efficiency (how much overlap was achieved)
         sequential_time = time_parsing_total + time_embedding_total + time_storage_total
         time_saved = sequential_time - total_time
-        pipeline_efficiency = (time_saved / sequential_time * 100) if sequential_time > 0 else 0.0
+        pipeline_efficiency = (
+            (time_saved / sequential_time * 100) if sequential_time > 0 else 0.0
+        )
 
         print(f"\n⏱️  TIMING SUMMARY (total={total_time:.2f}s):", flush=True)
         print(
