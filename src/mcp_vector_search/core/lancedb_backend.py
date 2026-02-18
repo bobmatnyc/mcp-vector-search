@@ -27,57 +27,74 @@ from .exceptions import (
 )
 from .models import CodeChunk, IndexStats, SearchResult
 
+
 # Explicit PyArrow schema for main vector search table
 # This ensures consistent schema across all batches, preventing
 # "Field not found in target schema" errors when adding new fields
-LANCEDB_SCHEMA = pa.schema(
-    [
-        # Identity
-        pa.field("id", pa.string()),
-        pa.field("chunk_id", pa.string()),
-        # Vector embedding (384-dimensional for all-MiniLM-L6-v2)
-        pa.field("vector", pa.list_(pa.float32(), 384)),
-        # Content and metadata
-        pa.field("content", pa.string()),
-        pa.field("file_path", pa.string()),
-        pa.field("start_line", pa.int32()),
-        pa.field("end_line", pa.int32()),
-        pa.field("language", pa.string()),
-        pa.field("chunk_type", pa.string()),
-        pa.field("function_name", pa.string()),
-        pa.field("class_name", pa.string()),
-        pa.field("docstring", pa.string()),
-        pa.field("imports", pa.string()),  # JSON-encoded list
-        pa.field("calls", pa.string()),  # Comma-separated
-        pa.field("inherits_from", pa.string()),  # Comma-separated
-        pa.field("complexity_score", pa.float64()),
-        pa.field("parent_chunk_id", pa.string()),
-        pa.field("child_chunk_ids", pa.string()),  # Comma-separated
-        pa.field("chunk_depth", pa.int32()),
-        pa.field("decorators", pa.string()),  # Comma-separated
-        pa.field("return_type", pa.string()),
-        pa.field("subproject_name", pa.string()),
-        pa.field("subproject_path", pa.string()),
-        # NLP-extracted entities
-        pa.field("nlp_keywords", pa.string()),  # Comma-separated
-        pa.field("nlp_code_refs", pa.string()),  # Comma-separated
-        pa.field("nlp_technical_terms", pa.string()),  # Comma-separated
-        # Git blame metadata
-        pa.field("last_author", pa.string()),
-        pa.field("last_modified", pa.string()),  # ISO timestamp
-        pa.field("commit_hash", pa.string()),
-        # Quality metrics (added dynamically, nullable)
-        pa.field("cognitive_complexity", pa.int32()),
-        pa.field("cyclomatic_complexity", pa.int32()),
-        pa.field("max_nesting_depth", pa.int32()),
-        pa.field("parameter_count", pa.int32()),
-        pa.field("lines_of_code", pa.int32()),
-        pa.field("complexity_grade", pa.string()),
-        pa.field("code_smells", pa.string()),  # JSON-encoded list
-        pa.field("smell_count", pa.int32()),
-        pa.field("quality_score", pa.int32()),
-    ]
-)
+#
+# NOTE: The vector dimension is set dynamically based on the embedding model.
+# Common dimensions: 384 (MiniLM), 768 (CodeBERT), 1024 (CodeXEmbed)
+def _create_lance_schema(vector_dim: int) -> pa.Schema:
+    """Create PyArrow schema with dynamic vector dimension.
+
+    Args:
+        vector_dim: Embedding vector dimension (e.g., 384, 768, 1024)
+
+    Returns:
+        PyArrow schema for LanceDB table
+    """
+    return pa.schema(
+        [
+            # Identity
+            pa.field("id", pa.string()),
+            pa.field("chunk_id", pa.string()),
+            # Vector embedding (dimension varies by model)
+            pa.field("vector", pa.list_(pa.float32(), vector_dim)),
+            # Content and metadata
+            pa.field("content", pa.string()),
+            pa.field("file_path", pa.string()),
+            pa.field("start_line", pa.int32()),
+            pa.field("end_line", pa.int32()),
+            pa.field("language", pa.string()),
+            pa.field("chunk_type", pa.string()),
+            pa.field("function_name", pa.string()),
+            pa.field("class_name", pa.string()),
+            pa.field("docstring", pa.string()),
+            pa.field("imports", pa.string()),  # JSON-encoded list
+            pa.field("calls", pa.string()),  # Comma-separated
+            pa.field("inherits_from", pa.string()),  # Comma-separated
+            pa.field("complexity_score", pa.float64()),
+            pa.field("parent_chunk_id", pa.string()),
+            pa.field("child_chunk_ids", pa.string()),  # Comma-separated
+            pa.field("chunk_depth", pa.int32()),
+            pa.field("decorators", pa.string()),  # Comma-separated
+            pa.field("return_type", pa.string()),
+            pa.field("subproject_name", pa.string()),
+            pa.field("subproject_path", pa.string()),
+            # NLP-extracted entities
+            pa.field("nlp_keywords", pa.string()),  # Comma-separated
+            pa.field("nlp_code_refs", pa.string()),  # Comma-separated
+            pa.field("nlp_technical_terms", pa.string()),  # Comma-separated
+            # Git blame metadata
+            pa.field("last_author", pa.string()),
+            pa.field("last_modified", pa.string()),  # ISO timestamp
+            pa.field("commit_hash", pa.string()),
+            # Quality metrics (added dynamically, nullable)
+            pa.field("cognitive_complexity", pa.int32()),
+            pa.field("cyclomatic_complexity", pa.int32()),
+            pa.field("max_nesting_depth", pa.int32()),
+            pa.field("parameter_count", pa.int32()),
+            pa.field("lines_of_code", pa.int32()),
+            pa.field("complexity_grade", pa.string()),
+            pa.field("code_smells", pa.string()),  # JSON-encoded list
+            pa.field("smell_count", pa.int32()),
+            pa.field("quality_score", pa.int32()),
+        ]
+    )
+
+
+# Default schema for 384-dimensional embeddings (backward compatibility)
+LANCEDB_SCHEMA = _create_lance_schema(384)
 
 
 def _detect_optimal_write_buffer_size() -> int:
@@ -156,6 +173,7 @@ class LanceVectorDatabase:
         persist_directory: Path,
         embedding_function: Any,  # EmbeddingFunction protocol
         collection_name: str = "code_search",
+        vector_dim: int | None = None,  # Optional: specify vector dimension
     ) -> None:
         """Initialize LanceDB vector database.
 
@@ -163,6 +181,7 @@ class LanceVectorDatabase:
             persist_directory: Directory to persist database
             embedding_function: Function to generate embeddings
             collection_name: Name of the table (equivalent to ChromaDB collection)
+            vector_dim: Vector dimension (auto-detected if not provided)
         """
         self.persist_directory = (
             Path(persist_directory)
@@ -173,6 +192,28 @@ class LanceVectorDatabase:
         self.collection_name = collection_name
         self._db = None
         self._table = None
+
+        # Detect vector dimension from embedding function or use provided value
+        if vector_dim is None:
+            # Try to get dimension from embedding function
+            if hasattr(embedding_function, "dimension"):
+                self.vector_dim = embedding_function.dimension
+            else:
+                # Fallback: detect by generating a test embedding
+                try:
+                    test_embedding = embedding_function(["test"])[0]
+                    self.vector_dim = len(test_embedding)
+                    logger.debug(f"Detected vector dimension: {self.vector_dim}")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to detect vector dimension: {e}, using default 384"
+                    )
+                    self.vector_dim = 384
+        else:
+            self.vector_dim = vector_dim
+
+        # Create schema with correct vector dimension
+        self._schema = _create_lance_schema(self.vector_dim)
 
         # LRU cache for search results (same as ChromaDB implementation)
         import os
@@ -231,9 +272,9 @@ class LanceVectorDatabase:
         try:
             # Create or append to table with buffered records
             if self._table is None:
-                # Create table with explicit schema to ensure all fields are present
+                # Create table with explicit schema (uses instance schema with correct dimension)
                 self._table = self._db.create_table(
-                    self.collection_name, self._write_buffer, schema=LANCEDB_SCHEMA
+                    self.collection_name, self._write_buffer, schema=self._schema
                 )
                 logger.debug(
                     f"Created LanceDB table '{self.collection_name}' with {len(self._write_buffer)} chunks"
@@ -418,12 +459,28 @@ class LanceVectorDatabase:
                     chunk_metrics = metrics[chunk.chunk_id]
                     metadata.update(chunk_metrics)
 
+                # Ensure all schema fields are present with defaults
+                # This prevents "Field not found in target schema" errors
+                schema_defaults = {
+                    # Quality metrics (nullable in schema)
+                    "cognitive_complexity": None,
+                    "cyclomatic_complexity": None,
+                    "max_nesting_depth": None,
+                    "parameter_count": None,
+                    "lines_of_code": None,
+                    "complexity_grade": "",
+                    "code_smells": "[]",
+                    "smell_count": 0,
+                    "quality_score": 0,
+                }
+
                 # Create record with embedding vector
                 record = {
                     "id": chunk.chunk_id or chunk.id,
                     "vector": embedding,
                     "content": chunk.content,
-                    **metadata,
+                    **schema_defaults,  # Add defaults first
+                    **metadata,  # Override with actual values
                 }
                 records.append(record)
 

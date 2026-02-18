@@ -216,6 +216,11 @@ class ChunksBackend:
                 normalized["complexity"] = chunk.get("complexity", 0)
                 normalized["token_count"] = chunk.get("token_count", 0)
 
+                # Git blame metadata with defaults
+                normalized["last_author"] = chunk.get("last_author", "")
+                normalized["last_modified"] = chunk.get("last_modified", "")
+                normalized["commit_hash"] = chunk.get("commit_hash", "")
+
                 # Phase tracking
                 normalized["embedding_status"] = "pending"
                 normalized["embedding_batch_id"] = 0
@@ -327,6 +332,11 @@ class ChunksBackend:
                 normalized["complexity"] = chunk.get("complexity", 0)
                 normalized["token_count"] = chunk.get("token_count", 0)
 
+                # Git blame metadata with defaults
+                normalized["last_author"] = chunk.get("last_author", "")
+                normalized["last_modified"] = chunk.get("last_modified", "")
+                normalized["commit_hash"] = chunk.get("commit_hash", "")
+
                 # Phase tracking
                 normalized["embedding_status"] = "pending"
                 normalized["embedding_batch_id"] = 0
@@ -400,6 +410,11 @@ class ChunksBackend:
             # Add timestamp and status fields to each chunk
             timestamp = datetime.utcnow().isoformat()
             for chunk in chunks:
+                # Ensure git blame fields exist with defaults
+                chunk.setdefault("last_author", "")
+                chunk.setdefault("last_modified", "")
+                chunk.setdefault("commit_hash", "")
+
                 chunk["embedding_status"] = "pending"
                 chunk["embedding_batch_id"] = 0
                 chunk["created_at"] = timestamp
