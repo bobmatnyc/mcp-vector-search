@@ -389,9 +389,11 @@ async def run_search(
     # Setup database and search engine
     embedding_function, _ = create_embedding_function(config.embedding_model)
     database = create_database(
-        persist_directory=config.index_path,
+        persist_directory=config.index_path / "lance",
         embedding_function=embedding_function,
+        collection_name="vectors",  # Search uses vectors.lance table
     )
+    await database.initialize()
 
     # Create indexer for version check
     indexer = SemanticIndexer(
@@ -733,8 +735,9 @@ async def run_similar_search(
 
     embedding_function, _ = create_embedding_function(config.embedding_model)
     database = create_database(
-        persist_directory=config.index_path,
+        persist_directory=config.index_path / "lance",
         embedding_function=embedding_function,
+        collection_name="vectors",  # Search uses vectors.lance table
     )
 
     search_engine = SemanticSearchEngine(
@@ -842,8 +845,9 @@ async def run_context_search(
 
     embedding_function, _ = create_embedding_function(config.embedding_model)
     database = create_database(
-        persist_directory=config.index_path,
+        persist_directory=config.index_path / "lance",
         embedding_function=embedding_function,
+        collection_name="vectors",  # Search uses vectors.lance table
     )
 
     search_engine = SemanticSearchEngine(

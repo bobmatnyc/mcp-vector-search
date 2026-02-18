@@ -5,6 +5,7 @@ Phase 2: Embed chunks, store to vectors.lance (resumable, incremental)
 """
 
 import asyncio
+import json
 import os
 import shutil
 import time
@@ -511,7 +512,7 @@ class SemanticIndexer:
                             # Code relationships (for KG)
                             "calls": chunk.calls or [],
                             "imports": [
-                                str(imp) if not isinstance(imp, str) else imp
+                                json.dumps(imp) if isinstance(imp, dict) else imp
                                 for imp in (chunk.imports or [])
                             ],
                             "inherits_from": chunk.inherits_from or [],
@@ -1337,7 +1338,7 @@ class SemanticIndexer:
                             # Code relationships (for KG)
                             "calls": chunk.calls or [],
                             "imports": [
-                                str(imp) if not isinstance(imp, str) else imp
+                                json.dumps(imp) if isinstance(imp, dict) else imp
                                 for imp in (chunk.imports or [])
                             ],
                             "inherits_from": chunk.inherits_from or [],
@@ -1494,7 +1495,10 @@ class SemanticIndexer:
                     "token_count": len(chunk.content.split()),
                     # Code relationships (for KG)
                     "calls": chunk.calls or [],
-                    "imports": chunk.imports or [],
+                    "imports": [
+                        json.dumps(imp) if isinstance(imp, dict) else imp
+                        for imp in (chunk.imports or [])
+                    ],
                     "inherits_from": chunk.inherits_from or [],
                 }
                 chunk_dicts.append(chunk_dict)
@@ -2023,7 +2027,12 @@ class SemanticIndexer:
                                     "token_count": len(chunk.content) // 5,
                                     # Code relationships (for KG)
                                     "calls": chunk.calls or [],
-                                    "imports": chunk.imports or [],
+                                    "imports": [
+                                        json.dumps(imp)
+                                        if isinstance(imp, dict)
+                                        else imp
+                                        for imp in (chunk.imports or [])
+                                    ],
                                     "inherits_from": chunk.inherits_from or [],
                                 }
                             )

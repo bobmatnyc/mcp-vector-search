@@ -504,12 +504,20 @@ class SemanticSearchEngine:
             if hasattr(self.database, "persist_directory"):
                 index_path = self.database.persist_directory
 
+                # Handle both old (config.index_path) and new (config.index_path/lance) paths
+                # Check if index_path already ends with "lance"
+                if index_path.name == "lance":
+                    # New path format: index_path already is the lance directory
+                    lance_path = index_path
+                else:
+                    # Old path format: need to add /lance
+                    lance_path = index_path / "lance"
+
                 # Check if vectors.lance table exists (LanceDB format is a directory)
-                # Path: {index_path}/lance/vectors.lance/
-                vectors_path = index_path / "lance" / "vectors.lance"
+                vectors_path = lance_path / "vectors.lance"
                 if vectors_path.exists() and vectors_path.is_dir():
-                    # Instantiate VectorsBackend with index_path (it will find lance/ subdirectory)
-                    vectors_backend = VectorsBackend(index_path / "lance")
+                    # Instantiate VectorsBackend with lance path
+                    vectors_backend = VectorsBackend(lance_path)
                     self._vectors_backend = vectors_backend
                     logger.debug(
                         "Two-phase architecture detected: using VectorsBackend for search"
