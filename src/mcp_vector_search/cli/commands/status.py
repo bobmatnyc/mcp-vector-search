@@ -213,8 +213,9 @@ async def show_status(
         # Get indexing statistics from database (fast, no filesystem scan)
         embedding_function, _ = create_embedding_function(config.embedding_model)
         database = create_database(
-            persist_directory=config.index_path,
+            persist_directory=config.index_path / "lance",
             embedding_function=embedding_function,
+            collection_name="vectors",  # Match VectorsBackend.TABLE_NAME
         )
 
         indexer = SemanticIndexer(
@@ -485,8 +486,9 @@ async def perform_health_check(project_root: Path, config) -> dict[str, Any]:
         # Check database
         try:
             database = create_database(
-                persist_directory=config.index_path,
+                persist_directory=config.index_path / "lance",
                 embedding_function=embedding_function,
+                collection_name="vectors",  # Match VectorsBackend.TABLE_NAME
             )
             async with database:
                 # Skip stats for health check to avoid crashes on large DBs

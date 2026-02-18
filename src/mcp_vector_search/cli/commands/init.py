@@ -195,6 +195,12 @@ def main(
             force=force,
         )
 
+        # Save schema version after successful initialization
+        from ...core.schema import save_schema_version
+
+        config = project_manager.load_config()
+        save_schema_version(config.index_path)
+
         print_success("Project initialized successfully!")
 
         # Show project information
@@ -215,7 +221,7 @@ def main(
                 asyncio.run(
                     run_indexing(
                         project_root=project_root,
-                        force_reindex=False,
+                        force_reindex=force,
                         show_progress=True,
                     )
                 )
@@ -293,6 +299,12 @@ def main(
                 "[cyan]mcp-vector-search search 'your query'[/cyan] - Search your code",
                 "Use MCP tools in Claude Code for AI-powered code search",
                 "[cyan]mcp-vector-search status[/cyan] - Check indexing statistics",
+                "",
+                "[bold]Knowledge Graph:[/bold]",
+                "[cyan]mcp-vector-search kg stats[/cyan] - View graph statistics",
+                '[cyan]mcp-vector-search kg query "ClassName"[/cyan] - Find related entities',
+                '[cyan]mcp-vector-search kg calls "function_name"[/cyan] - Show call graph',
+                '[cyan]mcp-vector-search kg inherits "ClassName"[/cyan] - Show inheritance tree',
             ]
             print_next_steps(next_steps, title="Ready to Use")
 
@@ -311,6 +323,19 @@ def main(
             if not mcp:
                 steps.append(
                     "[cyan]mcp-vector-search mcp install[/cyan] - Add Claude Code integration"
+                )
+
+            # Add KG examples if project is indexed
+            if auto_index:
+                steps.extend(
+                    [
+                        "",
+                        "[bold]Knowledge Graph:[/bold]",
+                        "[cyan]mcp-vector-search kg stats[/cyan] - View graph statistics",
+                        '[cyan]mcp-vector-search kg query "ClassName"[/cyan] - Find related entities',
+                        '[cyan]mcp-vector-search kg calls "function_name"[/cyan] - Show call graph',
+                        '[cyan]mcp-vector-search kg inherits "ClassName"[/cyan] - Show inheritance tree',
+                    ]
                 )
 
             print_next_steps(steps)
@@ -398,7 +423,7 @@ async def run_init_setup(
         try:
             await run_indexing(
                 project_root=project_root,
-                force_reindex=False,
+                force_reindex=force,
                 show_progress=True,
             )
             print_success("✅ Indexing completed!")

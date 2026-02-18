@@ -316,6 +316,53 @@ def print_index_stats(stats: dict[str, Any]) -> None:
     console.print(table)
 
 
+def print_kg_stats(stats: dict[str, Any]) -> None:
+    """Print Knowledge Graph statistics in a table."""
+    table = Table(title="Knowledge Graph Statistics", show_header=False)
+    table.add_column("Metric", style="cyan", no_wrap=True)
+    table.add_column("Value", style="green")
+
+    # Entity counts
+    total_entities = stats.get("total_entities", 0)
+    code_entities = stats.get("code_entities", 0)
+    doc_sections = stats.get("doc_sections", 0)
+    tags = stats.get("tags", 0)
+    persons = stats.get("persons", 0)
+    projects = stats.get("projects", 0)
+
+    table.add_row("Total Entities", f"{total_entities:,}")
+    table.add_row("  Code Entities", f"{code_entities:,}")
+    if doc_sections > 0:
+        table.add_row("  Doc Sections", f"{doc_sections:,}")
+    if tags > 0:
+        table.add_row("  Tags", f"{tags:,}")
+    if persons > 0:
+        table.add_row("  Persons", f"{persons:,}")
+    if projects > 0:
+        table.add_row("  Projects", f"{projects:,}")
+
+    # Relationship counts
+    relationships = stats.get("relationships", {})
+    if relationships:
+        total_rels = sum(relationships.values())
+        table.add_row("Total Relationships", f"{total_rels:,}")
+
+        # Show major relationship types
+        for rel_type in [
+            "calls",
+            "imports",
+            "inherits",
+            "contains",
+            "has_tag",
+            "authored",
+        ]:
+            count = relationships.get(rel_type, 0)
+            if count > 0:
+                table.add_row(f"  {rel_type.replace('_', ' ').title()}", f"{count:,}")
+
+    console.print(table)
+
+
 def print_config(config_dict: dict[str, Any]) -> None:
     """Print configuration in a formatted table."""
     table = Table(title="Configuration", show_header=False)
@@ -433,10 +480,20 @@ def print_next_steps(steps: list[str], title: str = "Next Steps") -> None:
     """Print next step hints after a command execution.
 
     Args:
-        steps: List of next step descriptions
+        steps: List of next step descriptions (empty strings and [bold] headers are not numbered)
         title: Panel title (default: "Next Steps")
     """
-    content = "\n".join(f"  {i}. {step}" for i, step in enumerate(steps, 1))
+    lines = []
+    num = 1
+    for step in steps:
+        if not step:  # Empty string = blank line
+            lines.append("")
+        elif step.startswith("[bold]"):  # Headers are not numbered
+            lines.append(f"  {step}")
+        else:
+            lines.append(f"  {num}. {step}")
+            num += 1
+    content = "\n".join(lines)
     print_panel(content, title=f"🚀 {title}", border_style="blue")
 
 

@@ -387,18 +387,60 @@ def _get_kg_build_schema() -> Tool:
     """Get kg_build tool schema."""
     return Tool(
         name="kg_build",
-        description="Build knowledge graph from indexed code chunks. Extracts entities (functions, classes, modules) and relationships (calls, imports, inheritance) for enhanced code navigation.",
+        description="""Build or rebuild the Knowledge Graph from indexed code.
+
+**What it does:**
+- Extracts code entities (functions, classes, modules) and relationships (calls, imports, inheritance)
+- Creates documentation-to-code mappings (DOCUMENTS, REFERENCES)
+- Extracts authorship from git history (AUTHORED, PART_OF)
+- Builds queryable graph for code navigation and exploration
+
+**When to use:**
+- After initial project indexing
+- After significant code changes
+- When KG queries return empty results
+- To refresh relationships after refactoring
+
+**Performance:**
+- ~2-3 minutes for 10K files (batch optimized)
+- Use skip_documents for faster builds (25-30% faster)
+- Progress tracking available via CLI
+
+**Example usage:**
+{"force": false}  # Build only if not exists
+{"force": true}  # Force rebuild
+{"force": true, "skip_documents": true}  # Fast rebuild
+{"limit": 100}  # Test with 100 chunks
+
+**Example response:**
+{
+  "status": "success",
+  "statistics": {
+    "entities": 3243,
+    "relationships": {
+      "calls": 3944,
+      "imports": 3243,
+      "inherits": 289,
+      "contains": 5821
+    }
+  }
+}""",
         inputSchema={
             "type": "object",
             "properties": {
                 "force": {
                     "type": "boolean",
-                    "description": "Force rebuild even if graph exists",
+                    "description": "Force rebuild even if graph exists. Default: false",
+                    "default": False,
+                },
+                "skip_documents": {
+                    "type": "boolean",
+                    "description": "Skip DOCUMENTS extraction for faster build (25-30% faster). Default: false",
                     "default": False,
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Limit chunks to process (for testing)",
+                    "description": "Limit chunks to process (for testing). Default: no limit",
                 },
             },
             "required": [],
@@ -410,7 +452,45 @@ def _get_kg_stats_schema() -> Tool:
     """Get kg_stats tool schema."""
     return Tool(
         name="kg_stats",
-        description="Get knowledge graph statistics including entity and relationship counts",
+        description="""Get Knowledge Graph statistics and health.
+
+**What it returns:**
+- Entity counts: code entities, doc sections, tags, persons, projects
+- Relationship counts: calls, imports, inherits, contains, documents, authored, etc.
+- Database size and location
+- Health status indicators
+
+**When to use:**
+- Check if KG is built and populated
+- Verify KG health after indexing
+- Monitor KG size for large repos
+- Validate before running queries
+- Troubleshoot KG issues
+
+**Example usage:**
+{}  # No parameters required
+
+**Example response:**
+{
+  "status": "success",
+  "statistics": {
+    "total_entities": 15609,
+    "code_entities": 3243,
+    "doc_sections": 10483,
+    "tags": 1060,
+    "persons": 4,
+    "projects": 1,
+    "database_path": "/path/.mcp-vector-search/knowledge_graph/kg.db",
+    "relationships": {
+      "calls": 3944,
+      "imports": 3243,
+      "inherits": 289,
+      "contains": 5821,
+      "documents": 2864,
+      "authored": 1276
+    }
+  }
+}""",
         inputSchema={"type": "object", "properties": {}, "required": []},
     )
 
@@ -419,13 +499,88 @@ def _get_kg_query_schema() -> Tool:
     """Get kg_query tool schema."""
     return Tool(
         name="kg_query",
-        description="Query knowledge graph for entity relationships. Find what calls a function, what a class inherits from, or related code entities.",
+        description="""Query entity relationships in the Knowledge Graph.
+
+**What it does:**
+- Finds entities related to a given entity
+- Supports filtering by relationship type
+- Returns relationship metadata and paths
+- Traverses graph within specified hops
+
+**Relationship types:**
+- **calls**: Functions called BY this entity
+- **called_by**: Functions that CALL this entity
+- **imports**: Modules imported BY this entity
+- **imported_by**: Modules that IMPORT this entity
+- **inherits**: Classes this entity INHERITS FROM (parents)
+- **inherited_by**: Classes that INHERIT FROM this entity (children)
+- **contains**: Entities CONTAINED BY this entity (module contains functions)
+- **contained_by**: Entities that CONTAIN this entity
+
+**Query patterns:**
+1. **Call graph discovery**: Find all functions a method calls
+2. **Impact analysis**: Find what calls a function (callers)
+3. **Inheritance hierarchy**: Find parent/child classes
+4. **Module structure**: Find what a module contains
+5. **Dependency analysis**: Find import relationships
+6. **General exploration**: Find all related entities (no relationship filter)
+
+**Example queries:**
+1. Find all functions called by search_code:
+   {"entity": "search_code", "relationship": "calls"}
+
+2. Find what calls search_code (impact analysis):
+   {"entity": "search_code", "relationship": "called_by"}
+
+3. Find parent classes of VectorDatabase:
+   {"entity": "VectorDatabase", "relationship": "inherits"}
+
+4. Find child classes of BaseModel:
+   {"entity": "BaseModel", "relationship": "inherited_by"}
+
+5. Find all related entities (no filter):
+   {"entity": "SemanticSearchEngine"}
+
+6. Limit results:
+   {"entity": "search", "relationship": "calls", "limit": 10}
+
+**Example response:**
+{
+  "status": "success",
+  "query": {
+    "entity": "search_code",
+    "relationship": "calls"
+  },
+  "results": [
+    {
+      "name": "_embed_query",
+      "type": "function",
+      "direction": "calls",
+      "file_path": "src/core/search.py"
+    },
+    {
+      "name": "_filter_results",
+      "type": "function",
+      "direction": "calls",
+      "file_path": "src/core/search.py"
+    }
+  ],
+  "count": 2
+}
+
+**Empty results:**
+{
+  "status": "success",
+  "query": {"entity": "unknown_function"},
+  "results": [],
+  "message": "No related entities found for 'unknown_function'"
+}""",
         inputSchema={
             "type": "object",
             "properties": {
                 "entity": {
                     "type": "string",
-                    "description": "Entity name to query (function, class, module)",
+                    "description": "Entity name or ID to query (e.g., 'search_code', 'VectorDatabase', 'SemanticSearchEngine')",
                 },
                 "relationship": {
                     "type": "string",
@@ -439,12 +594,14 @@ def _get_kg_query_schema() -> Tool:
                         "contains",
                         "contained_by",
                     ],
-                    "description": "Relationship type to query",
+                    "description": "Filter by relationship type. Omit to return all relationships.",
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max results",
+                    "description": "Maximum number of results to return (default: 20)",
                     "default": 20,
+                    "minimum": 1,
+                    "maximum": 100,
                 },
             },
             "required": ["entity"],

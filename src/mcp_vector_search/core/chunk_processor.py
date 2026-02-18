@@ -12,6 +12,7 @@ from loguru import logger
 from ..parsers.registry import ParserRegistry, get_parser_registry
 from ..utils.monorepo import MonorepoDetector
 from .exceptions import ParsingError
+from .git_blame import GitBlameCache
 from .models import CodeChunk
 
 
@@ -116,6 +117,9 @@ def _parse_file_standalone(
     This function must be at module level (not a method) to be picklable for
     multiprocessing. It creates its own parser registry to avoid serialization issues.
 
+    OPTIMIZATION: Uses synchronous parse_file_sync() to avoid async overhead,
+    since tree-sitter operations are CPU-bound and synchronous anyway.
+
     Args:
         args: Tuple of (file_path, subproject_info_json)
             - file_path: Path to the file to parse
@@ -130,26 +134,15 @@ def _parse_file_standalone(
     file_path, subproject_info_json = args
 
     try:
-        # Create parser registry in this process
+        # Create parser registry in this process (lazy loading, only creates needed parser)
         parser_registry = get_parser_registry()
 
-        # Get appropriate parser
+        # Get appropriate parser (lazy instantiation)
         parser = parser_registry.get_parser_for_file(file_path)
 
-        # Parse file synchronously (tree-sitter is synchronous anyway)
-        # We need to use the synchronous version of parse_file
-        # Since parsers may have async methods, we'll read and parse directly
-        import asyncio
-
-        # Create event loop for this process if needed
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        # Run the async parse_file in this process's event loop
-        chunks = loop.run_until_complete(parser.parse_file(file_path))
+        # Parse file synchronously - no async/event loop overhead!
+        # Parser grammar is loaded lazily on first actual parse
+        chunks = parser.parse_file_sync(file_path)
 
         # Filter out empty chunks
         valid_chunks = [chunk for chunk in chunks if chunk.content.strip()]
@@ -191,6 +184,7 @@ class ChunkProcessor:
         max_workers: int | None = None,
         use_multiprocessing: bool = True,
         debug: bool = False,
+        repo_root: Path | None = None,
     ) -> None:
         """Initialize chunk processor.
 
@@ -200,6 +194,7 @@ class ChunkProcessor:
             max_workers: Maximum number of worker processes for parallel parsing (ignored if use_multiprocessing=False)
             use_multiprocessing: Enable multiprocess parallel parsing (default: True, disable for debugging)
             debug: Enable debug output for hierarchy building
+            repo_root: Git repository root for blame extraction (optional)
         """
         self.parser_registry = parser_registry
         self.monorepo_detector = monorepo_detector
@@ -214,6 +209,11 @@ class ChunkProcessor:
         else:
             self.max_workers = 1
             logger.debug("Multiprocessing disabled (single-threaded mode)")
+
+        # Initialize git blame cache if repo root provided
+        self.git_blame_cache = GitBlameCache(repo_root) if repo_root else None
+        if self.git_blame_cache:
+            logger.debug(f"Git blame tracking enabled for repo: {repo_root}")
 
     async def parse_file(self, file_path: Path) -> list[CodeChunk]:
         """Parse a file into code chunks.
@@ -243,6 +243,10 @@ class ChunkProcessor:
                 for chunk in valid_chunks:
                     chunk.subproject_name = subproject.name
                     chunk.subproject_path = subproject.relative_path
+
+            # Enrich chunks with git blame metadata
+            if self.git_blame_cache:
+                self._enrich_chunks_with_blame(file_path, valid_chunks)
 
             return valid_chunks
 
@@ -317,6 +321,35 @@ class ChunkProcessor:
                 results.append((file_path, [], e))
 
         return results
+
+    def _enrich_chunks_with_blame(
+        self, file_path: Path, chunks: list[CodeChunk]
+    ) -> None:
+        """Enrich chunks with git blame metadata (in-place).
+
+        Args:
+            file_path: Path to file being processed
+            chunks: List of chunks to enrich (modified in-place)
+        """
+        if not self.git_blame_cache:
+            return
+
+        for chunk in chunks:
+            try:
+                # Get blame for chunk's line range
+                blame = self.git_blame_cache.get_blame_for_range(
+                    file_path, chunk.start_line, chunk.end_line
+                )
+
+                if blame:
+                    chunk.last_author = blame.author
+                    chunk.last_modified = blame.timestamp
+                    chunk.commit_hash = blame.commit_hash
+            except Exception as e:
+                # Non-fatal: log and continue without blame data
+                logger.debug(
+                    f"Failed to get blame for {file_path}:{chunk.start_line}-{chunk.end_line}: {e}"
+                )
 
     def build_chunk_hierarchy(self, chunks: list[CodeChunk]) -> list[CodeChunk]:
         """Build parent-child relationships between chunks.

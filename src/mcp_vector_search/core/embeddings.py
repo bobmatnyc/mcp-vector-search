@@ -26,6 +26,8 @@ os.environ["TQDM_DISABLE"] = "1"
 warnings.filterwarnings("ignore", message=".*position_ids.*")
 warnings.filterwarnings("ignore", message=".*not sharded.*")
 warnings.filterwarnings("ignore", category=FutureWarning, module="transformers")
+# Suppress Pydantic warnings from lancedb embeddings
+warnings.filterwarnings("ignore", message=".*has conflict with protected namespace.*")
 
 
 @contextlib.contextmanager
@@ -105,12 +107,31 @@ def _detect_device() -> str:
         logger.info("Using Apple Silicon MPS backend for GPU acceleration")
         return "mps"
 
-    # Check for NVIDIA CUDA
+    # Check for NVIDIA CUDA with detailed diagnostics
     if torch.cuda.is_available():
-        logger.info("Using CUDA backend for GPU acceleration")
+        gpu_count = torch.cuda.device_count()
+        gpu_name = torch.cuda.get_device_name(0) if gpu_count > 0 else "unknown"
+        logger.info(
+            f"Using CUDA backend for GPU acceleration ({gpu_count} GPU(s): {gpu_name})"
+        )
         return "cuda"
 
-    logger.info("Using CPU backend")
+    # Log why CUDA isn't available (helps debug AWS/cloud issues)
+    cuda_built = (
+        torch.backends.cuda.is_built() if hasattr(torch.backends, "cuda") else False
+    )
+    if not cuda_built:
+        logger.debug(
+            "CUDA not available: PyTorch installed without CUDA support. "
+            "Install with: pip install torch --index-url https://download.pytorch.org/whl/cu121"
+        )
+    else:
+        logger.debug(
+            "CUDA not available: PyTorch has CUDA support but no GPU detected. "
+            "Check: nvidia-smi, NVIDIA drivers, and GPU instance type."
+        )
+
+    logger.info("Using CPU backend (no GPU acceleration)")
     return "cpu"
 
 
@@ -378,6 +399,7 @@ class CodeBERTEmbeddingFunction:
                 )
             self.model_name = model_name
             self.timeout = timeout
+            self.device = device  # Store device for use in encode() calls
 
             # Get actual dimensions from loaded model
             actual_dims = self.model.get_sentence_embedding_dimension()
@@ -438,7 +460,14 @@ class CodeBERTEmbeddingFunction:
     def __call__(self, input: list[str]) -> list[list[float]]:
         """Generate embeddings for input texts (ChromaDB interface)."""
         try:
-            # Use ThreadPoolExecutor with timeout for embedding generation
+            # CUDA contexts are thread-bound, so run directly on CUDA to avoid
+            # GPU operations silently falling back to CPU when run in thread pool.
+            # For CPU/MPS, use ThreadPoolExecutor with timeout for safety.
+            if self.device == "cuda":
+                # Run directly on CUDA - no thread pool to avoid context issues
+                return self._generate_embeddings(input)
+
+            # For CPU/MPS, use thread pool with timeout
             from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
             with ThreadPoolExecutor(max_workers=1) as executor:
@@ -460,8 +489,21 @@ class CodeBERTEmbeddingFunction:
             raise EmbeddingError(f"Failed to generate embeddings: {e}") from e
 
     def _generate_embeddings(self, input: list[str]) -> list[list[float]]:
-        """Internal method to generate embeddings (runs in thread pool)."""
-        embeddings = self.model.encode(input, convert_to_numpy=True)
+        """Internal method to generate embeddings (runs in thread pool).
+
+        Uses optimal batch size for GPU (512 for M4 Max, detected automatically).
+        """
+        # Use optimal batch size for GPU throughput (5x faster with 512 vs 32)
+        batch_size = _detect_optimal_batch_size()
+        # CRITICAL: Pass device to ensure input tensors are moved to GPU
+        # Without this, model weights are on GPU but inputs stay on CPU (0% GPU compute)
+        embeddings = self.model.encode(
+            input,
+            convert_to_numpy=True,
+            batch_size=batch_size,
+            show_progress_bar=False,
+            device=self.device,  # Ensure inputs go to GPU
+        )
         return embeddings.tolist()
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
@@ -511,7 +553,7 @@ class BatchEmbeddingProcessor:
         self.batch_size = batch_size
 
     async def embed_batches_parallel(
-        self, texts: list[str], batch_size: int = 32, max_concurrent: int = 2
+        self, texts: list[str], batch_size: int = 32, max_concurrent: int | None = None
     ) -> list[list[float]]:
         """Generate embeddings in parallel batches for improved throughput.
 
@@ -521,10 +563,13 @@ class BatchEmbeddingProcessor:
         Args:
             texts: List of text content to embed
             batch_size: Size of each batch (default: 32)
-            max_concurrent: Maximum number of concurrent batches (default: 2)
+            max_concurrent: Maximum number of concurrent batches (default: 8 for GPU, override with MCP_VECTOR_SEARCH_MAX_CONCURRENT)
 
         Returns:
             List of embeddings corresponding to input texts
+
+        Environment Variables:
+            MCP_VECTOR_SEARCH_MAX_CONCURRENT: Override max concurrent embedding batches (default: 8)
 
         Note:
             This method is most effective when:
@@ -532,6 +577,25 @@ class BatchEmbeddingProcessor:
             - Using GPU for embeddings (parallel batches maximize GPU utilization)
             - Balancing batch size with max_concurrent to avoid OOM
         """
+        # Auto-detect optimal max_concurrent if not specified
+        if max_concurrent is None:
+            # Check environment variable first
+            env_max_concurrent = os.environ.get("MCP_VECTOR_SEARCH_MAX_CONCURRENT")
+            if env_max_concurrent:
+                try:
+                    max_concurrent = int(env_max_concurrent)
+                    logger.debug(
+                        f"Using max_concurrent from environment: {max_concurrent}"
+                    )
+                except ValueError:
+                    logger.warning(
+                        f"Invalid MCP_VECTOR_SEARCH_MAX_CONCURRENT value: {env_max_concurrent}, using default 8"
+                    )
+                    max_concurrent = 8
+            else:
+                # Default to 8 for better GPU utilization (up from 2)
+                # GPUs like M4 Max can handle much higher concurrency than CPUs
+                max_concurrent = 8
         import asyncio
 
         if not texts:
@@ -547,7 +611,16 @@ class BatchEmbeddingProcessor:
             """Process a single batch in thread pool."""
             async with semaphore:
                 # Run embedding generation in thread pool to avoid blocking
-                return await asyncio.to_thread(self.embedding_function, batch)
+                try:
+                    return await asyncio.to_thread(self.embedding_function, batch)
+                except BaseException as e:
+                    # PyO3 panics inherit from BaseException, not Exception
+                    if "Python interpreter is not initialized" in str(e):
+                        logger.warning("Embedding interrupted during shutdown")
+                        raise RuntimeError(
+                            "Embedding interrupted during Python shutdown"
+                        ) from e
+                    raise
 
         # Process all batches concurrently
         results = await asyncio.gather(*[process_batch(b) for b in batches])
@@ -609,10 +682,11 @@ class BatchEmbeddingProcessor:
                         logger.debug(
                             f"Using parallel embedding generation for {len(uncached_contents)} items"
                         )
+                        # max_concurrent now auto-detects from env var (defaults to 8)
                         new_embeddings = await self.embed_batches_parallel(
                             uncached_contents,
                             batch_size=self.batch_size,
-                            max_concurrent=2,
+                            max_concurrent=None,  # Auto-detect
                         )
                     except Exception as parallel_error:
                         # Graceful fallback to sequential if parallel fails
@@ -663,8 +737,19 @@ class BatchEmbeddingProcessor:
         for i in range(0, len(contents), self.batch_size):
             batch = contents[i : i + self.batch_size]
             # Run in thread pool to avoid blocking
-            batch_embeddings = await asyncio.to_thread(self.embedding_function, batch)
-            new_embeddings.extend(batch_embeddings)
+            try:
+                batch_embeddings = await asyncio.to_thread(
+                    self.embedding_function, batch
+                )
+                new_embeddings.extend(batch_embeddings)
+            except BaseException as e:
+                # PyO3 panics inherit from BaseException, not Exception
+                if "Python interpreter is not initialized" in str(e):
+                    logger.warning("Embedding interrupted during shutdown")
+                    raise RuntimeError(
+                        "Embedding interrupted during Python shutdown"
+                    ) from e
+                raise
         return new_embeddings
 
     def get_stats(self) -> dict[str, any]:
@@ -701,34 +786,32 @@ def create_embedding_function(
         # Logging suppression is handled at module level
         from chromadb.utils import embedding_functions
 
-        # Map legacy model names to current defaults
-        # This ensures backward compatibility with old config files
+        # Only map shorthand aliases to full model names
+        # DO NOT auto-migrate models - respect user's choice for speed vs quality
         model_mapping = {
-            # Legacy CodeBERT models (deprecated, never existed in sentence-transformers)
-            "microsoft/codebert-base": "Salesforce/SFR-Embedding-Code-400M_R",
-            "microsoft/unixcoder-base": "Salesforce/SFR-Embedding-Code-400M_R",
-            # Maintain existing mappings for smooth migration
-            "codebert": "Salesforce/SFR-Embedding-Code-400M_R",
-            "unixcoder": "Salesforce/SFR-Embedding-Code-400M_R",
+            # Shorthand aliases only
+            "codebert": "microsoft/codebert-base",
+            "unixcoder": "microsoft/unixcoder-base",
+            "sfr-400m": "Salesforce/SFR-Embedding-Code-400M_R",
+            "sfr-2b": "Salesforce/SFR-Embedding-Code-2B_R",
         }
 
         actual_model = model_mapping.get(model_name, model_name)
 
-        # Log migration warning if model was remapped
-        if actual_model != model_name:
-            logger.warning(
-                f"Model '{model_name}' is deprecated. Automatically using '{actual_model}' instead. "
-                f"Please update your configuration to use the new model explicitly."
-            )
+        # Detect optimal device (CUDA > MPS > CPU)
+        device = _detect_device()
 
         # Suppress stdout to hide "BertModel LOAD REPORT" noise
         with suppress_stdout_stderr():
             embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
                 model_name=actual_model,
+                device=device,  # Pass device for GPU acceleration
                 trust_remote_code=True,  # Required for models with custom code (e.g., CodeXEmbed)
             )
 
-        logger.debug(f"Created ChromaDB embedding function with model: {actual_model}")
+        logger.info(
+            f"Created embedding function with model: {actual_model} on {device}"
+        )
 
     except Exception as e:
         logger.warning(f"Failed to create ChromaDB embedding function: {e}")

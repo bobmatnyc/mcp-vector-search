@@ -177,6 +177,130 @@ class TextParser(BaseParser):
 
         return merged
 
+    def parse_file_sync(self, file_path: Path) -> list[CodeChunk]:
+        """Parse file synchronously (optimized for multiprocessing workers)."""
+        try:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
+                content = f.read()
+
+            # Text parsing is already synchronous, just call the internal method
+            if not content.strip():
+                return []
+
+            # Try paragraph-based chunking first
+            paragraphs = content.split("\n\n")
+
+            # Filter out empty paragraphs
+            valid_paragraphs = [p.strip() for p in paragraphs if p.strip()]
+
+            if len(valid_paragraphs) >= 2:
+                # Use paragraph-based chunking
+                return self._chunk_by_paragraphs_sync(valid_paragraphs, file_path)
+            else:
+                # Fallback to line-based chunking
+                return self._chunk_by_lines_sync(content, file_path)
+
+        except Exception:
+            return []
+
+    def _chunk_by_paragraphs_sync(
+        self, paragraphs: list[str], file_path: Path
+    ) -> list[CodeChunk]:
+        """Chunk by paragraphs (synchronous)."""
+        chunks = []
+        current_chunk_text = []
+        current_chunk_size = 0
+        start_line = 1
+
+        for para in paragraphs:
+            para_size = len(para)
+
+            # If paragraph alone exceeds max size, chunk it separately
+            if para_size > TEXT_CHUNK_SIZE * 2:
+                # Save current chunk if exists
+                if current_chunk_text:
+                    chunks.append(
+                        self._create_chunk(
+                            content="\n\n".join(current_chunk_text),
+                            file_path=file_path,
+                            start_line=start_line,
+                            end_line=start_line
+                            + sum(text.count("\n") for text in current_chunk_text),
+                            chunk_type="text",
+                        )
+                    )
+                    current_chunk_text = []
+                    current_chunk_size = 0
+
+                # Chunk large paragraph by lines
+                large_para_chunks = self._chunk_by_lines_sync(para, file_path)
+                chunks.extend(large_para_chunks)
+                start_line += para.count("\n") + 2  # +2 for paragraph breaks
+
+            # If adding this paragraph exceeds size, save current chunk
+            elif (
+                current_chunk_size + para_size > TEXT_CHUNK_SIZE and current_chunk_text
+            ):
+                chunks.append(
+                    self._create_chunk(
+                        content="\n\n".join(current_chunk_text),
+                        file_path=file_path,
+                        start_line=start_line,
+                        end_line=start_line
+                        + sum(text.count("\n") for text in current_chunk_text),
+                        chunk_type="text",
+                    )
+                )
+                current_chunk_text = [para]
+                current_chunk_size = para_size
+                start_line += sum(text.count("\n") for text in current_chunk_text) + 2
+
+            # Add paragraph to current chunk
+            else:
+                current_chunk_text.append(para)
+                current_chunk_size += para_size
+
+        # Add remaining chunk
+        if current_chunk_text:
+            chunks.append(
+                self._create_chunk(
+                    content="\n\n".join(current_chunk_text),
+                    file_path=file_path,
+                    start_line=start_line,
+                    end_line=start_line
+                    + sum(text.count("\n") for text in current_chunk_text),
+                    chunk_type="text",
+                )
+            )
+
+        return chunks
+
+    def _chunk_by_lines_sync(self, content: str, file_path: Path) -> list[CodeChunk]:
+        """Fallback to line-based chunking (synchronous)."""
+        lines = self._split_into_lines(content)
+        chunks = []
+
+        # Simple line-based chunking
+        chunk_size = TEXT_CHUNK_SIZE // 80  # Approximate lines per chunk
+
+        for i in range(0, len(lines), chunk_size):
+            start_line = i + 1
+            end_line = min(i + chunk_size, len(lines))
+
+            chunk_content = self._get_line_range(lines, start_line, end_line)
+
+            if chunk_content.strip():
+                chunk = self._create_chunk(
+                    content=chunk_content,
+                    file_path=file_path,
+                    start_line=start_line,
+                    end_line=end_line,
+                    chunk_type="text",
+                )
+                chunks.append(chunk)
+
+        return chunks
+
     def get_supported_extensions(self) -> list[str]:
         """Get list of supported file extensions.
 

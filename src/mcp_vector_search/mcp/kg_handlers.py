@@ -31,6 +31,7 @@ class KGHandlers:
         Args:
             args: Tool arguments containing:
                 - force (bool): Force rebuild even if graph exists
+                - skip_documents (bool): Skip DOCUMENTS extraction (faster)
                 - limit (int | None): Limit chunks to process (for testing)
 
         Returns:
@@ -38,6 +39,7 @@ class KGHandlers:
         """
         try:
             force = args.get("force", False)
+            skip_documents = args.get("skip_documents", False)
             limit = args.get("limit")
 
             # Load project configuration
@@ -94,7 +96,10 @@ class KGHandlers:
                 # Build graph
                 builder = KGBuilder(kg, self.project_root)
                 build_stats = await builder.build_from_database(
-                    database, show_progress=False, limit=limit
+                    database,
+                    show_progress=False,
+                    limit=limit,
+                    skip_documents=skip_documents,
                 )
 
                 # Close connections

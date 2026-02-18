@@ -404,6 +404,74 @@ class HTMLParser(BaseParser):
 
         return chunks
 
+    def parse_file_sync(self, file_path: Path) -> list[CodeChunk]:
+        """Parse file synchronously (optimized for multiprocessing workers)."""
+        try:
+            with open(file_path, encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            return self._parse_content_sync(content, file_path)
+        except Exception:
+            return []
+
+    def _parse_content_sync(self, content: str, file_path: Path) -> list[CodeChunk]:
+        """Parse HTML content synchronously without async overhead."""
+        if not content.strip():
+            return []
+
+        # Parse HTML content
+        parser = HTMLContentParser()
+        try:
+            parser.feed(content)
+        except Exception:
+            # If parsing fails, fall back to simple text extraction
+            return self._fallback_parse_sync(content, file_path)
+
+        sections = parser.get_sections()
+
+        if not sections:
+            # No semantic sections found, try fallback
+            return self._fallback_parse_sync(content, file_path)
+
+        # Convert sections to chunks
+        chunks = []
+
+        # Merge small sections for better semantic coherence
+        merged_sections = self._merge_small_sections(sections)
+
+        for section in merged_sections:
+            chunk_type = self._get_chunk_type(section["tag"])
+
+            # Create descriptive metadata
+            metadata = {
+                "chunk_type": chunk_type,
+                "function_name": section["tag_info"],  # Use tag_info as identifier
+            }
+
+            # Add class name for sections with specific IDs
+            if section["attrs"].get("id"):
+                metadata["class_name"] = section["attrs"]["id"]
+
+            chunk = self._create_chunk(
+                content=section["content"],
+                file_path=file_path,
+                start_line=section["start_line"],
+                end_line=section["end_line"],
+                **metadata,
+            )
+            chunks.append(chunk)
+
+        return chunks
+
+    def _fallback_parse_sync(self, content: str, file_path: Path) -> list[CodeChunk]:
+        """Fallback to simple text parsing (synchronous)."""
+        import asyncio
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(self._fallback_parse(content, file_path))
+        finally:
+            loop.close()
+
     def get_supported_extensions(self) -> list[str]:
         """Get list of supported file extensions.
 

@@ -22,9 +22,14 @@ class ParserRegistry:
     """Registry for managing language parsers."""
 
     def __init__(self) -> None:
-        """Initialize parser registry."""
-        self._parsers: dict[str, BaseParser] = {}
-        self._extension_map: dict[str, str] = {}
+        """Initialize parser registry with lazy loading."""
+        self._parsers: dict[
+            str, BaseParser
+        ] = {}  # Actual parser instances (created on-demand)
+        self._parser_classes: dict[
+            str, type[BaseParser]
+        ] = {}  # Parser classes for lazy instantiation
+        self._extension_map: dict[str, str] = {}  # Extension to language mapping
         self._fallback_parser = FallbackParser()
         self._initialized = False
 
@@ -35,31 +40,45 @@ class ParserRegistry:
             self._initialized = True
 
     def _register_default_parsers(self) -> None:
-        """Register default parsers for supported languages."""
-        parsers_to_register = [
-            ("python", PythonParser),
-            ("javascript", JavaScriptParser),
-            ("typescript", TypeScriptParser),
-            ("java", JavaParser),
-            ("c_sharp", CSharpParser),
-            ("go", GoParser),
-            ("rust", RustParser),
-            ("dart", DartParser),
-            ("php", PHPParser),
-            ("ruby", RubyParser),
-            ("text", TextParser),
-            ("html", HTMLParser),
-        ]
+        """Register default parsers for supported languages (lazy creation).
 
-        for language, parser_class in parsers_to_register:
-            try:
-                parser = parser_class()
-                self.register_parser(language, parser)
-            except Exception as e:
-                logger.error(
-                    f"Failed to initialize {language} parser "
-                    f"({parser_class.__name__}): {e}"
-                )
+        This method builds the extension-to-language mapping WITHOUT
+        instantiating parsers. Parsers are created on-demand in get_parser().
+        Error isolation happens at instantiation time.
+        """
+        # Map extensions to parser classes (not instances)
+        parser_map = {
+            ".py": ("python", PythonParser),
+            ".pyw": ("python", PythonParser),
+            ".js": ("javascript", JavaScriptParser),
+            ".jsx": ("javascript", JavaScriptParser),
+            ".mjs": ("javascript", JavaScriptParser),
+            ".ts": ("typescript", TypeScriptParser),
+            ".tsx": ("typescript", TypeScriptParser),
+            ".java": ("java", JavaParser),
+            ".cs": ("c_sharp", CSharpParser),
+            ".go": ("go", GoParser),
+            ".rs": ("rust", RustParser),
+            ".dart": ("dart", DartParser),
+            ".php": ("php", PHPParser),
+            ".rb": ("ruby", RubyParser),
+            ".txt": ("text", TextParser),
+            ".md": ("text", TextParser),
+            ".markdown": ("text", TextParser),
+            ".html": ("html", HTMLParser),
+            ".htm": ("html", HTMLParser),
+        }
+
+        # Build extension map without creating parsers
+        for ext, (lang, parser_class) in parser_map.items():
+            self._extension_map[ext.lower()] = lang
+            # Store parser class for lazy instantiation
+            if lang not in self._parser_classes:
+                self._parser_classes[lang] = parser_class
+
+        logger.debug(
+            f"Registered {len(self._parser_classes)} parser classes (lazy loading enabled)"
+        )
 
     def register_parser(self, language: str, parser: BaseParser) -> None:
         """Register a parser for a specific language.
@@ -78,7 +97,7 @@ class ParserRegistry:
         logger.debug(f"Registered parser for {language}: {parser.__class__.__name__}")
 
     def get_parser(self, file_extension: str) -> BaseParser:
-        """Get parser for a file extension.
+        """Get parser for a file extension (lazy instantiation).
 
         Args:
             file_extension: File extension (including dot)
@@ -88,8 +107,18 @@ class ParserRegistry:
         """
         self._ensure_initialized()
         language = self._extension_map.get(file_extension.lower())
-        if language and language in self._parsers:
-            return self._parsers[language]
+
+        # Lazy instantiation: create parser only if not already created
+        if language:
+            if language not in self._parsers:
+                # Create parser instance on first use
+                parser_class = self._parser_classes.get(language)
+                if parser_class:
+                    self._parsers[language] = parser_class()
+                    logger.debug(f"Lazily instantiated parser for {language}")
+
+            if language in self._parsers:
+                return self._parsers[language]
 
         # Return fallback parser for unsupported extensions
         return self._fallback_parser

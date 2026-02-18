@@ -149,8 +149,13 @@ class SemanticSearchEngine:
                 )
 
             # Enhance with knowledge graph context if available
+            # Gracefully skip if KG is unavailable (may be building)
             if self._kg and self.enable_kg:
-                results = await self._enhance_with_kg(results, query)
+                try:
+                    results = await self._enhance_with_kg(results, query)
+                except Exception as e:
+                    logger.debug(f"KG enhancement skipped: {e}")
+                    # Continue without KG - still return results
 
             # Post-process results
             enhanced_results = []
@@ -523,20 +528,29 @@ class SemanticSearchEngine:
         """Check if knowledge graph is available and initialize if needed.
 
         This lazily initializes the KG on first search if it exists.
+        Gracefully handles unavailable or building KG.
         """
         if not self.enable_kg:
             return
 
         try:
             kg_path = self.project_root / ".mcp-vector-search" / "knowledge_graph"
-            if (kg_path / "code_kg").exists():
+            kg_db_path = kg_path / "code_kg"
+
+            if kg_db_path.exists():
                 self._kg = KnowledgeGraph(kg_path)
                 await self._kg.initialize()
                 logger.debug("Knowledge graph loaded for search enhancement")
             else:
-                logger.debug("Knowledge graph not found, skipping KG enhancement")
+                logger.debug(
+                    "Knowledge graph not found yet (may be building in background), "
+                    "search will work without KG enhancement"
+                )
         except Exception as e:
-            logger.debug(f"Knowledge graph initialization failed: {e}")
+            logger.debug(
+                f"Knowledge graph initialization failed: {e}, "
+                "continuing without KG enhancement"
+            )
             self._kg = None
 
     async def _enhance_with_kg(

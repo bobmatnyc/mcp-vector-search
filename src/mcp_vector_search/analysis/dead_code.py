@@ -247,8 +247,8 @@ class DeadCodeAnalyzer:
             if chunk_type not in ("function", "method"):
                 continue
 
-            # Get function name
-            function_name = chunk.get("function_name") or chunk.get("class_name")
+            # Get function name (skip class definitions without function_name)
+            function_name = chunk.get("function_name")
             if not function_name:
                 continue
 
@@ -322,8 +322,8 @@ class DeadCodeAnalyzer:
             if chunk_type not in ("function", "method"):
                 continue
 
-            # Get function name
-            function_name = chunk.get("function_name") or chunk.get("class_name")
+            # Get function name (skip class definitions without function_name)
+            function_name = chunk.get("function_name")
             if not function_name:
                 continue
 
@@ -334,6 +334,10 @@ class DeadCodeAnalyzer:
             # Check if excluded by pattern
             file_path = chunk.get("file_path", "")
             if self._is_excluded(file_path):
+                continue
+
+            # Skip special Python methods that are called implicitly
+            if self._is_special_method(function_name, chunk):
                 continue
 
             # Assign confidence and create finding
@@ -369,7 +373,7 @@ class DeadCodeAnalyzer:
         Returns:
             Confidence level
         """
-        function_name = chunk.get("function_name") or chunk.get("class_name", "")
+        function_name = chunk.get("function_name", "")
         decorators = chunk.get("decorators", [])
 
         # LOW confidence if has decorators (might be registered as callback)
@@ -393,7 +397,7 @@ class DeadCodeAnalyzer:
         Returns:
             Reason string
         """
-        function_name = chunk.get("function_name") or chunk.get("class_name", "")
+        function_name = chunk.get("function_name", "")
 
         if confidence == Confidence.HIGH:
             return (
@@ -424,7 +428,7 @@ class DeadCodeAnalyzer:
             )
 
         # Check for common callback patterns in function name
-        function_name = chunk.get("function_name") or chunk.get("class_name", "")
+        function_name = chunk.get("function_name", "")
         callback_patterns = ["callback", "handler", "on_", "handle_"]
         if any(pattern in function_name.lower() for pattern in callback_patterns):
             caveats.append(
@@ -432,6 +436,43 @@ class DeadCodeAnalyzer:
             )
 
         return caveats
+
+    def _is_special_method(self, function_name: str, chunk: dict) -> bool:
+        """Check if function is a special method that shouldn't be flagged as dead code.
+
+        Special methods include:
+        - Dunder methods (__init__, __str__, __repr__, etc.)
+        - Property-decorated methods (@property, @cached_property)
+        - Dataclass __post_init__ methods
+
+        Args:
+            function_name: Name of the function
+            chunk: Code chunk dictionary
+
+        Returns:
+            True if function is a special method that should be excluded
+        """
+        # Dunder methods are called implicitly by Python
+        if function_name.startswith("__") and function_name.endswith("__"):
+            return True
+
+        # Check for property decorators
+        decorators = chunk.get("decorators", [])
+        property_decorators = [
+            "@property",
+            "@cached_property",
+            "@functools.cached_property",
+        ]
+
+        for decorator in decorators:
+            # Handle both simple and qualified decorator names
+            if any(prop in decorator for prop in property_decorators):
+                return True
+            # Also check for property setters/deleters (e.g., @foo.setter)
+            if ".setter" in decorator or ".deleter" in decorator:
+                return True
+
+        return False
 
     def _is_excluded(self, file_path: str) -> bool:
         """Check if file path matches exclusion patterns.

@@ -31,16 +31,75 @@ from ..output import console, print_error, print_info, print_json
 analyze_app = typer.Typer(help="📈 Analyze code complexity and quality")
 
 
-# Main callback - no invoke_without_command to allow subcommands to work properly
-@analyze_app.callback()
-def analyze_callback() -> None:
+# Main callback - runs both analyses when no subcommand specified
+@analyze_app.callback(invoke_without_command=True)
+def analyze_callback(
+    ctx: typer.Context,
+    quick: bool = typer.Option(
+        False,
+        "--quick",
+        help="Quick mode (cognitive + cyclomatic complexity only, skip dead-code)",
+        rich_help_panel="⚡ Performance Options",
+    ),
+) -> None:
     """Analyze code complexity and quality.
+
+    When called without a subcommand, runs both complexity and dead-code analysis.
 
     Available commands:
       complexity - Analyze code complexity (cyclomatic, cognitive, smells)
       dead-code  - Detect dead/unreachable code
     """
-    pass
+    if ctx.invoked_subcommand is None:
+        # No subcommand - run both analyses
+        from ..output import console
+
+        mode = "quick" if quick else "full"
+        console.print(f"[bold blue]Running {mode} analysis[/bold blue]\n")
+
+        # Run complexity analysis directly using asyncio.run instead of ctx.invoke
+        # to avoid Typer's option handling issues with boolean defaults
+        project_root = Path.cwd()
+        asyncio.run(
+            run_analysis(
+                project_root=project_root,
+                quick_mode=quick,
+                language_filter=None,
+                path_filter=None,
+                top_n=10,
+                json_output=False,
+                show_smells=True,
+                output_format="console",
+                output_file=None,
+                fail_on_smell=False,
+                severity_threshold="error",
+                changed_only=False,
+                baseline=None,
+                save_baseline=None,
+                compare_baseline=None,
+                force_baseline=False,
+                baseline_manager=BaselineManager(),
+                include_context=False,
+            )
+        )
+
+        # Skip dead code analysis in quick mode (it's slow)
+        if not quick:
+            console.print("\n" + "─" * 60 + "\n")
+
+            # Run dead code analysis directly using asyncio.run
+            asyncio.run(
+                run_dead_code_analysis(
+                    project_root=project_root,
+                    custom_entry_points=[],
+                    include_public=False,
+                    min_confidence="low",
+                    exclude_patterns=None,
+                    output_format="console",
+                    output_file=None,
+                    fail_on_dead=False,
+                )
+            )
 
 
 @analyze_app.command(name="complexity")
@@ -780,7 +839,6 @@ def _find_analyzable_files(
     Returns:
         List of file paths to analyze
     """
-    import fnmatch
 
     # If git_changed_files is provided, use it as the primary filter
     if git_changed_files is not None:
@@ -846,8 +904,8 @@ def _find_analyzable_files(
     files = []
     supported_extensions = parser_registry.get_supported_extensions()
 
-    # Common ignore patterns
-    ignore_patterns = {
+    # Common ignore patterns - exact matches for directory names
+    ignore_dirs = {
         ".git",
         ".venv",
         "venv",
@@ -858,7 +916,21 @@ def _find_analyzable_files(
         "build",
         ".tox",
         ".eggs",
+        "vendor",
+        ".mypy_cache",
+        ".ruff_cache",
+        "htmlcov",
+        "site-packages",
+        ".nox",
+        "env",
+        ".env",
+        "virtualenv",
+        ".cache",
+        ".uv",
     }
+
+    # Prefix patterns - match any directory starting with these
+    ignore_prefixes = {".venv", "venv", ".env", "env"}
 
     for file_path in base_path.rglob("*"):
         # Skip symlinks to prevent traversing outside project
@@ -869,11 +941,22 @@ def _find_analyzable_files(
         if file_path.is_dir():
             continue
 
-        # Skip ignored directories
-        if any(
-            ignored in file_path.parts or fnmatch.fnmatch(file_path.name, f"{ignored}*")
-            for ignored in ignore_patterns
-        ):
+        # Skip files in ignored directories (exact match or prefix match)
+        should_skip = False
+        for part in file_path.parts:
+            # Exact match
+            if part in ignore_dirs:
+                should_skip = True
+                break
+            # Prefix match (e.g., .venv-mcp, venv-test, .env-local)
+            for prefix in ignore_prefixes:
+                if part.startswith(prefix):
+                    should_skip = True
+                    break
+            if should_skip:
+                break
+
+        if should_skip:
             continue
 
         # Check if file extension is supported

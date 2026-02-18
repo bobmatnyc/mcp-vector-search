@@ -178,3 +178,26 @@ class IndexMetadata:
                 f.write(f"[{timestamp}] {error_msg}\n")
         except Exception as e:
             logger.debug(f"Failed to write error log: {e}")
+
+    def cleanup_stale_entries(self, valid_files: set[str]) -> int:
+        """Remove metadata entries for files that no longer exist.
+
+        Args:
+            valid_files: Set of relative file paths that currently exist
+
+        Returns:
+            Number of stale entries removed
+        """
+        metadata = self.load()
+        original_count = len(metadata)
+
+        cleaned = {
+            path: mtime for path, mtime in metadata.items() if path in valid_files
+        }
+
+        removed = original_count - len(cleaned)
+        if removed > 0:
+            self.save(cleaned)
+            logger.info(f"Cleaned up {removed} stale metadata entries")
+
+        return removed

@@ -16,6 +16,7 @@ from typing import Any
 
 import lancedb
 import orjson
+import pyarrow as pa
 from loguru import logger
 
 from .exceptions import (
@@ -25,6 +26,75 @@ from .exceptions import (
     DocumentAdditionError,
 )
 from .models import CodeChunk, IndexStats, SearchResult
+
+
+# Explicit PyArrow schema for main vector search table
+# This ensures consistent schema across all batches, preventing
+# "Field not found in target schema" errors when adding new fields
+#
+# NOTE: The vector dimension is set dynamically based on the embedding model.
+# Common dimensions: 384 (MiniLM), 768 (CodeBERT), 1024 (CodeXEmbed)
+def _create_lance_schema(vector_dim: int) -> pa.Schema:
+    """Create PyArrow schema with dynamic vector dimension.
+
+    Args:
+        vector_dim: Embedding vector dimension (e.g., 384, 768, 1024)
+
+    Returns:
+        PyArrow schema for LanceDB table
+    """
+    return pa.schema(
+        [
+            # Identity
+            pa.field("id", pa.string()),
+            pa.field("chunk_id", pa.string()),
+            # Vector embedding (dimension varies by model)
+            pa.field("vector", pa.list_(pa.float32(), vector_dim)),
+            # Content and metadata
+            pa.field("content", pa.string()),
+            pa.field("file_path", pa.string()),
+            pa.field("start_line", pa.int32()),
+            pa.field("end_line", pa.int32()),
+            pa.field("language", pa.string()),
+            pa.field("chunk_type", pa.string()),
+            pa.field("function_name", pa.string()),
+            pa.field("class_name", pa.string()),
+            pa.field("docstring", pa.string()),
+            pa.field("imports", pa.string()),  # JSON-encoded list
+            pa.field("calls", pa.string()),  # Comma-separated
+            pa.field("inherits_from", pa.string()),  # Comma-separated
+            pa.field("complexity_score", pa.float64()),
+            pa.field("parent_chunk_id", pa.string()),
+            pa.field("child_chunk_ids", pa.string()),  # Comma-separated
+            pa.field("chunk_depth", pa.int32()),
+            pa.field("decorators", pa.string()),  # Comma-separated
+            pa.field("return_type", pa.string()),
+            pa.field("subproject_name", pa.string()),
+            pa.field("subproject_path", pa.string()),
+            # NLP-extracted entities
+            pa.field("nlp_keywords", pa.string()),  # Comma-separated
+            pa.field("nlp_code_refs", pa.string()),  # Comma-separated
+            pa.field("nlp_technical_terms", pa.string()),  # Comma-separated
+            # Git blame metadata
+            pa.field("last_author", pa.string()),
+            pa.field("last_modified", pa.string()),  # ISO timestamp
+            pa.field("commit_hash", pa.string()),
+            # Quality metrics (added dynamically, nullable)
+            pa.field("cognitive_complexity", pa.int32()),
+            pa.field("cyclomatic_complexity", pa.int32()),
+            pa.field("max_nesting_depth", pa.int32()),
+            pa.field("parameter_count", pa.int32()),
+            pa.field("lines_of_code", pa.int32()),
+            pa.field("complexity_grade", pa.string()),
+            pa.field("code_smells", pa.string()),  # JSON-encoded list
+            pa.field("smell_count", pa.int32()),
+            pa.field("quality_score", pa.int32()),
+        ]
+    )
+
+
+# Default schema for 384-dimensional embeddings (backward compatibility)
+LANCEDB_SCHEMA = _create_lance_schema(384)
 
 
 def _detect_optimal_write_buffer_size() -> int:
@@ -103,6 +173,7 @@ class LanceVectorDatabase:
         persist_directory: Path,
         embedding_function: Any,  # EmbeddingFunction protocol
         collection_name: str = "code_search",
+        vector_dim: int | None = None,  # Optional: specify vector dimension
     ) -> None:
         """Initialize LanceDB vector database.
 
@@ -110,6 +181,7 @@ class LanceVectorDatabase:
             persist_directory: Directory to persist database
             embedding_function: Function to generate embeddings
             collection_name: Name of the table (equivalent to ChromaDB collection)
+            vector_dim: Vector dimension (auto-detected if not provided)
         """
         self.persist_directory = (
             Path(persist_directory)
@@ -120,6 +192,28 @@ class LanceVectorDatabase:
         self.collection_name = collection_name
         self._db = None
         self._table = None
+
+        # Detect vector dimension from embedding function or use provided value
+        if vector_dim is None:
+            # Try to get dimension from embedding function
+            if hasattr(embedding_function, "dimension"):
+                self.vector_dim = embedding_function.dimension
+            else:
+                # Fallback: detect by generating a test embedding
+                try:
+                    test_embedding = embedding_function(["test"])[0]
+                    self.vector_dim = len(test_embedding)
+                    logger.debug(f"Detected vector dimension: {self.vector_dim}")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to detect vector dimension: {e}, using default 384"
+                    )
+                    self.vector_dim = 384
+        else:
+            self.vector_dim = vector_dim
+
+        # Create schema with correct vector dimension
+        self._schema = _create_lance_schema(self.vector_dim)
 
         # LRU cache for search results (same as ChromaDB implementation)
         import os
@@ -148,7 +242,15 @@ class LanceVectorDatabase:
             self._db = lancedb.connect(str(self.persist_directory))
 
             # Check if table exists, open if it does
-            if self.collection_name in self._db.table_names():
+            # list_tables() returns a response object with .tables attribute or is iterable
+            tables_response = self._db.list_tables()
+            table_names = (
+                tables_response.tables
+                if hasattr(tables_response, "tables")
+                else tables_response
+            )
+
+            if self.collection_name in table_names:
                 self._table = self._db.open_table(self.collection_name)
                 logger.debug(
                     f"LanceDB table '{self.collection_name}' opened at {self.persist_directory}"
@@ -178,9 +280,9 @@ class LanceVectorDatabase:
         try:
             # Create or append to table with buffered records
             if self._table is None:
-                # Create table with first batch
+                # Create table with explicit schema (uses instance schema with correct dimension)
                 self._table = self._db.create_table(
-                    self.collection_name, self._write_buffer
+                    self.collection_name, self._write_buffer, schema=self._schema
                 )
                 logger.debug(
                     f"Created LanceDB table '{self.collection_name}' with {len(self._write_buffer)} chunks"
@@ -241,6 +343,15 @@ class LanceVectorDatabase:
         # Optimize table to compact fragments and cleanup transaction files
         await self.optimize()
 
+        # Save schema version after successful operation
+        try:
+            from .schema import save_schema_version
+
+            save_schema_version(self.persist_directory)
+        except Exception as e:
+            # Non-fatal - don't fail close() if schema version save fails
+            logger.warning(f"Failed to save schema version: {e}")
+
         self._table = None
         self._db = None
         logger.debug("LanceDB connections closed")
@@ -276,7 +387,18 @@ class LanceVectorDatabase:
                 # This allows other async operations to proceed during CPU-intensive embedding
                 import asyncio
 
-                embeddings = await asyncio.to_thread(self.embedding_function, contents)
+                try:
+                    embeddings = await asyncio.to_thread(
+                        self.embedding_function, contents
+                    )
+                except BaseException as e:
+                    # PyO3 panics inherit from BaseException, not Exception
+                    if "Python interpreter is not initialized" in str(e):
+                        logger.warning("Embedding interrupted during shutdown")
+                        raise RuntimeError(
+                            "Embedding interrupted during Python shutdown"
+                        ) from e
+                    raise
 
             # Convert chunks to LanceDB records
             records = []
@@ -334,6 +456,10 @@ class LanceVectorDatabase:
                         and chunk.nlp_technical_terms
                         else ""
                     ),
+                    # Git blame metadata
+                    "last_author": chunk.last_author or "",
+                    "last_modified": chunk.last_modified or "",
+                    "commit_hash": chunk.commit_hash or "",
                 }
 
                 # Add structural metrics if provided
@@ -341,12 +467,28 @@ class LanceVectorDatabase:
                     chunk_metrics = metrics[chunk.chunk_id]
                     metadata.update(chunk_metrics)
 
+                # Ensure all schema fields are present with defaults
+                # This prevents "Field not found in target schema" errors
+                schema_defaults = {
+                    # Quality metrics (nullable in schema)
+                    "cognitive_complexity": None,
+                    "cyclomatic_complexity": None,
+                    "max_nesting_depth": None,
+                    "parameter_count": None,
+                    "lines_of_code": None,
+                    "complexity_grade": "",
+                    "code_smells": "[]",
+                    "smell_count": 0,
+                    "quality_score": 0,
+                }
+
                 # Create record with embedding vector
                 record = {
                     "id": chunk.chunk_id or chunk.id,
                     "vector": embedding,
                     "content": chunk.content,
-                    **metadata,
+                    **schema_defaults,  # Add defaults first
+                    **metadata,  # Override with actual values
                 }
                 records.append(record)
 
@@ -451,6 +593,10 @@ class LanceVectorDatabase:
                     chunk_type=result.get("chunk_type", "code"),
                     function_name=result.get("function_name") or None,
                     class_name=result.get("class_name") or None,
+                    # Git blame metadata
+                    last_author=result.get("last_author") or None,
+                    last_modified=result.get("last_modified") or None,
+                    commit_hash=result.get("commit_hash") or None,
                 )
                 search_results.append(search_result)
 
@@ -503,6 +649,11 @@ class LanceVectorDatabase:
             return count_df
 
         except Exception as e:
+            # Handle LanceDB "Not found" errors gracefully (file not in index)
+            error_msg = str(e).lower()
+            if "not found" in error_msg:
+                logger.debug(f"No chunks to delete for {file_path} (not in index)")
+                return 0
             logger.error(f"Failed to delete chunks for {file_path}: {e}")
             raise DatabaseError(f"Failed to delete chunks: {e}") from e
 
@@ -760,13 +911,13 @@ class LanceVectorDatabase:
         self, batch_dict: dict, i: int, num_rows: int
     ) -> CodeChunk:
         """Convert Arrow batch dictionary row to CodeChunk."""
-        imports_str = batch_dict["imports"][i]
+        imports_str = batch_dict.get("imports", [""] * num_rows)[i]
         imports = imports_str.split(",") if imports_str else []
 
-        child_ids_str = batch_dict["child_chunk_ids"][i]
+        child_ids_str = batch_dict.get("child_chunk_ids", [""] * num_rows)[i]
         child_chunk_ids = child_ids_str.split(",") if child_ids_str else []
 
-        decorators_str = batch_dict["decorators"][i]
+        decorators_str = batch_dict.get("decorators", [""] * num_rows)[i]
         decorators = decorators_str.split(",") if decorators_str else []
 
         # Parse calls field (comma-separated string to list)
@@ -806,11 +957,15 @@ class LanceVectorDatabase:
 
     def _row_to_chunk(self, row: Any) -> CodeChunk:
         """Convert Pandas DataFrame row to CodeChunk."""
-        imports = row["imports"].split(",") if row["imports"] else []
+        imports = row.get("imports", "").split(",") if row.get("imports") else []
         child_chunk_ids = (
-            row["child_chunk_ids"].split(",") if row["child_chunk_ids"] else []
+            row.get("child_chunk_ids", "").split(",")
+            if row.get("child_chunk_ids")
+            else []
         )
-        decorators = row["decorators"].split(",") if row["decorators"] else []
+        decorators = (
+            row.get("decorators", "").split(",") if row.get("decorators") else []
+        )
 
         # Parse calls field (comma-separated string to list)
         calls = row.get("calls", "").split(",") if row.get("calls") else []
@@ -864,28 +1019,31 @@ class LanceVectorDatabase:
             if not file_path and not language:
                 return self._table.count_rows()
 
-            # With filters, try Lance scanner first
+            # With filters, build filter expression and count via scanner
+            filter_expr = None
+            if file_path:
+                filter_expr = f"file_path = '{file_path}'"
+            if language:
+                lang_filter = f"language = '{language}'"
+                filter_expr = (
+                    f"{filter_expr} AND {lang_filter}" if filter_expr else lang_filter
+                )
+
+            # Use scanner to get filtered data and count length
+            # Note: count_rows() on filtered scanner is not supported in newer pylance
             try:
-                filter_expr = None
-                if file_path:
-                    filter_expr = f"file_path = '{file_path}'"
-                if language:
-                    lang_filter = f"language = '{language}'"
-                    filter_expr = (
-                        f"{filter_expr} AND {lang_filter}"
-                        if filter_expr
-                        else lang_filter
-                    )
-
                 lance_dataset = self._table.to_lance()
-                scanner = lance_dataset.scanner(filter=filter_expr)
-                return scanner.count_rows()
-
+                scanner = lance_dataset.scanner(
+                    filter=filter_expr,
+                    columns=[],  # Empty column list for counting only
+                )
+                result = scanner.to_table()
+                return len(result)
             except Exception as e:
-                # pylance not available, fall back to Pandas
+                # pylance not available or scanner fails, fall back to Pandas
                 error_msg = str(e).lower()
                 if "pylance" not in error_msg and "lance library" not in error_msg:
-                    # Other error - re-raise
+                    # Not a pylance error - re-raise
                     raise
 
             # Fallback: Load and filter with Pandas

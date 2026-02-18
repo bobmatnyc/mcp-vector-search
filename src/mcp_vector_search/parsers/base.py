@@ -46,6 +46,33 @@ class BaseParser(ABC):
         """
         ...
 
+    def parse_file_sync(self, file_path: Path) -> list[CodeChunk]:
+        """Parse a file synchronously (for multiprocessing workers).
+
+        This method provides synchronous parsing without async overhead,
+        which is more efficient in worker processes where tree-sitter
+        operations are CPU-bound and synchronous anyway.
+
+        Args:
+            file_path: Path to the file to parse
+
+        Returns:
+            List of code chunks extracted from the file
+
+        Note:
+            Subclasses should override this for better performance in
+            multiprocessing scenarios. Default implementation uses async.
+        """
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        return loop.run_until_complete(self.parse_file(file_path))
+
     def supports_file(self, file_path: Path) -> bool:
         """Check if this parser supports the given file.
 
@@ -287,6 +314,43 @@ class FallbackParser(BaseParser):
         except Exception:
             # Return empty list if file can't be read
             return []
+
+    def parse_file_sync(self, file_path: Path) -> list[CodeChunk]:
+        """Parse file synchronously (optimized for multiprocessing)."""
+        try:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            return self._parse_content_sync(content, file_path)
+        except Exception:
+            return []
+
+    def _parse_content_sync(self, content: str, file_path: Path) -> list[CodeChunk]:
+        """Parse content synchronously."""
+        if not content.strip():
+            return []
+
+        lines = self._split_into_lines(content)
+        chunks = []
+
+        # Simple chunking: split into chunks of ~50 lines
+        chunk_size = DEFAULT_CHUNK_SIZE
+        for i in range(0, len(lines), chunk_size):
+            start_line = i + 1
+            end_line = min(i + chunk_size, len(lines))
+
+            chunk_content = self._get_line_range(lines, start_line, end_line)
+
+            if chunk_content.strip():
+                chunk = self._create_chunk(
+                    content=chunk_content,
+                    file_path=file_path,
+                    start_line=start_line,
+                    end_line=end_line,
+                    chunk_type="text",
+                )
+                chunks.append(chunk)
+
+        return chunks
 
     async def parse_content(self, content: str, file_path: Path) -> list[CodeChunk]:
         """Parse content using simple text chunking."""

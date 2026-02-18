@@ -572,6 +572,15 @@ class ChromaVectorDatabase(VectorDatabase):
     async def close(self) -> None:
         """Close database connections."""
         if self._client:
+            # Save schema version after successful operation
+            try:
+                from .schema import save_schema_version
+
+                save_schema_version(self.persist_directory)
+            except Exception as e:
+                # Non-fatal - don't fail close() if schema version save fails
+                logger.warning(f"Failed to save schema version: {e}")
+
             # ChromaDB doesn't require explicit closing
             self._client = None
             self._collection = None
@@ -744,6 +753,11 @@ class ChromaVectorDatabase(VectorDatabase):
             return 0
 
         except Exception as e:
+            # Handle "Not found" errors gracefully (file not in index)
+            error_msg = str(e).lower()
+            if "not found" in error_msg:
+                logger.debug(f"No chunks to delete for {file_path} (not in index)")
+                return 0
             logger.error(f"Failed to delete chunks for {file_path}: {e}")
             raise DatabaseError(f"Failed to delete chunks: {e}") from e
 
@@ -758,6 +772,41 @@ class ChromaVectorDatabase(VectorDatabase):
 
         return await self._statistics_collector.collect_stats(
             self._collection, skip_stats
+        )
+
+    def get_chunk_count(
+        self, file_path: str | None = None, language: str | None = None
+    ) -> int:
+        """Get total chunk count using ChromaDB's native count method.
+
+        Args:
+            file_path: Optional filter by file path
+            language: Optional filter by language
+
+        Returns:
+            Total number of chunks matching the filter criteria
+        """
+        if not self._collection:
+            raise DatabaseNotInitializedError("Database not initialized")
+
+        # Build where clause if filters provided
+        where = None
+        if file_path or language:
+            where_conditions = []
+            if file_path:
+                where_conditions.append({"file_path": file_path})
+            if language:
+                where_conditions.append({"language": language})
+
+            # Combine conditions with AND if multiple
+            if len(where_conditions) == 1:
+                where = where_conditions[0]
+            else:
+                where = {"$and": where_conditions}
+
+        # Use ChromaDB's native count() method
+        return (
+            self._collection.count(where=where) if where else self._collection.count()
         )
 
     async def reset(self) -> None:

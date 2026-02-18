@@ -122,18 +122,7 @@ class MCPVectorSearchServer:
                 database=self.database, project_root=self.project_root
             )
 
-            # Initialize handlers
-            self._search_handlers = SearchHandlers(
-                self.search_engine, self.project_root
-            )
-            self._analysis_handlers = AnalysisHandlers(self.project_root)
-            self._project_handlers = ProjectHandlers(
-                self.project_manager, self.search_engine, self.project_root
-            )
-            self._wiki_handlers = WikiHandlers(self.project_root)
-            self._kg_handlers = KGHandlers(self.project_root)
-
-            # Setup indexer for file watching
+            # Setup indexer for file watching (do this before handlers for status access)
             if self.enable_file_watching:
                 self.indexer = SemanticIndexer(
                     database=self.database,
@@ -154,6 +143,20 @@ class MCPVectorSearchServer:
                 logger.info("File watching enabled for automatic reindexing")
             else:
                 logger.info("File watching disabled")
+
+            # Initialize handlers (after indexer setup for status access)
+            self._search_handlers = SearchHandlers(
+                self.search_engine, self.project_root
+            )
+            self._analysis_handlers = AnalysisHandlers(self.project_root)
+            self._project_handlers = ProjectHandlers(
+                self.project_manager,
+                self.search_engine,
+                self.project_root,
+                self.indexer,
+            )
+            self._wiki_handlers = WikiHandlers(self.project_root)
+            self._kg_handlers = KGHandlers(self.project_root)
 
             self._initialized = True
             logger.info(f"MCP server initialized for project: {self.project_root}")

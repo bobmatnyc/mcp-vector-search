@@ -80,6 +80,60 @@ def export(
     asyncio.run(_export_chunks(output, file_path, code_only))
 
 
+async def _export_kg_data(viz_dir: Path) -> None:
+    """Export KG data to visualization directory.
+
+    Args:
+        viz_dir: Visualization directory path
+    """
+    try:
+        import json
+
+        from ....core.knowledge_graph import KnowledgeGraph
+
+        project_manager = ProjectManager(Path.cwd())
+        kg_path = (
+            project_manager.project_root / ".mcp-vector-search" / "knowledge_graph"
+        )
+        kg = KnowledgeGraph(kg_path)
+        await kg.initialize()
+
+        # Check if KG exists
+        stats = await kg.get_stats()
+        if stats["total_entities"] == 0:
+            console.print(
+                "[yellow]Knowledge graph is empty. Run 'mcp-vector-search kg build' to create it.[/yellow]"
+            )
+            # Create empty KG data file
+            kg_graph_file = viz_dir / "kg-graph.json"
+            with open(kg_graph_file, "w") as f:
+                json.dump({"nodes": [], "links": []}, f)
+            await kg.close()
+            return
+
+        # Export visualization data
+        viz_data = await kg.get_visualization_data()
+
+        # Save to visualization directory
+        kg_graph_file = viz_dir / "kg-graph.json"
+        with open(kg_graph_file, "w") as f:
+            json.dump(viz_data, f, indent=2)
+
+        console.print(
+            f"[green]✓[/green] Exported {len(viz_data['nodes'])} KG nodes to {kg_graph_file}"
+        )
+
+        await kg.close()
+
+    except Exception as e:
+        logger.error(f"KG export failed: {e}")
+        console.print(f"[yellow]⚠ KG export failed: {e}[/yellow]")
+        # Create empty KG data file
+        kg_graph_file = viz_dir / "kg-graph.json"
+        with open(kg_graph_file, "w") as f:
+            json.dump({"nodes": [], "links": []}, f)
+
+
 async def _export_chunks(
     output: Path, file_filter: str | None, code_only: bool = False
 ) -> None:
@@ -244,6 +298,31 @@ def serve(
     if not html_file.exists():
         console.print("[yellow]Creating visualization HTML file...[/yellow]")
         export_to_html(html_file)
+
+    # Check if KG data exists, if not export it
+    kg_graph_file = viz_dir / "kg-graph.json"
+    kg_db_path = (
+        project_manager.project_root
+        / ".mcp-vector-search"
+        / "knowledge_graph"
+        / "code_kg"
+    )
+
+    needs_kg_regeneration = not kg_graph_file.exists()
+
+    # Check if KG database is newer than graph file (stale detection)
+    if kg_graph_file.exists() and kg_db_path.exists():
+        graph_mtime = kg_graph_file.stat().st_mtime
+        kg_mtime = kg_db_path.stat().st_mtime
+        if kg_mtime > graph_mtime:
+            console.print(
+                "[yellow]Knowledge graph has changed since visualization was generated. Regenerating...[/yellow]"
+            )
+            needs_kg_regeneration = True
+
+    if needs_kg_regeneration:
+        console.print("[yellow]Exporting KG data for visualization...[/yellow]")
+        asyncio.run(_export_kg_data(viz_dir))
 
     # Check if we need to regenerate the graph file
     # Regenerate if: graph doesn't exist, code_only filter, or index is newer than graph

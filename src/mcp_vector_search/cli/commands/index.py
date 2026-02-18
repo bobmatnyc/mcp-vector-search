@@ -16,8 +16,10 @@ from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
 from ...core.factory import create_database
 from ...core.indexer import SemanticIndexer
+from ...core.progress import ProgressTracker
 from ...core.project import ProjectManager
 from ..output import (
+    console,
     print_error,
     print_index_stats,
     print_info,
@@ -71,10 +73,11 @@ def main(
         help="Force reindexing of all files",
         rich_help_panel="📊 Indexing Options",
     ),
-    auto_analyze: bool = typer.Option(
-        True,
-        "--analyze/--no-analyze",
-        help="Automatically run analysis after force reindex",
+    force_full: bool = typer.Option(
+        False,
+        "--force-full",
+        "-ff",
+        help="Force complete reindex including knowledge graph rebuild",
         rich_help_panel="📊 Indexing Options",
     ),
     batch_size: int = typer.Option(
@@ -91,6 +94,13 @@ def main(
         "--debug",
         "-d",
         help="Enable debug output (shows hierarchy building details)",
+        rich_help_panel="🔍 Debugging",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show verbose progress output with phase tracking",
         rich_help_panel="🔍 Debugging",
     ),
     skip_relationships: bool = typer.Option(
@@ -111,25 +121,42 @@ def main(
         help="Which indexing phase to run: all (default), chunk, or embed",
         rich_help_panel="📊 Indexing Options",
     ),
+    skip_schema_check: bool = typer.Option(
+        False,
+        "--skip-schema-check",
+        help="Skip schema compatibility check (use with caution - may cause errors if schema is incompatible)",
+        rich_help_panel="⚙️  Advanced Options",
+    ),
+    metrics_json: bool = typer.Option(
+        False,
+        "--metrics-json",
+        help="Output performance metrics as JSON",
+        rich_help_panel="📊 Indexing Options",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        "-l",
+        help="Limit indexing to first N files (for testing)",
+        min=1,
+        rich_help_panel="🔍 Debugging",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
     Parses code files, generates semantic embeddings, and stores them in ChromaDB.
     Supports incremental indexing to skip unchanged files for faster updates.
 
-    When using --force, automatically runs code analysis after indexing completes
-    (can be disabled with --no-analyze).
-
     [bold cyan]Basic Examples:[/bold cyan]
 
     [green]Index entire project:[/green]
         $ mcp-vector-search index
 
-    [green]Force full reindex:[/green]
+    [green]Force reindex (chunks/embeddings only):[/green]
         $ mcp-vector-search index --force
 
-    [green]Force reindex without analysis:[/green]
-        $ mcp-vector-search index --force --no-analyze
+    [green]Force complete rebuild (includes knowledge graph):[/green]
+        $ mcp-vector-search index --force-full
 
     [green]Custom file extensions:[/green]
         $ mcp-vector-search index --extensions .py,.js,.ts,.md
@@ -153,6 +180,11 @@ def main(
     # If a subcommand was invoked, don't run the indexing logic
     if ctx.invoked_subcommand is not None:
         return
+
+    # Handle force-full flag: combines force + compute-relationships
+    if force_full:
+        force = True
+        skip_relationships = False
 
     try:
         project_root = (ctx.obj.get("project_root") if ctx.obj else None) or Path.cwd()
@@ -178,27 +210,20 @@ def main(
                 batch_size=batch_size,
                 show_progress=True,
                 debug=debug,
+                verbose=verbose,
                 skip_relationships=skip_relationships,
                 auto_optimize=auto_optimize,
                 phase=phase,
+                skip_schema_check=skip_schema_check,
+                metrics_json=metrics_json,
+                limit=limit,
             )
         )
 
-        # Auto-analyze after force reindex
-        if force and auto_analyze:
-            from .analyze import run_analysis
-
-            print_info("\n📊 Running analysis after reindex...")
-            asyncio.run(
-                run_analysis(
-                    project_root=project_root,
-                    quick_mode=True,  # Use quick mode for speed
-                    show_smells=True,
-                )
-            )
-
     except KeyboardInterrupt:
-        print_info("Indexing interrupted by user")
+        print_info("\nIndexing interrupted by user")
+        print_info("Progress has been saved. Check status with:")
+        print_info("  [cyan]mcp-vector-search progress[/cyan]")
         raise typer.Exit(0)
     except Exception as e:
         logger.error(f"Indexing failed: {e}")
@@ -329,9 +354,13 @@ async def run_indexing(
     batch_size: int = 32,
     show_progress: bool = True,
     debug: bool = False,
+    verbose: bool = False,
     skip_relationships: bool = False,
     auto_optimize: bool = True,
     phase: str = "all",
+    skip_schema_check: bool = False,
+    metrics_json: bool = False,
+    limit: int | None = None,
 ) -> None:
     """Run the indexing process."""
     # Load project configuration
@@ -344,6 +373,46 @@ async def run_indexing(
 
     config = project_manager.load_config()
 
+    # Check schema compatibility before indexing (unless explicitly skipped)
+    if not skip_schema_check:
+        from ...core.schema import check_schema_compatibility, save_schema_version
+
+        db_path = config.index_path
+        is_compatible, message = check_schema_compatibility(db_path)
+
+        if not is_compatible:
+            print_warning("⚠️  Schema Version Mismatch Detected")
+            print_error(message)
+            print_warning("\n🔄 Auto-resetting database for new schema...")
+
+            # Automatically reset database on schema mismatch
+            import shutil
+
+            if config.index_path.exists():
+                try:
+                    shutil.rmtree(config.index_path)
+                    logger.info(f"Removed old database at {config.index_path}")
+                except Exception as e:
+                    logger.error(f"Failed to remove database: {e}")
+                    raise
+
+            # Ensure index path exists for new database
+            config.index_path.mkdir(parents=True, exist_ok=True)
+
+            # Recreate config file to preserve initialization state
+            # (config.json was deleted with the directory)
+            project_manager.save_config(config)
+            logger.info("Recreated config.json after schema reset")
+
+            # Save new schema version
+            save_schema_version(db_path)
+            print_info("✓ Database reset complete, proceeding with indexing...")
+
+            # Force reindex after reset
+            force_reindex = True
+        else:
+            logger.debug(message)
+
     # Override extensions if provided
     if extensions:
         file_extensions = [ext.strip() for ext in extensions.split(",")]
@@ -353,35 +422,99 @@ async def run_indexing(
         # Create a modified config copy with overridden extensions
         config = config.model_copy(update={"file_extensions": file_extensions})
 
+    # Clean up stale temp databases from incomplete previous rebuilds
+    if force_reindex:
+        import shutil
+
+        base_path = config.index_path.parent  # .mcp-vector-search directory
+
+        # Cleanup specific temp databases
+        stale_paths = [
+            base_path / "lance.new",
+            base_path / "knowledge_graph.new",
+            base_path / "code_search.lance.new",
+            base_path / "chroma.sqlite3.new",
+            base_path / "lance.old",
+            base_path / "knowledge_graph.old",
+            base_path / "code_search.lance.old",
+            base_path / "chroma.sqlite3.old",
+        ]
+
+        for stale_path in stale_paths:
+            if stale_path.exists():
+                try:
+                    if stale_path.is_dir():
+                        shutil.rmtree(stale_path, ignore_errors=True)
+                    else:
+                        stale_path.unlink()
+                    logger.info(f"Cleaned up stale temp database: {stale_path.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up {stale_path}: {e}")
+
+        # Also cleanup any *.tmp, *.lock files via glob patterns
+        cleanup_patterns = ["*.tmp", "*.lock"]
+        for pattern in cleanup_patterns:
+            for stale_file in base_path.glob(pattern):
+                try:
+                    if stale_file.is_dir():
+                        shutil.rmtree(stale_file, ignore_errors=True)
+                    else:
+                        stale_file.unlink()
+                    logger.info(f"Cleaned up stale file: {stale_file.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up {stale_file}: {e}")
+
     print_info(f"Indexing project: {project_root}")
     print_info(f"File extensions: {', '.join(config.file_extensions)}")
     print_info(f"Embedding model: {config.embedding_model}")
 
-    # Setup embedding function and cache
+    # Setup embedding function and cache with progress feedback
     cache_dir = (
         get_default_cache_path(project_root) if config.cache_embeddings else None
     )
-    embedding_function, cache = create_embedding_function(
-        model_name=config.embedding_model,
-        cache_dir=cache_dir,
-        cache_size=config.max_cache_size,
-    )
 
-    # Setup database
-    database = create_database(
-        persist_directory=config.index_path,
-        embedding_function=embedding_function,
-    )
+    # Show progress for model loading (can take 1-30 seconds for ~1.5GB model)
+    with console.status("[dim]Loading embedding model...[/dim]", spinner="dots"):
+        embedding_function, cache = create_embedding_function(
+            model_name=config.embedding_model,
+            cache_dir=cache_dir,
+            cache_size=config.max_cache_size,
+        )
+    console.print("[green]✓[/green] [dim]Embedding model ready[/dim]")
 
-    # Setup indexer
-    indexer = SemanticIndexer(
-        database=database,
-        project_root=project_root,
-        config=config,
-        debug=debug,
-        batch_size=batch_size,
-        auto_optimize=auto_optimize,
-    )
+    # Setup database and indexer with progress feedback
+    with console.status("[dim]Initializing indexing backend...[/dim]", spinner="dots"):
+        database = create_database(
+            persist_directory=config.index_path,
+            embedding_function=embedding_function,
+        )
+
+        indexer = SemanticIndexer(
+            database=database,
+            project_root=project_root,
+            config=config,
+            debug=debug,
+            batch_size=batch_size,
+            auto_optimize=auto_optimize,
+        )
+    console.print("[green]✓[/green] [dim]Backend ready[/dim]")
+
+    # Check if database has existing data for incremental update message
+    if not force_reindex:
+        existing_count = await indexer.get_indexed_count()
+        if existing_count > 0:
+            console.print(
+                f"[dim]ℹ️  Found existing index with {existing_count} files[/dim]"
+            )
+            console.print(
+                "[dim]   Running incremental update (only new/modified files)[/dim]"
+            )
+            console.print("[dim]   Use --force to reindex everything[/dim]\n")
+
+    # Create progress tracker if verbose mode enabled
+    progress_tracker_obj = None
+    if verbose:
+        progress_tracker_obj = ProgressTracker(console, verbose=verbose)
 
     try:
         async with database:
@@ -389,7 +522,15 @@ async def run_indexing(
                 await _run_watch_mode(indexer, show_progress)
             else:
                 await _run_batch_indexing(
-                    indexer, force_reindex, show_progress, skip_relationships, phase
+                    indexer,
+                    force_reindex,
+                    show_progress,
+                    skip_relationships,
+                    phase,
+                    progress_tracker_obj,
+                    metrics_json,
+                    limit,
+                    verbose,
                 )
 
     except Exception as e:
@@ -403,8 +544,24 @@ async def _run_batch_indexing(
     show_progress: bool,
     skip_relationships: bool = False,
     phase: str = "all",
+    progress_tracker: ProgressTracker | None = None,
+    metrics_json: bool = False,
+    limit: int | None = None,
+    verbose: bool = False,
 ) -> None:
-    """Run batch indexing of all files."""
+    """Run batch indexing of all files with three-phase progress display."""
+    # Initialize progress state tracking
+    from .progress_state import ProgressStateManager
+
+    progress_manager = ProgressStateManager(indexer.project_root)
+    progress_manager.reset()  # Start fresh tracking
+
+    # Start progress tracking if verbose mode enabled
+    if progress_tracker:
+        progress_tracker.start(
+            f"Indexing project: {indexer.project_root}", total_phases=4
+        )
+
     if show_progress:
         # Import enhanced progress utilities
         from rich.layout import Layout
@@ -415,24 +572,171 @@ async def _run_batch_indexing(
             Progress,
             SpinnerColumn,
             TextColumn,
-            TimeRemainingColumn,
         )
+
+        # Get existing indexed count BEFORE scanning (for progress display context)
+        # For force rebuild, existing_count should be 0 (we're rebuilding from scratch)
+        if force_reindex:
+            existing_count = 0
+        else:
+            existing_count = await indexer.get_indexed_count()
+
+        # Pre-scan to get total file count with live progress display
         from rich.table import Table
+        from rich.text import Text
 
         from ..output import console
 
-        # Pre-scan to get total file count
-        console.print("[dim]Scanning for indexable files...[/dim]")
-        indexable_files, files_to_index = await indexer.get_files_to_index(
-            force_reindex=force_reindex
-        )
+        console.print()  # Add blank line before progress
+
+        # Phase 1: File discovery
+        if progress_tracker:
+            progress_tracker.phase("Discovering files")
+
+        # Track discovery progress
+        dirs_scanned = 0
+        files_found = 0
+
+        def update_discovery_progress(dirs: int, files: int):
+            nonlocal dirs_scanned, files_found
+            dirs_scanned = dirs
+            files_found = files
+
+        # Create live-updating progress display
+        progress_text = Text()
+        progress_text.append("📂 ", style="cyan")
+        progress_text.append("Scanning directories... ", style="dim")
+
+        with Live(
+            progress_text, console=console, refresh_per_second=10
+        ) as live_display:
+
+            async def scan_with_progress():
+                return await indexer.get_files_to_index(
+                    force_reindex=force_reindex,
+                    progress_callback=update_discovery_progress,
+                    file_limit=limit,  # Early exit from discovery when limit reached
+                )
+
+            # Poll progress while scanning
+            scan_task = asyncio.create_task(scan_with_progress())
+
+            # Update display every 100ms while scanning
+            while not scan_task.done():
+                progress_text = Text()
+                progress_text.append("📂 ", style="cyan")
+                progress_text.append("Scanning... ", style="dim")
+                progress_text.append(
+                    f"{dirs_scanned:,} dirs, {files_found:,} files found",
+                    style="cyan",
+                )
+                live_display.update(progress_text)
+                await asyncio.sleep(0.1)
+
+            # Get final results
+            indexable_files, files_to_index = await scan_task
+
+        # Clean up stale metadata entries (files that no longer exist)
+        if indexable_files:
+            valid_files = {str(f) for f in indexable_files}
+            removed = indexer.metadata.cleanup_stale_entries(valid_files)
+            if removed > 0:
+                console.print(
+                    f"[dim]🧹 Cleaned up {removed:,} stale metadata entries[/dim]"
+                )
+
+        # Apply limit if specified
+        if limit is not None and len(files_to_index) > limit:
+            console.print(
+                f"[yellow]⚠️  Limiting to first {limit} files (out of {len(files_to_index)} total)[/yellow]"
+            )
+            files_to_index = files_to_index[:limit]
+
         total_files = len(files_to_index)
 
+        # Progress tracker update for file discovery
+        if progress_tracker:
+            progress_tracker.item(
+                f"Found {len(indexable_files)} total files", done=True
+            )
+            if total_files < len(indexable_files):
+                progress_tracker.item(
+                    f"{total_files} files need indexing (incremental update)", done=True
+                )
+            else:
+                progress_tracker.item(f"{total_files} files to index", done=True)
+
+        # Initialize progress state with total files
+        progress_manager.update_chunking(total_files=total_files)
+
+        # Show discovery results
         if total_files == 0:
-            console.print("[yellow]No files need indexing[/yellow]")
+            # All files are already indexed
+            console.print(
+                f"[green]✓[/green] [dim]All {len(indexable_files)} files are up to date[/dim]"
+            )
+            console.print("[dim]   No new or modified files to index[/dim]\n")
             indexed_count = 0
+
+            # Complete progress tracker if enabled
+            if progress_tracker:
+                progress_tracker.complete(
+                    "All files up to date, no indexing needed", time_taken=0
+                )
+        elif force_reindex:
+            # Force rebuild (with or without limit)
+            console.print(
+                f"[green]✓[/green] [dim]Discovered {len(indexable_files)} total files[/dim]"
+            )
+            if limit is not None and total_files < len(indexable_files):
+                console.print(
+                    f"[cyan]🔄 Force rebuild: processing {total_files} files[/cyan] "
+                    f"[dim](limited from {len(indexable_files)} total)[/dim]\n"
+                )
+            else:
+                console.print(
+                    f"[cyan]🔄 Force rebuild: reindexing all {total_files} files[/cyan]\n"
+                )
+        elif total_files == len(indexable_files):
+            # Full indexing (first run, no prior index)
+            console.print(
+                f"[green]✓[/green] [dim]Discovered {len(indexable_files)} files to index[/dim]\n"
+            )
         else:
-            console.print(f"[dim]Found {total_files} files to index[/dim]\n")
+            # Incremental update
+            console.print(
+                f"[green]✓[/green] [dim]Discovered {len(indexable_files)} total files[/dim]"
+            )
+            console.print(
+                f"[cyan]📂 Updated {total_files} new/modified files[/cyan] "
+                f"[dim]({len(indexable_files) - total_files} unchanged)[/dim]\n"
+            )
+
+        if total_files > 0:
+            # Pre-initialize backends before progress display
+            with console.status(
+                "[dim]Initializing indexing backend...[/dim]", spinner="dots"
+            ):
+                # Initialize the backends here so the progress display starts with tasks already added
+                if indexer.chunks_backend._db is None:
+                    await indexer.chunks_backend.initialize()
+                if indexer.vectors_backend._db is None:
+                    await indexer.vectors_backend.initialize()
+            console.print("[green]✓[/green] [dim]Backend ready[/dim]")
+
+            # Show temp DB indication if force_reindex
+            if force_reindex:
+                # CRITICAL: Set atomic rebuild flag to skip delete operations
+                # This provides massive performance improvement (2-3x faster)
+                indexer._atomic_rebuild_active = True
+                console.print(
+                    "[cyan]🔄 Building to temporary database (atomic rebuild)...[/cyan]\n"
+                )
+            else:
+                console.print()  # Just add blank line
+
+            # Import time for throughput tracking
+            import time
 
             # Track recently indexed files for display
             recent_files = []
@@ -440,29 +744,96 @@ async def _run_batch_indexing(
             indexed_count = 0
             failed_count = 0
 
-            # Create layout for two-panel display
-            layout = Layout()
-            layout.split_column(
-                Layout(name="progress", size=4),
-                Layout(name="samples", size=7),
-            )
+            # Track chunk and embedding progress separately
+            total_chunks_created = 0  # Total chunks created from parsing
+            chunks_embedded = 0  # Chunks successfully embedded
+            embedding_start_time = time.time()  # For throughput calculation
 
-            # Create progress bar
+            # Create progress bars for all three phases
+            # NOTE: We'll dynamically update total for Phase 2 as chunks are created
             progress = Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(bar_width=40),
                 TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TextColumn("({task.completed}/{task.total} files)"),
-                TimeRemainingColumn(),
+                TextColumn("[dim]{task.fields[progress_text]}[/dim]"),
                 console=console,
             )
 
-            task = progress.add_task("Indexing files...", total=total_files)
+            # Phase 1: Chunking (file-level progress)
+            # Total should include both existing and new files
+            total_files_including_cached = existing_count + total_files
+            phase1_task = progress.add_task(
+                "📄 Chunking   ",
+                total=total_files_including_cached,
+                completed=existing_count,  # Start from cached count
+                progress_text=f"{existing_count:,}/{total_files_including_cached:,} files ({existing_count:,} cached)",
+            )
 
-            # Create live display with both panels
+            # Phase 2: Embedding (chunk-level progress, starts with total=1 to avoid division by zero)
+            phase2_task = progress.add_task(
+                "🧠 Embedding  ",
+                total=1,
+                completed=0,
+                progress_text="0 chunks embedded",
+            )
+
+            # Phase 3: Knowledge Graph
+            phase3_task = progress.add_task(
+                "🔗 KG Build   ", total=1, completed=0, progress_text="pending"
+            )
+
+            # Track phase timing
+            phase_start_times = {
+                "phase1": time.time(),
+                "phase2": None,
+                "phase3": None,
+            }
+
+            # Track phase completion
+            phase_times = {
+                "phase1": 0,
+                "phase2": 0,
+                "phase3": 0,
+            }
+
+            # Create samples table BEFORE layout to have all content ready
+            samples_table = Table.grid(expand=True)
+            samples_table.add_column(style="dim")
+            samples_table.add_row("[dim]Starting indexing...[/dim]")
+
+            # Create layout with initial content to avoid debug output
+            layout = Layout()
+            layout.split_column(
+                Layout(name="phases", size=8),
+                Layout(name="samples", size=7),
+            )
+
+            # Initialize panels with actual content BEFORE Live display
+            # Progress now has tasks added, so it won't show debug representation
+            layout["phases"].update(
+                Panel(
+                    progress,
+                    title="[bold]📊 Indexing Progress[/bold]",
+                    border_style="blue",
+                )
+            )
+
+            layout["samples"].update(
+                Panel(
+                    samples_table,
+                    title="[bold]📁 Recently Processed[/bold]",
+                    border_style="dim",
+                )
+            )
+
+            # Progress tracker: Phase 2 - Parsing & Chunking
+            if progress_tracker:
+                progress_tracker.phase("Parsing & chunking")
+
+            # Create live display
             with Live(layout, console=console, refresh_per_second=4):
-                # Index files with progress updates
+                # Phase 1: Chunking and file processing
                 async for (
                     file_path,
                     chunks_added,
@@ -471,11 +842,67 @@ async def _run_batch_indexing(
                     # Update counts
                     if success:
                         indexed_count += 1
+                        total_chunks_created += chunks_added
+                        # Phase 2 progresses AFTER chunks are embedded (happens in batch)
+                        # For now, we assume embedding happens immediately after parsing
+                        chunks_embedded += chunks_added
+
+                        # Update progress state
+                        progress_manager.update_chunking(
+                            processed_files_increment=1,
+                            chunks_increment=chunks_added,
+                        )
+                        progress_manager.update_embedding(
+                            total_chunks=total_chunks_created,
+                            embedded_chunks_increment=chunks_added,
+                        )
                     else:
                         failed_count += 1
+                        # Still count as processed even if failed
+                        progress_manager.update_chunking(processed_files_increment=1)
 
-                    # Update progress
-                    progress.update(task, advance=1)
+                    # Update Phase 1 progress (file-based, include existing context)
+                    current_total = existing_count + indexed_count
+                    phase1_elapsed = time.time() - phase_start_times["phase1"]
+                    chunking_rate = (
+                        total_chunks_created / phase1_elapsed
+                        if phase1_elapsed > 0
+                        else 0
+                    )
+                    # Format rate display with avg chunks/file
+                    if chunking_rate > 0:
+                        avg_chunks_per_file = (
+                            total_chunks_created / indexed_count
+                            if indexed_count > 0
+                            else 0
+                        )
+                        rate_display = f"({chunking_rate:.1f}/sec, ~{avg_chunks_per_file:.1f}/file)"
+                    else:
+                        rate_display = ""
+
+                    if existing_count > 0:
+                        progress_text_str = f"{current_total:,}/{total_files_including_cached:,} files ({indexed_count} new + {existing_count:,} cached) → {total_chunks_created:,} chunks {rate_display} • {phase1_elapsed:.0f}s"
+                    else:
+                        progress_text_str = f"{current_total:,}/{total_files_including_cached:,} files → {total_chunks_created:,} chunks {rate_display} • {phase1_elapsed:.0f}s"
+
+                    progress.update(
+                        phase1_task,
+                        advance=1,
+                        progress_text=progress_text_str,
+                    )
+
+                    # Update Phase 2 progress (chunk-based)
+                    # Update total to reflect chunks created so far
+                    if total_chunks_created > 0:
+                        # Calculate chunks per second
+                        elapsed = time.time() - embedding_start_time
+                        chunks_per_sec = chunks_embedded / elapsed if elapsed > 0 else 0
+                        progress.update(
+                            phase2_task,
+                            total=total_chunks_created,
+                            completed=chunks_embedded,
+                            progress_text=f"{chunks_embedded:,}/{total_chunks_created:,} chunks ({chunks_per_sec:.1f}/sec)",
+                        )
 
                     # Update current file name for display
                     current_file_name = file_path.name
@@ -490,11 +917,26 @@ async def _run_batch_indexing(
                     if len(recent_files) > 5:
                         recent_files.pop(0)
 
-                    # Update display layouts
-                    layout["progress"].update(
+                    # Calculate embedding throughput (separate from chunking)
+                    embed_elapsed = time.time() - embedding_start_time
+                    _embedding_rate = (  # noqa: F841 - kept for future use
+                        chunks_embedded / embed_elapsed if embed_elapsed > 0 else 0
+                    )
+
+                    # Update phases panel with existing files context
+                    current_total = existing_count + indexed_count
+                    # Don't show rates in header (they're shown in progress lines)
+                    if existing_count > 0:
+                        # Show both new and existing files
+                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({current_total:,}/{total_files_including_cached:,} files • {indexed_count} new + {existing_count:,} cached • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]"
+                    else:
+                        # First-time indexing, no cached files
+                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({current_total:,}/{total_files_including_cached:,} files • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]"
+
+                    layout["phases"].update(
                         Panel(
                             progress,
-                            title="[bold]Indexing Progress[/bold]",
+                            title=title_text,
                             border_style="blue",
                         )
                     )
@@ -525,56 +967,367 @@ async def _run_batch_indexing(
                     layout["samples"].update(
                         Panel(
                             samples_table,
-                            title="[bold]File Processing[/bold]",
+                            title="[bold]📁 Recently Processed[/bold]",
                             border_style="dim",
                         )
                     )
 
-            # Rebuild directory index after indexing completes
-            try:
-                import os
+                # Phase 1 & 2 complete (they happen together in current implementation)
+                phase_times["phase1"] = time.time() - phase_start_times["phase1"]
 
-                chunk_stats = {}
-                for file_path in files_to_index:
-                    try:
-                        mtime = os.path.getmtime(file_path)
-                        chunk_stats[str(file_path)] = {
-                            "modified": mtime,
-                            "chunks": 1,  # Placeholder - real counts are in database
-                        }
-                    except OSError:
-                        pass
+                # Progress tracker update for parsing/chunking completion
+                if progress_tracker:
+                    progress_tracker.item(f"Parsed {indexed_count} files", done=True)
+                    progress_tracker.item(
+                        f"Generated {total_chunks_created:,} chunks", done=True
+                    )
 
-                indexer.directory_index.rebuild_from_files(
-                    files_to_index, indexer.project_root, chunk_stats=chunk_stats
+                # Include existing files in completion message with chunking rate and avg chunks/file
+                final_total = existing_count + indexed_count
+                phase1_elapsed = phase_times["phase1"]
+                final_chunking_rate = (
+                    total_chunks_created / phase1_elapsed if phase1_elapsed > 0 else 0
                 )
-                indexer.directory_index.save()
-            except Exception as e:
-                logger.error(f"Failed to update directory index: {e}")
+                final_avg_chunks_per_file = (
+                    total_chunks_created / indexed_count if indexed_count > 0 else 0
+                )
+                if existing_count > 0:
+                    completion_text = f"{final_total:,}/{total_files_including_cached:,} files ({indexed_count} new + {existing_count:,} cached) → {total_chunks_created:,} chunks ({final_chunking_rate:.1f}/sec, ~{final_avg_chunks_per_file:.1f}/file) • {phase1_elapsed:.0f}s"
+                else:
+                    completion_text = f"{final_total:,}/{total_files_including_cached:,} files → {total_chunks_created:,} chunks ({final_chunking_rate:.1f}/sec, ~{final_avg_chunks_per_file:.1f}/file) • {phase1_elapsed:.0f}s"
 
-            # Mark relationships for background computation (unless skipped)
-            if not skip_relationships and indexed_count > 0:
+                progress.update(
+                    phase1_task,
+                    completed=total_files_including_cached,
+                    progress_text=completion_text,
+                )
+
+                # Phase 2 completes at the same time as Phase 1 (embedding happens during indexing)
+                phase_times["phase2"] = phase_times["phase1"]  # Same timing
+                embedding_elapsed = time.time() - embedding_start_time
+                final_chunks_per_sec = (
+                    chunks_embedded / embedding_elapsed if embedding_elapsed > 0 else 0
+                )
+                progress.update(
+                    phase2_task,
+                    total=total_chunks_created if total_chunks_created > 0 else 1,
+                    completed=chunks_embedded,
+                    progress_text=f"{chunks_embedded:,}/{total_chunks_created:,} chunks ({final_chunks_per_sec:.1f}/sec) • {phase_times['phase1']:.0f}s",
+                )
+
+                # Progress tracker: Phase 3 - Embedding
+                if progress_tracker:
+                    progress_tracker.phase("Generating embeddings")
+                    progress_tracker.item(
+                        f"Embedded {chunks_embedded:,} chunks", done=True
+                    )
+
+                # Update display
+                layout["phases"].update(
+                    Panel(
+                        progress,
+                        title="[bold]📊 Indexing Progress[/bold]",
+                        border_style="blue",
+                    )
+                )
+
+                # Rebuild directory index after indexing completes
                 try:
-                    console.print(
-                        "\n[cyan]Marking relationships for background computation...[/cyan]"
-                    )
-                    all_chunks = await indexer.database.get_all_chunks()
+                    import os
 
-                    if len(all_chunks) > 0:
-                        await indexer.relationship_store.compute_and_store(
-                            all_chunks, indexer.database, background=True
-                        )
-                        console.print(
-                            "[green]✓[/green] Relationships marked for background computation"
-                        )
-                        console.print(
-                            "[dim]  → Use 'mcp-vector-search index relationships' to compute now[/dim]"
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to mark relationships: {e}")
-                    console.print(
-                        "[yellow]⚠ Relationships not marked (visualization will compute on demand)[/yellow]"
+                    chunk_stats = {}
+                    for file_path in files_to_index:
+                        try:
+                            mtime = os.path.getmtime(file_path)
+                            chunk_stats[str(file_path)] = {
+                                "modified": mtime,
+                                "chunks": 1,  # Placeholder - real counts are in database
+                            }
+                        except OSError:
+                            pass
+
+                    indexer.directory_index.rebuild_from_files(
+                        files_to_index, indexer.project_root, chunk_stats=chunk_stats
                     )
+                    indexer.directory_index.save()
+                except Exception as e:
+                    logger.error(f"Failed to update directory index: {e}")
+
+                # Phase 3: Knowledge Graph building
+                if not skip_relationships and indexed_count > 0:
+                    try:
+                        # Progress tracker: Phase 4 - KG Build
+                        if progress_tracker:
+                            progress_tracker.phase("Building knowledge graph")
+
+                        phase_start_times["phase3"] = time.time()
+
+                        # Update progress to show starting
+                        progress.update(
+                            phase3_task,
+                            progress_text="initializing...",
+                        )
+
+                        # CRITICAL: Use subprocess isolation to avoid Kuzu segfaults
+                        # The async KG builder causes segfaults with LanceDB background threads
+                        # We use the same subprocess isolation pattern as `kg build` command
+                        import subprocess
+                        import sys
+                        import tempfile
+                        from dataclasses import asdict
+
+                        # Get all chunks for KG building
+                        all_chunks = await indexer.database.get_all_chunks()
+
+                        if len(all_chunks) > 0:
+                            # Update progress to show preparing
+                            progress.update(
+                                phase3_task,
+                                total=len(all_chunks),
+                                completed=0,
+                                progress_text=f"preparing {len(all_chunks):,} chunks...",
+                            )
+
+                            # Serialize chunks to temp JSON file for subprocess
+                            temp_fd, chunks_file = tempfile.mkstemp(
+                                suffix=".json", prefix="kg_chunks_"
+                            )
+                            try:
+                                with open(chunks_file, "w") as f:
+                                    # Serialize chunks to JSON (use asdict for dataclasses)
+                                    chunks_data = [
+                                        asdict(chunk) for chunk in all_chunks
+                                    ]
+                                    # Convert Path objects to strings for JSON serialization
+                                    for chunk_dict in chunks_data:
+                                        chunk_dict["file_path"] = str(
+                                            chunk_dict["file_path"]
+                                        )
+                                    json.dump(chunks_data, f)
+                            finally:
+                                os.close(temp_fd)
+
+                            # Update progress to show subprocess starting
+                            progress.update(
+                                phase3_task,
+                                progress_text="building in subprocess...",
+                            )
+
+                            # Determine KG path based on rebuild mode
+                            if force_reindex:
+                                kg_path_suffix = "knowledge_graph.new"
+                            else:
+                                kg_path_suffix = "knowledge_graph"
+
+                            # Build command to execute subprocess
+                            python_executable = sys.executable
+                            subprocess_script = (
+                                Path(__file__).parent / "_kg_subprocess.py"
+                            )
+
+                            # Create args for subprocess (matching _kg_subprocess.py expectations)
+                            cmd = [
+                                python_executable,
+                                str(subprocess_script),
+                                str(indexer.project_root.absolute()),
+                                chunks_file,
+                            ]
+
+                            # Always force rebuild during indexing (clear existing KG)
+                            cmd.append("--force")
+
+                            # Skip expensive documents relationship in index command
+                            # (can be added later with `kg build` if needed)
+                            cmd.append("--skip-documents")
+
+                            if verbose:
+                                cmd.append("--verbose")
+
+                            # CRITICAL: Set environment variable to use .new suffix for atomic rebuild
+                            env = os.environ.copy()
+                            env["KG_PATH_SUFFIX"] = kg_path_suffix
+
+                            # Run subprocess
+                            result = subprocess.run(
+                                cmd,
+                                check=False,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                text=True,
+                                env=env,
+                            )
+
+                            # Clean up temp file
+                            try:
+                                Path(chunks_file).unlink()
+                            except Exception:
+                                pass
+
+                            # Check subprocess exit code
+                            if result.returncode == 0:
+                                # Parse KG stats from subprocess output
+                                # The subprocess prints a table with "Code Entities", etc.
+                                entities = 0
+                                relationships = 0
+
+                                # Try to extract stats from subprocess output
+                                # The subprocess outputs a Rich table like:
+                                # │ Code Entities │ 3,396 │
+                                for line in result.stdout.splitlines():
+                                    if "Code Entities" in line:
+                                        try:
+                                            # Split by │ separator
+                                            parts = line.split("│")
+                                            # The number is in the second-to-last part
+                                            entities = int(
+                                                parts[-2].strip().replace(",", "")
+                                            )
+                                        except (ValueError, IndexError):
+                                            pass
+                                    elif "Calls" in line:
+                                        try:
+                                            parts = line.split("│")
+                                            calls = int(
+                                                parts[-2].strip().replace(",", "")
+                                            )
+                                            relationships += calls
+                                        except (ValueError, IndexError):
+                                            pass
+                                    elif "Imports" in line:
+                                        try:
+                                            parts = line.split("│")
+                                            imports = int(
+                                                parts[-2].strip().replace(",", "")
+                                            )
+                                            relationships += imports
+                                        except (ValueError, IndexError):
+                                            pass
+
+                                # Complete Phase 3
+                                phase_times["phase3"] = (
+                                    time.time() - phase_start_times["phase3"]
+                                )
+                                progress.update(
+                                    phase3_task,
+                                    completed=len(all_chunks),
+                                    progress_text=f"{entities:,} entities, {relationships:,} relations • {phase_times['phase3']:.0f}s",
+                                )
+
+                                # Progress tracker update for KG build
+                                if progress_tracker:
+                                    progress_tracker.item(
+                                        f"Built knowledge graph with {entities:,} entities and {relationships:,} relationships",
+                                        done=True,
+                                    )
+                            else:
+                                # Subprocess failed
+                                logger.error(
+                                    f"KG build subprocess failed with exit code {result.returncode}"
+                                )
+                                if verbose:
+                                    console.print(
+                                        f"[red]Subprocess output:[/red]\n{result.stdout}"
+                                    )
+
+                                phase_times["phase3"] = (
+                                    time.time() - phase_start_times["phase3"]
+                                )
+                                progress.update(
+                                    phase3_task,
+                                    completed=0,
+                                    progress_text=f"[red]failed[/red] • {phase_times['phase3']:.0f}s",
+                                )
+
+                            # Mark indexing as complete in progress state
+                            progress_manager.mark_complete()
+
+                            # Final display with total time (phase1 and phase2 overlap)
+                            total_time = phase_times["phase1"] + phase_times["phase3"]
+
+                            # Add swap message if force_reindex
+                            completion_title = "[bold green]✓[/bold green] [bold]📊 Indexing Complete[/bold]"
+                            if force_reindex:
+                                completion_title += " [dim](atomic rebuild)[/dim]"
+                            completion_title += f" [dim]Total: {total_time:.0f}s[/dim]"
+
+                            layout["phases"].update(
+                                Panel(
+                                    progress,
+                                    title=completion_title,
+                                    border_style="green",
+                                )
+                            )
+
+                            # Update samples panel with completion message
+                            completion_msg = "[green]✓[/green] All phases complete!\n\n"
+                            if force_reindex:
+                                completion_msg += "[green]✓ Replaced live database with new index[/green]\n\n"
+                            else:
+                                completion_msg += (
+                                    "[dim]Index updated successfully[/dim]\n\n"
+                                )
+
+                            # Suggest next steps
+                            completion_msg += (
+                                "[bold]Search/Chat:[/bold]\n"
+                                "  [cyan]mcp-vector-search search '<query>'[/cyan] - Semantic search\n"
+                                "  [cyan]mcp-vector-search chat '<question>'[/cyan] - Ask AI about code\n"
+                                "  [cyan]mcp-vector-search status[/cyan] - View statistics\n\n"
+                                "[bold]Knowledge Graph:[/bold]\n"
+                                "  [cyan]mcp-vector-search kg stats[/cyan] - Graph statistics\n"
+                                "  [cyan]mcp-vector-search kg query '<entity>'[/cyan] - Find related\n"
+                                "  [cyan]mcp-vector-search kg calls '<func>'[/cyan] - Call graph\n\n"
+                                "[bold]Visualization:[/bold]\n"
+                                "  [cyan]mcp-vector-search visualize[/cyan] - Interactive explorer\n\n"
+                                "[bold]Analyze Code:[/bold]\n"
+                                "  [cyan]mcp-vector-search analyze[/cyan] - Full (complexity + dead code)\n"
+                                "  [cyan]mcp-vector-search analyze complexity[/cyan] - Complexity only\n"
+                                "  [cyan]mcp-vector-search analyze dead-code[/cyan] - Dead code only"
+                            )
+
+                            layout["samples"].update(
+                                Panel(
+                                    completion_msg,
+                                    title="[bold]📁 Status[/bold]",
+                                    border_style="green",
+                                )
+                            )
+
+                    except Exception as e:
+                        logger.warning(f"Failed to build knowledge graph: {e}")
+                        import traceback
+
+                        traceback.print_exc()
+                        progress.update(
+                            phase3_task,
+                            completed=1,
+                            progress_text="[yellow]⚠ Skipped[/yellow]",
+                        )
+
+                        # Show warning in final display (phase1 and phase2 overlap)
+                        total_time = phase_times["phase1"] + phase_times.get(
+                            "phase3", 0
+                        )
+                        layout["phases"].update(
+                            Panel(
+                                progress,
+                                title=f"[bold yellow]⚠[/bold yellow] [bold]📊 Indexing Complete[/bold] [dim]Total: {total_time:.0f}s[/dim]",
+                                border_style="yellow",
+                            )
+                        )
+                        # Still mark as complete even if KG build failed
+                        progress_manager.mark_complete()
+                else:
+                    # If relationships were skipped, still mark as complete
+                    progress_manager.mark_complete()
+
+            # Progress tracker completion
+            if progress_tracker:
+                total_time = phase_times["phase1"] + phase_times.get("phase3", 0)
+                progress_tracker.complete(
+                    f"Indexing complete! Files: {indexed_count}, Chunks: {total_chunks_created:,}",
+                    time_taken=total_time,
+                )
 
             # Final progress summary
             console.print()
@@ -596,6 +1349,7 @@ async def _run_batch_indexing(
             show_progress=show_progress,
             skip_relationships=skip_relationships,
             phase=phase,
+            metrics_json=metrics_json,
         )
 
     # Show statistics
@@ -608,6 +1362,45 @@ async def _run_batch_indexing(
     )
 
     print_index_stats(stats)
+
+    # Check for KG stats and show if available
+    kg_path = indexer.project_root / ".mcp-vector-search" / "knowledge_graph"
+    kg_db_path = kg_path / "code_kg"
+
+    kg_has_relationships = False  # Track whether KG has complete relationships
+    if kg_db_path.exists():
+        try:
+            from ...core.knowledge_graph import KnowledgeGraph
+            from ..output import print_kg_stats
+
+            kg = KnowledgeGraph(kg_path)
+            await kg.initialize()
+            kg_stats = await kg.get_stats()
+
+            if kg_stats.get("total_entities", 0) > 0:
+                console.print()  # Blank line before KG stats
+                print_kg_stats(kg_stats)
+
+                # Check if relationships are built
+                kg_has_relationships = await kg.has_relationships()
+
+                if not kg_has_relationships:
+                    # Show warning if incomplete KG
+                    console.print()
+                    console.print(
+                        "[yellow]⚠️  Knowledge Graph is incomplete[/yellow] "
+                        "[dim](entities exist but no relationships)[/dim]"
+                    )
+
+                await kg.close()
+        except Exception as e:
+            logger.debug(f"Could not load KG stats: {e}")
+    else:
+        # KG not built - show hint
+        console.print()
+        console.print(
+            "[dim]💡 Run 'mcp-vector-search kg build' to enable graph queries[/dim]"
+        )
 
     # Add next-step hints
     if indexed_count > 0:
@@ -628,11 +1421,68 @@ async def _run_batch_indexing(
         else:
             chat_hint = "[cyan]mcp-vector-search chat 'question'[/cyan] - Ask AI about your code [dim](requires API key)[/dim]"
 
+        # Conditionally show KG build step based on database existence AND relationship status
+        kg_db_exists = kg_db_path.exists()
+        kg_complete = kg_db_exists and kg_has_relationships
+
         steps = [
+            "[bold]Search/Chat:[/bold]",
             "[cyan]mcp-vector-search search 'your query'[/cyan] - Try semantic search",
             chat_hint,
             "[cyan]mcp-vector-search status[/cyan] - View detailed statistics",
         ]
+
+        if not kg_db_exists:
+            # KG database doesn't exist - show build hint
+            steps.extend(
+                [
+                    "",
+                    "[bold]Knowledge Graph:[/bold]",
+                    "[cyan]mcp-vector-search kg build[/cyan] - Build knowledge graph for advanced queries",
+                ]
+            )
+        elif not kg_complete:
+            # KG exists but incomplete (no relationships) - show rebuild hint
+            steps.extend(
+                [
+                    "",
+                    "[bold]Knowledge Graph:[/bold]",
+                    "[cyan]mcp-vector-search kg build --force[/cyan] - Rebuild incomplete graph (has entities but no relationships)",
+                ]
+            )
+        else:
+            # KG is complete - show query commands
+            steps.extend(
+                [
+                    "",
+                    "[bold]Knowledge Graph:[/bold]",
+                    "[cyan]mcp-vector-search kg stats[/cyan] - View graph statistics",
+                    '[cyan]mcp-vector-search kg query "ClassName"[/cyan] - Find related entities',
+                    '[cyan]mcp-vector-search kg calls "function_name"[/cyan] - Show call graph',
+                    '[cyan]mcp-vector-search kg inherits "ClassName"[/cyan] - Show inheritance tree',
+                ]
+            )
+
+        # Add visualization options
+        steps.extend(
+            [
+                "",
+                "[bold]Visualization:[/bold]",
+                "[cyan]mcp-vector-search visualize[/cyan] - Interactive code explorer (chunks + KG graph)",
+            ]
+        )
+
+        # Add analyze code options
+        steps.extend(
+            [
+                "",
+                "[bold]Analyze Code:[/bold]",
+                "[cyan]mcp-vector-search analyze[/cyan] - Full (complexity + dead code)",
+                "[cyan]mcp-vector-search analyze complexity[/cyan] - Complexity only",
+                "[cyan]mcp-vector-search analyze dead-code[/cyan] - Dead code only",
+            ]
+        )
+
         print_next_steps(steps, title="Ready to Search")
     else:
         print_info("\n[bold]No files were indexed. Possible reasons:[/bold]")
@@ -774,7 +1624,9 @@ async def _reindex_entire_project(project_root: Path) -> None:
             await database.reset()
 
             # Then reindex everything with enhanced progress display
-            await _run_batch_indexing(indexer, force_reindex=True, show_progress=True)
+            await _run_batch_indexing(
+                indexer, force_reindex=True, show_progress=True, verbose=False
+            )
 
     except Exception as e:
         logger.error(f"Full reindex error: {e}")

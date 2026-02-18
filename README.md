@@ -4,7 +4,7 @@
 
 [![PyPI version](https://badge.fury.io/py/mcp-vector-search.svg)](https://badge.fury.io/py/mcp-vector-search)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Elastic-2.0](https://img.shields.io/badge/License-Elastic--2.0-blue.svg)](LICENSE)
 
 > ⚠️ **Production Release (v2.1.9)**: Stable and actively maintained. LanceDB is now the default backend for better performance and stability.
 
@@ -862,7 +862,9 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+Elastic License 2.0 - see [LICENSE](LICENSE) file for details.
+
+**Note**: This software may not be provided to third parties as a hosted or managed service.
 
 ## 🙏 Acknowledgments
 

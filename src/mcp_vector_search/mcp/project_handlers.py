@@ -6,6 +6,7 @@ from typing import Any
 from mcp.types import CallToolResult, TextContent
 
 from ..core.exceptions import ProjectNotFoundError
+from ..core.indexer import SemanticIndexer
 from ..core.project import ProjectManager
 from ..core.search import SemanticSearchEngine
 
@@ -18,6 +19,7 @@ class ProjectHandlers:
         project_manager: ProjectManager,
         search_engine: SemanticSearchEngine | None,
         project_root: Path,
+        indexer: SemanticIndexer | None = None,
     ):
         """Initialize project handlers.
 
@@ -25,10 +27,12 @@ class ProjectHandlers:
             project_manager: Project manager instance
             search_engine: Semantic search engine instance (or None if not initialized)
             project_root: Project root directory
+            indexer: Semantic indexer instance (for KG status)
         """
         self.project_manager = project_manager
         self.search_engine = search_engine
         self.project_root = project_root
+        self.indexer = indexer
 
     async def handle_get_project_status(self, args: dict[str, Any]) -> CallToolResult:
         """Handle get_project_status tool call.
@@ -60,6 +64,14 @@ class ProjectHandlers:
                         else "Unknown"
                     ),
                 }
+
+                # Add KG status if indexer is available
+                if self.indexer:
+                    status_info["kg_status"] = self.indexer.get_kg_status()
+                    status_info["search_available"] = True
+                else:
+                    status_info["kg_status"] = "not_started"
+                    status_info["search_available"] = stats.total_chunks > 0
             else:
                 status_info = {
                     "project_root": str(config.project_root),
@@ -154,6 +166,23 @@ class ProjectHandlers:
             response_text += f"**Total Chunks:** {status_info['total_chunks']}\n"
             response_text += f"**Total Files:** {status_info['total_files']}\n"
             response_text += f"**Index Size:** {status_info['index_size']}\n"
+
+            # Add KG status and search availability
+            if "kg_status" in status_info:
+                kg_status = status_info["kg_status"]
+                if kg_status == "not_started":
+                    kg_display = "Not built"
+                elif kg_status == "building":
+                    kg_display = "Building in background..."
+                elif kg_status == "complete":
+                    kg_display = "Available"
+                elif kg_status.startswith("error:"):
+                    kg_display = f"Failed: {kg_status[7:]}"
+                else:
+                    kg_display = kg_status
+
+                response_text += f"**Knowledge Graph:** {kg_display}\n"
+                response_text += f"**Search Available:** {'Yes' if status_info['search_available'] else 'No'}\n"
         else:
             response_text += f"**Status:** {status_info['status']}\n"
 
