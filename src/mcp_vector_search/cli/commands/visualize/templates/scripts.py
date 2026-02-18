@@ -281,6 +281,15 @@ async function loadGraphDataActual() {
         console.log('Node type counts:', typeCounts);
         console.log('=== END SAMPLE NODE STRUCTURE ===');
 
+        // Auto-expand depth 0-1 directories (2-level initial view)
+        allNodes.forEach(node => {
+            if (node.type === 'directory' && node.expanded === true) {
+                expandedNodes.add(node.id);
+                console.log(`Auto-expanding directory: ${node.id} (depth ${node.depth})`);
+            }
+        });
+        console.log(`Auto-expanded ${expandedNodes.size} directories for initial 2-level view`);
+
         buildTreeStructure();
         renderVisualization();
     } catch (error) {
@@ -301,21 +310,32 @@ async function expandNode(nodeId) {
     // Prevent duplicate expansions
     if (expandedNodes.has(nodeId)) {
         console.log(`Node ${nodeId} already expanded`);
+        alert(`DEBUG: Node ${nodeId} already expanded, skipping`);
         return;
     }
 
     console.log(`Expanding node: ${nodeId}`);
+    alert(`DEBUG: Starting expandNode for ${nodeId}`);
 
     try {
         // Show loading indicator
         showLoadingIndicator(`Loading children of ${nodeId}...`);
 
         // Fetch children from server
-        const response = await fetch(`/api/graph-expand/${encodeURIComponent(nodeId)}`);
+        const url = `/api/graph-expand/${encodeURIComponent(nodeId)}`;
+        console.log(`Fetching: ${url}`);
+        const response = await fetch(url);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
         const data = await response.json();
+        console.log('Server response:', data);
 
         if (data.error) {
             console.error('Failed to expand node:', data.error);
+            alert(`ERROR: Server returned error: ${data.error}`);
             hideLoadingIndicator();
             return;
         }
@@ -324,6 +344,7 @@ async function expandNode(nodeId) {
         const newLinks = data.links || [];
 
         console.log(`Received ${newNodes.length} new nodes and ${newLinks.length} new links`);
+        alert(`DEBUG: Received ${newNodes.length} nodes, ${newLinks.length} links`);
 
         // Add new nodes to global arrays (avoid duplicates)
         const existingNodeIds = new Set(allNodes.map(n => n.id));
@@ -365,8 +386,10 @@ async function expandNode(nodeId) {
         renderVisualization();
 
         hideLoadingIndicator();
+        alert(`DEBUG: Successfully expanded ${nodeId}, tree rebuilt`);
     } catch (error) {
         console.error('Error expanding node:', error);
+        alert(`ERROR in expandNode: ${error.message}\n${error.stack}`);
         hideLoadingIndicator();
     }
 }
@@ -1779,7 +1802,11 @@ function handleNodeClick(event, d) {
         if (nodeData.expandable && !nodeData.expanded) {
             // First time expansion - fetch from server
             console.log('Progressive loading: fetching children from server');
-            expandNode(nodeData.id);
+            alert(`DEBUG: Fetching children for directory: ${nodeData.name}`);
+            expandNode(nodeData.id).catch(err => {
+                console.error('expandNode failed:', err);
+                alert(`ERROR: Failed to expand ${nodeData.name}: ${err.message}`);
+            });
             return;
         }
 
@@ -1810,7 +1837,11 @@ function handleNodeClick(event, d) {
         if (nodeData.expandable && !nodeData.expanded) {
             // First time expansion - fetch chunks from server
             console.log('Progressive loading: fetching file chunks from server');
-            expandNode(nodeData.id);
+            alert(`DEBUG: Fetching chunks for file: ${nodeData.name}`);
+            expandNode(nodeData.id).catch(err => {
+                console.error('expandNode failed:', err);
+                alert(`ERROR: Failed to expand ${nodeData.name}: ${err.message}`);
+            });
             return;
         }
 

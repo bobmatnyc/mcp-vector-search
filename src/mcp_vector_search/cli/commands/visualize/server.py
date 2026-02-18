@@ -192,15 +192,16 @@ def create_app(viz_dir: Path) -> FastAPI:
                     initial_nodes.append(node)
                     initial_node_ids.add(node["id"])
 
-            # 2. Include top-level directories (depth 0-1 only)
+            # 2. Include top-level directories (depth 0-2 for 2-level initial view)
             for node in all_nodes:
                 if node.get("type") == "directory":
                     depth = node.get("depth", 0)
-                    if depth <= 1:  # Root and first-level subdirectories
+                    if depth <= 2:  # Root, first-level, and second-level subdirectories
                         # Mark as expandable if it has children
                         node_copy = node.copy()
                         node_copy["expandable"] = True
-                        node_copy["expanded"] = False
+                        # Auto-expand depth 0-1 nodes, keep depth 2 collapsed
+                        node_copy["expanded"] = depth <= 1
                         initial_nodes.append(node_copy)
                         initial_node_ids.add(node["id"])
 
