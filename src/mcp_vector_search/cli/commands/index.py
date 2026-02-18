@@ -1549,6 +1549,13 @@ async def _run_batch_indexing(
                     # If relationships were skipped, still mark as complete
                     progress_manager.mark_complete()
 
+            # Reset cursor position after Live display exits
+            # This ensures subsequent output isn't affected by Live's cursor movements
+            import sys
+
+            sys.stdout.write("\r")
+            sys.stdout.flush()
+
             # Progress tracker completion
             if progress_tracker:
                 total_time = phase_times["phase1"] + phase_times.get("phase3", 0)
