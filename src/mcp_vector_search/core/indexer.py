@@ -196,6 +196,7 @@ class SemanticIndexer:
             max_workers=max_workers,
             use_multiprocessing=use_multiprocessing,
             debug=debug,
+            repo_root=project_root,  # Enable git blame tracking
         )
 
         # Store use_multiprocessing for _process_file_batch
@@ -503,6 +504,10 @@ class SemanticIndexer:
                             "signature": "",  # Not directly in CodeChunk, could build from params
                             "complexity": int(chunk.complexity_score),
                             "token_count": len(chunk.content.split()),  # Rough estimate
+                            # Git blame metadata
+                            "last_author": chunk.last_author or "",
+                            "last_modified": chunk.last_modified or "",
+                            "commit_hash": chunk.commit_hash or "",
                         }
                         chunk_dicts.append(chunk_dict)
 

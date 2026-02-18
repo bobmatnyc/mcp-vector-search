@@ -14,10 +14,11 @@ from mcp_vector_search import __version__
 
 # Schema version - ONLY bump when database schema changes (new fields, removed fields)
 # This is separate from package __version__ which changes for every release
-SCHEMA_VERSION = "2.3.0"  # Last schema change: added 'calls' and 'inherits_from' fields
+SCHEMA_VERSION = "2.4.0"  # Last schema change: added git blame fields
 
 # Schema changelog - documents when schema actually changed
 SCHEMA_CHANGELOG = {
+    "2.4.0": "Added git blame fields (last_author, last_modified, commit_hash)",
     "2.3.0": "Added 'calls' and 'inherits_from' fields to chunks table",
     "2.2.0": "Initial schema with basic chunk fields",
 }
@@ -25,6 +26,7 @@ SCHEMA_CHANGELOG = {
 # Code versions compatible with each schema version
 # All patch versions within the same minor version are compatible
 SCHEMA_COMPATIBILITY = {
+    "2.4.0": ["2.4.0"],  # Current schema with git blame fields
     "2.3.0": ["2.3.0", "2.3.1", "2.3.2", "2.3.3", "2.3.4", "2.3.5", "2.3.6", "2.3.7"],
     "2.2.0": ["2.2.0", "2.2.1", "2.2.2", "2.2.3", "2.2.4", "2.2.5"],
 }
@@ -69,6 +71,9 @@ OPTIONAL_FIELDS = {
         "nlp_keywords",
         "nlp_code_refs",
         "nlp_technical_terms",
+        "last_author",  # Git blame fields (optional - may not be in git)
+        "last_modified",
+        "commit_hash",
     ],
 }
 

@@ -93,6 +93,7 @@ class EntryPointDetector:
         self._cli_decorators = {
             "command",
             "group",
+            "callback",  # Typer callback decorator
             "click.command",
             "click.group",
             "app.command",
@@ -164,8 +165,52 @@ class EntryPointDetector:
         """
         all_entry_points: list[EntryPoint] = []
 
-        # Find all Python files (excluding symlinks to prevent traversing outside project)
-        python_files = [p for p in root_path.rglob("*.py") if not p.is_symlink()]
+        # Common ignore patterns - exact matches for directory names
+        ignore_dirs = {
+            ".git",
+            ".venv",
+            "venv",
+            "node_modules",
+            "__pycache__",
+            ".pytest_cache",
+            "dist",
+            "build",
+            ".tox",
+            ".eggs",
+            "*.egg-info",
+            ".mypy_cache",
+            "vendor",
+            ".cache",
+            ".uv",
+        }
+
+        # Prefix patterns - match any directory starting with these
+        ignore_prefixes = {".venv", "venv", ".env", "env"}
+
+        # Find all Python files with filtering
+        python_files: list[Path] = []
+        for file_path in root_path.rglob("*.py"):
+            # Skip symlinks to prevent traversing outside project
+            if file_path.is_symlink():
+                continue
+
+            # Check if any parent directory should be ignored
+            should_skip = False
+            for part in file_path.parts:
+                # Exact match
+                if part in ignore_dirs:
+                    should_skip = True
+                    break
+                # Prefix match (e.g., .venv-mcp, venv-test, .env-local)
+                for prefix in ignore_prefixes:
+                    if part.startswith(prefix):
+                        should_skip = True
+                        break
+                if should_skip:
+                    break
+
+            if not should_skip:
+                python_files.append(file_path)
 
         for file_path in python_files:
             try:
@@ -234,6 +279,11 @@ class EntryPointDetector:
     def _detect_cli_commands(self, tree: ast.AST, file_path: str) -> list[EntryPoint]:
         """Detect CLI decorator patterns (click, typer).
 
+        Detects:
+        - @click.command / @click.group
+        - @app.command() / @app.callback() where app is a Typer/Click object
+        - @<variable_name>.command() / @<variable_name>.callback()
+
         Args:
             tree: AST tree
             file_path: Path to file
@@ -248,6 +298,8 @@ class EntryPointDetector:
                 # Check decorators
                 for decorator in node.decorator_list:
                     decorator_name = self._extract_decorator_name(decorator)
+
+                    # Check for exact matches (click.command, etc.)
                     if decorator_name in self._cli_decorators:
                         entry_points.append(
                             EntryPoint(
@@ -259,6 +311,22 @@ class EntryPointDetector:
                             )
                         )
                         break
+
+                    # Check for Typer pattern: <variable>.command() or <variable>.callback()
+                    # e.g., @analyze_app.command(), @main_app.callback()
+                    if "." in decorator_name:
+                        _, method = decorator_name.rsplit(".", 1)
+                        if method in {"command", "callback", "group"}:
+                            entry_points.append(
+                                EntryPoint(
+                                    name=node.name,
+                                    file_path=file_path,
+                                    line_number=node.lineno,
+                                    type=EntryPointType.CLI,
+                                    confidence=1.0,
+                                )
+                            )
+                            break
 
         return entry_points
 

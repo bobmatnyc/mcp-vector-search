@@ -48,6 +48,11 @@ class CodeChunk:
     nlp_code_refs: list[str] = None  # Backtick code references
     nlp_technical_terms: list[str] = None  # CamelCase, ACRONYMS, snake_case
 
+    # Enhancement 7: Git blame metadata (who last touched this code)
+    last_author: str | None = None  # Author who last modified any line in this chunk
+    last_modified: str | None = None  # ISO timestamp of last modification
+    commit_hash: str | None = None  # Commit hash of last modification
+
     def __post_init__(self) -> None:
         """Initialize default values and generate chunk ID."""
         if self.imports is None:
@@ -121,6 +126,9 @@ class CodeChunk:
             "nlp_keywords": self.nlp_keywords,
             "nlp_code_refs": self.nlp_code_refs,
             "nlp_technical_terms": self.nlp_technical_terms,
+            "last_author": self.last_author,
+            "last_modified": self.last_modified,
+            "commit_hash": self.commit_hash,
         }
 
     @classmethod
@@ -153,6 +161,9 @@ class CodeChunk:
             nlp_keywords=data.get("nlp_keywords", []),
             nlp_code_refs=data.get("nlp_code_refs", []),
             nlp_technical_terms=data.get("nlp_technical_terms", []),
+            last_author=data.get("last_author"),
+            last_modified=data.get("last_modified"),
+            commit_hash=data.get("commit_hash"),
         )
 
 
@@ -203,6 +214,17 @@ class SearchResult(BaseModel):
     )
     quality_score: int | None = Field(
         default=None, description="Overall quality score (0-100)"
+    )
+
+    # Git blame metadata (who last touched this code)
+    last_author: str | None = Field(
+        default=None, description="Author who last modified this code"
+    )
+    last_modified: str | None = Field(
+        default=None, description="ISO timestamp of last modification"
+    )
+    commit_hash: str | None = Field(
+        default=None, description="Commit hash of last modification"
     )
 
     class Config:
@@ -295,6 +317,14 @@ class SearchResult(BaseModel):
             result["smell_count"] = self.smell_count
         if self.quality_score is not None:
             result["quality_score"] = self.quality_score
+
+        # Add git blame metadata if available
+        if self.last_author is not None:
+            result["last_author"] = self.last_author
+        if self.last_modified is not None:
+            result["last_modified"] = self.last_modified
+        if self.commit_hash is not None:
+            result["commit_hash"] = self.commit_hash
 
         return result
 

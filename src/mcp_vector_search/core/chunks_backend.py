@@ -65,6 +65,10 @@ CHUNKS_SCHEMA = pa.schema(
         pa.field("signature", pa.string()),
         pa.field("complexity", pa.int32()),
         pa.field("token_count", pa.int32()),
+        # Git blame metadata
+        pa.field("last_author", pa.string()),
+        pa.field("last_modified", pa.string()),
+        pa.field("commit_hash", pa.string()),
         # Phase tracking
         pa.field(
             "embedding_status", pa.string()

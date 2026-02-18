@@ -16,6 +16,7 @@ from typing import Any
 
 import lancedb
 import orjson
+import pyarrow as pa
 from loguru import logger
 
 from .exceptions import (
@@ -25,6 +26,58 @@ from .exceptions import (
     DocumentAdditionError,
 )
 from .models import CodeChunk, IndexStats, SearchResult
+
+# Explicit PyArrow schema for main vector search table
+# This ensures consistent schema across all batches, preventing
+# "Field not found in target schema" errors when adding new fields
+LANCEDB_SCHEMA = pa.schema(
+    [
+        # Identity
+        pa.field("id", pa.string()),
+        pa.field("chunk_id", pa.string()),
+        # Vector embedding (384-dimensional for all-MiniLM-L6-v2)
+        pa.field("vector", pa.list_(pa.float32(), 384)),
+        # Content and metadata
+        pa.field("content", pa.string()),
+        pa.field("file_path", pa.string()),
+        pa.field("start_line", pa.int32()),
+        pa.field("end_line", pa.int32()),
+        pa.field("language", pa.string()),
+        pa.field("chunk_type", pa.string()),
+        pa.field("function_name", pa.string()),
+        pa.field("class_name", pa.string()),
+        pa.field("docstring", pa.string()),
+        pa.field("imports", pa.string()),  # JSON-encoded list
+        pa.field("calls", pa.string()),  # Comma-separated
+        pa.field("inherits_from", pa.string()),  # Comma-separated
+        pa.field("complexity_score", pa.float64()),
+        pa.field("parent_chunk_id", pa.string()),
+        pa.field("child_chunk_ids", pa.string()),  # Comma-separated
+        pa.field("chunk_depth", pa.int32()),
+        pa.field("decorators", pa.string()),  # Comma-separated
+        pa.field("return_type", pa.string()),
+        pa.field("subproject_name", pa.string()),
+        pa.field("subproject_path", pa.string()),
+        # NLP-extracted entities
+        pa.field("nlp_keywords", pa.string()),  # Comma-separated
+        pa.field("nlp_code_refs", pa.string()),  # Comma-separated
+        pa.field("nlp_technical_terms", pa.string()),  # Comma-separated
+        # Git blame metadata
+        pa.field("last_author", pa.string()),
+        pa.field("last_modified", pa.string()),  # ISO timestamp
+        pa.field("commit_hash", pa.string()),
+        # Quality metrics (added dynamically, nullable)
+        pa.field("cognitive_complexity", pa.int32()),
+        pa.field("cyclomatic_complexity", pa.int32()),
+        pa.field("max_nesting_depth", pa.int32()),
+        pa.field("parameter_count", pa.int32()),
+        pa.field("lines_of_code", pa.int32()),
+        pa.field("complexity_grade", pa.string()),
+        pa.field("code_smells", pa.string()),  # JSON-encoded list
+        pa.field("smell_count", pa.int32()),
+        pa.field("quality_score", pa.int32()),
+    ]
+)
 
 
 def _detect_optimal_write_buffer_size() -> int:
@@ -178,9 +231,9 @@ class LanceVectorDatabase:
         try:
             # Create or append to table with buffered records
             if self._table is None:
-                # Create table with first batch
+                # Create table with explicit schema to ensure all fields are present
                 self._table = self._db.create_table(
-                    self.collection_name, self._write_buffer
+                    self.collection_name, self._write_buffer, schema=LANCEDB_SCHEMA
                 )
                 logger.debug(
                     f"Created LanceDB table '{self.collection_name}' with {len(self._write_buffer)} chunks"
@@ -354,6 +407,10 @@ class LanceVectorDatabase:
                         and chunk.nlp_technical_terms
                         else ""
                     ),
+                    # Git blame metadata
+                    "last_author": chunk.last_author or "",
+                    "last_modified": chunk.last_modified or "",
+                    "commit_hash": chunk.commit_hash or "",
                 }
 
                 # Add structural metrics if provided
@@ -471,6 +528,10 @@ class LanceVectorDatabase:
                     chunk_type=result.get("chunk_type", "code"),
                     function_name=result.get("function_name") or None,
                     class_name=result.get("class_name") or None,
+                    # Git blame metadata
+                    last_author=result.get("last_author") or None,
+                    last_modified=result.get("last_modified") or None,
+                    commit_hash=result.get("commit_hash") or None,
                 )
                 search_results.append(search_result)
 
