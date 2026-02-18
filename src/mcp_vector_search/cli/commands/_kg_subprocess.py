@@ -125,8 +125,12 @@ def main():
             if stats["total_entities"] > 0:
                 console.print(
                     f"[yellow]⚠[/yellow] Knowledge graph already exists "
-                    f"({stats['total_entities']} entities). Use --force to rebuild."
+                    f"({stats['total_entities']} entities)."
                 )
+                console.print(
+                    "  Run [cyan]'mcp-vector-search kg status'[/cyan] to view details."
+                )
+                console.print("  Use [cyan]--force[/cyan] to rebuild.")
                 kg.close_sync()
                 return 0
 
