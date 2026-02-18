@@ -9,12 +9,14 @@ LanceDB provides:
 """
 
 import hashlib
+import json
 import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import lancedb
+import numpy as np
 import orjson
 import pyarrow as pa
 from loguru import logger
@@ -911,22 +913,59 @@ class LanceVectorDatabase:
         self, batch_dict: dict, i: int, num_rows: int
     ) -> CodeChunk:
         """Convert Arrow batch dictionary row to CodeChunk."""
-        imports_str = batch_dict.get("imports", [""] * num_rows)[i]
-        imports = imports_str.split(",") if imports_str else []
+        # Handle imports field (list/numpy array of JSON strings or legacy comma-separated string)
+        imports_raw = batch_dict.get("imports", [[]] * num_rows)[i]
 
-        child_ids_str = batch_dict.get("child_chunk_ids", [""] * num_rows)[i]
-        child_chunk_ids = child_ids_str.split(",") if child_ids_str else []
+        if isinstance(imports_raw, (list, np.ndarray)):
+            # New format: list or numpy array of JSON strings
+            imports = []
+            for item in imports_raw:
+                try:
+                    imports.append(json.loads(item))
+                except (json.JSONDecodeError, TypeError):
+                    imports.append(item)  # Keep as string if not valid JSON
+        elif isinstance(imports_raw, str):
+            # Legacy format: comma-separated string
+            imports = imports_raw.split(",") if imports_raw else []
+        else:
+            # Unknown type - default to empty
+            imports = []
 
-        decorators_str = batch_dict.get("decorators", [""] * num_rows)[i]
-        decorators = decorators_str.split(",") if decorators_str else []
+        # Handle child_chunk_ids field (list/numpy array or legacy comma-separated string)
+        child_ids_raw = batch_dict.get("child_chunk_ids", [[]] * num_rows)[i]
+        if isinstance(child_ids_raw, (list, np.ndarray)):
+            child_chunk_ids = list(child_ids_raw)
+        elif isinstance(child_ids_raw, str):
+            child_chunk_ids = child_ids_raw.split(",") if child_ids_raw else []
+        else:
+            child_chunk_ids = []
 
-        # Parse calls field (comma-separated string to list)
-        calls_str = batch_dict.get("calls", [""] * num_rows)[i]
-        calls = calls_str.split(",") if calls_str else []
+        # Handle decorators field (list/numpy array or legacy comma-separated string)
+        decorators_raw = batch_dict.get("decorators", [[]] * num_rows)[i]
+        if isinstance(decorators_raw, (list, np.ndarray)):
+            decorators = list(decorators_raw)
+        elif isinstance(decorators_raw, str):
+            decorators = decorators_raw.split(",") if decorators_raw else []
+        else:
+            decorators = []
 
-        # Parse inherits_from field (comma-separated string to list)
-        inherits_str = batch_dict.get("inherits_from", [""] * num_rows)[i]
-        inherits_from = inherits_str.split(",") if inherits_str else []
+        # Handle calls field (list/numpy array or legacy comma-separated string)
+        calls_raw = batch_dict.get("calls", [[]] * num_rows)[i]
+        if isinstance(calls_raw, (list, np.ndarray)):
+            calls = list(calls_raw)
+        elif isinstance(calls_raw, str):
+            calls = calls_raw.split(",") if calls_raw else []
+        else:
+            calls = []
+
+        # Handle inherits_from field (list/numpy array or legacy comma-separated string)
+        inherits_raw = batch_dict.get("inherits_from", [[]] * num_rows)[i]
+        if isinstance(inherits_raw, (list, np.ndarray)):
+            inherits_from = list(inherits_raw)
+        elif isinstance(inherits_raw, str):
+            inherits_from = inherits_raw.split(",") if inherits_raw else []
+        else:
+            inherits_from = []
 
         return CodeChunk(
             content=batch_dict["content"][i],
@@ -957,23 +996,58 @@ class LanceVectorDatabase:
 
     def _row_to_chunk(self, row: Any) -> CodeChunk:
         """Convert Pandas DataFrame row to CodeChunk."""
-        imports = row.get("imports", "").split(",") if row.get("imports") else []
-        child_chunk_ids = (
-            row.get("child_chunk_ids", "").split(",")
-            if row.get("child_chunk_ids")
-            else []
-        )
-        decorators = (
-            row.get("decorators", "").split(",") if row.get("decorators") else []
-        )
+        # Handle imports field (list/numpy array of JSON strings or legacy comma-separated string)
+        imports_raw = row.get("imports", [])
+        if isinstance(imports_raw, (list, np.ndarray)):
+            # New format: list or numpy array of JSON strings
+            imports = []
+            for item in imports_raw:
+                try:
+                    imports.append(json.loads(item))
+                except (json.JSONDecodeError, TypeError):
+                    imports.append(item)  # Keep as string if not valid JSON
+        elif isinstance(imports_raw, str):
+            # Legacy format: comma-separated string
+            imports = imports_raw.split(",") if imports_raw else []
+        else:
+            # Unknown type - default to empty
+            imports = []
 
-        # Parse calls field (comma-separated string to list)
-        calls = row.get("calls", "").split(",") if row.get("calls") else []
+        # Handle child_chunk_ids field (list/numpy array or legacy comma-separated string)
+        child_ids_raw = row.get("child_chunk_ids", [])
+        if isinstance(child_ids_raw, (list, np.ndarray)):
+            child_chunk_ids = list(child_ids_raw)
+        elif isinstance(child_ids_raw, str):
+            child_chunk_ids = child_ids_raw.split(",") if child_ids_raw else []
+        else:
+            child_chunk_ids = []
 
-        # Parse inherits_from field (comma-separated string to list)
-        inherits_from = (
-            row.get("inherits_from", "").split(",") if row.get("inherits_from") else []
-        )
+        # Handle decorators field (list/numpy array or legacy comma-separated string)
+        decorators_raw = row.get("decorators", [])
+        if isinstance(decorators_raw, (list, np.ndarray)):
+            decorators = list(decorators_raw)
+        elif isinstance(decorators_raw, str):
+            decorators = decorators_raw.split(",") if decorators_raw else []
+        else:
+            decorators = []
+
+        # Handle calls field (list/numpy array or legacy comma-separated string)
+        calls_raw = row.get("calls", [])
+        if isinstance(calls_raw, (list, np.ndarray)):
+            calls = list(calls_raw)
+        elif isinstance(calls_raw, str):
+            calls = calls_raw.split(",") if calls_raw else []
+        else:
+            calls = []
+
+        # Handle inherits_from field (list/numpy array or legacy comma-separated string)
+        inherits_raw = row.get("inherits_from", [])
+        if isinstance(inherits_raw, (list, np.ndarray)):
+            inherits_from = list(inherits_raw)
+        elif isinstance(inherits_raw, str):
+            inherits_from = inherits_raw.split(",") if inherits_raw else []
+        else:
+            inherits_from = []
 
         return CodeChunk(
             content=row["content"],
