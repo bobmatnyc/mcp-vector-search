@@ -242,7 +242,15 @@ class LanceVectorDatabase:
             self._db = lancedb.connect(str(self.persist_directory))
 
             # Check if table exists, open if it does
-            if self.collection_name in self._db.table_names():
+            # list_tables() returns a response object with .tables attribute or is iterable
+            tables_response = self._db.list_tables()
+            table_names = (
+                tables_response.tables
+                if hasattr(tables_response, "tables")
+                else tables_response
+            )
+
+            if self.collection_name in table_names:
                 self._table = self._db.open_table(self.collection_name)
                 logger.debug(
                     f"LanceDB table '{self.collection_name}' opened at {self.persist_directory}"
