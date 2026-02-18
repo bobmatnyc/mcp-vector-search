@@ -1418,5 +1418,13 @@ async def run_dead_code_analysis(
         raise typer.Exit(2)
 
 
+# Register engineers command directly (not as nested app)
+from .analyze_engineers import analyze_engineers
+
+analyze_app.command(name="engineers", help="👥 Profile engineers by code quality")(
+    analyze_engineers
+)
+
+
 if __name__ == "__main__":
     analyze_app()

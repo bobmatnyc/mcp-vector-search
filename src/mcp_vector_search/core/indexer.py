@@ -900,21 +900,15 @@ class SemanticIndexer:
         t_start = time.time()
         await self.chunks_backend.initialize()
         await self.vectors_backend.initialize()
-        t_init = time.time()
-        print(f"⏱️  TIMING: Backend initialization: {t_init - t_start:.2f}s", flush=True)
 
         # Check and run pending migrations automatically
         t_start = time.time()
         await self._run_auto_migrations()
-        t_migrations = time.time()
-        print(f"⏱️  TIMING: Migrations check: {t_migrations - t_start:.2f}s", flush=True)
 
         # Apply auto-optimizations before indexing
         t_start = time.time()
         if self.auto_optimize:
             self.apply_auto_optimizations()
-        t_optimize = time.time()
-        print(f"⏱️  TIMING: Auto-optimizations: {t_optimize - t_start:.2f}s", flush=True)
 
         # Clean up stale lock files from previous interrupted indexing runs
         cleanup_stale_locks(self.project_root)
@@ -929,11 +923,6 @@ class SemanticIndexer:
             # Find all indexable files
             t_start = time.time()
             all_files = self.file_discovery.find_indexable_files()
-            t_scan = time.time()
-            print(
-                f"⏱️  TIMING: File scanning ({len(all_files)} files): {t_scan - t_start:.2f}s",
-                flush=True,
-            )
 
             # Clean up stale metadata entries (files that no longer exist)
             if force_reindex:
@@ -974,22 +963,12 @@ class SemanticIndexer:
                             )
                             filtered_files.append(f)
                     files_to_index = filtered_files
-                    t_filter = time.time()
                     logger.info(
                         f"Incremental index: {len(files_to_index)} of {len(all_files)} files need updating"
-                    )
-                    print(
-                        f"⏱️  TIMING: File change detection: {t_filter - t_start:.2f}s",
-                        flush=True,
                     )
                 else:
                     logger.info(
                         f"Force reindex: processing all {len(files_to_index)} files"
-                    )
-                    t_filter = time.time()
-                    print(
-                        f"⏱️  TIMING: File filtering (force): {t_filter - t_start:.2f}s",
-                        flush=True,
                     )
 
                 if files_to_index:
@@ -997,11 +976,6 @@ class SemanticIndexer:
                     t_start = time.time()
                     indexed_count, chunks_created = await self._phase1_chunk_files(
                         files_to_index, force=force_reindex
-                    )
-                    t_phase1 = time.time()
-                    print(
-                        f"⏱️  TIMING: Phase 1 (parsing/chunking): {t_phase1 - t_start:.2f}s",
-                        flush=True,
                     )
 
                     # Update metadata for backward compatibility
@@ -1027,10 +1001,6 @@ class SemanticIndexer:
             chunks_embedded, _ = await self._phase2_embed_chunks(
                 batch_size=self.batch_size
             )
-            t_phase2 = time.time()
-            print(
-                f"⏱️  TIMING: Phase 2 (embedding): {t_phase2 - t_start:.2f}s", flush=True
-            )
 
         # Log summary with total timing
         t_end_total = time.time()
@@ -1046,8 +1016,6 @@ class SemanticIndexer:
             )
         elif phase == "embed":
             logger.info(f"✓ Phase 2 complete: {chunks_embedded} chunks embedded")
-
-        print(f"\n⏱️  TIMING: TOTAL indexing time: {total_time:.2f}s\n", flush=True)
 
         # Update directory index (only if files were indexed)
         if indexed_count > 0:
@@ -1873,8 +1841,6 @@ class SemanticIndexer:
             await self.chunks_backend.initialize()
         if self.vectors_backend._db is None:
             await self.vectors_backend.initialize()
-        t_init = time.time()
-        print(f"⏱️  TIMING: Backend initialization: {t_init - t_start:.2f}s", flush=True)
 
         # Write version header to error log at start of indexing run
         self.metadata.write_indexing_run_header()
@@ -2154,15 +2120,6 @@ class SemanticIndexer:
                         logger.debug(
                             f"Successfully indexed {len(all_chunks)} chunks from batch"
                         )
-                        if batch_num == 1:  # Print timing for first batch as sample
-                            print(
-                                f"⏱️  TIMING: First batch ({len(batch)} files, {len(all_chunks)} chunks):",
-                                flush=True,
-                            )
-                            print(
-                                f"  - Storage: {time.time() - t_start_storage:.2f}s total",
-                                flush=True,
-                            )
                     except Exception as e:
                         error_msg = f"Failed to insert batch of chunks: {e}"
                         logger.error(error_msg)
