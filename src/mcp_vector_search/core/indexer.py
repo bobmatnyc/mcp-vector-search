@@ -1201,7 +1201,6 @@ class SemanticIndexer:
             await self.chunks_backend.initialize()
 
         all_chunks: list[CodeChunk] = []
-        all_metrics: dict[str, Any] = {}
         file_to_chunks_map: dict[str, tuple[int, int]] = {}
         success_flags: list[bool] = []
 
@@ -1268,10 +1267,6 @@ class SemanticIndexer:
                 all_chunks.extend(chunks_with_hierarchy)
                 end_idx = len(all_chunks)
                 file_to_chunks_map[str(file_path)] = (start_idx, end_idx)
-
-                # Merge metrics
-                if chunk_metrics:
-                    all_metrics.update(chunk_metrics)
 
                 # Update metadata for successfully parsed file
                 try:
