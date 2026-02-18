@@ -257,6 +257,12 @@ def main(
         help="Skip checking for vendor pattern updates (use cached patterns only)",
         rich_help_panel="📁 Configuration",
     ),
+    simple_progress: bool = typer.Option(
+        False,
+        "--simple-progress",
+        help="Use simple text progress output instead of fancy TUI (fixes display issues on some terminals)",
+        rich_help_panel="🔍 Debugging",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -315,9 +321,11 @@ def main(
             print_error(f"Invalid phase: {phase}. Must be 'all', 'chunk', or 'embed'")
             raise typer.Exit(1)
 
-        # Reset cancellation flag and start ESC listener
+        # Reset cancellation flag
+        # NOTE: ESC listener disabled - it conflicts with Rich's terminal handling
+        # causing cursor position issues. Use Ctrl+C for cancellation instead.
         _reset_cancellation_flag()
-        _start_esc_listener()
+        # _start_esc_listener()  # DISABLED - causes TUI cursor issues
 
         # Create backup of index if it exists (for safe cancellation)
         cache_path = get_default_cache_path(project_root)
@@ -335,7 +343,7 @@ def main(
 
         try:
             # Show cancellation hint
-            print_tip("Press ESC or Ctrl+C to cancel indexing")
+            print_tip("Press Ctrl+C to cancel indexing")
 
             # Run async indexing
             asyncio.run(
@@ -358,6 +366,7 @@ def main(
                     no_vendor_patterns=no_vendor_patterns,
                     skip_vendor_update=skip_vendor_update,
                     cancellation_flag=_cancellation_flag,
+                    simple_progress=simple_progress,
                 )
             )
 
@@ -369,8 +378,9 @@ def main(
                 except (OSError, shutil.Error) as e:
                     logger.warning(f"Could not remove backup: {e}")
         finally:
-            # Stop ESC listener
-            _stop_esc_listener()
+            # Stop ESC listener (disabled - see note above)
+            # _stop_esc_listener()
+            pass
 
     except KeyboardInterrupt:
         print_warning("\n⚠️  Indexing cancelled by user")
@@ -516,12 +526,14 @@ async def run_indexing(
     no_vendor_patterns: bool = False,
     skip_vendor_update: bool = False,
     cancellation_flag: threading.Event | None = None,
+    simple_progress: bool = False,
 ) -> None:
     """Run the indexing process.
 
     Args:
         skip_vendor_update: Skip checking for vendor pattern updates
         cancellation_flag: Event that signals cancellation (set by ESC or Ctrl+C)
+        simple_progress: Use simple text progress instead of fancy TUI
     """
     # Load project configuration
     project_manager = ProjectManager(project_root)
@@ -754,6 +766,7 @@ async def run_indexing(
                     limit,
                     verbose,
                     cancellation_flag,
+                    simple_progress,
                 )
 
     except Exception as e:
@@ -772,8 +785,13 @@ async def _run_batch_indexing(
     limit: int | None = None,
     verbose: bool = False,
     cancellation_flag: threading.Event | None = None,
+    simple_progress: bool = False,
 ) -> None:
-    """Run batch indexing of all files with three-phase progress display."""
+    """Run batch indexing of all files with three-phase progress display.
+
+    Args:
+        simple_progress: Use simple text output instead of fancy TUI (fixes cursor issues)
+    """
     # Initialize progress state tracking
     from .progress_state import ProgressStateManager
 
@@ -786,11 +804,161 @@ async def _run_batch_indexing(
             f"Indexing project: {indexer.project_root}", total_phases=4
         )
 
-    if show_progress:
-        # Import enhanced progress utilities
-        from rich.layout import Layout
-        from rich.live import Live
-        from rich.panel import Panel
+    if show_progress and simple_progress:
+        # ========== SIMPLE PROGRESS MODE ==========
+        # Uses plain text output to avoid cursor manipulation issues
+        # that occur with Rich's Live/Layout on some terminals
+
+        import time
+
+        from ..output import console
+
+        console.print()
+        console.print("[cyan]📂[/cyan] Scanning directories...", end="")
+
+        # Phase 1: File discovery
+        if progress_tracker:
+            progress_tracker.phase("Discovering files")
+
+        dirs_scanned = 0
+        files_found = 0
+
+        def update_discovery_progress_simple(dirs: int, files: int):
+            nonlocal dirs_scanned, files_found
+            dirs_scanned = dirs
+            files_found = files
+
+        indexable_files, files_to_index = await indexer.get_files_to_index(
+            force_reindex=force_reindex,
+            progress_callback=update_discovery_progress_simple,
+            file_limit=limit,
+        )
+        console.print(f" found {len(indexable_files)} files")
+
+        # Clean up stale metadata entries
+        if indexable_files:
+            valid_files = {str(f) for f in indexable_files}
+            removed = indexer.metadata.cleanup_stale_entries(valid_files)
+            if removed > 0:
+                console.print(f"[dim]Cleaned up {removed:,} stale entries[/dim]")
+
+        # Apply limit
+        if limit is not None and len(files_to_index) > limit:
+            console.print(f"[yellow]Limiting to first {limit} files[/yellow]")
+            files_to_index = files_to_index[:limit]
+
+        total_files = len(files_to_index)
+        progress_manager.update_chunking(total_files=total_files)
+
+        if total_files == 0:
+            console.print("[green]✓[/green] All files are up to date")
+            indexed_count = 0
+        else:
+            # Determine rebuild mode
+            if force_reindex:
+                console.print(f"[cyan]🔄 Force rebuild: {total_files} files[/cyan]")
+                indexer._atomic_rebuild_active = True
+            else:
+                existing_count = await indexer.get_indexed_count()
+                if existing_count > 0:
+                    console.print(
+                        f"[cyan]📂 Incremental update: {total_files} new/modified files[/cyan]"
+                    )
+
+            # Initialize backends
+            if indexer.chunks_backend._db is None:
+                await indexer.chunks_backend.initialize()
+            if indexer.vectors_backend._db is None:
+                await indexer.vectors_backend.initialize()
+            console.print("[green]✓[/green] Backend ready")
+
+            # Process files with simple progress
+            indexed_count = 0
+            failed_count = 0
+            total_chunks_created = 0
+            start_time = time.time()
+            last_progress_pct = 0
+
+            console.print()
+            console.print("[bold]Phase 1: Chunking & Embedding[/bold]")
+
+            async for (
+                _file_path,
+                chunks_added,
+                success,
+            ) in indexer.index_files_with_progress(files_to_index, force_reindex):
+                # Check for cancellation
+                if cancellation_flag and cancellation_flag.is_set():
+                    print_warning("\n⚠️  Indexing cancelled by user")
+                    raise KeyboardInterrupt()
+
+                if success:
+                    indexed_count += 1
+                    total_chunks_created += chunks_added
+                    progress_manager.update_chunking(
+                        processed_files_increment=1, chunks_increment=chunks_added
+                    )
+                    progress_manager.update_embedding(
+                        total_chunks=total_chunks_created,
+                        embedded_chunks_increment=chunks_added,
+                    )
+                else:
+                    failed_count += 1
+                    progress_manager.update_chunking(processed_files_increment=1)
+
+                # Print progress every 10% or at least every 50 files
+                current_pct = int((indexed_count / total_files) * 100) // 10 * 10
+                if current_pct > last_progress_pct or indexed_count % 50 == 0:
+                    elapsed = time.time() - start_time
+                    rate = indexed_count / elapsed if elapsed > 0 else 0
+                    console.print(
+                        f"  {indexed_count}/{total_files} files ({current_pct}%) - "
+                        f"{total_chunks_created} chunks - {rate:.1f} files/sec"
+                    )
+                    last_progress_pct = current_pct
+
+            # Phase 1 complete
+            elapsed = time.time() - start_time
+            console.print(
+                f"[green]✓[/green] Chunking complete: {indexed_count} files, "
+                f"{total_chunks_created} chunks in {elapsed:.1f}s"
+            )
+
+            # Rebuild directory index
+            try:
+                import os as os_module
+
+                chunk_stats = {}
+                for file_path in files_to_index:
+                    try:
+                        mtime = os_module.path.getmtime(file_path)
+                        chunk_stats[str(file_path)] = {"modified": mtime, "chunks": 1}
+                    except OSError:
+                        pass
+                indexer.directory_index.rebuild_from_files(
+                    files_to_index, indexer.project_root, chunk_stats=chunk_stats
+                )
+                indexer.directory_index.save()
+            except Exception as e:
+                logger.error(f"Failed to update directory index: {e}")
+
+            # NOTE: KG building removed from index command
+            # Use `mcp-vector-search kg build` for knowledge graph
+
+            progress_manager.mark_complete()
+
+            # Summary
+            console.print()
+            total_elapsed = time.time() - start_time
+            console.print(
+                f"[green]✓[/green] [bold]Indexing complete![/bold] "
+                f"{indexed_count} files, {total_chunks_created} chunks in {total_elapsed:.1f}s"
+            )
+            if failed_count > 0:
+                console.print(f"[yellow]⚠ {failed_count} files failed[/yellow]")
+
+    elif show_progress:
+        # ========== PROGRESS TUI MODE (default) ==========
         from rich.progress import (
             BarColumn,
             Progress,
@@ -798,17 +966,14 @@ async def _run_batch_indexing(
             TextColumn,
         )
 
+        from ..output import console
+
         # Get existing indexed count BEFORE scanning (for progress display context)
         # For force rebuild, existing_count should be 0 (we're rebuilding from scratch)
         if force_reindex:
             existing_count = 0
         else:
             existing_count = await indexer.get_indexed_count()
-
-        # Pre-scan to get total file count with live progress display
-        from rich.table import Table
-
-        from ..output import console
 
         console.print()  # Add blank line before progress
 
@@ -933,127 +1098,45 @@ async def _run_batch_indexing(
             else:
                 console.print()  # Just add blank line
 
-            # Import time for throughput tracking
+            # ============================================================
+            # CLEAN TUI - Simple Progress without Layout/Panel complexity
+            # ============================================================
             import time
 
-            # Track recently indexed files for display
-            recent_files = []
-            current_file_name = ""
             indexed_count = 0
             failed_count = 0
+            total_chunks_created = 0
+            start_time = time.time()
 
-            # Track chunk and embedding progress separately
-            total_chunks_created = 0  # Total chunks created from parsing
-            chunks_embedded = 0  # Chunks successfully embedded
-            embedding_start_time = time.time()  # For throughput calculation
-
-            # Create progress bars for all three phases
-            # NOTE: We'll dynamically update total for Phase 2 as chunks are created
-            progress = Progress(
+            # Simple progress bar - no Layout, no Panel, just Progress
+            with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
-                BarColumn(bar_width=40),
+                BarColumn(bar_width=50),
                 TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TextColumn("[dim]{task.fields[progress_text]}[/dim]"),
+                TextColumn("[dim]{task.fields[status]}[/dim]"),
                 console=console,
-            )
-
-            # Phase 1: Chunking (file-level progress)
-            # Total should include both existing and new files
-            total_files_including_cached = existing_count + total_files
-            phase1_task = progress.add_task(
-                "📄 Chunking   ",
-                total=total_files_including_cached,
-                completed=existing_count,  # Start from cached count
-                progress_text=f"{existing_count:,}/{total_files_including_cached:,} files ({existing_count:,} cached)",
-            )
-
-            # Phase 2: Embedding (chunk-level progress, starts with total=1 to avoid division by zero)
-            phase2_task = progress.add_task(
-                "🧠 Embedding  ",
-                total=1,
-                completed=0,
-                progress_text="0 chunks embedded",
-            )
-
-            # Phase 3: Knowledge Graph
-            phase3_task = progress.add_task(
-                "🔗 KG Build   ", total=1, completed=0, progress_text="pending"
-            )
-
-            # Track phase timing
-            phase_start_times = {
-                "phase1": time.time(),
-                "phase2": None,
-                "phase3": None,
-            }
-
-            # Track phase completion
-            phase_times = {
-                "phase1": 0,
-                "phase2": 0,
-                "phase3": 0,
-            }
-
-            # Create samples table BEFORE layout to have all content ready
-            samples_table = Table.grid(expand=True)
-            samples_table.add_column(style="dim")
-            samples_table.add_row("[dim]Starting indexing...[/dim]")
-
-            # Create layout with initial content to avoid debug output
-            # Use exact sizes matching panel heights to prevent blank line padding
-            layout = Layout()
-            layout.split_column(
-                Layout(name="phases", size=5),  # 3 progress lines + 2 border
-                Layout(name="samples", size=7),  # 5 content lines + 2 border
-            )
-
-            # Initialize panels with actual content BEFORE Live display
-            # Progress now has tasks added, so it won't show debug representation
-            layout["phases"].update(
-                Panel(
-                    progress,
-                    title="[bold]📊 Indexing Progress[/bold]",
-                    border_style="blue",
-                    height=5,  # Force exact height: 3 progress lines + 2 border
+                transient=False,
+            ) as progress:
+                task = progress.add_task(
+                    "[cyan]📄 Indexing[/cyan]",
+                    total=total_files,
+                    status=f"0/{total_files} files",
                 )
-            )
 
-            layout["samples"].update(
-                Panel(
-                    samples_table,
-                    title="[bold]📁 Recently Processed[/bold]",
-                    border_style="dim",
-                    height=7,  # 5 content lines + 2 border
-                )
-            )
-
-            # Progress tracker: Phase 2 - Parsing & Chunking
-            if progress_tracker:
-                progress_tracker.phase("Parsing & chunking")
-
-            # Create live display
-            with Live(layout, console=console, refresh_per_second=4):
-                # Phase 1: Chunking and file processing
                 async for (
-                    file_path,
+                    _file_path,
                     chunks_added,
                     success,
                 ) in indexer.index_files_with_progress(files_to_index, force_reindex):
                     # Check for cancellation
                     if cancellation_flag and cancellation_flag.is_set():
-                        print_warning("\n⚠️  Indexing cancelled by user")
+                        console.print("\n[yellow]⚠️  Indexing cancelled[/yellow]")
                         raise KeyboardInterrupt()
 
-                    # Update counts
                     if success:
                         indexed_count += 1
                         total_chunks_created += chunks_added
-                        # Phase 2 progresses AFTER chunks are embedded (happens in batch)
-                        # For now, we assume embedding happens immediately after parsing
-                        chunks_embedded += chunks_added
-
-                        # Update progress state
                         progress_manager.update_chunking(
                             processed_files_increment=1,
                             chunks_increment=chunks_added,
@@ -1064,491 +1147,25 @@ async def _run_batch_indexing(
                         )
                     else:
                         failed_count += 1
-                        # Still count as processed even if failed
                         progress_manager.update_chunking(processed_files_increment=1)
 
-                    # Update Phase 1 progress (file-based, include existing context)
-                    current_total = existing_count + indexed_count
-                    phase1_elapsed = time.time() - phase_start_times["phase1"]
-                    chunking_rate = (
-                        total_chunks_created / phase1_elapsed
-                        if phase1_elapsed > 0
-                        else 0
-                    )
-                    # Format rate display with avg chunks/file
-                    if chunking_rate > 0:
-                        avg_chunks_per_file = (
-                            total_chunks_created / indexed_count
-                            if indexed_count > 0
-                            else 0
-                        )
-                        rate_display = f"({chunking_rate:.1f}/sec, ~{avg_chunks_per_file:.1f}/file)"
-                    else:
-                        rate_display = ""
-
-                    if existing_count > 0:
-                        progress_text_str = f"{current_total:,}/{total_files_including_cached:,} files ({indexed_count} new + {existing_count:,} cached) → {total_chunks_created:,} chunks {rate_display} • {phase1_elapsed:.0f}s"
-                    else:
-                        progress_text_str = f"{current_total:,}/{total_files_including_cached:,} files → {total_chunks_created:,} chunks {rate_display} • {phase1_elapsed:.0f}s"
-
+                    # Update progress with simple status
+                    elapsed = time.time() - start_time
+                    rate = indexed_count / elapsed if elapsed > 0 else 0
                     progress.update(
-                        phase1_task,
+                        task,
                         advance=1,
-                        progress_text=progress_text_str,
+                        status=f"{indexed_count}/{total_files} files • {total_chunks_created:,} chunks • {rate:.1f}/s",
                     )
 
-                    # Update Phase 2 progress (chunk-based)
-                    # Update total to reflect chunks created so far
-                    if total_chunks_created > 0:
-                        # Calculate chunks per second
-                        elapsed = time.time() - embedding_start_time
-                        chunks_per_sec = chunks_embedded / elapsed if elapsed > 0 else 0
-                        progress.update(
-                            phase2_task,
-                            total=total_chunks_created,
-                            completed=chunks_embedded,
-                            progress_text=f"{chunks_embedded:,}/{total_chunks_created:,} chunks ({chunks_per_sec:.1f}/sec)",
-                        )
-
-                    # Update current file name for display
-                    current_file_name = file_path.name
-
-                    # Keep last 5 files for sampling display
-                    try:
-                        relative_path = str(file_path.relative_to(indexer.project_root))
-                    except ValueError:
-                        relative_path = str(file_path)
-
-                    recent_files.append((relative_path, chunks_added, success))
-                    if len(recent_files) > 5:
-                        recent_files.pop(0)
-
-                    # Calculate embedding throughput (separate from chunking)
-                    embed_elapsed = time.time() - embedding_start_time
-                    _embedding_rate = (  # noqa: F841 - kept for future use
-                        chunks_embedded / embed_elapsed if embed_elapsed > 0 else 0
-                    )
-
-                    # Update phases panel with existing files context
-                    current_total = existing_count + indexed_count
-                    # Don't show rates in header (they're shown in progress lines)
-                    if existing_count > 0:
-                        # Show both new and existing files
-                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({current_total:,}/{total_files_including_cached:,} files • {indexed_count} new + {existing_count:,} cached • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]"
-                    else:
-                        # First-time indexing, no cached files
-                        title_text = f"[bold]📊 Indexing Progress[/bold] [dim]({current_total:,}/{total_files_including_cached:,} files • {total_chunks_created:,} chunks • {phase1_elapsed:.0f}s)[/dim]"
-
-                    layout["phases"].update(
-                        Panel(
-                            progress,
-                            title=title_text,
-                            border_style="blue",
-                            height=5,  # 3 progress lines + 2 border
-                        )
-                    )
-
-                    # Build samples panel content
-                    samples_table = Table.grid(expand=True)
-                    samples_table.add_column(style="dim")
-
-                    if current_file_name:
-                        samples_table.add_row(
-                            f"[bold cyan]Currently processing:[/bold cyan] {current_file_name}"
-                        )
-                        samples_table.add_row("")
-
-                    samples_table.add_row("[dim]Recently indexed:[/dim]")
-                    for rel_path, chunk_count, file_success in recent_files[-5:]:
-                        icon = "✓" if file_success else "✗"
-                        style = "green" if file_success else "red"
-                        chunk_info = (
-                            f"({chunk_count} chunks)"
-                            if chunk_count > 0
-                            else "(no chunks)"
-                        )
-                        samples_table.add_row(
-                            f"  [{style}]{icon}[/{style}] [cyan]{rel_path}[/cyan] [dim]{chunk_info}[/dim]"
-                        )
-
-                    layout["samples"].update(
-                        Panel(
-                            samples_table,
-                            title="[bold]📁 Recently Processed[/bold]",
-                            border_style="dim",
-                            height=7,  # 5 content lines + 2 border
-                        )
-                    )
-
-                # Phase 1 & 2 complete (they happen together in current implementation)
-                phase_times["phase1"] = time.time() - phase_start_times["phase1"]
-
-                # Progress tracker update for parsing/chunking completion
-                if progress_tracker:
-                    progress_tracker.item(f"Parsed {indexed_count} files", done=True)
-                    progress_tracker.item(
-                        f"Generated {total_chunks_created:,} chunks", done=True
-                    )
-
-                # Include existing files in completion message with chunking rate and avg chunks/file
-                final_total = existing_count + indexed_count
-                phase1_elapsed = phase_times["phase1"]
-                final_chunking_rate = (
-                    total_chunks_created / phase1_elapsed if phase1_elapsed > 0 else 0
-                )
-                final_avg_chunks_per_file = (
-                    total_chunks_created / indexed_count if indexed_count > 0 else 0
-                )
-                if existing_count > 0:
-                    completion_text = f"{final_total:,}/{total_files_including_cached:,} files ({indexed_count} new + {existing_count:,} cached) → {total_chunks_created:,} chunks ({final_chunking_rate:.1f}/sec, ~{final_avg_chunks_per_file:.1f}/file) • {phase1_elapsed:.0f}s"
-                else:
-                    completion_text = f"{final_total:,}/{total_files_including_cached:,} files → {total_chunks_created:,} chunks ({final_chunking_rate:.1f}/sec, ~{final_avg_chunks_per_file:.1f}/file) • {phase1_elapsed:.0f}s"
-
-                progress.update(
-                    phase1_task,
-                    completed=total_files_including_cached,
-                    progress_text=completion_text,
-                )
-
-                # Phase 2 completes at the same time as Phase 1 (embedding happens during indexing)
-                phase_times["phase2"] = phase_times["phase1"]  # Same timing
-                embedding_elapsed = time.time() - embedding_start_time
-                final_chunks_per_sec = (
-                    chunks_embedded / embedding_elapsed if embedding_elapsed > 0 else 0
-                )
-                progress.update(
-                    phase2_task,
-                    total=total_chunks_created if total_chunks_created > 0 else 1,
-                    completed=chunks_embedded,
-                    progress_text=f"{chunks_embedded:,}/{total_chunks_created:,} chunks ({final_chunks_per_sec:.1f}/sec) • {phase_times['phase1']:.0f}s",
-                )
-
-                # Progress tracker: Phase 3 - Embedding
-                if progress_tracker:
-                    progress_tracker.phase("Generating embeddings")
-                    progress_tracker.item(
-                        f"Embedded {chunks_embedded:,} chunks", done=True
-                    )
-
-                # Update display
-                layout["phases"].update(
-                    Panel(
-                        progress,
-                        title="[bold]📊 Indexing Progress[/bold]",
-                        border_style="blue",
-                        height=5,  # 3 progress lines + 2 border
-                    )
-                )
-
-                # Rebuild directory index after indexing completes
-                try:
-                    import os
-
-                    chunk_stats = {}
-                    for file_path in files_to_index:
-                        try:
-                            mtime = os.path.getmtime(file_path)
-                            chunk_stats[str(file_path)] = {
-                                "modified": mtime,
-                                "chunks": 1,  # Placeholder - real counts are in database
-                            }
-                        except OSError:
-                            pass
-
-                    indexer.directory_index.rebuild_from_files(
-                        files_to_index, indexer.project_root, chunk_stats=chunk_stats
-                    )
-                    indexer.directory_index.save()
-                except Exception as e:
-                    logger.error(f"Failed to update directory index: {e}")
-
-                # Phase 3: Knowledge Graph building
-                if not skip_relationships and indexed_count > 0:
-                    try:
-                        # Progress tracker: Phase 4 - KG Build
-                        if progress_tracker:
-                            progress_tracker.phase("Building knowledge graph")
-
-                        phase_start_times["phase3"] = time.time()
-
-                        # Update progress to show starting
-                        progress.update(
-                            phase3_task,
-                            progress_text="initializing...",
-                        )
-
-                        # CRITICAL: Use subprocess isolation to avoid Kuzu segfaults
-                        # The async KG builder causes segfaults with LanceDB background threads
-                        # We use the same subprocess isolation pattern as `kg build` command
-                        import subprocess
-                        import sys
-                        import tempfile
-                        from dataclasses import asdict
-
-                        # Get all chunks for KG building
-                        all_chunks = await indexer.database.get_all_chunks()
-
-                        if len(all_chunks) > 0:
-                            # Update progress to show preparing
-                            progress.update(
-                                phase3_task,
-                                total=len(all_chunks),
-                                completed=0,
-                                progress_text=f"preparing {len(all_chunks):,} chunks...",
-                            )
-
-                            # Serialize chunks to temp JSON file for subprocess
-                            temp_fd, chunks_file = tempfile.mkstemp(
-                                suffix=".json", prefix="kg_chunks_"
-                            )
-                            try:
-                                with open(chunks_file, "w") as f:
-                                    # Serialize chunks to JSON (use asdict for dataclasses)
-                                    chunks_data = [
-                                        asdict(chunk) for chunk in all_chunks
-                                    ]
-                                    # Convert Path objects to strings for JSON serialization
-                                    for chunk_dict in chunks_data:
-                                        chunk_dict["file_path"] = str(
-                                            chunk_dict["file_path"]
-                                        )
-                                    json.dump(chunks_data, f)
-                            finally:
-                                os.close(temp_fd)
-
-                            # Update progress to show subprocess starting
-                            progress.update(
-                                phase3_task,
-                                progress_text="building in subprocess...",
-                            )
-
-                            # Determine KG path based on rebuild mode
-                            if force_reindex:
-                                kg_path_suffix = "knowledge_graph.new"
-                            else:
-                                kg_path_suffix = "knowledge_graph"
-
-                            # Build command to execute subprocess
-                            python_executable = sys.executable
-                            subprocess_script = (
-                                Path(__file__).parent / "_kg_subprocess.py"
-                            )
-
-                            # Create args for subprocess (matching _kg_subprocess.py expectations)
-                            cmd = [
-                                python_executable,
-                                str(subprocess_script),
-                                str(indexer.project_root.absolute()),
-                                chunks_file,
-                            ]
-
-                            # Always force rebuild during indexing (clear existing KG)
-                            cmd.append("--force")
-
-                            # Skip expensive documents relationship in index command
-                            # (can be added later with `kg build` if needed)
-                            cmd.append("--skip-documents")
-
-                            if verbose:
-                                cmd.append("--verbose")
-
-                            # CRITICAL: Set environment variable to use .new suffix for atomic rebuild
-                            env = os.environ.copy()
-                            env["KG_PATH_SUFFIX"] = kg_path_suffix
-
-                            # Run subprocess
-                            result = subprocess.run(
-                                cmd,
-                                check=False,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                text=True,
-                                env=env,
-                            )
-
-                            # Clean up temp file
-                            try:
-                                Path(chunks_file).unlink()
-                            except Exception:
-                                pass
-
-                            # Check subprocess exit code
-                            if result.returncode == 0:
-                                # Parse KG stats from subprocess output
-                                # The subprocess prints a table with "Code Entities", etc.
-                                entities = 0
-                                relationships = 0
-
-                                # Try to extract stats from subprocess output
-                                # The subprocess outputs a Rich table like:
-                                # │ Code Entities │ 3,396 │
-                                for line in result.stdout.splitlines():
-                                    if "Code Entities" in line:
-                                        try:
-                                            # Split by │ separator
-                                            parts = line.split("│")
-                                            # The number is in the second-to-last part
-                                            entities = int(
-                                                parts[-2].strip().replace(",", "")
-                                            )
-                                        except (ValueError, IndexError):
-                                            pass
-                                    elif "Calls" in line:
-                                        try:
-                                            parts = line.split("│")
-                                            calls = int(
-                                                parts[-2].strip().replace(",", "")
-                                            )
-                                            relationships += calls
-                                        except (ValueError, IndexError):
-                                            pass
-                                    elif "Imports" in line:
-                                        try:
-                                            parts = line.split("│")
-                                            imports = int(
-                                                parts[-2].strip().replace(",", "")
-                                            )
-                                            relationships += imports
-                                        except (ValueError, IndexError):
-                                            pass
-
-                                # Complete Phase 3
-                                phase_times["phase3"] = (
-                                    time.time() - phase_start_times["phase3"]
-                                )
-                                progress.update(
-                                    phase3_task,
-                                    completed=len(all_chunks),
-                                    progress_text=f"{entities:,} entities, {relationships:,} relations • {phase_times['phase3']:.0f}s",
-                                )
-
-                                # Progress tracker update for KG build
-                                if progress_tracker:
-                                    progress_tracker.item(
-                                        f"Built knowledge graph with {entities:,} entities and {relationships:,} relationships",
-                                        done=True,
-                                    )
-                            else:
-                                # Subprocess failed
-                                logger.error(
-                                    f"KG build subprocess failed with exit code {result.returncode}"
-                                )
-                                if verbose:
-                                    console.print(
-                                        f"[red]Subprocess output:[/red]\n{result.stdout}"
-                                    )
-
-                                phase_times["phase3"] = (
-                                    time.time() - phase_start_times["phase3"]
-                                )
-                                progress.update(
-                                    phase3_task,
-                                    completed=0,
-                                    progress_text=f"[red]failed[/red] • {phase_times['phase3']:.0f}s",
-                                )
-
-                            # Mark indexing as complete in progress state
-                            progress_manager.mark_complete()
-
-                            # Final display with total time (phase1 and phase2 overlap)
-                            total_time = phase_times["phase1"] + phase_times["phase3"]
-
-                            # Add swap message if force_reindex
-                            completion_title = "[bold green]✓[/bold green] [bold]📊 Indexing Complete[/bold]"
-                            if force_reindex:
-                                completion_title += " [dim](atomic rebuild)[/dim]"
-                            completion_title += f" [dim]Total: {total_time:.0f}s[/dim]"
-
-                            layout["phases"].update(
-                                Panel(
-                                    progress,
-                                    title=completion_title,
-                                    border_style="green",
-                                    height=5,  # 3 progress lines + 2 border
-                                )
-                            )
-
-                            # Update samples panel with completion message
-                            completion_msg = "[green]✓[/green] All phases complete!\n\n"
-                            if force_reindex:
-                                completion_msg += "[green]✓ Replaced live database with new index[/green]\n\n"
-                            else:
-                                completion_msg += (
-                                    "[dim]Index updated successfully[/dim]\n\n"
-                                )
-
-                            # Suggest next steps
-                            completion_msg += (
-                                "[bold]Search/Chat:[/bold]\n"
-                                "  [cyan]mcp-vector-search search '<query>'[/cyan] - Semantic search\n"
-                                "  [cyan]mcp-vector-search chat '<question>'[/cyan] - Ask AI about code\n"
-                                "  [cyan]mcp-vector-search status[/cyan] - View statistics\n\n"
-                                "[bold]Knowledge Graph:[/bold]\n"
-                                "  [cyan]mcp-vector-search kg stats[/cyan] - Graph statistics\n"
-                                "  [cyan]mcp-vector-search kg query '<entity>'[/cyan] - Find related\n"
-                                "  [cyan]mcp-vector-search kg calls '<func>'[/cyan] - Call graph\n\n"
-                                "[bold]Visualization:[/bold]\n"
-                                "  [cyan]mcp-vector-search visualize[/cyan] - Interactive explorer\n\n"
-                                "[bold]Analyze Code:[/bold]\n"
-                                "  [cyan]mcp-vector-search analyze[/cyan] - Full (complexity + dead code)\n"
-                                "  [cyan]mcp-vector-search analyze complexity[/cyan] - Complexity only\n"
-                                "  [cyan]mcp-vector-search analyze dead-code[/cyan] - Dead code only"
-                            )
-
-                            layout["samples"].update(
-                                Panel(
-                                    completion_msg,
-                                    title="[bold]📁 Status[/bold]",
-                                    border_style="green",
-                                )
-                            )
-
-                    except Exception as e:
-                        logger.warning(f"Failed to build knowledge graph: {e}")
-                        import traceback
-
-                        traceback.print_exc()
-                        progress.update(
-                            phase3_task,
-                            completed=1,
-                            progress_text="[yellow]⚠ Skipped[/yellow]",
-                        )
-
-                        # Show warning in final display (phase1 and phase2 overlap)
-                        total_time = phase_times["phase1"] + phase_times.get(
-                            "phase3", 0
-                        )
-                        layout["phases"].update(
-                            Panel(
-                                progress,
-                                title=f"[bold yellow]⚠[/bold yellow] [bold]📊 Indexing Complete[/bold] [dim]Total: {total_time:.0f}s[/dim]",
-                                border_style="yellow",
-                                height=5,  # 3 progress lines + 2 border
-                            )
-                        )
-                        # Still mark as complete even if KG build failed
-                        progress_manager.mark_complete()
-                else:
-                    # If relationships were skipped, still mark as complete
-                    progress_manager.mark_complete()
-
-            # Reset cursor position after Live display exits
-            # This ensures subsequent output isn't affected by Live's cursor movements
-            import sys
-
-            sys.stdout.write("\r")
-            sys.stdout.flush()
-
-            # Progress tracker completion
-            if progress_tracker:
-                total_time = phase_times["phase1"] + phase_times.get("phase3", 0)
-                progress_tracker.complete(
-                    f"Indexing complete! Files: {indexed_count}, Chunks: {total_chunks_created:,}",
-                    time_taken=total_time,
-                )
-
-            # Final progress summary
+            # Progress complete - show summary
+            elapsed = time.time() - start_time
             console.print()
+            console.print(
+                f"[green]✓[/green] Indexed [bold]{indexed_count}[/bold] files "
+                f"([bold]{total_chunks_created:,}[/bold] chunks) in [bold]{elapsed:.1f}s[/bold]"
+            )
+
             if failed_count > 0:
                 console.print(
                     f"[yellow]⚠ {failed_count} files failed to index[/yellow]"
@@ -1557,9 +1174,34 @@ async def _run_batch_indexing(
                     indexer.project_root / ".mcp-vector-search" / "indexing_errors.log"
                 )
                 if error_log_path.exists():
-                    # Prune log to keep only last 1000 errors
                     _prune_error_log(error_log_path, max_lines=1000)
                     console.print(f"[dim]  → See details in: {error_log_path}[/dim]")
+
+            # Rebuild directory index
+            try:
+                chunk_stats = {}
+                for fp in files_to_index:
+                    try:
+                        mtime = os.path.getmtime(fp)
+                        chunk_stats[str(fp)] = {"modified": mtime, "chunks": 1}
+                    except OSError:
+                        pass
+                indexer.directory_index.rebuild_from_files(
+                    files_to_index, indexer.project_root, chunk_stats=chunk_stats
+                )
+                indexer.directory_index.save()
+            except Exception as e:
+                logger.error(f"Failed to update directory index: {e}")
+
+            # Mark complete
+            progress_manager.mark_complete()
+
+            # Progress tracker completion
+            if progress_tracker:
+                progress_tracker.complete(
+                    f"Indexing complete! Files: {indexed_count}, Chunks: {total_chunks_created:,}",
+                    time_taken=elapsed,
+                )
     else:
         # Non-progress mode (fallback to original behavior)
         indexed_count = await indexer.index_project(

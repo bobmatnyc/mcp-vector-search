@@ -593,9 +593,10 @@ class BatchEmbeddingProcessor:
                     )
                     max_concurrent = 8
             else:
-                # Default to 8 for better GPU utilization (up from 2)
+                # Default to 16 for better GPU utilization (up from 8)
                 # GPUs like M4 Max can handle much higher concurrency than CPUs
-                max_concurrent = 8
+                # This allows more parallel batches to overlap, improving throughput
+                max_concurrent = 16
         import asyncio
 
         if not texts:
@@ -676,8 +677,8 @@ class BatchEmbeddingProcessor:
                     "MCP_VECTOR_SEARCH_PARALLEL_EMBEDDINGS", "true"
                 ).lower() in ("true", "1", "yes")
 
-                if use_parallel and len(uncached_contents) >= 32:
-                    # Use parallel embedding for large batches (32+ items)
+                if use_parallel and len(uncached_contents) >= 16:
+                    # Use parallel embedding for moderate+ batches (16+ items)
                     try:
                         logger.debug(
                             f"Using parallel embedding generation for {len(uncached_contents)} items"
