@@ -344,7 +344,7 @@ async function expandNode(nodeId) {
             }
         });
 
-        // Mark node as expanded
+        // Mark node as expanded (prevents re-collapsing in buildTreeStructure)
         expandedNodes.add(nodeId);
         const node = allNodes.find(n => n.id === nodeId);
         if (node) {
@@ -352,6 +352,7 @@ async function expandNode(nodeId) {
         }
 
         // Rebuild tree structure with new nodes
+        // The collapseAllExceptExpanded function will preserve expanded state
         buildTreeStructure();
 
         // Re-render visualization
@@ -639,13 +640,28 @@ function buildTreeStructure() {
         }
     }
 
-    // Collapse ALL nodes except the root itself
-    // This ensures only the root node is visible initially, all children are collapsed
-    if (treeData.children) {
-        treeData.children.forEach(child => collapseAll(child));
+    // Collapse ALL nodes except:
+    // 1. The root itself
+    // 2. Nodes that were previously expanded (tracked in expandedNodes set)
+    function collapseAllExceptExpanded(node) {
+        if (node.children && node.children.length > 0) {
+            // First, recursively process all descendants
+            node.children.forEach(child => collapseAllExceptExpanded(child));
+
+            // Then collapse this node UNLESS it's in expandedNodes set
+            if (!expandedNodes.has(node.id)) {
+                node._children = node.children;
+                node.children = null;
+            }
+        }
     }
 
-    console.log('Tree structure built with all directories and files collapsed');
+    // This ensures only the root node + expanded nodes are visible
+    if (treeData.children) {
+        treeData.children.forEach(child => collapseAllExceptExpanded(child));
+    }
+
+    console.log(`Tree structure built with ${expandedNodes.size} nodes kept expanded`);
 
     // Calculate line counts for all nodes (for proportional node rendering)
     allLineCounts = [];  // Reset for fresh calculation
@@ -1761,11 +1777,15 @@ function handleNodeClick(event, d) {
             console.log('Collapsing directory');
             nodeData._children = nodeData.children;
             nodeData.children = null;
+            // Remove from expandedNodes so it stays collapsed on rebuild
+            expandedNodes.delete(nodeData.id);
         } else if (nodeData._children) {
             // Currently collapsed - expand it
             console.log('Expanding directory');
             nodeData.children = nodeData._children;
             nodeData._children = null;
+            // Add to expandedNodes to preserve expansion on rebuild
+            expandedNodes.add(nodeData.id);
         }
 
         // Re-render to show/hide children
@@ -1821,11 +1841,15 @@ function handleNodeClick(event, d) {
             console.log('Collapsing file');
             nodeData._children = nodeData.children;
             nodeData.children = null;
+            // Remove from expandedNodes so it stays collapsed on rebuild
+            expandedNodes.delete(nodeData.id);
         } else if (nodeData._children) {
             // Currently collapsed - expand it
             console.log('Expanding file');
             nodeData.children = nodeData._children;
             nodeData._children = null;
+            // Add to expandedNodes to preserve expansion on rebuild
+            expandedNodes.add(nodeData.id);
         } else {
             console.log('WARNING: File has neither children nor _children!');
         }
@@ -1843,11 +1867,15 @@ function handleNodeClick(event, d) {
                 console.log(`Collapsing ${nodeData.type} chunk`);
                 nodeData._children = nodeData.children;
                 nodeData.children = null;
+                // Remove from expandedNodes so it stays collapsed on rebuild
+                expandedNodes.delete(nodeData.id);
             } else if (nodeData._children) {
                 // Currently collapsed - expand it
                 console.log(`Expanding ${nodeData.type} chunk to show ${nodeData._children.length} children`);
                 nodeData.children = nodeData._children;
                 nodeData._children = null;
+                // Add to expandedNodes to preserve expansion on rebuild
+                expandedNodes.add(nodeData.id);
             }
             // Re-render to show/hide children
             renderVisualization();
