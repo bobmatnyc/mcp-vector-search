@@ -1816,24 +1816,37 @@ function handleNodeClick(event, d) {
         }
 
         // Toggle directory: swap children <-> _children
-        if (nodeData.children) {
+        // IMPORTANT: Check length, not just existence - empty arrays [] are truthy in JS!
+        const hasVisibleChildren = nodeData.children && nodeData.children.length > 0;
+        const hasHiddenChildren = nodeData._children && nodeData._children.length > 0;
+
+        if (hasVisibleChildren) {
             // Currently expanded - collapse it
-            console.log('Collapsing directory');
+            console.log(`Collapsing directory (${nodeData.children.length} children)`);
             nodeData._children = nodeData.children;
             nodeData.children = null;
-            // Remove from expandedNodes so it stays collapsed on rebuild
             expandedNodes.delete(nodeData.id);
-        } else if (nodeData._children) {
+            renderVisualization();
+        } else if (hasHiddenChildren) {
             // Currently collapsed - expand it
-            console.log('Expanding directory');
+            console.log(`Expanding directory (${nodeData._children.length} children)`);
             nodeData.children = nodeData._children;
             nodeData._children = null;
-            // Add to expandedNodes to preserve expansion on rebuild
             expandedNodes.add(nodeData.id);
+            renderVisualization();
+        } else if (nodeData.expandable) {
+            // No children loaded yet - fetch them even if expanded flag is wrong
+            console.log(`No children for ${nodeData.name}, fetching from server...`);
+            nodeData.expanded = false;  // Reset the flag
+            expandNode(nodeData.id).catch(err => {
+                console.error('expandNode failed:', err);
+                alert(`ERROR: Failed to expand ${nodeData.name}: ${err.message}`);
+            });
+        } else {
+            console.log(`Directory ${nodeData.name} has no children and is not expandable`);
         }
 
-        // Re-render to show/hide children
-        renderVisualization();
+        // Don't re-render here - done above or in expandNode callback
 
         // Don't auto-open viewer panel for directories - just expand/collapse
     } else if (nodeData.type === 'file') {
