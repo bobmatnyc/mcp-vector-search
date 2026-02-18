@@ -349,10 +349,16 @@ async function expandNode(nodeId) {
         const node = allNodes.find(n => n.id === nodeId);
         if (node) {
             node.expanded = true;
+            console.log(`Marked node ${nodeId} as expanded`);
+        } else {
+            console.warn(`Could not find node ${nodeId} in allNodes to mark as expanded`);
         }
+
+        console.log(`expandedNodes set now contains: ${Array.from(expandedNodes).join(', ')}`);
 
         // Rebuild tree structure with new nodes
         // The collapseAllExceptExpanded function will preserve expanded state
+        console.log(`Rebuilding tree structure after expanding ${nodeId}...`);
         buildTreeStructure();
 
         // Re-render visualization
@@ -652,6 +658,9 @@ function buildTreeStructure() {
             if (!expandedNodes.has(node.id)) {
                 node._children = node.children;
                 node.children = null;
+                console.log(`Collapsed node ${node.id} (not in expandedNodes)`);
+            } else {
+                console.log(`Preserving node ${node.id} (in expandedNodes with ${node.children.length} children)`);
             }
         }
     }
@@ -1764,12 +1773,10 @@ function handleNodeClick(event, d) {
 
     if (nodeData.type === 'directory') {
         // Check if needs progressive loading (not yet fetched)
-        // Node needs loading if: expandable=true, not yet expanded, and has no children loaded
-        // Check for EMPTY arrays, not just absence of arrays (buildTreeStructure adds empty [])
-        const hasLoadedChildren = (nodeData.children && nodeData.children.length > 0) ||
-                                   (nodeData._children && nodeData._children.length > 0);
-
-        if (nodeData.expandable && !nodeData.expanded && !hasLoadedChildren) {
+        // Node needs loading if: expandable=true AND not yet expanded
+        // The `expanded` flag is set by expandNode() after successful fetch (line 351)
+        // We CANNOT rely on children.length because buildTreeStructure initializes all nodes with children: []
+        if (nodeData.expandable && !nodeData.expanded) {
             // First time expansion - fetch from server
             console.log('Progressive loading: fetching children from server');
             expandNode(nodeData.id);
@@ -1799,7 +1806,8 @@ function handleNodeClick(event, d) {
         // Don't auto-open viewer panel for directories - just expand/collapse
     } else if (nodeData.type === 'file') {
         // Check if needs progressive loading (not yet fetched)
-        if (nodeData.expandable && !nodeData.expanded && !nodeData.children && !nodeData._children) {
+        // Same as directory: use expanded flag, not children array length
+        if (nodeData.expandable && !nodeData.expanded) {
             // First time expansion - fetch chunks from server
             console.log('Progressive loading: fetching file chunks from server');
             expandNode(nodeData.id);
