@@ -86,7 +86,7 @@ class ComponentFactory:
             # LanceDB backend (no pooling support yet)
             logger.info("Using LanceDB backend")
             return LanceVectorDatabase(
-                persist_directory=config.index_path,
+                persist_directory=config.index_path / "lance",
                 embedding_function=embedding_function,
                 collection_name="code_search",
             )
