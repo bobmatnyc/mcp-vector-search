@@ -1280,8 +1280,9 @@ async def _run_batch_indexing(
                                 "[bold]Visualization:[/bold]\n"
                                 "  [cyan]mcp-vector-search visualize[/cyan] - Interactive explorer\n\n"
                                 "[bold]Analyze Code:[/bold]\n"
-                                "  [cyan]mcp-vector-search analyze[/cyan] - Full analysis\n"
-                                "  [cyan]mcp-vector-search analyze --quick[/cyan] - Quick mode"
+                                "  [cyan]mcp-vector-search analyze[/cyan] - Full (complexity + dead code)\n"
+                                "  [cyan]mcp-vector-search analyze complexity[/cyan] - Complexity only\n"
+                                "  [cyan]mcp-vector-search analyze dead-code[/cyan] - Dead code only"
                             )
 
                             layout["samples"].update(
@@ -1476,8 +1477,9 @@ async def _run_batch_indexing(
             [
                 "",
                 "[bold]Analyze Code:[/bold]",
-                "[cyan]mcp-vector-search analyze[/cyan] - Full analysis",
-                "[cyan]mcp-vector-search analyze --quick[/cyan] - Quick mode",
+                "[cyan]mcp-vector-search analyze[/cyan] - Full (complexity + dead code)",
+                "[cyan]mcp-vector-search analyze complexity[/cyan] - Complexity only",
+                "[cyan]mcp-vector-search analyze dead-code[/cyan] - Dead code only",
             ]
         )
 
