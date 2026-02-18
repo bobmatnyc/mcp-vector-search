@@ -88,7 +88,7 @@ class ComponentFactory:
             return LanceVectorDatabase(
                 persist_directory=config.index_path / "lance",
                 embedding_function=embedding_function,
-                collection_name="code_search",
+                collection_name="chunks",  # Match ChunksBackend.TABLE_NAME
             )
         else:
             # ChromaDB backend (default)
