@@ -115,6 +115,21 @@ class ProjectHandlers:
         file_extensions = args.get("file_extensions")
 
         try:
+            # Check if index already exists (unless force is set)
+            if not force and self.search_engine:
+                stats = await self.search_engine.database.get_stats()
+                if stats.total_chunks > 0:
+                    return CallToolResult(
+                        content=[
+                            TextContent(
+                                type="text",
+                                text=f"Index already exists with {stats.total_chunks} chunks from {stats.total_files} files. "
+                                f"Use force=true to reindex, or run search queries directly. "
+                                f"Call get_project_status for more details.",
+                            )
+                        ]
+                    )
+
             # Import indexing functionality
             from ..cli.commands.index import run_indexing
 

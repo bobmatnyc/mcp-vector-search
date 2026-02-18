@@ -161,7 +161,7 @@ def _get_index_project_schema() -> Tool:
     """Get index_project tool schema."""
     return Tool(
         name="index_project",
-        description="Index or reindex the project codebase",
+        description="Index or reindex the project codebase. IMPORTANT: Always call get_project_status first to check if an index already exists. Only call this tool if: (1) No index exists (total_chunks: 0), OR (2) User explicitly requests reindexing with force=true. This operation can take 2-5 minutes for large projects.",
         inputSchema={
             "type": "object",
             "properties": {
