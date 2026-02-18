@@ -1483,7 +1483,7 @@ async def _run_batch_indexing(
             ]
         )
 
-        print_next_steps(steps, title="Ready to Search")
+        print_next_steps(steps, title="Ready to Use")
     else:
         print_info("\n[bold]No files were indexed. Possible reasons:[/bold]")
         print_info("  • No matching files found for configured extensions")

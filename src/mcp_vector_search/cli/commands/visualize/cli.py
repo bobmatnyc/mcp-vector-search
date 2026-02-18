@@ -156,11 +156,12 @@ async def _export_chunks(
 
         config = project_manager.load_config()
 
-        # Get database
+        # Get database (use lance subdirectory and correct collection)
         embedding_function, _ = create_embedding_function(config.embedding_model)
         database = create_database(
-            persist_directory=config.index_path,
+            persist_directory=config.index_path / "lance",
             embedding_function=embedding_function,
+            collection_name="chunks",
         )
         await database.initialize()
 

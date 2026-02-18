@@ -613,16 +613,9 @@ class KGBuilder:
         if code_entities and project:
             self._extract_part_of_sync(code_entities, project, stats, progress_tracker)
 
-        # PHASE 5: Skip DOCUMENTS extraction in sync version (too expensive)
-        if not skip_documents and text_chunks and code_chunks:
-            if progress_tracker:
-                progress_tracker.warning(
-                    "Skipping DOCUMENTS extraction (computationally expensive)"
-                )
-            else:
-                console.print(
-                    "[yellow]⚠ Skipping DOCUMENTS extraction (computationally expensive)[/yellow]"
-                )
+        # NOTE: DOCUMENTS extraction (linking doc sections to code entities) is skipped
+        # in subprocess mode due to O(n×m) complexity. For 57k docs × 4k entities = 228M comparisons.
+        # Use async mode if DOCUMENTS relationships are needed.
 
         # Save metadata
         processed_chunk_ids = {c.chunk_id or c.id for c in chunks}
