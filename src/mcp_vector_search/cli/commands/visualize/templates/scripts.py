@@ -1800,14 +1800,18 @@ function handleNodeClick(event, d) {
     console.log(`Expandable: ${nodeData.expandable}, Expanded: ${nodeData.expanded}`);
 
     if (nodeData.type === 'directory') {
-        // Check if needs progressive loading (not yet fetched)
-        // Node needs loading if: expandable=true AND not yet expanded
-        // The `expanded` flag is set by expandNode() after successful fetch (line 351)
-        // We CANNOT rely on children.length because buildTreeStructure initializes all nodes with children: []
-        if (nodeData.expandable && !nodeData.expanded) {
-            // First time expansion - fetch from server
-            console.log('Progressive loading: fetching children from server');
-            alert(`DEBUG: Fetching children for directory: ${nodeData.name}`);
+        // Check actual children state (not just flags)
+        const hasVisibleChildren = nodeData.children && nodeData.children.length > 0;
+        const hasHiddenChildren = nodeData._children && nodeData._children.length > 0;
+        const hasCollapsedChildren = nodeData.collapsed_children_count > 0;
+        const hasAnyLoadedChildren = hasVisibleChildren || hasHiddenChildren;
+
+        console.log(`Directory click: ${nodeData.name}`);
+        console.log(`  visible: ${hasVisibleChildren}, hidden: ${hasHiddenChildren}, collapsed_count: ${nodeData.collapsed_children_count || 0}`);
+
+        // Case 1: Has collapsed children but none loaded - fetch them
+        if (hasCollapsedChildren && !hasAnyLoadedChildren) {
+            console.log(`Fetching ${nodeData.collapsed_children_count} collapsed children for ${nodeData.name}`);
             expandNode(nodeData.id).catch(err => {
                 console.error('expandNode failed:', err);
                 alert(`ERROR: Failed to expand ${nodeData.name}: ${err.message}`);
@@ -1815,39 +1819,36 @@ function handleNodeClick(event, d) {
             return;
         }
 
-        // Toggle directory: swap children <-> _children
-        // IMPORTANT: Check length, not just existence - empty arrays [] are truthy in JS!
-        const hasVisibleChildren = nodeData.children && nodeData.children.length > 0;
-        const hasHiddenChildren = nodeData._children && nodeData._children.length > 0;
-
+        // Case 2: Has visible children - collapse them
         if (hasVisibleChildren) {
-            // Currently expanded - collapse it
             console.log(`Collapsing directory (${nodeData.children.length} children)`);
             nodeData._children = nodeData.children;
             nodeData.children = null;
             expandedNodes.delete(nodeData.id);
             renderVisualization();
-        } else if (hasHiddenChildren) {
-            // Currently collapsed - expand it
+            return;
+        }
+
+        // Case 3: Has hidden children - show them
+        if (hasHiddenChildren) {
             console.log(`Expanding directory (${nodeData._children.length} children)`);
             nodeData.children = nodeData._children;
             nodeData._children = null;
             expandedNodes.add(nodeData.id);
             renderVisualization();
-        } else if (nodeData.expandable) {
-            // No children loaded yet - fetch them even if expanded flag is wrong
-            console.log(`No children for ${nodeData.name}, fetching from server...`);
-            nodeData.expanded = false;  // Reset the flag
-            expandNode(nodeData.id).catch(err => {
-                console.error('expandNode failed:', err);
-                alert(`ERROR: Failed to expand ${nodeData.name}: ${err.message}`);
-            });
-        } else {
-            console.log(`Directory ${nodeData.name} has no children and is not expandable`);
+            return;
         }
 
-        // Don't re-render here - done above or in expandNode callback
+        // Case 4: Expandable but no children - try fetching
+        if (nodeData.expandable) {
+            console.log(`No children for ${nodeData.name}, trying to fetch...`);
+            expandNode(nodeData.id).catch(err => {
+                console.error('expandNode failed:', err);
+            });
+            return;
+        }
 
+        console.log(`Directory ${nodeData.name} has no children and is not expandable`);
         // Don't auto-open viewer panel for directories - just expand/collapse
     } else if (nodeData.type === 'file') {
         // Check if needs progressive loading (not yet fetched)
