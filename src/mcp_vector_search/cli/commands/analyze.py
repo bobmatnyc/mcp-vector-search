@@ -839,7 +839,6 @@ def _find_analyzable_files(
     Returns:
         List of file paths to analyze
     """
-    import fnmatch
 
     # If git_changed_files is provided, use it as the primary filter
     if git_changed_files is not None:
@@ -905,8 +904,8 @@ def _find_analyzable_files(
     files = []
     supported_extensions = parser_registry.get_supported_extensions()
 
-    # Common ignore patterns
-    ignore_patterns = {
+    # Common ignore patterns - exact matches for directory names
+    ignore_dirs = {
         ".git",
         ".venv",
         "venv",
@@ -917,7 +916,21 @@ def _find_analyzable_files(
         "build",
         ".tox",
         ".eggs",
+        "vendor",
+        ".mypy_cache",
+        ".ruff_cache",
+        "htmlcov",
+        "site-packages",
+        ".nox",
+        "env",
+        ".env",
+        "virtualenv",
+        ".cache",
+        ".uv",
     }
+
+    # Prefix patterns - match any directory starting with these
+    ignore_prefixes = {".venv", "venv", ".env", "env"}
 
     for file_path in base_path.rglob("*"):
         # Skip symlinks to prevent traversing outside project
@@ -928,11 +941,22 @@ def _find_analyzable_files(
         if file_path.is_dir():
             continue
 
-        # Skip ignored directories
-        if any(
-            ignored in file_path.parts or fnmatch.fnmatch(file_path.name, f"{ignored}*")
-            for ignored in ignore_patterns
-        ):
+        # Skip files in ignored directories (exact match or prefix match)
+        should_skip = False
+        for part in file_path.parts:
+            # Exact match
+            if part in ignore_dirs:
+                should_skip = True
+                break
+            # Prefix match (e.g., .venv-mcp, venv-test, .env-local)
+            for prefix in ignore_prefixes:
+                if part.startswith(prefix):
+                    should_skip = True
+                    break
+            if should_skip:
+                break
+
+        if should_skip:
             continue
 
         # Check if file extension is supported
