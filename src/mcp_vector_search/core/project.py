@@ -110,17 +110,24 @@ class ProjectManager:
             logger.debug(f"Using default embedding model: {embedding_model}")
 
         try:
-            # Backup existing config if forcing re-initialization
-            config_path = get_default_config_path(self.project_root)
-            if force and config_path.exists():
-                backup_path = config_path.with_suffix(".json.bak")
-                import shutil
+            import shutil
 
-                shutil.copy2(config_path, backup_path)
-                logger.info(f"Backed up existing config to {backup_path}")
-
-            # Create index directory
             index_path = get_default_index_path(self.project_root)
+            config_path = get_default_config_path(self.project_root)
+
+            # Clean up existing directory if forcing re-initialization
+            if force and index_path.exists():
+                # Backup config before removal
+                if config_path.exists():
+                    backup_path = config_path.with_suffix(".json.bak")
+                    shutil.copy2(config_path, backup_path)
+                    logger.info(f"Backed up existing config to {backup_path}")
+
+                # Remove entire directory for clean slate
+                shutil.rmtree(index_path)
+                logger.info(f"Removed existing index directory: {index_path}")
+
+            # Create fresh index directory
             index_path.mkdir(parents=True, exist_ok=True)
 
             # Ensure .mcp-vector-search/ is in .gitignore
