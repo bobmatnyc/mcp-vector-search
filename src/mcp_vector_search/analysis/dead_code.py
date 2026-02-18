@@ -247,8 +247,8 @@ class DeadCodeAnalyzer:
             if chunk_type not in ("function", "method"):
                 continue
 
-            # Get function name
-            function_name = chunk.get("function_name") or chunk.get("class_name")
+            # Get function name (skip class definitions without function_name)
+            function_name = chunk.get("function_name")
             if not function_name:
                 continue
 
@@ -322,8 +322,8 @@ class DeadCodeAnalyzer:
             if chunk_type not in ("function", "method"):
                 continue
 
-            # Get function name
-            function_name = chunk.get("function_name") or chunk.get("class_name")
+            # Get function name (skip class definitions without function_name)
+            function_name = chunk.get("function_name")
             if not function_name:
                 continue
 
@@ -373,7 +373,7 @@ class DeadCodeAnalyzer:
         Returns:
             Confidence level
         """
-        function_name = chunk.get("function_name") or chunk.get("class_name", "")
+        function_name = chunk.get("function_name", "")
         decorators = chunk.get("decorators", [])
 
         # LOW confidence if has decorators (might be registered as callback)
@@ -397,7 +397,7 @@ class DeadCodeAnalyzer:
         Returns:
             Reason string
         """
-        function_name = chunk.get("function_name") or chunk.get("class_name", "")
+        function_name = chunk.get("function_name", "")
 
         if confidence == Confidence.HIGH:
             return (
@@ -428,7 +428,7 @@ class DeadCodeAnalyzer:
             )
 
         # Check for common callback patterns in function name
-        function_name = chunk.get("function_name") or chunk.get("class_name", "")
+        function_name = chunk.get("function_name", "")
         callback_patterns = ["callback", "handler", "on_", "handle_"]
         if any(pattern in function_name.lower() for pattern in callback_patterns):
             caveats.append(
