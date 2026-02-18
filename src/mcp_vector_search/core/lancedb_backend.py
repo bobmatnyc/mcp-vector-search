@@ -911,13 +911,13 @@ class LanceVectorDatabase:
         self, batch_dict: dict, i: int, num_rows: int
     ) -> CodeChunk:
         """Convert Arrow batch dictionary row to CodeChunk."""
-        imports_str = batch_dict["imports"][i]
+        imports_str = batch_dict.get("imports", [""] * num_rows)[i]
         imports = imports_str.split(",") if imports_str else []
 
-        child_ids_str = batch_dict["child_chunk_ids"][i]
+        child_ids_str = batch_dict.get("child_chunk_ids", [""] * num_rows)[i]
         child_chunk_ids = child_ids_str.split(",") if child_ids_str else []
 
-        decorators_str = batch_dict["decorators"][i]
+        decorators_str = batch_dict.get("decorators", [""] * num_rows)[i]
         decorators = decorators_str.split(",") if decorators_str else []
 
         # Parse calls field (comma-separated string to list)
@@ -957,11 +957,15 @@ class LanceVectorDatabase:
 
     def _row_to_chunk(self, row: Any) -> CodeChunk:
         """Convert Pandas DataFrame row to CodeChunk."""
-        imports = row["imports"].split(",") if row["imports"] else []
+        imports = row.get("imports", "").split(",") if row.get("imports") else []
         child_chunk_ids = (
-            row["child_chunk_ids"].split(",") if row["child_chunk_ids"] else []
+            row.get("child_chunk_ids", "").split(",")
+            if row.get("child_chunk_ids")
+            else []
         )
-        decorators = row["decorators"].split(",") if row["decorators"] else []
+        decorators = (
+            row.get("decorators", "").split(",") if row.get("decorators") else []
+        )
 
         # Parse calls field (comma-separated string to list)
         calls = row.get("calls", "").split(",") if row.get("calls") else []
