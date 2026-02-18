@@ -1172,7 +1172,7 @@ class SemanticIndexer:
             chunks_with_hierarchy, file_path
         )
 
-        return (chunks_with_hierarchy, chunk_metrics)
+        return (chunks_with_hierarchy, None)
 
     async def _process_file_batch(
         self,
