@@ -170,7 +170,6 @@ def main():
         table.add_row("Inherits", str(build_stats["inherits"]))
         table.add_row("Contains", str(build_stats["contains"]))
         table.add_row("References", str(build_stats.get("references", 0)))
-        table.add_row("Documents", str(build_stats.get("documents", 0)))
         table.add_row("Follows", str(build_stats.get("follows", 0)))
         table.add_row("Has Tag", str(build_stats.get("has_tag", 0)))
         table.add_row("Demonstrates", str(build_stats.get("demonstrates", 0)))

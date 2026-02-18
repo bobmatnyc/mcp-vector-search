@@ -216,7 +216,6 @@ def _build_kg_in_subprocess(
             table.add_row("Inherits", str(build_stats["inherits"]))
             table.add_row("Contains", str(build_stats["contains"]))
             table.add_row("References", str(build_stats.get("references", 0)))
-            table.add_row("Documents", str(build_stats.get("documents", 0)))
             table.add_row("Follows", str(build_stats.get("follows", 0)))
             table.add_row("Has Tag", str(build_stats.get("has_tag", 0)))
             table.add_row("Demonstrates", str(build_stats.get("demonstrates", 0)))
@@ -906,11 +905,10 @@ def kg_status(
         code_rel_branch.add(f"[dim]Inherits[/dim]         {code_rels['inherits']:,}")
         code_rel_branch.add(f"[dim]Contains[/dim]         {code_rels['contains']:,}")
 
-        # Documentation subtree
+        # Documentation subtree (DOCUMENTS relation removed - not implemented in subprocess mode)
         doc_rels = {
             "follows": relationships.get("follows", 0),
             "demonstrates": relationships.get("demonstrates", 0),
-            "documents": relationships.get("documents", 0),
             "references": relationships.get("references", 0),
             "links_to": relationships.get("links_to", 0),
         }
@@ -920,7 +918,6 @@ def kg_status(
         )
         doc_rel_branch.add(f"[dim]Follows[/dim]        {doc_rels['follows']:,}")
         doc_rel_branch.add(f"[dim]Demonstrates[/dim]   {doc_rels['demonstrates']:,}")
-        doc_rel_branch.add(f"[dim]Documents[/dim]      {doc_rels['documents']:,}")
         doc_rel_branch.add(f"[dim]References[/dim]     {doc_rels['references']:,}")
         doc_rel_branch.add(f"[dim]Links To[/dim]       {doc_rels['links_to']:,}")
 
