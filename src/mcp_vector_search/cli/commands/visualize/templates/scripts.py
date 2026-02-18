@@ -281,17 +281,26 @@ async function loadGraphDataActual() {
         console.log('Node type counts:', typeCounts);
         console.log('=== END SAMPLE NODE STRUCTURE ===');
 
-        // Auto-expand depth 0-1 directories (2-level initial view)
-        allNodes.forEach(node => {
-            if (node.type === 'directory' && node.expanded === true) {
-                expandedNodes.add(node.id);
-                console.log(`Auto-expanding directory: ${node.id} (depth ${node.depth})`);
-            }
-        });
-        console.log(`Auto-expanded ${expandedNodes.size} directories for initial 2-level view`);
-
+        // Build initial tree structure
         buildTreeStructure();
         renderVisualization();
+
+        // Auto-expand directories marked with autoExpand flag (depth 0-1)
+        // Do this AFTER initial render so user sees something immediately
+        const nodesToAutoExpand = allNodes.filter(node =>
+            node.type === 'directory' && node.autoExpand === true && !expandedNodes.has(node.id)
+        );
+        if (nodesToAutoExpand.length > 0) {
+            console.log(`Auto-expanding ${nodesToAutoExpand.length} directories for 2-level view...`);
+            for (const node of nodesToAutoExpand) {
+                console.log(`Auto-expanding: ${node.name} (${node.id})`);
+                try {
+                    await expandNode(node.id);
+                } catch (err) {
+                    console.warn(`Failed to auto-expand ${node.name}:`, err);
+                }
+            }
+        }
     } catch (error) {
         console.error('Failed to load graph data:', error);
         document.body.innerHTML =

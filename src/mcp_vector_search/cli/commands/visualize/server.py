@@ -200,8 +200,10 @@ def create_app(viz_dir: Path) -> FastAPI:
                         # Mark as expandable if it has children
                         node_copy = node.copy()
                         node_copy["expandable"] = True
-                        # Auto-expand depth 0-1 nodes, keep depth 2 collapsed
-                        node_copy["expanded"] = depth <= 1
+                        # NEVER set expanded=true server-side - let client track via expandedNodes
+                        # The client will auto-expand depth 0-1 after fetching children
+                        node_copy["expanded"] = False
+                        node_copy["autoExpand"] = depth <= 1  # Hint for client
                         initial_nodes.append(node_copy)
                         initial_node_ids.add(node["id"])
 
