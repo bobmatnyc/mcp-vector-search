@@ -38,6 +38,122 @@ _cancellation_flag = threading.Event()
 _esc_listener_thread: threading.Thread | None = None
 
 
+def auto_batch_size() -> int:
+    """Calculate optimal batch size based on available RAM and CPU cores.
+
+    Heuristic:
+    - Base: cpu_count * 16 (each core can parse ~16 files efficiently)
+    - RAM factor: If available RAM < 4GB, halve. If < 2GB, use minimum.
+    - Cap at 1024, floor at 32
+    - Round to nearest power of 2 (32, 64, 128, 256, 512, 1024)
+
+    Returns:
+        Optimal batch size (32-1024, power of 2)
+    """
+    # Get CPU count
+    cpu_count = os.cpu_count() or 4  # Fallback to 4 if detection fails
+
+    # Get available RAM (not total) - cross-platform without psutil
+    available_ram_gb = _get_available_ram_gb()
+
+    # Base calculation: cpu_count * 16
+    base_batch = cpu_count * 16
+
+    # RAM factor adjustments
+    if available_ram_gb < 2.0:
+        # Very low RAM - use minimum
+        batch = 32
+    elif available_ram_gb < 4.0:
+        # Low RAM - halve the batch size
+        batch = base_batch // 2
+    else:
+        # Sufficient RAM - use base calculation
+        batch = base_batch
+
+    # Cap at 1024, floor at 32
+    batch = max(32, min(1024, batch))
+
+    # Round to nearest power of 2
+    batch = _round_to_power_of_2(batch)
+
+    return batch
+
+
+def _get_available_ram_gb() -> float:
+    """Get available RAM in GB without external dependencies.
+
+    Returns:
+        Available RAM in gigabytes (fallback: 8.0 if detection fails)
+    """
+    try:
+        import platform
+
+        system = platform.system()
+
+        if system == "Darwin":  # macOS
+            # Use sysctl to get available memory
+            try:
+                result = subprocess.run(  # nosec B607
+                    ["sysctl", "-n", "vm.page_free_count"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                free_pages = int(result.stdout.strip())
+
+                result = subprocess.run(  # nosec B607
+                    ["sysctl", "-n", "vm.pagesize"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                page_size = int(result.stdout.strip())
+
+                available_bytes = free_pages * page_size
+                return available_bytes / (1024**3)
+            except Exception:
+                # Fallback: try sysconf
+                try:
+                    page_size = os.sysconf("SC_PAGE_SIZE")
+                    avail_pages = os.sysconf("SC_AVPHYS_PAGES")
+                    available_bytes = page_size * avail_pages
+                    return available_bytes / (1024**3)
+                except Exception:
+                    pass
+
+        elif system == "Linux":
+            # Read /proc/meminfo
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        # Value is in kB
+                        kb = int(line.split()[1])
+                        return kb / (1024**2)  # Convert kB to GB
+
+        # Fallback for other systems or if detection fails
+        return 8.0
+
+    except Exception as e:
+        logger.debug(f"Failed to detect available RAM: {e}")
+        return 8.0  # Reasonable default
+
+
+def _round_to_power_of_2(n: int) -> int:
+    """Round to nearest power of 2 within valid range.
+
+    Args:
+        n: Input number
+
+    Returns:
+        Nearest power of 2 in range [32, 1024]
+    """
+    # Valid powers of 2: 32, 64, 128, 256, 512, 1024
+    powers = [32, 64, 128, 256, 512, 1024]
+
+    # Find closest power
+    return min(powers, key=lambda x: abs(x - n))
+
+
 def _reset_cursor() -> None:
     """Reset cursor to column 0 after Rich status/Live displays.
 
@@ -187,11 +303,11 @@ def main(
         rich_help_panel="📊 Indexing Options",
     ),
     batch_size: int = typer.Option(
-        256,
+        0,
         "--batch-size",
         "-b",
-        help="Number of files per batch (larger = faster with multiprocessing)",
-        min=1,
+        help="Number of files per batch (0 = auto-tune based on CPU/RAM, larger = faster with multiprocessing)",
+        min=0,
         max=1024,
         rich_help_panel="⚡ Performance",
     ),
@@ -536,7 +652,7 @@ async def run_indexing(
     incremental: bool = True,
     extensions: str | None = None,
     force_reindex: bool = False,
-    batch_size: int = 256,
+    batch_size: int = 0,  # 0 = auto-tune based on CPU/RAM
     show_progress: bool = True,
     debug: bool = False,
     verbose: bool = False,
@@ -578,6 +694,18 @@ async def run_indexing(
     if embedding_model_override:
         logger.info(f"Overriding embedding model: {embedding_model_override}")
         config = config.model_copy(update={"embedding_model": embedding_model_override})
+
+    # Auto-tune batch size if not explicitly set (batch_size == 0 is sentinel)
+    if batch_size == 0:
+        batch_size = auto_batch_size()
+        cpu_count = os.cpu_count() or 4
+        available_ram_gb = _get_available_ram_gb()
+        print_info(
+            f"Batch size: {batch_size} (auto-tuned: {cpu_count} cores, {available_ram_gb:.1f}GB available)"
+        )
+    else:
+        # User explicitly set batch size
+        print_info(f"Batch size: {batch_size} (user-specified)")
 
     # Check schema compatibility before indexing (unless explicitly skipped)
     if not skip_schema_check:
