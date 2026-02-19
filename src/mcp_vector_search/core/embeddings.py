@@ -99,8 +99,25 @@ def _detect_device() -> str:
 
     Returns:
         Device string: "mps", "cuda", or "cpu"
+
+    Environment Variables:
+        MCP_VECTOR_SEARCH_DEVICE: Override device selection ("cpu", "cuda", or "mps")
     """
     import torch
+
+    # Check environment variable override first
+    env_device = os.environ.get("MCP_VECTOR_SEARCH_DEVICE", "").lower()
+    if env_device in ("cpu", "cuda", "mps"):
+        logger.info(f"Using device from environment override: {env_device}")
+        return env_device
+
+    # Check for PyTorch 2.10.0 MPS regression and warn user
+    if torch.__version__.startswith("2.10."):
+        logger.warning(
+            f"PyTorch {torch.__version__} has known MPS performance regression "
+            "(MPS can be 10x slower than CPU). Consider downgrading to PyTorch 2.8.x or 2.9.x "
+            "for better GPU performance, or set MCP_VECTOR_SEARCH_DEVICE=cpu to use CPU explicitly."
+        )
 
     # Check for Apple Silicon MPS first (highest priority for M4 Max)
     if torch.backends.mps.is_available() and torch.backends.mps.is_built():
