@@ -111,18 +111,15 @@ def _detect_device() -> str:
         logger.info(f"Using device from environment override: {env_device}")
         return env_device
 
-    # Check for PyTorch 2.10.0 MPS regression and warn user
-    if torch.__version__.startswith("2.10."):
-        logger.warning(
-            f"PyTorch {torch.__version__} has known MPS performance regression "
-            "(MPS can be 10x slower than CPU). Consider downgrading to PyTorch 2.8.x or 2.9.x "
-            "for better GPU performance, or set MCP_VECTOR_SEARCH_DEVICE=cpu to use CPU explicitly."
-        )
-
-    # Check for Apple Silicon MPS first (highest priority for M4 Max)
+    # Apple Silicon MPS offers minimal speedup for transformer inference
+    # (M4 Max CPU is already very fast with unified memory), so we default
+    # to CPU. Users can override with MCP_VECTOR_SEARCH_DEVICE=mps.
     if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-        logger.info("Using Apple Silicon MPS backend for GPU acceleration")
-        return "mps"
+        logger.info(
+            "Apple Silicon detected. Using CPU (faster than MPS for transformer inference). "
+            "Override with MCP_VECTOR_SEARCH_DEVICE=mps if desired."
+        )
+        return "cpu"
 
     # Check for NVIDIA CUDA with detailed diagnostics
     if torch.cuda.is_available():
@@ -793,15 +790,29 @@ class BatchEmbeddingProcessor:
         return stats
 
 
+def _default_model_for_device() -> str:
+    """Select the best default embedding model based on compute device.
+
+    - CUDA (dedicated GPU): GraphCodeBERT (768d) — 12x slower but much higher quality
+    - CPU/MPS (local): MiniLM-L6 (384d) — fast, good quality for local development
+
+    Users can always override via MCP_VECTOR_SEARCH_EMBEDDING_MODEL env var.
+    """
+    device = _detect_device()
+    if device == "cuda":
+        return "microsoft/graphcodebert-base"
+    return "sentence-transformers/all-MiniLM-L6-v2"
+
+
 def create_embedding_function(
-    model_name: str = "microsoft/graphcodebert-base",
+    model_name: str | None = None,
     cache_dir: Path | None = None,
     cache_size: int = 1000,
 ):
     """Create embedding function and cache.
 
     Args:
-        model_name: Name of the embedding model
+        model_name: Name of the embedding model (auto-selected by device if None)
         cache_dir: Directory for caching embeddings
         cache_size: Maximum cache size
 
@@ -816,6 +827,9 @@ def create_embedding_function(
     if env_model:
         model_name = env_model
         logger.info(f"Using embedding model from environment: {model_name}")
+    elif model_name is None:
+        model_name = _default_model_for_device()
+        logger.info(f"Auto-selected embedding model for device: {model_name}")
 
     # Use our native CodeBERTEmbeddingFunction which supports GPU (MPS/CUDA)
     # and doesn't require ChromaDB (which has Python 3.14 compatibility issues)
