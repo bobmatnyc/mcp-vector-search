@@ -311,6 +311,12 @@ def main(
         max=1024,
         rich_help_panel="⚡ Performance",
     ),
+    preset: str = typer.Option(
+        "",
+        "--preset",
+        help="Model preset: 'fast' (MiniLM, 384d, ~10x faster) or 'quality' (GraphCodeBERT, 768d, better code understanding). Default: quality.",
+        rich_help_panel="⚡ Performance",
+    ),
     debug: bool = typer.Option(
         False,
         "--debug",
@@ -490,6 +496,7 @@ def main(
                     extensions=extensions,
                     force_reindex=force,
                     batch_size=batch_size,
+                    preset=preset,
                     show_progress=True,
                     debug=debug,
                     verbose=verbose,
@@ -653,6 +660,7 @@ async def run_indexing(
     extensions: str | None = None,
     force_reindex: bool = False,
     batch_size: int = 0,  # 0 = auto-tune based on CPU/RAM
+    preset: str = "",
     show_progress: bool = True,
     debug: bool = False,
     verbose: bool = False,
@@ -673,6 +681,7 @@ async def run_indexing(
     """Run the indexing process.
 
     Args:
+        preset: Model preset ('fast' for MiniLM, 'quality' for GraphCodeBERT, empty for default)
         skip_vendor_update: Skip checking for vendor pattern updates
         cancellation_flag: Event that signals cancellation (set by ESC or Ctrl+C)
         simple_progress: Use simple text progress instead of fancy TUI
@@ -690,10 +699,26 @@ async def run_indexing(
 
     config = project_manager.load_config()
 
-    # Override embedding model if specified
+    # Handle preset
+    if preset == "fast":
+        # Override to MiniLM for fast indexing
+        print_info("Preset: fast (MiniLM-L6-v2, 384d)")
+        config_model = "sentence-transformers/all-MiniLM-L6-v2"
+    elif preset == "quality" or preset == "":
+        # Default: GraphCodeBERT for best code understanding
+        config_model = config.embedding_model  # None = auto-select (GraphCodeBERT)
+    else:
+        print_warning(f"Unknown preset '{preset}', using default (quality)")
+        config_model = config.embedding_model
+
+    # Override embedding model if specified (takes precedence over preset)
     if embedding_model_override:
         logger.info(f"Overriding embedding model: {embedding_model_override}")
-        config = config.model_copy(update={"embedding_model": embedding_model_override})
+        config_model = embedding_model_override
+
+    # Apply the model selection
+    if config_model != config.embedding_model:
+        config = config.model_copy(update={"embedding_model": config_model})
 
     # Auto-tune batch size if not explicitly set (batch_size == 0 is sentinel)
     if batch_size == 0:
@@ -806,9 +831,16 @@ async def run_indexing(
 
     print_info(f"Indexing project: {project_root}")
     print_info(f"File extensions: {', '.join(config.file_extensions)}")
-    print_info(
-        f"Embedding model: {config.embedding_model or 'auto (device-dependent)'}"
-    )
+
+    # Display embedding model with preset info
+    if preset == "fast":
+        print_info(
+            "Embedding model: sentence-transformers/all-MiniLM-L6-v2 (fast preset)"
+        )
+    elif config.embedding_model:
+        print_info(f"Embedding model: {config.embedding_model}")
+    else:
+        print_info("Embedding model: auto (GraphCodeBERT - code-optimized)")
 
     # Load vendor patterns if not disabled
     vendor_patterns_set: set[str] | None = None

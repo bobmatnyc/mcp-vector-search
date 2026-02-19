@@ -92,9 +92,7 @@ class VectorsBackend:
     """
 
     TABLE_NAME = "vectors"
-    DEFAULT_VECTOR_DIMENSION = (
-        384  # all-MiniLM-L6-v2 (local CPU default); 768 for GraphCodeBERT on CUDA
-    )
+    DEFAULT_VECTOR_DIMENSION = 768  # GraphCodeBERT (default model)
 
     def __init__(self, db_path: Path, vector_dim: int | None = None) -> None:
         """Initialize vectors backend.

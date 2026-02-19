@@ -791,17 +791,29 @@ class BatchEmbeddingProcessor:
 
 
 def _default_model_for_device() -> str:
-    """Select the best default embedding model based on compute device.
+    """Return the default embedding model.
 
-    - CUDA (dedicated GPU): GraphCodeBERT (768d) — 12x slower but much higher quality
-    - CPU/MPS (local): MiniLM-L6 (384d) — fast, good quality for local development
-
-    Users can always override via MCP_VECTOR_SEARCH_EMBEDDING_MODEL env var.
+    GraphCodeBERT provides superior code understanding (data-flow aware).
+    Use --preset fast for MiniLM if indexing speed is preferred.
     """
-    device = _detect_device()
-    if device == "cuda":
-        return "microsoft/graphcodebert-base"
-    return "sentence-transformers/all-MiniLM-L6-v2"
+    return "microsoft/graphcodebert-base"
+
+
+def get_model_dimension(model_name: str | None = None) -> int:
+    """Return the embedding dimension for the given model.
+
+    Args:
+        model_name: Model name (None = use default)
+
+    Returns:
+        Embedding dimension (384 for MiniLM, 768 for code models)
+    """
+    if model_name is None:
+        model_name = _default_model_for_device()
+    if "minilm" in model_name.lower():
+        return 384
+    # GraphCodeBERT, CodeBERT, and most code models are 768d
+    return 768
 
 
 def create_embedding_function(
