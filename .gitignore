@@ -195,6 +195,7 @@ chunk-graph.json
 
 # UV specific
 .uv/
+uv.lock
 
 # ChromaDB
 chroma.sqlite3
