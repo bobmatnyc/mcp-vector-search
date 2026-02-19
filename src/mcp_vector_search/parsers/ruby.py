@@ -17,6 +17,7 @@ class RubyParser(BaseParser):
         super().__init__("ruby")
         self._parser = None
         self._language = None
+        self._initialized = False
         self._initialize_parser()
 
     def _initialize_parser(self) -> None:

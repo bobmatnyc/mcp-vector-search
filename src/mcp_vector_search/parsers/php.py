@@ -17,6 +17,7 @@ class PHPParser(BaseParser):
         super().__init__("php")
         self._parser = None
         self._language = None
+        self._initialized = False
         self._initialize_parser()
 
     def _initialize_parser(self) -> None:
