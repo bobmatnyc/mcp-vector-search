@@ -1949,7 +1949,7 @@ class SemanticIndexer:
                 BarColumn(),
                 DownloadColumn(),
                 TimeRemainingColumn(),
-                transient=True,  # Clear progress bar when done
+                transient=False,  # Keep progress bar visible after completion
             ) as progress:
                 file_size = metadata_file.stat().st_size
                 task_id = progress.add_task("", total=file_size)
