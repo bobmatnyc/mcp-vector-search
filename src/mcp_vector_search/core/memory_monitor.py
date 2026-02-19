@@ -3,6 +3,7 @@
 Provides memory cap enforcement with configurable limits and warning thresholds.
 """
 
+import asyncio
 import os
 from collections.abc import Callable
 
@@ -151,7 +152,7 @@ class MemoryMonitor:
         usage_pct = self.get_memory_usage_pct()
         return usage_pct >= self.critical_threshold
 
-    def wait_for_memory_available(
+    async def wait_for_memory_available(
         self, target_pct: float = 0.8, poll_interval_sec: float = 1.0
     ) -> None:
         """Block until memory usage drops below target threshold.
@@ -162,8 +163,6 @@ class MemoryMonitor:
             target_pct: Target memory usage to wait for (default: 0.8 = 80%)
             poll_interval_sec: Polling interval in seconds (default: 1.0)
         """
-        import time
-
         usage_pct = self.get_memory_usage_pct()
         if usage_pct < target_pct:
             return  # Already under target
@@ -173,7 +172,7 @@ class MemoryMonitor:
         )
 
         while usage_pct >= target_pct:
-            time.sleep(poll_interval_sec)
+            await asyncio.sleep(poll_interval_sec)
             usage_pct = self.get_memory_usage_pct()
 
         logger.info(

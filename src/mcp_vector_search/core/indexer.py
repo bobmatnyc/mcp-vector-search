@@ -493,7 +493,7 @@ class SemanticIndexer:
                         logger.warning(
                             "Memory limit exceeded during chunking, waiting for memory to free up..."
                         )
-                        self.memory_monitor.wait_for_memory_available(
+                        await self.memory_monitor.wait_for_memory_available(
                             target_pct=self.memory_monitor.warn_threshold
                         )
 
@@ -622,7 +622,7 @@ class SemanticIndexer:
                     logger.warning(
                         "Memory limit exceeded during embedding, waiting for memory to free up..."
                     )
-                    self.memory_monitor.wait_for_memory_available(
+                    await self.memory_monitor.wait_for_memory_available(
                         target_pct=self.memory_monitor.warn_threshold
                     )
 
