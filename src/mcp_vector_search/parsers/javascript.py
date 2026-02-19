@@ -33,14 +33,9 @@ class JavaScriptParser(BaseParser):
 
             self._language = get_language("javascript")
             self._parser = get_parser("javascript")
-
-            logger.debug(
-                "JavaScript Tree-sitter parser initialized via tree-sitter-language-pack"
-            )
             self._use_tree_sitter = True
             return
-        except Exception as e:
-            logger.debug(f"tree-sitter-language-pack failed: {e}, using regex fallback")
+        except Exception:
             self._use_tree_sitter = False
 
     async def parse_file(self, file_path: Path) -> list[CodeChunk]:
@@ -685,12 +680,7 @@ class TypeScriptParser(JavaScriptParser):
 
             self._language = get_language("typescript")
             self._parser = get_parser("typescript")
-
-            logger.debug(
-                "TypeScript Tree-sitter parser initialized via tree-sitter-language-pack"
-            )
             self._use_tree_sitter = True
             return
-        except Exception as e:
-            logger.debug(f"tree-sitter-language-pack failed: {e}, using regex fallback")
+        except Exception:
             self._use_tree_sitter = False

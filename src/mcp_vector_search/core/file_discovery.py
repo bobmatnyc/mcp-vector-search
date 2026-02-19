@@ -474,9 +474,6 @@ class FileDiscovery:
             if self.config and self.config.force_include_patterns:
                 for pattern in self.config.force_include_patterns:
                     if self._matches_glob_pattern(relative_path_str, pattern):
-                        logger.debug(
-                            f"Force-including {relative_path} (matched pattern: {pattern})"
-                        )
                         self._ignore_path_cache[cache_key] = False
                         return False  # Don't ignore this file
 
@@ -485,9 +482,6 @@ class FileDiscovery:
                         if self._pattern_could_match_inside_dir(
                             relative_path_str, pattern
                         ):
-                            logger.debug(
-                                f"Not ignoring directory {relative_path} (could contain force-included files matching: {pattern})"
-                            )
                             self._ignore_path_cache[cache_key] = False
                             return False  # Don't ignore this directory
 
@@ -498,9 +492,6 @@ class FileDiscovery:
             # where N=path parts, M=patterns, k=buckets (~10x faster for 283 patterns)
             for part in relative_path.parts:
                 if self._matches_compiled_patterns(part):
-                    logger.debug(
-                        f"Path ignored by pattern matching '{part}': {file_path}"
-                    )
                     self._ignore_path_cache[cache_key] = True
                     return True
 
@@ -512,17 +503,11 @@ class FileDiscovery:
 
                     # Check if this exact path or a parent matches
                     if relative_path_str == include_path_normalized:
-                        logger.debug(
-                            f"Force-including {relative_path} (matched path: {include_path})"
-                        )
                         self._ignore_path_cache[cache_key] = False
                         return False  # Don't ignore
 
                     # Check if path starts with include_path (i.e., it's inside the directory)
                     if relative_path_str.startswith(include_path_normalized + "/"):
-                        logger.debug(
-                            f"Force-including {relative_path} (inside force_include_path: {include_path})"
-                        )
                         self._ignore_path_cache[cache_key] = False
                         return False  # Don't ignore
 
@@ -532,9 +517,6 @@ class FileDiscovery:
                     if is_directory and include_path_normalized.startswith(
                         relative_path_str + "/"
                     ):
-                        logger.debug(
-                            f"Not ignoring directory {relative_path} (contains force_include_path: {include_path})"
-                        )
                         self._ignore_path_cache[cache_key] = False
                         return False  # Don't ignore
 
@@ -545,9 +527,6 @@ class FileDiscovery:
                 for part in relative_path.parts:
                     # Skip dotfiles unless they're in the whitelist
                     if part.startswith(".") and part not in ALLOWED_DOTFILES:
-                        logger.debug(
-                            f"Path ignored by dotfile filter '{part}': {file_path}"
-                        )
                         self._ignore_path_cache[cache_key] = True
                         return True
 
@@ -557,7 +536,6 @@ class FileDiscovery:
                 if self.gitignore_parser and self.gitignore_parser.is_ignored(
                     file_path, is_directory=is_directory
                 ):
-                    logger.debug(f"Path ignored by .gitignore: {file_path}")
                     self._ignore_path_cache[cache_key] = True
                     return True
 

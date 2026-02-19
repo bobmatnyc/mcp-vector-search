@@ -27,14 +27,9 @@ class CSharpParser(BaseParser):
 
             self._language = get_language("csharp")
             self._parser = get_parser("csharp")
-
-            logger.debug(
-                "C# Tree-sitter parser initialized via tree-sitter-language-pack"
-            )
             self._use_tree_sitter = True
             return
-        except Exception as e:
-            logger.debug(f"tree-sitter-language-pack failed: {e}, using regex fallback")
+        except Exception:
             self._use_tree_sitter = False
 
     def _ensure_parser_initialized(self) -> None:

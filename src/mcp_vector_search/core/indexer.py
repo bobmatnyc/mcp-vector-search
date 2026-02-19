@@ -451,10 +451,27 @@ class SemanticIndexer:
             files_to_delete = []
             files_to_process = []
 
-            for file_path in files:
+            # Log start of hash computation phase
+            if force:
+                logger.info("Force mode enabled, skipping file hash computation...")
+            else:
+                logger.info(
+                    f"Computing file hashes for change detection ({len(files)} files)..."
+                )
+
+            for idx, file_path in enumerate(files):
                 try:
-                    # Compute current file hash
-                    file_hash = compute_file_hash(file_path)
+                    # Log progress every 1000 files
+                    if idx > 0 and idx % 1000 == 0:
+                        logger.info(f"Computing file hashes: {idx}/{len(files)}")
+
+                    # Skip hash computation when force=True (all files will be reindexed)
+                    if force:
+                        file_hash = ""  # Empty hash when forcing full reindex
+                    else:
+                        # Compute current file hash for change detection
+                        file_hash = compute_file_hash(file_path)
+
                     rel_path = str(file_path.relative_to(self.project_root))
 
                     # Check if file changed (skip if unchanged and not forcing)
@@ -473,6 +490,12 @@ class SemanticIndexer:
                 except Exception as e:
                     logger.error(f"Failed to check file {file_path}: {e}")
                     continue
+
+            # Log completion of hash computation phase
+            if not force:
+                logger.info(
+                    f"File hash computation complete: {len(files_to_process)} files changed, {len(files) - len(files_to_process)} unchanged"
+                )
 
             # Batch delete old chunks for all files (skip if atomic rebuild is active)
             if not self._atomic_rebuild_active and files_to_delete:

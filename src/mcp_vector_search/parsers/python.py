@@ -49,29 +49,19 @@ class PythonParser(BaseParser):
             # Get the language and parser objects
             self._language = get_language("python")
             self._parser = get_parser("python")
-
-            logger.debug(
-                "Python Tree-sitter parser initialized via tree-sitter-language-pack"
-            )
             return
-        except Exception as e:
-            logger.debug(f"tree-sitter-language-pack failed: {e}")
+        except Exception:
+            pass
 
         try:
             # Fallback to manual tree-sitter setup (requires language binaries)
             # This would require language binaries to be available
             # For now, we'll skip this and rely on fallback parsing
-            logger.debug("Manual tree-sitter setup not implemented yet")
             self._parser = None
             self._language = None
-        except Exception as e:
-            logger.debug(f"Manual tree-sitter setup failed: {e}")
+        except Exception:
             self._parser = None
             self._language = None
-
-        logger.info(
-            "Using fallback regex-based parsing for Python (Tree-sitter unavailable)"
-        )
 
     async def parse_file(self, file_path: Path) -> list[CodeChunk]:
         """Parse a Python file and extract code chunks.

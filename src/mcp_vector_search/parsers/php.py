@@ -28,30 +28,19 @@ class PHPParser(BaseParser):
             # Get the language and parser objects
             self._language = get_language("php")
             self._parser = get_parser("php")
-
-            logger.debug(
-                "PHP Tree-sitter parser initialized via tree-sitter-language-pack"
-            )
             return
-        except Exception as e:
-            logger.debug(f"tree-sitter-language-pack failed: {e}")
+        except Exception:
+            pass
 
         try:
             # Fallback to manual tree-sitter setup (requires language binaries)
-
             # This would require language binaries to be available
             # For now, we'll skip this and rely on fallback parsing
-            logger.debug("Manual tree-sitter setup not implemented yet")
             self._parser = None
             self._language = None
-        except Exception as e:
-            logger.debug(f"Manual tree-sitter setup failed: {e}")
+        except Exception:
             self._parser = None
             self._language = None
-
-        logger.info(
-            "Using fallback regex-based parsing for PHP (Tree-sitter unavailable)"
-        )
 
     def _ensure_parser_initialized(self) -> None:
         """Ensure tree-sitter parser is initialized (lazy loading)."""

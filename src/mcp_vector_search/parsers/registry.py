@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-from loguru import logger
-
 from .base import BaseParser, FallbackParser
 from .csharp import CSharpParser
 from .dart import DartParser
@@ -76,10 +74,6 @@ class ParserRegistry:
             if lang not in self._parser_classes:
                 self._parser_classes[lang] = parser_class
 
-        logger.debug(
-            f"Registered {len(self._parser_classes)} parser classes (lazy loading enabled)"
-        )
-
     def register_parser(self, language: str, parser: BaseParser) -> None:
         """Register a parser for a specific language.
 
@@ -93,8 +87,6 @@ class ParserRegistry:
         for ext in parser.get_supported_extensions():
             if ext != "*":  # Skip fallback marker
                 self._extension_map[ext.lower()] = language
-
-        logger.debug(f"Registered parser for {language}: {parser.__class__.__name__}")
 
     def get_parser(self, file_extension: str) -> BaseParser:
         """Get parser for a file extension (lazy instantiation).
@@ -115,7 +107,6 @@ class ParserRegistry:
                 parser_class = self._parser_classes.get(language)
                 if parser_class:
                     self._parsers[language] = parser_class()
-                    logger.debug(f"Lazily instantiated parser for {language}")
 
             if language in self._parsers:
                 return self._parsers[language]
