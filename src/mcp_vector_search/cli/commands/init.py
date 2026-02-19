@@ -376,7 +376,7 @@ def check_initialization(ctx: typer.Context) -> None:
 async def run_init_setup(
     project_root: Path,
     file_extensions: list[str] | None = None,
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+    embedding_model: str = "microsoft/graphcodebert-base",
     similarity_threshold: float = 0.5,
     mcp: bool = True,
     auto_index: bool = True,

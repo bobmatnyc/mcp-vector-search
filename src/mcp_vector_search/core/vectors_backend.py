@@ -92,7 +92,7 @@ class VectorsBackend:
     """
 
     TABLE_NAME = "vectors"
-    DEFAULT_VECTOR_DIMENSION = 384  # all-MiniLM-L6-v2
+    DEFAULT_VECTOR_DIMENSION = 768  # microsoft/graphcodebert-base
 
     def __init__(self, db_path: Path, vector_dim: int | None = None) -> None:
         """Initialize vectors backend.
@@ -143,10 +143,86 @@ class VectorsBackend:
                 f"Vectors backend initialization failed: {e}"
             ) from e
 
+    async def check_dimension_mismatch(self, expected_dim: int) -> bool:
+        """Check if vectors table has mismatched dimensions.
+
+        Args:
+            expected_dim: Expected vector dimension from embedding model
+
+        Returns:
+            True if dimension mismatch detected, False otherwise
+        """
+        if self._table is None:
+            # No table exists yet - no mismatch
+            return False
+
+        try:
+            # Get schema from existing table
+            schema = self._table.schema
+            vector_field = schema.field("vector")
+
+            # Extract dimension from list type (e.g., list<item: float>[384])
+            # The list_size property gives the fixed dimension
+            if hasattr(vector_field.type, "list_size"):
+                actual_dim = vector_field.type.list_size
+                if actual_dim != expected_dim:
+                    logger.warning(
+                        f"Vector dimension mismatch: table has {actual_dim}D, "
+                        f"model expects {expected_dim}D"
+                    )
+                    return True
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to check dimension mismatch: {e}")
+            return False
+
+    async def recreate_table_with_new_dimensions(self, new_dim: int) -> None:
+        """Drop and recreate vectors table with new dimensions.
+
+        This is needed when switching embedding models with different dimensions
+        (e.g., 384D -> 768D). Preserves chunk data - only vectors need re-embedding.
+
+        Args:
+            new_dim: New vector dimension
+
+        Raises:
+            DatabaseNotInitializedError: If backend not initialized
+            DatabaseError: If recreation fails
+        """
+        if self._db is None:
+            raise DatabaseNotInitializedError("Vectors backend not initialized")
+
+        try:
+            # Check if table exists
+            tables_response = self._db.list_tables()
+            table_names = (
+                tables_response.tables
+                if hasattr(tables_response, "tables")
+                else tables_response
+            )
+
+            if self.TABLE_NAME in table_names:
+                # Drop existing table
+                self._db.drop_table(self.TABLE_NAME)
+                logger.info(
+                    f"Dropped vectors table (dimension change: {self.vector_dim}D -> {new_dim}D)"
+                )
+
+            # Update dimension
+            self.vector_dim = new_dim
+            self._table = None
+            logger.info(
+                f"Vectors table will be recreated with {new_dim}D on first write"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to recreate vectors table: {e}")
+            raise DatabaseError(f"Failed to recreate vectors table: {e}") from e
+
     async def add_vectors(
         self,
         chunks_with_vectors: list[dict[str, Any]],
-        model_version: str = "all-MiniLM-L6-v2",
+        model_version: str = "graphcodebert-base",
     ) -> int:
         """Add embedded chunks to vectors table.
 

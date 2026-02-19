@@ -271,6 +271,18 @@ def main(
         help="Enable git blame tracking for per-line authorship (slower, disabled by default)",
         rich_help_panel="⚡ Performance",
     ),
+    re_embed: bool = typer.Option(
+        False,
+        "--re-embed",
+        help="Re-embed all chunks with current or specified model without re-parsing",
+        rich_help_panel="📊 Indexing Options",
+    ),
+    embedding_model: str | None = typer.Option(
+        None,
+        "--embedding-model",
+        help="Override embedding model (e.g., microsoft/graphcodebert-base)",
+        rich_help_panel="📁 Configuration",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -376,6 +388,8 @@ def main(
                     cancellation_flag=_cancellation_flag,
                     simple_progress=simple_progress,
                     skip_blame=not enable_blame,
+                    re_embed=re_embed,
+                    embedding_model_override=embedding_model,
                 )
             )
 
@@ -537,6 +551,8 @@ async def run_indexing(
     cancellation_flag: threading.Event | None = None,
     simple_progress: bool = False,
     skip_blame: bool = False,
+    re_embed: bool = False,
+    embedding_model_override: str | None = None,
 ) -> None:
     """Run the indexing process.
 
@@ -545,6 +561,8 @@ async def run_indexing(
         cancellation_flag: Event that signals cancellation (set by ESC or Ctrl+C)
         simple_progress: Use simple text progress instead of fancy TUI
         skip_blame: Skip git blame tracking for faster indexing
+        re_embed: Re-embed all chunks with current or specified model without re-parsing
+        embedding_model_override: Override embedding model (e.g., microsoft/graphcodebert-base)
     """
     # Load project configuration
     project_manager = ProjectManager(project_root)
@@ -555,6 +573,11 @@ async def run_indexing(
         )
 
     config = project_manager.load_config()
+
+    # Override embedding model if specified
+    if embedding_model_override:
+        logger.info(f"Overriding embedding model: {embedding_model_override}")
+        config = config.model_copy(update={"embedding_model": embedding_model_override})
 
     # Check schema compatibility before indexing (unless explicitly skipped)
     if not skip_schema_check:
@@ -802,6 +825,7 @@ async def run_indexing(
                     verbose,
                     cancellation_flag,
                     simple_progress,
+                    re_embed,
                 )
 
     except Exception as e:
@@ -821,17 +845,54 @@ async def _run_batch_indexing(
     verbose: bool = False,
     cancellation_flag: threading.Event | None = None,
     simple_progress: bool = False,
+    re_embed: bool = False,
 ) -> None:
     """Run batch indexing of all files with three-phase progress display.
 
     Args:
         simple_progress: Use simple text output instead of fancy TUI (fixes cursor issues)
+        re_embed: Re-embed all chunks with current model without re-parsing
     """
     # Initialize progress state tracking
     from .progress_state import ProgressStateManager
 
     progress_manager = ProgressStateManager(indexer.project_root)
     progress_manager.reset()  # Start fresh tracking
+
+    # Handle re-embed mode
+    if re_embed:
+        console.print(
+            "[cyan]🔄 Re-embedding mode: Re-embedding all chunks with current model without re-parsing[/cyan]\n"
+        )
+        try:
+            # Initialize backends
+            if indexer.chunks_backend._db is None:
+                await indexer.chunks_backend.initialize()
+            if indexer.vectors_backend._db is None:
+                await indexer.vectors_backend.initialize()
+
+            # Run re-embed (this handles dimension changes internally)
+            chunks_embedded, batches_processed = await indexer.re_embed_chunks()
+
+            console.print()
+            console.print(
+                f"[green]✓[/green] [bold]Re-embedding complete![/bold] "
+                f"{chunks_embedded:,} chunks re-embedded in {batches_processed} batches"
+            )
+
+            # Show statistics
+            stats = await indexer.get_indexing_stats()
+            print_success(
+                f"Re-embedded {chunks_embedded:,} chunks with current embedding model"
+            )
+            print_index_stats(stats)
+
+            return
+
+        except Exception as e:
+            logger.error(f"Re-embedding failed: {e}")
+            print_error(f"Re-embedding failed: {e}")
+            raise typer.Exit(1)
 
     # Start progress tracking if verbose mode enabled
     if progress_tracker:

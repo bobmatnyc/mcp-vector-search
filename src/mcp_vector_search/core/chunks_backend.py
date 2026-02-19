@@ -927,6 +927,74 @@ class ChunksBackend:
             logger.error(f"Failed to cleanup stale chunks: {e}")
             raise DatabaseError(f"Failed to cleanup stale chunks: {e}") from e
 
+    async def count_chunks(self) -> int:
+        """Get total count of chunks in database.
+
+        Returns:
+            Total number of chunks
+
+        Raises:
+            DatabaseNotInitializedError: If backend not initialized
+        """
+        if self._table is None:
+            raise DatabaseNotInitializedError("Chunks backend not initialized")
+
+        try:
+            return self._table.count_rows()
+        except Exception as e:
+            logger.error(f"Failed to count chunks: {e}")
+            raise DatabaseError(f"Failed to count chunks: {e}") from e
+
+    async def reset_all_to_pending(self) -> int:
+        """Reset all chunks to pending status for re-embedding.
+
+        This is used when changing embedding models or re-embedding with
+        a different model. It resets embedding_status to "pending" for
+        all chunks regardless of current status.
+
+        Returns:
+            Number of chunks reset
+
+        Raises:
+            DatabaseNotInitializedError: If backend not initialized
+            DatabaseError: If reset fails
+        """
+        if self._table is None:
+            raise DatabaseNotInitializedError("Chunks backend not initialized")
+
+        try:
+            # OPTIMIZATION: Use LanceDB scanner to get all chunks efficiently
+            scanner = self._table.to_lance().scanner()
+            result = scanner.to_table()
+
+            if len(result) == 0:
+                logger.info("No chunks to reset")
+                return 0
+
+            # Convert to pandas for manipulation
+            df = result.to_pandas()
+            chunk_count = len(df)
+
+            # Update status fields
+            df["embedding_status"] = "pending"
+            df["updated_at"] = datetime.utcnow().isoformat()
+            df["batch_id"] = 0  # Reset batch assignment
+            df["error_message"] = ""  # Clear any error messages
+
+            # Delete all rows and re-add with updated status
+            # This is more efficient than updating each row individually
+            self._table.delete("chunk_id IS NOT NULL")  # Delete all rows
+            self._table.add(df.to_dict("records"))
+
+            logger.info(
+                f"Reset {chunk_count:,} chunks to pending status for re-embedding"
+            )
+            return chunk_count
+
+        except Exception as e:
+            logger.error(f"Failed to reset chunks to pending: {e}")
+            raise DatabaseError(f"Failed to reset chunks: {e}") from e
+
     async def close(self) -> None:
         """Close database connections.
 

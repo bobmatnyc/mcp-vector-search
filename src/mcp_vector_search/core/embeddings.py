@@ -361,10 +361,10 @@ class CodeBERTEmbeddingFunction:
 
     def __init__(
         self,
-        model_name: str = "microsoft/codebert-base",
+        model_name: str = "microsoft/graphcodebert-base",
         timeout: float = 300.0,  # 5 minutes default timeout
     ) -> None:
-        """Initialize CodeBERT embedding function.
+        """Initialize embedding function.
 
         Args:
             model_name: Name of the sentence transformer model
@@ -768,7 +768,7 @@ class BatchEmbeddingProcessor:
 
 
 def create_embedding_function(
-    model_name: str = "microsoft/codebert-base",
+    model_name: str = "microsoft/graphcodebert-base",
     cache_dir: Path | None = None,
     cache_size: int = 1000,
 ):

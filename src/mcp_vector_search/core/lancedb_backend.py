@@ -95,8 +95,8 @@ def _create_lance_schema(vector_dim: int) -> pa.Schema:
     )
 
 
-# Default schema for 384-dimensional embeddings (backward compatibility)
-LANCEDB_SCHEMA = _create_lance_schema(384)
+# Default schema for 768-dimensional embeddings (GraphCodeBERT default)
+LANCEDB_SCHEMA = _create_lance_schema(768)
 
 
 def _detect_optimal_write_buffer_size() -> int:
@@ -205,9 +205,9 @@ class LanceVectorDatabase:
                     logger.debug(f"Detected vector dimension: {self.vector_dim}")
                 except Exception as e:
                     logger.warning(
-                        f"Failed to detect vector dimension: {e}, using default 384"
+                        f"Failed to detect vector dimension: {e}, using default 768"
                     )
-                    self.vector_dim = 384
+                    self.vector_dim = 768
         else:
             self.vector_dim = vector_dim
 

@@ -1214,6 +1214,77 @@ class SemanticIndexer:
         )
         return chunks_embedded, batches_processed
 
+    async def re_embed_chunks(
+        self, batch_size: int = 10000, checkpoint_interval: int = 50000
+    ) -> tuple[int, int]:
+        """Re-embed all chunks with current embedding model without re-parsing.
+
+        This method:
+        1. Reads all existing chunks from chunks backend
+        2. Checks for dimension mismatch with current embedding model
+        3. Drops and recreates vectors table if dimensions changed
+        4. Resets all chunks to pending status
+        5. Runs Phase 2 embedding with current model
+
+        Useful for:
+        - Upgrading embedding models (e.g., MiniLM 384D -> GraphCodeBERT 768D)
+        - Re-embedding with better models without re-parsing files
+        - Fixing corrupted embeddings
+
+        Args:
+            batch_size: Chunks per embedding batch
+            checkpoint_interval: Chunks between checkpoint logs
+
+        Returns:
+            Tuple of (chunks_re_embedded, batches_processed)
+
+        Raises:
+            DatabaseNotInitializedError: If backends not initialized
+        """
+        from ..config.defaults import get_model_dimensions
+
+        logger.info("🔄 Re-embedding all chunks with current embedding model...")
+
+        # Get current embedding model dimensions
+        if hasattr(self.database, "_embedding_function"):
+            model_name = self.database._embedding_function.model_name
+            expected_dim = get_model_dimensions(model_name)
+            logger.info(f"Current embedding model: {model_name} ({expected_dim}D)")
+        else:
+            logger.error("Cannot access embedding model from database")
+            raise ValueError("Cannot determine embedding model dimensions")
+
+        # Check for dimension mismatch with existing vectors table
+        if await self.vectors_backend.check_dimension_mismatch(expected_dim):
+            logger.warning(
+                f"Dimension mismatch detected! Recreating vectors table with {expected_dim}D..."
+            )
+            await self.vectors_backend.recreate_table_with_new_dimensions(expected_dim)
+        else:
+            logger.info(
+                f"Vector dimensions match ({expected_dim}D), dropping existing vectors..."
+            )
+            # Drop vectors table to re-embed
+            await self.vectors_backend.recreate_table_with_new_dimensions(expected_dim)
+
+        # Reset all chunks to pending status
+        logger.info("Resetting all chunks to pending status...")
+        await self.chunks_backend.reset_all_to_pending()
+
+        # Get total chunk count for progress
+        total_chunks = await self.chunks_backend.count_chunks()
+        logger.info(f"Found {total_chunks:,} chunks to re-embed")
+
+        # Run Phase 2 embedding (reuses existing logic)
+        chunks_embedded, batches_processed = await self._phase2_embed_chunks(
+            batch_size=batch_size, checkpoint_interval=checkpoint_interval
+        )
+
+        logger.info(
+            f"✓ Re-embedding complete: {chunks_embedded:,} chunks embedded with {model_name}"
+        )
+        return chunks_embedded, batches_processed
+
     async def _atomic_rebuild_databases(self, force: bool = False) -> bool:
         """Atomically rebuild databases when force is enabled.
 

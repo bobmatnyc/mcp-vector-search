@@ -213,9 +213,9 @@ LANGUAGE_MAPPINGS: dict[str, str] = {
 # MiniLM-L6-v2 is the default: fast, reliable, good enough for code search
 # CodeXEmbed integration pending (see issue #81 for status)
 DEFAULT_EMBEDDING_MODELS = {
-    # CodeBERT is the default - trained on code, better semantic understanding
+    # GraphCodeBERT is the default - understands code structure and data flow
     # MiniLM available via "fast" preset for speed-focused users
-    "code": "microsoft/codebert-base",  # Default: best for code search (768 dims)
+    "code": "microsoft/graphcodebert-base",  # Default: best for code search (768 dims)
     "multilingual": "sentence-transformers/all-MiniLM-L6-v2",  # General purpose
     "fast": "sentence-transformers/all-MiniLM-L6-v2",  # Fastest option (384 dims)
     "precise": "Salesforce/SFR-Embedding-Code-400M_R",  # Highest quality (4096 dims)
@@ -446,10 +446,10 @@ DEFAULT_IGNORE_FILES = [
     "*.temp",
     "*.tmp",
     # Flutter/Dart generated files
-    "*.g.dart",         # json_serializable, built_value generated
-    "*.freezed.dart",   # freezed code generation
-    "*.mocks.dart",     # mockito mock generation
-    "*.gr.dart",        # auto_route generation
+    "*.g.dart",  # json_serializable, built_value generated
+    "*.freezed.dart",  # freezed code generation
+    "*.mocks.dart",  # mockito mock generation
+    "*.gr.dart",  # auto_route generation
     # Minified and bundled files (generated, slow to parse, no search value)
     "*.min.js",
     "*.min.css",
