@@ -1337,9 +1337,13 @@ class SemanticIndexer:
             from .factory import create_database
 
             # Create new database instance for .new location
-            embedding_function, _ = create_embedding_function(
-                model_name=self.config.embedding_model if self.config else "default"
+            # Use config's embedding model, or fallback to default (GraphCodeBERT)
+            model_name = (
+                self.config.embedding_model
+                if self.config
+                else "microsoft/graphcodebert-base"
             )
+            embedding_function, _ = create_embedding_function(model_name=model_name)
             new_db_path = base_path / "code_search.lance.new"
             self.database = create_database(
                 persist_directory=new_db_path, embedding_function=embedding_function

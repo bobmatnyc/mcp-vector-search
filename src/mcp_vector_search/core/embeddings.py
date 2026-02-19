@@ -369,7 +369,16 @@ class CodeBERTEmbeddingFunction:
         Args:
             model_name: Name of the sentence transformer model
             timeout: Timeout in seconds for embedding generation (default: 300s)
+
+        Environment Variables:
+            MCP_VECTOR_SEARCH_EMBEDDING_MODEL: Override embedding model (highest priority)
         """
+        # Check environment variable override FIRST (highest priority)
+        env_model = os.environ.get("MCP_VECTOR_SEARCH_EMBEDDING_MODEL")
+        if env_model:
+            model_name = env_model
+            logger.info(f"Using embedding model from environment: {model_name}")
+
         try:
             # Auto-detect optimal device (MPS > CUDA > CPU)
             device = _detect_device()
@@ -781,7 +790,16 @@ def create_embedding_function(
 
     Returns:
         Tuple of (embedding_function, cache)
+
+    Environment Variables:
+        MCP_VECTOR_SEARCH_EMBEDDING_MODEL: Override embedding model (highest priority)
     """
+    # Check environment variable override FIRST (highest priority)
+    env_model = os.environ.get("MCP_VECTOR_SEARCH_EMBEDDING_MODEL")
+    if env_model:
+        model_name = env_model
+        logger.info(f"Using embedding model from environment: {model_name}")
+
     # Use our native CodeBERTEmbeddingFunction which supports GPU (MPS/CUDA)
     # and doesn't require ChromaDB (which has Python 3.14 compatibility issues)
     embedding_function = CodeBERTEmbeddingFunction(model_name)
