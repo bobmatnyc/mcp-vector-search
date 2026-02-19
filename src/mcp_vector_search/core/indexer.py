@@ -569,6 +569,14 @@ class SemanticIndexer:
 
                 # Process files in batches and put on queue
                 for batch_start in range(0, len(files_to_process), file_batch_size):
+                    # Check if consumer is still alive
+                    if consumer_task.done():
+                        exc = consumer_task.exception()
+                        logger.error(
+                            f"Consumer died unexpectedly: {exc}. Stopping producer."
+                        )
+                        break
+
                     batch_end = min(
                         batch_start + file_batch_size, len(files_to_process)
                     )
@@ -692,6 +700,7 @@ class SemanticIndexer:
             )
 
             embedding_batch_size = self.batch_size  # Use configured batch size
+            consecutive_errors = 0  # Track consecutive errors to detect fatal issues
 
             with metrics_tracker.phase("embedding") as embedding_metrics:
                 while True:
@@ -729,9 +738,17 @@ class SemanticIndexer:
                             logger.warning(
                                 f"Memory usage at {usage_pct * 100:.1f}%, waiting for memory to drop..."
                             )
-                            await self.memory_monitor.wait_for_memory_available(
-                                target_pct=0.80
-                            )
+                            try:
+                                await asyncio.wait_for(
+                                    self.memory_monitor.wait_for_memory_available(
+                                        target_pct=0.80
+                                    ),
+                                    timeout=120.0,  # 2 minute timeout
+                                )
+                            except TimeoutError:
+                                logger.warning(
+                                    "Memory wait timed out after 120s, proceeding anyway"
+                                )
 
                         try:
                             # Generate embeddings
@@ -747,9 +764,17 @@ class SemanticIndexer:
                                     f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB). "
                                     "Waiting for memory..."
                                 )
-                                await self.memory_monitor.wait_for_memory_available(
-                                    target_pct=self.memory_monitor.warn_threshold
-                                )
+                                try:
+                                    await asyncio.wait_for(
+                                        self.memory_monitor.wait_for_memory_available(
+                                            target_pct=self.memory_monitor.warn_threshold
+                                        ),
+                                        timeout=120.0,  # 2 minute timeout
+                                    )
+                                except TimeoutError:
+                                    logger.warning(
+                                        "Memory wait timed out after 120s, proceeding anyway"
+                                    )
 
                             # Generate embeddings
                             vectors = None
@@ -797,12 +822,27 @@ class SemanticIndexer:
                             await self.vectors_backend.add_vectors(chunks_with_vectors)
                             chunks_embedded += len(emb_batch)
 
+                            # Reset consecutive error counter on success
+                            consecutive_errors = 0
+
                             logger.info(
                                 f"Phase 2 progress: {chunks_embedded} chunks embedded"
                             )
 
                         except Exception as e:
-                            logger.error(f"Failed to embed batch: {e}")
+                            consecutive_errors += 1
+                            logger.error(
+                                f"Failed to embed batch (consecutive errors: {consecutive_errors}): {e}"
+                            )
+
+                            # Fail after too many consecutive errors to avoid silent hangs
+                            if consecutive_errors >= 3:
+                                logger.error(
+                                    f"Too many consecutive embedding errors ({consecutive_errors}), "
+                                    "stopping consumer to prevent silent failure"
+                                )
+                                raise
+
                             continue
 
                 # Update metrics
@@ -817,8 +857,23 @@ class SemanticIndexer:
         producer_task = asyncio.create_task(chunk_producer())
         consumer_task = asyncio.create_task(embed_consumer())
 
-        # Wait for both to complete
-        await asyncio.gather(producer_task, consumer_task)
+        # Wait for both to complete with proper error handling
+        try:
+            await asyncio.gather(producer_task, consumer_task)
+        except Exception as e:
+            logger.error(f"Pipeline task failed: {e}")
+
+            # Cancel the other task if one fails
+            for task in [producer_task, consumer_task]:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+
+            # Re-raise the original exception
+            raise
 
         # Update metadata for backward compatibility
         if files_indexed > 0:
@@ -1318,9 +1373,19 @@ class SemanticIndexer:
             # Remove any stale .new directories from previous interrupted rebuilds
             for new_path in [lance_new, kg_new, code_search_new]:
                 if new_path.exists():
-                    shutil.rmtree(new_path, ignore_errors=True)
+                    try:
+                        shutil.rmtree(new_path)
+                        logger.debug(f"Removed stale directory: {new_path}")
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to remove stale directory {new_path}: {e}. "
+                            "Attempting to continue anyway."
+                        )
             if chroma_new.exists():
-                chroma_new.unlink()
+                try:
+                    chroma_new.unlink()
+                except Exception as e:
+                    logger.warning(f"Failed to remove stale file {chroma_new}: {e}")
 
             # Create new database directories
             lance_new.mkdir(parents=True, exist_ok=True)
@@ -1399,7 +1464,13 @@ class SemanticIndexer:
                     lance_path.rename(lance_old)
                 lance_new.rename(lance_path)
                 if lance_old.exists():
-                    shutil.rmtree(lance_old, ignore_errors=True)
+                    try:
+                        shutil.rmtree(lance_old)
+                        logger.debug(f"Removed old directory: {lance_old}")
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to remove old directory {lance_old}: {e}"
+                        )
 
             # Step 3: Atomic switch for knowledge_graph directory
             if kg_new.exists():
@@ -1407,7 +1478,11 @@ class SemanticIndexer:
                     kg_path.rename(kg_old)
                 kg_new.rename(kg_path)
                 if kg_old.exists():
-                    shutil.rmtree(kg_old, ignore_errors=True)
+                    try:
+                        shutil.rmtree(kg_old)
+                        logger.debug(f"Removed old directory: {kg_old}")
+                    except Exception as e:
+                        logger.warning(f"Failed to remove old directory {kg_old}: {e}")
 
             # Step 4: Atomic switch for code_search.lance
             if code_search_new.exists():
@@ -1415,7 +1490,13 @@ class SemanticIndexer:
                     code_search_path.rename(code_search_old)
                 code_search_new.rename(code_search_path)
                 if code_search_old.exists():
-                    shutil.rmtree(code_search_old, ignore_errors=True)
+                    try:
+                        shutil.rmtree(code_search_old)
+                        logger.debug(f"Removed old directory: {code_search_old}")
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to remove old directory {code_search_old}: {e}"
+                        )
 
             # Step 5: Handle chroma.sqlite3 (deprecated, but may exist)
             if chroma_new.exists():

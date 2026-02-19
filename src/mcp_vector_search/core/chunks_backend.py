@@ -147,7 +147,22 @@ class ChunksBackend:
 
             if self.TABLE_NAME in table_names:
                 self._table = self._db.open_table(self.TABLE_NAME)
-                logger.debug(f"Opened existing chunks table at {self.db_path}")
+
+                # Validate schema compatibility (handles atomic rebuild stale dirs + schema upgrades)
+                existing_fields = set(self._table.schema.names)
+                required_fields = {field.name for field in CHUNKS_SCHEMA}
+
+                if not required_fields.issubset(existing_fields):
+                    missing = required_fields - existing_fields
+                    logger.warning(
+                        f"Schema mismatch: missing fields {missing}. "
+                        f"Recreating table with current schema."
+                    )
+                    self._db.drop_table(self.TABLE_NAME)
+                    self._table = None
+                    logger.debug("Table dropped, will be recreated on first write")
+                else:
+                    logger.debug(f"Opened existing chunks table at {self.db_path}")
             else:
                 # Table will be created on first add_chunks with schema
                 self._table = None
