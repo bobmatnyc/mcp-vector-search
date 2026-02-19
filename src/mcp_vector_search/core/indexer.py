@@ -1883,7 +1883,11 @@ class SemanticIndexer:
 
         # OPTIMIZATION: Load metadata once at start instead of per batch
         # This avoids O(n) json.load() calls that kill performance on large codebases (25k+ files)
+        self.console.print(
+            "[cyan]⏳[/cyan] Loading index metadata...", end="", flush=True
+        )
         metadata_dict = self.metadata.load()
+        self.console.print("\r[green]✓[/green] Metadata loaded    ")
 
         # PIPELINE PARALLELISM: Overlap parsing and embedding stages
         # Queue holds parsed batches ready for embedding (maxsize=2 buffers one batch ahead)

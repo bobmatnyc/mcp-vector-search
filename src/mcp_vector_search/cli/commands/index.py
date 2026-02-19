@@ -13,6 +13,8 @@ from pathlib import Path
 import typer
 from loguru import logger
 
+from mcp_vector_search import __build__, __version__
+
 from ...config.defaults import get_default_cache_path
 from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
@@ -594,6 +596,12 @@ async def run_indexing(
         else:
             logger.debug(message)
 
+    # Show version banner at startup
+    console.print(
+        f"[cyan bold]🚀 mcp-vector-search[/cyan bold] [cyan]v{__version__}[/cyan] "
+        f"[dim](build {__build__})[/dim]"
+    )
+
     # Override extensions if provided
     if extensions:
         file_extensions = [ext.strip() for ext in extensions.split(",")]
@@ -741,7 +749,9 @@ async def run_indexing(
         skip_blame = False
 
     if not skip_blame:
-        console.print("[cyan]📝[/cyan] [dim]Git blame tracking enabled (per-line authorship)[/dim]")
+        console.print(
+            "[cyan]📝[/cyan] [dim]Git blame tracking enabled (per-line authorship)[/dim]"
+        )
 
     indexer = SemanticIndexer(
         database=database,
