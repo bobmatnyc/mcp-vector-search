@@ -56,8 +56,9 @@ def _create_vectors_schema(vector_dim: int) -> pa.Schema:
     )
 
 
-# Default schema for backward compatibility (384-dimensional for all-MiniLM-L6-v2)
-VECTORS_SCHEMA = _create_vectors_schema(384)
+# Default schema for backward compatibility (768-dimensional for GraphCodeBERT)
+# NOTE: This is rarely used due to dimension auto-detection in VectorsBackend.__init__
+VECTORS_SCHEMA = _create_vectors_schema(768)
 
 
 class VectorsBackend:
@@ -233,7 +234,7 @@ class VectorsBackend:
         Args:
             chunks_with_vectors: List of dicts with chunk data + 'vector' field:
                 - chunk_id (str): Unique identifier linking to chunks.lance
-                - vector (list[float]): Embedding vector (384D)
+                - vector (list[float]): Embedding vector (dimension varies by model)
                 - file_path (str): Source file path
                 - content (str): Code content for display
                 - language (str): Programming language
@@ -368,13 +369,37 @@ class VectorsBackend:
                         f"Created vectors table with {len(normalized_vectors)} vectors (dimension: {self.vector_dim})"
                     )
             else:
-                # Append to existing table with explicit schema
-                # OPTIMIZATION: Use mode='append' for faster bulk inserts
-                # This defers index updates until later, improving write throughput
-                self._table.add(pa_table, mode="append")
-                logger.debug(
-                    f"Added {len(normalized_vectors)} vectors to table (append mode)"
-                )
+                # Check dimension mismatch before appending
+                # This handles cases where the table was opened with stale dimension
+                existing_schema = self._table.schema
+                vector_field = existing_schema.field("vector")
+                existing_dim = None
+                if hasattr(vector_field.type, "list_size"):
+                    existing_dim = vector_field.type.list_size
+
+                if existing_dim != self.vector_dim:
+                    # Dimension mismatch detected - drop and recreate table
+                    logger.warning(
+                        f"Vector dimension mismatch detected during append: "
+                        f"table has {existing_dim}D, new data has {self.vector_dim}D. "
+                        f"Dropping and recreating table."
+                    )
+                    self._db.drop_table(self.TABLE_NAME)
+                    self._table = self._db.create_table(
+                        self.TABLE_NAME, pa_table, schema=schema
+                    )
+                    logger.info(
+                        f"Recreated vectors table with {len(normalized_vectors)} vectors "
+                        f"(dimension: {self.vector_dim})"
+                    )
+                else:
+                    # Dimensions match, safe to append
+                    # OPTIMIZATION: Use mode='append' for faster bulk inserts
+                    # This defers index updates until later, improving write throughput
+                    self._table.add(pa_table, mode="append")
+                    logger.debug(
+                        f"Added {len(normalized_vectors)} vectors to table (append mode)"
+                    )
 
             return len(normalized_vectors)
 
@@ -394,7 +419,7 @@ class VectorsBackend:
         approximate nearest neighbor (ANN) search.
 
         Args:
-            query_vector: Query embedding (384D)
+            query_vector: Query embedding (dimension must match table)
             limit: Max results to return
             filters: Optional metadata filters:
                 - language (str): Filter by programming language
@@ -506,7 +531,7 @@ class VectorsBackend:
 
         Args:
             file_path: Path to file to search within
-            query_vector: Query embedding (384D)
+            query_vector: Query embedding (dimension must match table)
             limit: Max results to return
 
         Returns:
@@ -694,7 +719,7 @@ class VectorsBackend:
             self._table.create_index(
                 metric="L2",  # L2 distance for cosine similarity approximation
                 num_partitions=256,  # Number of IVF partitions (good default)
-                num_sub_vectors=96,  # PQ sub-vectors (384 / 4 = 96)
+                num_sub_vectors=192,  # PQ sub-vectors (768 / 4 = 192, for GraphCodeBERT)
             )
             logger.info("Vector index rebuilt successfully")
 
