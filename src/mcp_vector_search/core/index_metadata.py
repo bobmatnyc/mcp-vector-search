@@ -2,6 +2,7 @@
 
 import json
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,8 +30,13 @@ class IndexMetadata:
             project_root / ".mcp-vector-search" / "index_metadata.json"
         )
 
-    def load(self) -> dict[str, float]:
+    def load(
+        self, progress_callback: Callable[[int, int], None] | None = None
+    ) -> dict[str, float]:
         """Load file modification times from metadata file.
+
+        Args:
+            progress_callback: Optional callback(bytes_read, total_bytes) for progress tracking
 
         Returns:
             Dictionary mapping file paths to modification times
@@ -39,14 +45,36 @@ class IndexMetadata:
             return {}
 
         try:
-            with open(self._metadata_file) as f:
-                data = json.load(f)
-                # Handle legacy format (just file_mtimes dict) and new format
-                if "file_mtimes" in data:
-                    return data["file_mtimes"]
-                else:
-                    # Legacy format - just return as-is
-                    return data
+            file_size = self._metadata_file.stat().st_size
+
+            # Read file with progress tracking
+            with open(self._metadata_file, "rb") as f:
+                chunks = []
+                bytes_read = 0
+                chunk_size = 8192  # 8KB chunks
+
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+
+                    chunks.append(chunk)
+                    bytes_read += len(chunk)
+
+                    if progress_callback:
+                        progress_callback(bytes_read, file_size)
+
+                content = b"".join(chunks)
+
+            # Parse JSON
+            data = json.loads(content.decode("utf-8"))
+
+            # Handle legacy format (just file_mtimes dict) and new format
+            if "file_mtimes" in data:
+                return data["file_mtimes"]
+            else:
+                # Legacy format - just return as-is
+                return data
         except Exception as e:
             logger.warning(f"Failed to load index metadata: {e}")
             return {}

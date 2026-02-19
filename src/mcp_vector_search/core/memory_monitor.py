@@ -184,7 +184,8 @@ class MemoryMonitor:
     ) -> int:
         """Calculate adjusted batch size based on current memory usage.
 
-        Reduces batch size when memory pressure is high.
+        Reduces batch size when memory pressure is high. More aggressive
+        thresholds to prevent memory explosion.
 
         Args:
             current_batch_size: Current batch size
@@ -198,11 +199,17 @@ class MemoryMonitor:
         if usage_pct >= 1.0:
             # At limit - reduce to minimum
             return min_batch_size
-        elif usage_pct >= self.critical_threshold:
-            # Critical - reduce by 75%
+        elif usage_pct >= 0.90:
+            # Critical (90%+) - reduce to 1% of original
+            return max(min_batch_size, current_batch_size // 100)
+        elif usage_pct >= 0.80:
+            # Very high (80%+) - reduce to 10% of original
+            return max(min_batch_size, current_batch_size // 10)
+        elif usage_pct >= 0.70:
+            # High (70%+) - reduce to 25% of original
             return max(min_batch_size, current_batch_size // 4)
-        elif usage_pct >= self.warn_threshold:
-            # Warning - reduce by 50%
+        elif usage_pct >= 0.60:
+            # Moderate (60%+) - reduce to 50% of original
             return max(min_batch_size, current_batch_size // 2)
         else:
             # Normal - no reduction

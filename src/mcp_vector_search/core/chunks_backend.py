@@ -633,6 +633,52 @@ class ChunksBackend:
             logger.error(f"Failed to mark chunks complete: {e}")
             raise DatabaseError(f"Failed to update chunk status: {e}") from e
 
+    async def mark_chunks_pending(self, chunk_ids: list[str]) -> None:
+        """Mark chunks as pending (revert from processing status).
+
+        Used when batch needs to be retried due to memory pressure or errors.
+
+        Args:
+            chunk_ids: List of chunk IDs to mark as pending
+
+        Raises:
+            DatabaseError: If update fails
+        """
+        if self._table is None or not chunk_ids:
+            return
+
+        try:
+            # Build filter
+            ids_str = "', '".join(chunk_ids)
+            filter_expr = f"chunk_id IN ('{ids_str}')"
+
+            # OPTIMIZATION: Use LanceDB scanner for O(1) filtered query instead of to_pandas()
+            scanner = self._table.to_lance().scanner(filter=filter_expr)
+
+            # Convert to PyArrow table (only selected rows, not entire table)
+            result = scanner.to_table()
+            if len(result) == 0:
+                return
+
+            # Convert to pandas for manipulation
+            df = result.to_pandas()
+
+            df["embedding_status"] = "pending"
+            df["updated_at"] = datetime.utcnow().isoformat()
+            df["batch_id"] = 0  # Reset batch assignment
+            df["error_message"] = ""
+
+            self._table.delete(filter_expr)
+            self._table.add(df.to_dict("records"))
+
+            logger.debug(
+                f"Marked {len(chunk_ids)} chunks as pending (reverted from processing)"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to mark chunks pending: {e}")
+            raise DatabaseError(f"Failed to update chunk status: {e}") from e
+
     async def mark_chunks_error(self, chunk_ids: list[str], error: str) -> None:
         """Mark chunks as failed embedding.
 

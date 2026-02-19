@@ -485,17 +485,18 @@ class SemanticIndexer:
                     )
 
             # Now process files for parsing and chunking
-            for idx, (file_path, rel_path, file_hash) in enumerate(files_to_process):
-                # Check memory periodically (every 100 files)
-                if idx > 0 and idx % 100 == 0:
-                    is_ok, usage_pct, status = self.memory_monitor.check_memory_limit()
-                    if not is_ok:
-                        logger.warning(
-                            "Memory limit exceeded during chunking, waiting for memory to free up..."
-                        )
-                        await self.memory_monitor.wait_for_memory_available(
-                            target_pct=self.memory_monitor.warn_threshold
-                        )
+            for _idx, (file_path, rel_path, file_hash) in enumerate(files_to_process):
+                # Check memory before processing each file (CRITICAL: not every 100!)
+                is_ok, usage_pct, status = self.memory_monitor.check_memory_limit()
+                if not is_ok:
+                    logger.warning(
+                        f"Memory limit exceeded during chunking "
+                        f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB), "
+                        "waiting for memory to free up..."
+                    )
+                    await self.memory_monitor.wait_for_memory_available(
+                        target_pct=self.memory_monitor.warn_threshold
+                    )
 
                 try:
                     # Parse file
@@ -614,13 +615,39 @@ class SemanticIndexer:
 
         with metrics_tracker.phase("embedding") as embedding_metrics:
             while True:
-                # Check memory before fetching next batch
+                # CRITICAL: Check memory BEFORE loading batch to prevent spikes
+                usage_pct = self.memory_monitor.get_memory_usage_pct()
+
+                # Proactively reduce batch size if memory is high
+                while usage_pct > 0.90 and batch_size > 100:
+                    batch_size = batch_size // 2
+                    logger.warning(
+                        f"⚠️  Memory at {usage_pct * 100:.1f}%, proactively reducing batch to {batch_size}"
+                    )
+                    usage_pct = self.memory_monitor.get_memory_usage_pct()
+
+                # If still over 90%, wait for memory to free
+                if usage_pct > 0.90:
+                    logger.warning(
+                        f"Memory usage at {usage_pct * 100:.1f}%, waiting for memory to drop..."
+                    )
+                    await self.memory_monitor.wait_for_memory_available(target_pct=0.80)
+
+                # Get pending chunks from chunks.lance FIRST
+                pending = await self.chunks_backend.get_pending_chunks(batch_size)
+                if not pending:
+                    logger.info("No more pending chunks to embed")
+                    break
+
+                # Check memory AFTER loading batch (when memory is at peak)
                 is_ok, usage_pct, status = self.memory_monitor.check_memory_limit()
 
                 if not is_ok:
-                    # Memory limit exceeded - apply backpressure
+                    # Memory limit exceeded after loading - apply backpressure
                     logger.warning(
-                        "Memory limit exceeded during embedding, waiting for memory to free up..."
+                        f"Memory limit exceeded after loading batch "
+                        f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB), "
+                        "waiting for memory to free up..."
                     )
                     await self.memory_monitor.wait_for_memory_available(
                         target_pct=self.memory_monitor.warn_threshold
@@ -637,12 +664,6 @@ class SemanticIndexer:
                     )
                     batch_size = adjusted_batch_size
 
-                # Get pending chunks from chunks.lance
-                pending = await self.chunks_backend.get_pending_chunks(batch_size)
-                if not pending:
-                    logger.info("No more pending chunks to embed")
-                    break
-
                 # Mark as processing (for crash recovery)
                 chunk_ids = [c["chunk_id"] for c in pending]
                 await self.chunks_backend.mark_chunks_processing(chunk_ids, batch_id)
@@ -650,6 +671,30 @@ class SemanticIndexer:
                 try:
                     # Generate embeddings using database's embedding function
                     contents = [c["content"] for c in pending]
+
+                    # CRITICAL: Check memory before expensive embedding operation
+                    is_ok, usage_pct, status = self.memory_monitor.check_memory_limit()
+                    if not is_ok:
+                        logger.error(
+                            f"Memory limit exceeded before embedding "
+                            f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB). "
+                            f"Reducing batch size and retrying..."
+                        )
+
+                        # Return chunks to pending state
+                        await self.chunks_backend.mark_chunks_pending(chunk_ids)
+
+                        # Wait for memory to free
+                        await self.memory_monitor.wait_for_memory_available(
+                            target_pct=self.memory_monitor.warn_threshold
+                        )
+
+                        # Dramatically reduce batch size
+                        batch_size = max(100, batch_size // 4)
+                        logger.info(
+                            f"Reduced batch size to {batch_size} due to memory pressure"
+                        )
+                        continue  # Skip to next iteration with smaller batch
 
                     # Generate embeddings in batch
                     vectors = None
@@ -1883,11 +1928,39 @@ class SemanticIndexer:
 
         # OPTIMIZATION: Load metadata once at start instead of per batch
         # This avoids O(n) json.load() calls that kill performance on large codebases (25k+ files)
-        self.console.print(
-            "[cyan]⏳[/cyan] Loading index metadata...", end="", flush=True
+        from rich.progress import (
+            BarColumn,
+            DownloadColumn,
+            Progress,
+            TextColumn,
+            TimeRemainingColumn,
         )
-        metadata_dict = self.metadata.load()
-        self.console.print("\r[green]✓[/green] Metadata loaded    ")
+
+        # Check metadata file size to decide if progress bar is needed
+        metadata_file = self.project_root / ".mcp-vector-search" / "index_metadata.json"
+        show_progress = (
+            metadata_file.exists() and metadata_file.stat().st_size > 50_000
+        )  # 50KB threshold
+
+        if show_progress:
+            # Use progress bar for large metadata files
+            with Progress(
+                TextColumn("📄 Loading metadata"),
+                BarColumn(),
+                DownloadColumn(),
+                TimeRemainingColumn(),
+                transient=True,  # Clear progress bar when done
+            ) as progress:
+                file_size = metadata_file.stat().st_size
+                task_id = progress.add_task("", total=file_size)
+
+                def update_progress(bytes_read: int, total_bytes: int):
+                    progress.update(task_id, completed=bytes_read)
+
+                metadata_dict = self.metadata.load(progress_callback=update_progress)
+        else:
+            # Fast path for small/nonexistent files (no progress bar needed)
+            metadata_dict = self.metadata.load()
 
         # PIPELINE PARALLELISM: Overlap parsing and embedding stages
         # Queue holds parsed batches ready for embedding (maxsize=2 buffers one batch ahead)
