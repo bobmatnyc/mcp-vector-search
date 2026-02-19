@@ -118,6 +118,7 @@ class VectorsBackend:
             self.db_path.mkdir(parents=True, exist_ok=True)
 
             # Connect to LanceDB
+            logger.info(f"[VectorsBackend] Connecting to LanceDB at: {self.db_path}")
             self._db = lancedb.connect(str(self.db_path))
 
             # Check if table exists
@@ -272,7 +273,9 @@ class VectorsBackend:
                 vector = chunk["vector"]
                 if self.vector_dim is None:
                     self.vector_dim = len(vector)
-                    logger.debug(f"Auto-detected vector dimension: {self.vector_dim}")
+                    logger.info(
+                        f"Auto-detected vector dimension: {self.vector_dim}D from first chunk"
+                    )
 
                 # Validate vector dimensions match detected/expected dimension
                 if len(vector) != self.vector_dim:
@@ -303,6 +306,18 @@ class VectorsBackend:
 
                 normalized_vectors.append(normalized)
 
+            # Convert to PyArrow Table with explicit schema to avoid type inference issues
+            # This ensures vectors are treated as fixed-size lists, not variable-length lists
+            schema = _create_vectors_schema(self.vector_dim)
+
+            # Convert normalized vectors to PyArrow Table with explicit schema
+            # This prevents LanceDB from inferring variable-length list types
+            import pyarrow as pa_table_module
+
+            pa_table = pa_table_module.Table.from_pylist(
+                normalized_vectors, schema=schema
+            )
+
             # Create or append to table
             if self._table is None:
                 # Check if table exists (it might exist but self._table wasn't opened)
@@ -314,26 +329,49 @@ class VectorsBackend:
                 )
 
                 if self.TABLE_NAME in table_names:
-                    # Table exists, open it
-                    self._table = self._db.open_table(self.TABLE_NAME)
-                    self._table.add(normalized_vectors, mode="append")
-                    logger.debug(
-                        f"Opened existing table and added {len(normalized_vectors)} vectors (append mode)"
-                    )
+                    # Table exists, check if dimensions match before appending
+                    existing_table = self._db.open_table(self.TABLE_NAME)
+                    existing_schema = existing_table.schema
+                    vector_field = existing_schema.field("vector")
+
+                    # Extract existing dimension from fixed-size list type
+                    existing_dim = None
+                    if hasattr(vector_field.type, "list_size"):
+                        existing_dim = vector_field.type.list_size
+
+                    if existing_dim == self.vector_dim:
+                        # Dimensions match, safe to append
+                        self._table = existing_table
+                        self._table.add(pa_table, mode="append")
+                        logger.debug(
+                            f"Opened existing table and added {len(normalized_vectors)} vectors (append mode)"
+                        )
+                    else:
+                        # Dimension mismatch - drop and recreate table
+                        logger.warning(
+                            f"Vector dimension mismatch: existing table has {existing_dim}D, "
+                            f"new data has {self.vector_dim}D. Dropping and recreating table."
+                        )
+                        self._db.drop_table(self.TABLE_NAME)
+                        self._table = self._db.create_table(
+                            self.TABLE_NAME, pa_table, schema=schema
+                        )
+                        logger.info(
+                            f"Recreated vectors table with {len(normalized_vectors)} vectors (dimension: {self.vector_dim})"
+                        )
                 else:
-                    # Create table with first batch using detected dimension
-                    schema = _create_vectors_schema(self.vector_dim)
+                    # Create table with first batch using explicit schema
                     self._table = self._db.create_table(
-                        self.TABLE_NAME, normalized_vectors, schema=schema
+                        self.TABLE_NAME, pa_table, schema=schema
                     )
                     logger.debug(
                         f"Created vectors table with {len(normalized_vectors)} vectors (dimension: {self.vector_dim})"
                     )
             else:
-                # Append to existing table
+                # Append to existing table with explicit schema
                 # OPTIMIZATION: Use mode='append' for faster bulk inserts
                 # This defers index updates until later, improving write throughput
-                self._table.add(normalized_vectors, mode="append")
+                self._table.add(pa_table, mode="append")
                 logger.debug(
                     f"Added {len(normalized_vectors)} vectors to table (append mode)"
                 )
