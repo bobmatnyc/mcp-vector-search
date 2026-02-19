@@ -1964,7 +1964,7 @@ class SemanticIndexer:
 
         # PIPELINE PARALLELISM: Overlap parsing and embedding stages
         # Queue holds parsed batches ready for embedding (maxsize=2 buffers one batch ahead)
-        self.console.print("📋 Preparing first batch for indexing...", flush=True)
+        print("📋 Preparing first batch for indexing...", flush=True)
         chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=2)
         batch_count = 0
 
@@ -1989,9 +1989,7 @@ class SemanticIndexer:
 
                 # Parse all files in parallel using multiprocessing for CPU-bound parsing
                 if batch_count == 1:
-                    self.console.print(
-                        f"📄 Parsing {len(batch)} files from batch...", flush=True
-                    )
+                    print(f"📄 Parsing {len(batch)} files from batch...", flush=True)
                 t_start = time.time()
 
                 # Filter files that should be indexed
@@ -2227,7 +2225,7 @@ class SemanticIndexer:
                         # Phase 2: Generate embeddings and store to vectors.lance
                         # This enables search functionality
                         if batch_count == 1:
-                            self.console.print(
+                            print(
                                 f"🧠 Generating embeddings for {len(all_chunks)} chunks...",
                                 flush=True,
                             )
