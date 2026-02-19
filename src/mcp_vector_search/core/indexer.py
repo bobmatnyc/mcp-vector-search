@@ -1402,12 +1402,8 @@ class SemanticIndexer:
             from .factory import create_database
 
             # Create new database instance for .new location
-            # Use config's embedding model, or fallback to default (GraphCodeBERT)
-            model_name = (
-                self.config.embedding_model
-                if self.config
-                else "microsoft/graphcodebert-base"
-            )
+            # Pass config model to create_embedding_function (None = auto-select by device)
+            model_name = self.config.embedding_model if self.config else None
             embedding_function, _ = create_embedding_function(model_name=model_name)
             new_db_path = base_path / "code_search.lance.new"
             self.database = create_database(
@@ -2557,39 +2553,7 @@ class SemanticIndexer:
 
         # OPTIMIZATION: Load metadata once at start instead of per batch
         # This avoids O(n) json.load() calls that kill performance on large codebases (25k+ files)
-        from rich.progress import (
-            BarColumn,
-            DownloadColumn,
-            Progress,
-            TextColumn,
-            TimeRemainingColumn,
-        )
-
-        # Check metadata file size to decide if progress bar is needed
-        metadata_file = self.project_root / ".mcp-vector-search" / "index_metadata.json"
-        show_progress = (
-            metadata_file.exists() and metadata_file.stat().st_size > 50_000
-        )  # 50KB threshold
-
-        if show_progress:
-            # Use progress bar for large metadata files
-            with Progress(
-                TextColumn("📄 Loading metadata"),
-                BarColumn(),
-                DownloadColumn(),
-                TimeRemainingColumn(),
-                transient=False,  # Keep progress bar visible after completion
-            ) as progress:
-                file_size = metadata_file.stat().st_size
-                task_id = progress.add_task("", total=file_size)
-
-                def update_progress(bytes_read: int, total_bytes: int):
-                    progress.update(task_id, completed=bytes_read)
-
-                metadata_dict = self.metadata.load(progress_callback=update_progress)
-        else:
-            # Fast path for small/nonexistent files (no progress bar needed)
-            metadata_dict = self.metadata.load()
+        metadata_dict = self.metadata.load()
 
         # PIPELINE PARALLELISM: Overlap parsing and embedding stages
         # Queue holds parsed batches ready for embedding (maxsize=2 buffers one batch ahead)

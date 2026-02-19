@@ -95,8 +95,8 @@ def _create_lance_schema(vector_dim: int) -> pa.Schema:
     )
 
 
-# Default schema for 768-dimensional embeddings (GraphCodeBERT default)
-LANCEDB_SCHEMA = _create_lance_schema(768)
+# Default schema for 384-dimensional embeddings (MiniLM default for CPU)
+LANCEDB_SCHEMA = _create_lance_schema(384)
 
 
 def _detect_optimal_write_buffer_size() -> int:

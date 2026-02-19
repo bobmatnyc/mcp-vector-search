@@ -187,12 +187,12 @@ def main(
         rich_help_panel="📊 Indexing Options",
     ),
     batch_size: int = typer.Option(
-        32,
+        256,
         "--batch-size",
         "-b",
-        help="Batch size for embedding generation",
+        help="Number of files per batch (larger = faster with multiprocessing)",
         min=1,
-        max=128,
+        max=1024,
         rich_help_panel="⚡ Performance",
     ),
     debug: bool = typer.Option(
@@ -678,7 +678,9 @@ async def run_indexing(
 
     print_info(f"Indexing project: {project_root}")
     print_info(f"File extensions: {', '.join(config.file_extensions)}")
-    print_info(f"Embedding model: {config.embedding_model}")
+    print_info(
+        f"Embedding model: {config.embedding_model or 'auto (device-dependent)'}"
+    )
 
     # Load vendor patterns if not disabled
     vendor_patterns_set: set[str] | None = None
@@ -1548,7 +1550,9 @@ async def _reindex_entire_project(project_root: Path) -> None:
 
     print_info(f"Project: {project_root}")
     print_info(f"File extensions: {', '.join(config.file_extensions)}")
-    print_info(f"Embedding model: {config.embedding_model}")
+    print_info(
+        f"Embedding model: {config.embedding_model or 'auto (device-dependent)'}"
+    )
 
     # Setup embedding function and cache
     cache_dir = (

@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
-from .defaults import DEFAULT_EMBEDDING_MODELS, DEFAULT_FILE_EXTENSIONS
+from .defaults import DEFAULT_FILE_EXTENSIONS
 
 
 class ProjectConfig(BaseSettings):
@@ -19,9 +19,9 @@ class ProjectConfig(BaseSettings):
         default_factory=lambda: list(DEFAULT_FILE_EXTENSIONS),
         description="File extensions to index",
     )
-    embedding_model: str = Field(
-        default_factory=lambda: DEFAULT_EMBEDDING_MODELS["code"],
-        description="Embedding model name (default: CodeXEmbed-400M for code understanding)",
+    embedding_model: str | None = Field(
+        default=None,
+        description="Embedding model name (None = auto-select by device: MiniLM on CPU, GraphCodeBERT on CUDA)",
     )
     similarity_threshold: float = Field(
         default=0.3, ge=0.0, le=1.0, description="Similarity threshold"
