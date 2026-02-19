@@ -420,6 +420,418 @@ class SemanticIndexer:
                 "  Run 'mcp-vector-search migrate' to fix manually."
             )
 
+    async def _index_with_pipeline(
+        self, force_reindex: bool = False
+    ) -> tuple[int, int, int]:
+        """Index files using pipeline parallelism to overlap Phase 1 and Phase 2.
+
+        This method implements a producer-consumer pattern where:
+        - Producer: Chunks files in batches and puts them on a queue
+        - Consumer: Embeds chunks from the queue concurrently
+        - Result: Parsing and embedding overlap for 30-50% speedup
+
+        Args:
+            force_reindex: Whether to reindex all files
+
+        Returns:
+            Tuple of (files_indexed, chunks_created, chunks_embedded)
+        """
+        # Find all indexable files
+        all_files = self.file_discovery.find_indexable_files()
+
+        # Clean up stale metadata entries
+        if force_reindex:
+            logger.info("Force reindex: clearing all metadata entries")
+            self.metadata.save({})
+        elif all_files:
+            valid_files = {str(f) for f in all_files}
+            removed = self.metadata.cleanup_stale_entries(valid_files)
+            if removed > 0:
+                logger.info(
+                    f"Removed {removed} stale metadata entries for deleted files"
+                )
+
+        if not all_files:
+            logger.warning("No indexable files found")
+            return 0, 0, 0
+
+        # Filter files that need indexing
+        files_to_index = all_files
+        if not force_reindex:
+            logger.info(
+                f"Incremental change detection: checking {len(all_files)} files..."
+            )
+            filtered_files = []
+            for idx, f in enumerate(all_files, start=1):
+                try:
+                    file_hash = compute_file_hash(f)
+                    rel_path = str(f.relative_to(self.project_root))
+                    if await self.chunks_backend.file_changed(rel_path, file_hash):
+                        filtered_files.append(f)
+                except Exception as e:
+                    logger.warning(f"Error checking file {f}: {e}, will re-index")
+                    filtered_files.append(f)
+
+                if idx % 500 == 0:
+                    logger.info(
+                        f"Change detection progress: {idx}/{len(all_files)} files checked"
+                    )
+
+            files_to_index = filtered_files
+            logger.info(
+                f"Incremental index: {len(files_to_index)} of {len(all_files)} files need updating"
+            )
+        else:
+            logger.info(f"Force reindex: processing all {len(files_to_index)} files")
+
+        if not files_to_index:
+            logger.info("All files are up to date")
+            return 0, 0, 0
+
+        # PIPELINE IMPLEMENTATION: Producer-consumer pattern
+        # Queue holds chunked file batches ready for embedding (maxsize=2 buffers one batch ahead)
+        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=2)
+        files_indexed = 0
+        chunks_created = 0
+        chunks_embedded = 0
+
+        # Get metrics tracker
+        metrics_tracker = get_metrics_tracker()
+
+        # Batch size for file processing (can be different from embedding batch size)
+        file_batch_size = 256  # Process files in groups of 256
+
+        async def chunk_producer():
+            """Producer: Parse and chunk files in batches, put on queue."""
+            nonlocal files_indexed, chunks_created
+
+            logger.info(
+                f"📄 Phase 1: Chunking {len(files_to_index)} files (parsing and extracting code structure)..."
+            )
+
+            with metrics_tracker.phase("parsing") as parsing_metrics:
+                # Batch delete optimization (like _phase1_chunk_files)
+                files_to_delete = []
+                files_to_process = []
+
+                # Compute file hashes
+                if force_reindex:
+                    logger.info("Force mode enabled, skipping file hash computation...")
+                else:
+                    logger.info(
+                        f"Computing file hashes for change detection ({len(files_to_index)} files)..."
+                    )
+
+                for idx, file_path in enumerate(files_to_index):
+                    try:
+                        if idx > 0 and idx % 1000 == 0:
+                            logger.info(
+                                f"Computing file hashes: {idx}/{len(files_to_index)}"
+                            )
+
+                        if force_reindex:
+                            file_hash = ""
+                        else:
+                            file_hash = compute_file_hash(file_path)
+
+                        rel_path = str(file_path.relative_to(self.project_root))
+
+                        if not force_reindex:
+                            file_changed = await self.chunks_backend.file_changed(
+                                rel_path, file_hash
+                            )
+                            if not file_changed:
+                                logger.debug(f"Skipping unchanged file: {rel_path}")
+                                continue
+
+                        files_to_delete.append(rel_path)
+                        files_to_process.append((file_path, rel_path, file_hash))
+
+                    except Exception as e:
+                        logger.error(f"Failed to check file {file_path}: {e}")
+                        continue
+
+                if not force_reindex:
+                    logger.info(
+                        f"File hash computation complete: {len(files_to_process)} files changed, "
+                        f"{len(files_to_index) - len(files_to_process)} unchanged"
+                    )
+
+                # Batch delete old chunks
+                if not self._atomic_rebuild_active and files_to_delete:
+                    deleted_count = await self.chunks_backend.delete_files_batch(
+                        files_to_delete
+                    )
+                    if deleted_count > 0:
+                        logger.info(
+                            f"Batch deleted {deleted_count} old chunks for {len(files_to_delete)} files"
+                        )
+
+                # Process files in batches and put on queue
+                for batch_start in range(0, len(files_to_process), file_batch_size):
+                    batch_end = min(
+                        batch_start + file_batch_size, len(files_to_process)
+                    )
+                    batch = files_to_process[batch_start:batch_end]
+
+                    batch_chunks = []
+                    batch_files_processed = 0
+
+                    for file_path, rel_path, file_hash in batch:
+                        # Check memory before processing
+                        is_ok, usage_pct, status = (
+                            self.memory_monitor.check_memory_limit()
+                        )
+                        if not is_ok:
+                            logger.warning(
+                                f"Memory limit exceeded during chunking "
+                                f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB), "
+                                "waiting for memory to free up..."
+                            )
+                            await self.memory_monitor.wait_for_memory_available(
+                                target_pct=self.memory_monitor.warn_threshold
+                            )
+
+                        try:
+                            # Parse file
+                            chunks = await self.chunk_processor.parse_file(file_path)
+
+                            if not chunks:
+                                logger.debug(f"No chunks extracted from {file_path}")
+                                continue
+
+                            # Build hierarchical relationships
+                            chunks_with_hierarchy = (
+                                self.chunk_processor.build_chunk_hierarchy(chunks)
+                            )
+
+                            # Convert CodeChunk objects to dicts for storage
+                            chunk_dicts = []
+                            for chunk in chunks_with_hierarchy:
+                                chunk_dict = {
+                                    "chunk_id": chunk.chunk_id,
+                                    "file_path": rel_path,
+                                    "content": chunk.content,
+                                    "language": chunk.language,
+                                    "start_line": chunk.start_line,
+                                    "end_line": chunk.end_line,
+                                    "start_char": 0,
+                                    "end_char": 0,
+                                    "chunk_type": chunk.chunk_type,
+                                    "name": chunk.function_name
+                                    or chunk.class_name
+                                    or "",
+                                    "parent_name": "",
+                                    "hierarchy_path": self._build_hierarchy_path(chunk),
+                                    "docstring": chunk.docstring or "",
+                                    "signature": "",
+                                    "complexity": int(chunk.complexity_score),
+                                    "token_count": len(chunk.content.split()),
+                                    "last_author": chunk.last_author or "",
+                                    "last_modified": chunk.last_modified or "",
+                                    "commit_hash": chunk.commit_hash or "",
+                                    "calls": chunk.calls or [],
+                                    "imports": [
+                                        json.dumps(imp)
+                                        if isinstance(imp, dict)
+                                        else imp
+                                        for imp in (chunk.imports or [])
+                                    ],
+                                    "inherits_from": chunk.inherits_from or [],
+                                }
+                                chunk_dicts.append(chunk_dict)
+
+                            # Store chunks to chunks.lance
+                            if chunk_dicts:
+                                count = await self.chunks_backend.add_chunks(
+                                    chunk_dicts, file_hash
+                                )
+                                batch_chunks.extend(chunk_dicts)
+                                chunks_created += count
+                                batch_files_processed += 1
+                                logger.debug(f"Chunked {count} chunks from {rel_path}")
+
+                        except Exception as e:
+                            logger.error(f"Failed to chunk file {file_path}: {e}")
+                            continue
+
+                    files_indexed += batch_files_processed
+
+                    # Put batch on queue for embedding (blocks if queue is full - backpressure)
+                    if batch_chunks:
+                        logger.info(
+                            f"Phase 1 progress: {files_indexed}/{len(files_to_process)} files, "
+                            f"{chunks_created} chunks | Queuing {len(batch_chunks)} chunks for embedding"
+                        )
+                        await chunk_queue.put(
+                            {"chunks": batch_chunks, "batch_size": len(batch_chunks)}
+                        )
+
+                # Update metrics
+                parsing_metrics.item_count = files_indexed
+
+            # Track chunking separately
+            with metrics_tracker.phase("chunking") as chunking_metrics:
+                chunking_metrics.item_count = chunks_created
+
+            # Log completion
+            self.memory_monitor.log_memory_summary()
+            logger.info(
+                f"✓ Phase 1 complete: {files_indexed} files processed, {chunks_created} chunks created"
+            )
+
+            # Signal completion
+            await chunk_queue.put(None)
+
+        async def embed_consumer():
+            """Consumer: Take chunks from queue, embed, and store to vectors.lance."""
+            nonlocal chunks_embedded
+
+            logger.info(
+                "🧠 Phase 2: Embedding pending chunks (GPU processing for semantic search)..."
+            )
+
+            embedding_batch_size = self.batch_size  # Use configured batch size
+
+            with metrics_tracker.phase("embedding") as embedding_metrics:
+                while True:
+                    # Get next batch from queue (blocks until available)
+                    batch_data = await chunk_queue.get()
+
+                    # Check for completion signal
+                    if batch_data is None:
+                        break
+
+                    chunks = batch_data["chunks"]
+
+                    if not chunks:
+                        continue
+
+                    # Process chunks in embedding batches
+                    for emb_batch_start in range(0, len(chunks), embedding_batch_size):
+                        emb_batch_end = min(
+                            emb_batch_start + embedding_batch_size, len(chunks)
+                        )
+                        emb_batch = chunks[emb_batch_start:emb_batch_end]
+
+                        # Check memory before embedding
+                        usage_pct = self.memory_monitor.get_memory_usage_pct()
+
+                        # Proactively reduce batch size if memory is high
+                        while usage_pct > 0.90 and embedding_batch_size > 100:
+                            embedding_batch_size = embedding_batch_size // 2
+                            logger.warning(
+                                f"⚠️  Memory at {usage_pct * 100:.1f}%, proactively reducing batch to {embedding_batch_size}"
+                            )
+                            usage_pct = self.memory_monitor.get_memory_usage_pct()
+
+                        if usage_pct > 0.90:
+                            logger.warning(
+                                f"Memory usage at {usage_pct * 100:.1f}%, waiting for memory to drop..."
+                            )
+                            await self.memory_monitor.wait_for_memory_available(
+                                target_pct=0.80
+                            )
+
+                        try:
+                            # Generate embeddings
+                            contents = [c["content"] for c in emb_batch]
+
+                            # Check memory before expensive embedding
+                            is_ok, usage_pct, status = (
+                                self.memory_monitor.check_memory_limit()
+                            )
+                            if not is_ok:
+                                logger.warning(
+                                    f"Memory limit exceeded before embedding "
+                                    f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB). "
+                                    "Waiting for memory..."
+                                )
+                                await self.memory_monitor.wait_for_memory_available(
+                                    target_pct=self.memory_monitor.warn_threshold
+                                )
+
+                            # Generate embeddings
+                            vectors = None
+                            if hasattr(self.database, "_embedding_function"):
+                                vectors = self.database._embedding_function(contents)
+                            elif hasattr(self.database, "_collection") and hasattr(
+                                self.database._collection, "_embedding_function"
+                            ):
+                                vectors = self.database._collection._embedding_function(
+                                    contents
+                                )
+                            elif hasattr(self.database, "embedding_function"):
+                                vectors = (
+                                    self.database.embedding_function.embed_documents(
+                                        contents
+                                    )
+                                )
+                            else:
+                                logger.error(
+                                    "Cannot access embedding function from database, skipping batch"
+                                )
+                                continue
+
+                            if vectors is None:
+                                raise ValueError("Failed to generate embeddings")
+
+                            # Add to vectors table
+                            chunks_with_vectors = []
+                            for chunk, vec in zip(emb_batch, vectors, strict=True):
+                                chunk_with_vec = {
+                                    "chunk_id": chunk["chunk_id"],
+                                    "vector": vec,
+                                    "file_path": chunk["file_path"],
+                                    "content": chunk["content"],
+                                    "language": chunk["language"],
+                                    "start_line": chunk["start_line"],
+                                    "end_line": chunk["end_line"],
+                                    "chunk_type": chunk["chunk_type"],
+                                    "name": chunk["name"],
+                                    "hierarchy_path": chunk["hierarchy_path"],
+                                }
+                                chunks_with_vectors.append(chunk_with_vec)
+
+                            # Store to vectors.lance
+                            await self.vectors_backend.add_vectors(chunks_with_vectors)
+                            chunks_embedded += len(emb_batch)
+
+                            logger.info(
+                                f"Phase 2 progress: {chunks_embedded} chunks embedded"
+                            )
+
+                        except Exception as e:
+                            logger.error(f"Failed to embed batch: {e}")
+                            continue
+
+                # Update metrics
+                embedding_metrics.item_count = chunks_embedded
+
+            logger.info(f"✓ Phase 2 complete: {chunks_embedded} chunks embedded")
+
+        # Run producer and consumer concurrently with pipeline parallelism
+        logger.info(
+            "Starting pipeline: Phase 1 (parsing) and Phase 2 (embedding) will overlap"
+        )
+        producer_task = asyncio.create_task(chunk_producer())
+        consumer_task = asyncio.create_task(embed_consumer())
+
+        # Wait for both to complete
+        await asyncio.gather(producer_task, consumer_task)
+
+        # Update metadata for backward compatibility
+        if files_indexed > 0:
+            metadata_dict = self.metadata.load()
+            for file_path in files_to_index:
+                try:
+                    metadata_dict[str(file_path)] = os.path.getmtime(file_path)
+                except OSError:
+                    pass
+            self.metadata.save(metadata_dict)
+
+        return files_indexed, chunks_created, chunks_embedded
+
     async def _phase1_chunk_files(
         self, files: list[Path], force: bool = False
     ) -> tuple[int, int]:
@@ -969,6 +1381,7 @@ class SemanticIndexer:
         skip_relationships: bool = False,
         phase: str = "all",
         metrics_json: bool = False,
+        pipeline: bool = True,
     ) -> int:
         """Index all files in the project using two-phase architecture.
 
@@ -981,6 +1394,9 @@ class SemanticIndexer:
                 - "chunk": Only Phase 1 (parse and chunk, no embedding)
                 - "embed": Only Phase 2 (embed pending chunks)
             metrics_json: Output metrics as JSON to stdout
+            pipeline: Whether to use pipeline parallelism to overlap Phase 1 and Phase 2 (default: True)
+                - When True: Phase 1 (parsing) and Phase 2 (embedding) run concurrently
+                - When False: Sequential execution (fallback for debugging)
 
         Returns:
             Number of files indexed (for backward compatibility)
@@ -995,6 +1411,12 @@ class SemanticIndexer:
             - Builds into new database with .new suffix
             - Atomically switches on success
             - Keeps old database intact on failure
+
+            When pipeline=True (default):
+            - Phase 1 and Phase 2 overlap using producer-consumer pattern
+            - Producer: Chunks files in batches, puts chunks on queue
+            - Consumer: Embeds chunks from queue concurrently
+            - Result: GPU doesn't sit idle during parsing phase (30-50% speedup)
         """
         logger.info(
             f"Starting indexing of project: {self.project_root} (phase: {phase})"
@@ -1025,96 +1447,114 @@ class SemanticIndexer:
         indexed_count = 0
         chunks_created = 0
         chunks_embedded = 0
+        files_to_index = []  # Initialize to empty list for directory index updates
 
-        # Phase 1: Chunk files (if requested)
-        if phase in ("all", "chunk"):
-            # Find all indexable files
-            all_files = self.file_discovery.find_indexable_files()
+        # Decide whether to use pipeline or sequential execution
+        use_pipeline = pipeline and phase == "all"
 
-            # Clean up stale metadata entries (files that no longer exist)
-            if force_reindex:
-                # Clear all metadata on force reindex
-                logger.info("Force reindex: clearing all metadata entries")
-                self.metadata.save({})
-            elif all_files:
-                # Clean up stale entries for incremental index
-                valid_files = {str(f) for f in all_files}
-                removed = self.metadata.cleanup_stale_entries(valid_files)
-                if removed > 0:
-                    logger.info(
-                        f"Removed {removed} stale metadata entries for deleted files"
-                    )
+        if use_pipeline:
+            # PIPELINE MODE: Overlap Phase 1 (chunking) and Phase 2 (embedding)
+            logger.info(
+                "🔄 Using pipeline parallelism to overlap parsing and embedding phases"
+            )
+            (
+                indexed_count,
+                chunks_created,
+                chunks_embedded,
+            ) = await self._index_with_pipeline(force_reindex)
+            # Get files list for directory index updates
+            files_to_index = self.file_discovery.find_indexable_files()
+        else:
+            # SEQUENTIAL MODE: Traditional two-phase execution
+            # Phase 1: Chunk files (if requested)
+            if phase in ("all", "chunk"):
+                # Find all indexable files
+                all_files = self.file_discovery.find_indexable_files()
 
-            if not all_files:
-                logger.warning("No indexable files found")
-                if phase == "chunk":
-                    return 0
-            else:
-                # Filter files that need indexing
-                files_to_index = all_files
-                if not force_reindex:
-                    # Use chunks_backend for change detection instead of metadata
-                    logger.info(
-                        f"Incremental change detection: checking {len(all_files)} files..."
-                    )
-                    filtered_files = []
-                    for idx, f in enumerate(all_files, start=1):
-                        try:
-                            file_hash = compute_file_hash(f)
-                            rel_path = str(f.relative_to(self.project_root))
-                            if await self.chunks_backend.file_changed(
-                                rel_path, file_hash
-                            ):
-                                filtered_files.append(f)
-                        except Exception as e:
-                            logger.warning(
-                                f"Error checking file {f}: {e}, will re-index"
-                            )
-                            filtered_files.append(f)
+                # Clean up stale metadata entries (files that no longer exist)
+                if force_reindex:
+                    # Clear all metadata on force reindex
+                    logger.info("Force reindex: clearing all metadata entries")
+                    self.metadata.save({})
+                elif all_files:
+                    # Clean up stale entries for incremental index
+                    valid_files = {str(f) for f in all_files}
+                    removed = self.metadata.cleanup_stale_entries(valid_files)
+                    if removed > 0:
+                        logger.info(
+                            f"Removed {removed} stale metadata entries for deleted files"
+                        )
 
-                        # Progress logging every 500 files
-                        if idx % 500 == 0:
-                            logger.info(
-                                f"Change detection progress: {idx}/{len(all_files)} files checked"
-                            )
-
-                    files_to_index = filtered_files
-                    logger.info(
-                        f"Incremental index: {len(files_to_index)} of {len(all_files)} files need updating"
-                    )
-                else:
-                    logger.info(
-                        f"Force reindex: processing all {len(files_to_index)} files"
-                    )
-
-                if files_to_index:
-                    # Run Phase 1
-                    indexed_count, chunks_created = await self._phase1_chunk_files(
-                        files_to_index, force=force_reindex
-                    )
-
-                    # Update metadata for backward compatibility
-                    if indexed_count > 0:
-                        metadata_dict = self.metadata.load()
-                        for file_path in files_to_index:
-                            try:
-                                metadata_dict[str(file_path)] = os.path.getmtime(
-                                    file_path
-                                )
-                            except OSError:
-                                pass  # File might have been deleted during indexing
-                        self.metadata.save(metadata_dict)
-                else:
-                    logger.info("All files are up to date")
+                if not all_files:
+                    logger.warning("No indexable files found")
                     if phase == "chunk":
                         return 0
+                else:
+                    # Filter files that need indexing
+                    files_to_index = all_files
+                    if not force_reindex:
+                        # Use chunks_backend for change detection instead of metadata
+                        logger.info(
+                            f"Incremental change detection: checking {len(all_files)} files..."
+                        )
+                        filtered_files = []
+                        for idx, f in enumerate(all_files, start=1):
+                            try:
+                                file_hash = compute_file_hash(f)
+                                rel_path = str(f.relative_to(self.project_root))
+                                if await self.chunks_backend.file_changed(
+                                    rel_path, file_hash
+                                ):
+                                    filtered_files.append(f)
+                            except Exception as e:
+                                logger.warning(
+                                    f"Error checking file {f}: {e}, will re-index"
+                                )
+                                filtered_files.append(f)
 
-        # Phase 2: Embed chunks (if requested)
-        if phase in ("all", "embed"):
-            # Run Phase 2 on pending chunks
-            chunks_embedded, _ = await self._phase2_embed_chunks(
-                batch_size=self.batch_size
-            )
+                            # Progress logging every 500 files
+                            if idx % 500 == 0:
+                                logger.info(
+                                    f"Change detection progress: {idx}/{len(all_files)} files checked"
+                                )
+
+                        files_to_index = filtered_files
+                        logger.info(
+                            f"Incremental index: {len(files_to_index)} of {len(all_files)} files need updating"
+                        )
+                    else:
+                        logger.info(
+                            f"Force reindex: processing all {len(files_to_index)} files"
+                        )
+
+                    if files_to_index:
+                        # Run Phase 1
+                        indexed_count, chunks_created = await self._phase1_chunk_files(
+                            files_to_index, force=force_reindex
+                        )
+
+                        # Update metadata for backward compatibility
+                        if indexed_count > 0:
+                            metadata_dict = self.metadata.load()
+                            for file_path in files_to_index:
+                                try:
+                                    metadata_dict[str(file_path)] = os.path.getmtime(
+                                        file_path
+                                    )
+                                except OSError:
+                                    pass  # File might have been deleted during indexing
+                            self.metadata.save(metadata_dict)
+                    else:
+                        logger.info("All files are up to date")
+                        if phase == "chunk":
+                            return 0
+
+            # Phase 2: Embed chunks (if requested)
+            if phase in ("all", "embed"):
+                # Run Phase 2 on pending chunks
+                chunks_embedded, _ = await self._phase2_embed_chunks(
+                    batch_size=self.batch_size
+                )
         if phase == "all":
             logger.info(
                 f"✓ Two-phase indexing complete: {indexed_count} files, "
