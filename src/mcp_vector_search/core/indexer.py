@@ -1987,24 +1987,56 @@ class SemanticIndexer:
                 file_to_chunks_map: dict[str, tuple[int, int]] = {}
                 file_results: dict[Path, tuple[int, bool]] = {}
 
-                # Parse all files in parallel
+                # Parse all files in parallel using multiprocessing for CPU-bound parsing
                 if batch_count == 1:
                     self.console.print(
                         f"📄 Parsing {len(batch)} files from batch...", flush=True
                     )
                 t_start = time.time()
-                tasks = []
-                for file_path in batch:
-                    task = asyncio.create_task(
-                        self._parse_and_prepare_file(
-                            file_path,
-                            force_reindex,
-                            skip_delete=self._atomic_rebuild_active,
+
+                # Filter files that should be indexed
+                files_to_parse = [
+                    f for f in batch if self.file_discovery.should_index_file(f)
+                ]
+
+                # Use multiprocessing for parallel CPU-bound parsing (fixes pipeline bottleneck)
+                if self.use_multiprocessing and len(files_to_parse) > 1:
+                    multiprocess_results = (
+                        await self.chunk_processor.parse_files_multiprocess(
+                            files_to_parse
                         )
                     )
-                    tasks.append(task)
+                else:
+                    multiprocess_results = await self.chunk_processor.parse_files_async(
+                        files_to_parse
+                    )
 
-                parse_results = await asyncio.gather(*tasks, return_exceptions=True)
+                # Build parse_results in same format as before
+                # Each result is (chunks, metrics) or an Exception
+                # Create dict to map file_path to result
+                parse_result_map = {}
+                for file_path, chunks, error in multiprocess_results:
+                    if error:
+                        parse_result_map[file_path] = error
+                    else:
+                        # Build hierarchy like _parse_and_prepare_file does
+                        if chunks:
+                            chunks_with_hierarchy = (
+                                self.chunk_processor.build_chunk_hierarchy(chunks)
+                            )
+                            parse_result_map[file_path] = (chunks_with_hierarchy, None)
+                        else:
+                            parse_result_map[file_path] = ([], None)
+
+                # Build final results list in same order as batch (some files may have been filtered)
+                parse_results = []
+                for file_path in batch:
+                    if file_path in parse_result_map:
+                        parse_results.append(parse_result_map[file_path])
+                    else:
+                        # File was filtered out (not indexable)
+                        parse_results.append(([], None))
+
                 parse_time = time.time() - t_start
 
                 # OPTIMIZATION: Cache mtimes for batch to avoid repeated os.path.getmtime() calls
