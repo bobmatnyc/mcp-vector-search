@@ -1054,8 +1054,11 @@ class SemanticIndexer:
                 files_to_index = all_files
                 if not force_reindex:
                     # Use chunks_backend for change detection instead of metadata
+                    logger.info(
+                        f"Incremental change detection: checking {len(all_files)} files..."
+                    )
                     filtered_files = []
-                    for f in all_files:
+                    for idx, f in enumerate(all_files, start=1):
                         try:
                             file_hash = compute_file_hash(f)
                             rel_path = str(f.relative_to(self.project_root))
@@ -1068,6 +1071,13 @@ class SemanticIndexer:
                                 f"Error checking file {f}: {e}, will re-index"
                             )
                             filtered_files.append(f)
+
+                        # Progress logging every 500 files
+                        if idx % 500 == 0:
+                            logger.info(
+                                f"Change detection progress: {idx}/{len(all_files)} files checked"
+                            )
+
                     files_to_index = filtered_files
                     logger.info(
                         f"Incremental index: {len(files_to_index)} of {len(all_files)} files need updating"
