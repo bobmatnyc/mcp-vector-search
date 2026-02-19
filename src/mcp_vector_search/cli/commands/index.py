@@ -536,7 +536,7 @@ async def run_indexing(
     incremental: bool = True,
     extensions: str | None = None,
     force_reindex: bool = False,
-    batch_size: int = 32,
+    batch_size: int = 256,
     show_progress: bool = True,
     debug: bool = False,
     verbose: bool = False,

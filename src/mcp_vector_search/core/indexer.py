@@ -98,7 +98,7 @@ class SemanticIndexer:
             file_extensions: File extensions to index (deprecated, use config)
             config: Project configuration (preferred over file_extensions)
             max_workers: Maximum number of worker processes for parallel parsing (ignored if use_multiprocessing=False)
-            batch_size: Number of files to process in each batch (default: 32, override with MCP_VECTOR_SEARCH_BATCH_SIZE or auto-optimization)
+            batch_size: Number of files to process in each batch (default: 256, override with MCP_VECTOR_SEARCH_BATCH_SIZE or auto-optimization)
             debug: Enable debug output for hierarchy building
             collectors: Metric collectors to run during indexing (defaults to all complexity collectors)
             use_multiprocessing: Enable multiprocess parallel parsing (default: True, disable for debugging)
@@ -107,7 +107,7 @@ class SemanticIndexer:
             skip_blame: Skip git blame tracking for faster indexing (default: False)
 
         Environment Variables:
-            MCP_VECTOR_SEARCH_BATCH_SIZE: Override batch size (default: 32)
+            MCP_VECTOR_SEARCH_BATCH_SIZE: Override batch size (default: 256)
             MCP_VECTOR_SEARCH_SKIP_BLAME: Skip git blame tracking (true/1/yes)
         """
         self.database = database
