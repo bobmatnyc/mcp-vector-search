@@ -631,16 +631,16 @@ class SemanticIndexer:
                             )
 
                         try:
-                            # Parse file
+                            # Parse file (runs in thread pool to avoid blocking event loop)
                             chunks = await self.chunk_processor.parse_file(file_path)
 
                             if not chunks:
                                 logger.debug(f"No chunks extracted from {file_path}")
                                 continue
 
-                            # Build hierarchical relationships
-                            chunks_with_hierarchy = (
-                                self.chunk_processor.build_chunk_hierarchy(chunks)
+                            # Build hierarchical relationships (CPU-bound, run in thread pool)
+                            chunks_with_hierarchy = await asyncio.to_thread(
+                                self.chunk_processor.build_chunk_hierarchy, chunks
                             )
 
                             # Convert CodeChunk objects to dicts for storage
@@ -713,6 +713,8 @@ class SemanticIndexer:
                         await chunk_queue.put(
                             {"chunks": batch_chunks, "batch_size": len(batch_chunks)}
                         )
+                        # Yield to event loop to let consumer process the batch
+                        await asyncio.sleep(0)
 
                 # Update metrics
                 parsing_metrics.item_count = files_indexed
@@ -1046,16 +1048,16 @@ class SemanticIndexer:
                     )
 
                 try:
-                    # Parse file
+                    # Parse file (runs in thread pool to avoid blocking event loop)
                     chunks = await self.chunk_processor.parse_file(file_path)
 
                     if not chunks:
                         logger.debug(f"No chunks extracted from {file_path}")
                         continue
 
-                    # Build hierarchical relationships
-                    chunks_with_hierarchy = self.chunk_processor.build_chunk_hierarchy(
-                        chunks
+                    # Build hierarchical relationships (CPU-bound, run in thread pool)
+                    chunks_with_hierarchy = await asyncio.to_thread(
+                        self.chunk_processor.build_chunk_hierarchy, chunks
                     )
 
                     # Convert CodeChunk objects to dicts for storage
@@ -1322,7 +1324,9 @@ class SemanticIndexer:
                     if first_batch:
                         # If we got a full batch, there are likely more pending
                         # Use a conservative estimate of 2x current batch as minimum
-                        estimated_total_chunks = max(chunks_embedded * 2, chunks_embedded)
+                        estimated_total_chunks = max(
+                            chunks_embedded * 2, chunks_embedded
+                        )
                         first_batch = False
 
                     # Show progress bar if tracker is available
@@ -1338,7 +1342,9 @@ class SemanticIndexer:
                     if chunks_embedded % checkpoint_interval == 0:
                         self.memory_monitor.log_memory_summary()
                         if not self.progress_tracker:
-                            logger.info(f"Checkpoint: {chunks_embedded} chunks embedded")
+                            logger.info(
+                                f"Checkpoint: {chunks_embedded} chunks embedded"
+                            )
 
                     # Check memory after each batch and clear references
                     del pending, chunk_ids, contents, vectors, chunks_with_vectors

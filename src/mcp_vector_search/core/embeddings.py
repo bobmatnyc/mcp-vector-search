@@ -111,15 +111,19 @@ def _detect_device() -> str:
         logger.info(f"Using device from environment override: {env_device}")
         return env_device
 
-    # Apple Silicon MPS offers minimal speedup for transformer inference
-    # (M4 Max CPU is already very fast with unified memory), so we default
-    # to CPU. Users can override with MCP_VECTOR_SEARCH_DEVICE=mps.
+    # Apple Silicon MPS provides significant speedup for models >50M params on Apple Silicon
+    # PyTorch 2.10.0 has a known MPS regression, so we fall back to CPU for that version
     if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-        logger.info(
-            "Apple Silicon detected. Using CPU (faster than MPS for transformer inference). "
-            "Override with MCP_VECTOR_SEARCH_DEVICE=mps if desired."
-        )
-        return "cpu"
+        # Check for PyTorch 2.10.0 regression
+        if torch.__version__.startswith("2.10.0"):
+            logger.warning(
+                "PyTorch 2.10.0 detected — falling back to CPU due to known MPS regression. "
+                "Upgrade PyTorch to restore GPU acceleration."
+            )
+            return "cpu"
+
+        logger.info("Apple Silicon detected. Using MPS for GPU-accelerated inference.")
+        return "mps"
 
     # Check for NVIDIA CUDA with detailed diagnostics
     if torch.cuda.is_available():

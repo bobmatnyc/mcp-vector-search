@@ -26,9 +26,9 @@ def generate_html_template() -> str:
 <head>
     <meta charset="utf-8">
     <title>Code Chunk Relationship Graph</title>
-    <meta http-cache="no-cache, no-store, must-revalidate">
-    <meta http-pragma="no-cache">
-    <meta http-expires="0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <!-- Build: {build_timestamp} -->
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <script src="https://d3js.org/d3.v7.min.js"></script>

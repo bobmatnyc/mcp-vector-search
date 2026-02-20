@@ -294,9 +294,25 @@ def serve(
         )
         viz_dir.mkdir(parents=True, exist_ok=True)
 
-    # Always ensure index.html exists (regenerate if missing)
+    # Always ensure index.html exists and is up-to-date
     html_file = viz_dir / "index.html"
-    if not html_file.exists():
+    needs_html_regeneration = not html_file.exists()
+
+    # Check if template source files are newer than cached HTML (staleness detection)
+    if html_file.exists() and not needs_html_regeneration:
+        html_mtime = html_file.stat().st_mtime
+        templates_dir = Path(__file__).parent / "templates"
+
+        # Check all Python template files for modifications
+        for template_file in templates_dir.glob("*.py"):
+            if template_file.stat().st_mtime > html_mtime:
+                console.print(
+                    f"[yellow]Template {template_file.name} changed. Regenerating visualization HTML...[/yellow]"
+                )
+                needs_html_regeneration = True
+                break
+
+    if needs_html_regeneration:
         console.print("[yellow]Creating visualization HTML file...[/yellow]")
         export_to_html(html_file)
 

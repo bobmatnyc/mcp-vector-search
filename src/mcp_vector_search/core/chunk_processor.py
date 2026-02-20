@@ -215,8 +215,11 @@ class ChunkProcessor:
         if self.git_blame_cache:
             logger.debug(f"Git blame tracking enabled for repo: {repo_root}")
 
-    async def parse_file(self, file_path: Path) -> list[CodeChunk]:
-        """Parse a file into code chunks.
+    def parse_file_sync(self, file_path: Path) -> list[CodeChunk]:
+        """Parse a file into code chunks synchronously (for asyncio.to_thread).
+
+        This is the synchronous version used by the async wrapper to avoid
+        blocking the event loop during CPU-bound parsing operations.
 
         Args:
             file_path: Path to the file to parse
@@ -228,8 +231,8 @@ class ChunkProcessor:
             # Get appropriate parser
             parser = self.parser_registry.get_parser_for_file(file_path)
 
-            # Parse file
-            chunks = await parser.parse_file(file_path)
+            # Parse file synchronously (no event loop blocking)
+            chunks = parser.parse_file_sync(file_path)
 
             # Filter out empty chunks
             valid_chunks = [chunk for chunk in chunks if chunk.content.strip()]
@@ -257,6 +260,21 @@ class ChunkProcessor:
         except Exception as e:
             logger.error(f"Failed to parse file {file_path}: {e}")
             raise ParsingError(f"Failed to parse file {file_path}: {e}") from e
+
+    async def parse_file(self, file_path: Path) -> list[CodeChunk]:
+        """Parse a file into code chunks (async wrapper for thread pool execution).
+
+        In pipeline mode, this runs in a thread pool to avoid blocking the
+        event loop during CPU-bound tree-sitter parsing operations.
+
+        Args:
+            file_path: Path to the file to parse
+
+        Returns:
+            List of code chunks with subproject information
+        """
+        # Run synchronous parsing in thread pool to avoid blocking event loop
+        return await asyncio.to_thread(self.parse_file_sync, file_path)
 
     async def parse_files_multiprocess(
         self, file_paths: list[Path]
