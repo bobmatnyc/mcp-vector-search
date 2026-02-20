@@ -4518,7 +4518,11 @@ function buildFileHierarchy(maxDepth = 3, includeAllForNodeId = null) {
             content: node.content,
             docstring: node.docstring,
             language: node.language,
-            depth: currentDepth
+            depth: currentDepth,
+            quality_score: node.quality_score,
+            smell_count: node.smell_count,
+            smells: node.smells,
+            complexity_grade: node.complexity_grade
         };
 
         const children = node.children || node._children || [];
@@ -4604,7 +4608,11 @@ function buildASTHierarchy() {
             end_line: node.end_line,
             content: node.content,
             docstring: node.docstring,
-            language: language
+            language: language,
+            quality_score: node.quality_score,
+            smell_count: node.smell_count,
+            smells: node.smells,
+            complexity_grade: node.complexity_grade
         });
     });
 
