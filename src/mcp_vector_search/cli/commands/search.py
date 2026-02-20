@@ -391,7 +391,7 @@ async def run_search(
     database = create_database(
         persist_directory=config.index_path / "lance",
         embedding_function=embedding_function,
-        collection_name="vectors",  # Search uses vectors.lance table
+        collection_name="chunks",  # Search queries chunks.lance (or VectorsBackend if available)
     )
     await database.initialize()
 
@@ -737,7 +737,7 @@ async def run_similar_search(
     database = create_database(
         persist_directory=config.index_path / "lance",
         embedding_function=embedding_function,
-        collection_name="vectors",  # Search uses vectors.lance table
+        collection_name="chunks",  # Search queries chunks.lance (or VectorsBackend if available)
     )
 
     search_engine = SemanticSearchEngine(
@@ -847,7 +847,7 @@ async def run_context_search(
     database = create_database(
         persist_directory=config.index_path / "lance",
         embedding_function=embedding_function,
-        collection_name="vectors",  # Search uses vectors.lance table
+        collection_name="chunks",  # Search queries chunks.lance (or VectorsBackend if available)
     )
 
     search_engine = SemanticSearchEngine(

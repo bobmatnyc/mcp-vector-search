@@ -116,11 +116,32 @@ class VectorsBackend:
             error: Exception to check
 
         Returns:
-            True if error indicates corruption (missing .lance file), False otherwise
+            True if error indicates corruption (missing data fragments), False otherwise
+
+        Note:
+            This checks for ACTUAL corruption (missing data fragment files),
+            NOT schema mismatches or other operational errors. Schema mismatches
+            should be handled by the caller, not treated as corruption.
         """
         error_msg = str(error).lower()
-        # Check for lance "Not found" errors with .lance file path pattern
-        return "not found" in error_msg and ".lance" in error_msg
+
+        # Check for genuine corruption: missing data fragment files
+        # These errors mention specific fragment files like "data/abc123.lance"
+        # Example: "NotFound: data fragment 'data/abc123.lance' not found"
+        is_fragment_error = (
+            "not found" in error_msg or "no such file" in error_msg
+        ) and ("fragment" in error_msg or "data/" in error_msg)
+
+        # Schema errors are NOT corruption - they indicate wrong collection_name
+        is_schema_error = (
+            "schema" in error_msg
+            or "field" in error_msg
+            or "column" in error_msg
+            or "type mismatch" in error_msg
+        )
+
+        # Only treat as corruption if it's a fragment error AND NOT a schema error
+        return is_fragment_error and not is_schema_error
 
     def _handle_corrupt_table(self, error: Exception, table_name: str) -> bool:
         """Handle corrupted LanceDB table by deleting and resetting.
@@ -504,8 +525,11 @@ class VectorsBackend:
             SearchError: If search fails
         """
         if self._table is None:
-            # Empty database - return empty results
-            return []
+            # Table doesn't exist - raise error instead of silently returning []
+            raise SearchError(
+                "Vectors table not found. Index may be corrupted or not built yet. "
+                "Run 'mcp-vector-search index' to rebuild the index."
+            )
 
         # Validate query vector dimensions (if dimension is known)
         if self.vector_dim is not None and len(query_vector) != self.vector_dim:

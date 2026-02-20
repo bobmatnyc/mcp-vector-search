@@ -232,7 +232,7 @@ async def show_status(
         database = create_database(
             persist_directory=config.index_path / "lance",
             embedding_function=embedding_function,
-            collection_name="vectors",  # Match VectorsBackend.TABLE_NAME
+            collection_name="chunks",  # Check chunks.lance (primary table)
         )
 
         indexer = SemanticIndexer(
@@ -523,7 +523,7 @@ async def perform_health_check(project_root: Path, config) -> dict[str, Any]:
             database = create_database(
                 persist_directory=config.index_path / "lance",
                 embedding_function=embedding_function,
-                collection_name="vectors",  # Match VectorsBackend.TABLE_NAME
+                collection_name="chunks",  # Check chunks.lance (primary table)
             )
             async with database:
                 # Skip stats for health check to avoid crashes on large DBs
