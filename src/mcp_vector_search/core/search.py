@@ -1,5 +1,6 @@
 """Semantic search engine for MCP Vector Search."""
 
+import os
 import re
 import time
 from pathlib import Path
@@ -727,10 +728,12 @@ class SemanticSearchEngine:
                 )
                 search_results.append(search_result)
 
-            # Code enrichment: check for code_vectors table and merge results
-            search_results = await self._enrich_with_code_vectors(
-                query, search_results, limit, filters
-            )
+            # Code enrichment: opt-in only (set MCP_CODE_ENRICHMENT=true to enable)
+            # CodeT5+ enrichment is experimental - see feature/code-index branch
+            if os.environ.get("MCP_CODE_ENRICHMENT", "").lower() == "true":
+                search_results = await self._enrich_with_code_vectors(
+                    query, search_results, limit, filters
+                )
 
             return search_results
 

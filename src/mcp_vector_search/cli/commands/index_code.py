@@ -245,7 +245,7 @@ async def _index_code(project_root_str: str, force: bool, verbose: bool) -> None
     console.print(f"  Index: [dim]{code_vectors_path}[/dim]")
 
     # Close embedding cache if needed
-    if embedding_cache:
+    if embedding_cache and hasattr(embedding_cache, "close"):
         embedding_cache.close()
 
     # Close backends
