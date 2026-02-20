@@ -1088,7 +1088,7 @@ class LanceVectorDatabase:
             imports=imports,
             calls=calls,
             inherits_from=inherits_from,
-            complexity_score=batch_dict.get("complexity_score", [0.0] * num_rows)[i],
+            complexity_score=float(batch_dict.get("complexity", [0] * num_rows)[i]),
             chunk_id=batch_dict.get("chunk_id", [None] * num_rows)[i],
             parent_chunk_id=batch_dict.get("parent_chunk_id", [None] * num_rows)[i]
             or None,
@@ -1170,7 +1170,7 @@ class LanceVectorDatabase:
             imports=imports,
             calls=calls,
             inherits_from=inherits_from,
-            complexity_score=row.get("complexity_score", 0.0),
+            complexity_score=float(row.get("complexity", 0)),
             chunk_id=row.get("chunk_id"),
             parent_chunk_id=row.get("parent_chunk_id") or None,
             child_chunk_ids=child_chunk_ids,

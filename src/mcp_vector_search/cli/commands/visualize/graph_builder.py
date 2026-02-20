@@ -45,10 +45,22 @@ def compute_quality_metrics(chunk: Any) -> dict[str, Any]:
     lines_of_code = chunk.end_line - chunk.start_line + 1
 
     # Extract complexity metrics if available
-    complexity = getattr(chunk, "complexity_score", 0.0) or 0.0
+    raw_complexity = getattr(chunk, "complexity_score", 0.0) or 0.0
     cyclomatic = getattr(chunk, "cyclomatic_complexity", None)
     nesting_depth = getattr(chunk, "max_nesting_depth", None)
     param_count = len(getattr(chunk, "parameters", []))
+
+    # If stored complexity is 0, estimate from lines of code
+    # This handles both legitimately simple code and missing data
+    if raw_complexity == 0:
+        # Heuristic: Estimate complexity from LOC
+        # Short functions (1-10 lines) = complexity 1-3
+        # Medium (10-30 lines) = complexity 3-10
+        # Long (30-100 lines) = complexity 10-30
+        # Very long (100+ lines) = complexity 30+
+        raw_complexity = max(1, lines_of_code / 5)
+
+    complexity = float(raw_complexity)
 
     # 1. Long Method: >50 lines
     if lines_of_code > 50:
@@ -97,6 +109,7 @@ def compute_quality_metrics(chunk: Any) -> dict[str, Any]:
         complexity_grade = "F"
 
     return {
+        "complexity": effective_complexity,  # Include computed complexity
         "quality_score": round(quality_score, 2),
         "smell_count": len(smells),
         "smells": smells,
