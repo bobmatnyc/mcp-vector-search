@@ -264,6 +264,36 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
         def __init__(self):
             self.chunks: list[CodeChunk] = []
             self.initialized = False
+            # Add mock embedding function for tests that need it
+            self.embedding_function = self._create_mock_embedding_function()
+
+        def _create_mock_embedding_function(self):
+            """Create a mock embedding function that returns 384-dimensional vectors."""
+
+            class MockEmbedding:
+                model_name = "all-MiniLM-L6-v2"
+
+                def __call__(self, texts: list[str]) -> list[list[float]]:
+                    """Generate deterministic mock embeddings."""
+                    embeddings = []
+                    for text in texts:
+                        # Create a simple hash-based embedding (384-dimensional)
+                        embedding = [
+                            float(hash(text + str(i)) % 100) / 100.0
+                            for i in range(384)
+                        ]
+                        embeddings.append(embedding)
+                    return embeddings
+
+                def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                    """Embed multiple documents."""
+                    return self.__call__(texts)
+
+                def embed_query(self, text: str) -> list[float]:
+                    """Embed a single query."""
+                    return self.__call__([text])[0]
+
+            return MockEmbedding()
 
         async def initialize(self) -> None:
             self.initialized = True

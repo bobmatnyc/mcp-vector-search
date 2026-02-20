@@ -307,6 +307,8 @@ class TestIndexFileWithMetrics:
         mock_db = AsyncMock()
         mock_db.delete_by_file = AsyncMock(return_value=0)
         mock_db.add_chunks = AsyncMock()
+        # Add mock embedding function that returns 384-d vectors
+        mock_db.embedding_function = MagicMock(return_value=[[0.1] * 384])
 
         # Mock parser
         mock_parser = MagicMock()
@@ -336,6 +338,10 @@ class TestIndexFileWithMetrics:
                 project_root=tmp_path,
                 config=config,
             )
+
+            # Initialize backends before indexing individual file
+            await indexer.chunks_backend.initialize()
+            await indexer.vectors_backend.initialize()
 
             # Index the file
             success = await indexer.index_file(test_file)
@@ -375,6 +381,8 @@ class TestIndexFileWithMetrics:
         mock_db = AsyncMock()
         mock_db.delete_by_file = AsyncMock(return_value=0)
         mock_db.add_chunks = AsyncMock()
+        # Add mock embedding function that returns 384-d vectors
+        mock_db.embedding_function = MagicMock(return_value=[[0.1] * 384])
 
         # Mock parser
         mock_parser = MagicMock()
@@ -405,6 +413,10 @@ class TestIndexFileWithMetrics:
                 config=config,
                 collectors=[],  # Disable collectors
             )
+
+            # Initialize backends before indexing individual file
+            await indexer.chunks_backend.initialize()
+            await indexer.vectors_backend.initialize()
 
             # Index the file
             success = await indexer.index_file(test_file)
