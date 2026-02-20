@@ -752,14 +752,22 @@ class ChunksBackend:
             return 0
 
         try:
-            # Delete matching rows directly (delete is idempotent, no need to count first)
+            # Count chunks before deletion to return accurate count
             filter_expr = f"file_path = '{file_path}'"
-            self._table.delete(filter_expr)
+            df = (
+                self._table.search()
+                .where(filter_expr, prefilter=True)
+                .limit(10000)
+                .to_pandas()
+            )
+            count = len(df)
 
-            # Note: We don't know exact count deleted without counting first, but that's OK
-            # The important thing is the file's chunks are gone
-            logger.debug(f"Deleted chunks for file: {file_path}")
-            return 1  # Return 1 to indicate something was done
+            if count > 0:
+                # Delete matching rows
+                self._table.delete(filter_expr)
+                logger.debug(f"Deleted {count} chunks for file: {file_path}")
+
+            return count
 
         except Exception as e:
             # Handle LanceDB "Not found" errors gracefully (file not in index)
