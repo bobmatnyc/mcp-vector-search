@@ -80,6 +80,11 @@ class SemanticSearchEngine:
         self._vectors_backend: VectorsBackend | None = None
         self._vectors_backend_checked = False
 
+        # Code vectors backend (lazy initialization for code enrichment)
+        self._code_vectors_backend: VectorsBackend | None = None
+        self._code_vectors_backend_checked = False
+        self._code_embedding_func = None  # Cache CodeT5+ model
+
         # Knowledge graph (lazy initialization)
         self._kg: KnowledgeGraph | None = None
         self._kg_checked = False
@@ -722,8 +727,170 @@ class SemanticSearchEngine:
                 )
                 search_results.append(search_result)
 
+            # Code enrichment: check for code_vectors table and merge results
+            search_results = await self._enrich_with_code_vectors(
+                query, search_results, limit, filters
+            )
+
             return search_results
 
         except Exception as e:
             logger.error(f"VectorsBackend search failed: {e}")
             raise SearchError(f"Vector search failed: {e}") from e
+
+    async def _enrich_with_code_vectors(
+        self,
+        query: str,
+        main_results: list[SearchResult],
+        limit: int,
+        filters: dict[str, Any] | None,
+    ) -> list[SearchResult]:
+        """Enrich search results with code_vectors table if available.
+
+        This method performs a second search using the CodeT5+ model on the
+        code_vectors table (if it exists) and boosts results that appear in BOTH
+        the main index and code index.
+
+        Args:
+            query: Original search query
+            main_results: Results from main vectors.lance search
+            limit: Maximum number of results
+            filters: Optional metadata filters
+
+        Returns:
+            Enriched and re-sorted search results
+        """
+        # Lazy check for code_vectors backend on first search
+        if not self._code_vectors_backend_checked:
+            await self._check_code_vectors_backend()
+            self._code_vectors_backend_checked = True
+
+        # If no code_vectors backend, return main results unchanged
+        if not self._code_vectors_backend:
+            return main_results
+
+        try:
+            # Initialize code_vectors backend if needed
+            if self._code_vectors_backend._db is None:
+                await self._code_vectors_backend.initialize()
+
+            # Lazy load CodeT5+ embedding function (cache for performance)
+            if self._code_embedding_func is None:
+                from ..config.defaults import DEFAULT_EMBEDDING_MODELS
+                from .embeddings import CodeBERTEmbeddingFunction
+
+                code_model = DEFAULT_EMBEDDING_MODELS["code_specialized"]
+                self._code_embedding_func = CodeBERTEmbeddingFunction(code_model)
+                logger.debug(f"Loaded CodeT5+ model for code enrichment: {code_model}")
+
+            # Generate code embedding for query
+            code_query_vector = self._code_embedding_func([query])[0]
+
+            # Search code_vectors with higher threshold (0.75 vs 0.5)
+            # Code-specific models need higher confidence for relevance
+            code_threshold = 0.75
+            code_raw_results = await self._code_vectors_backend.search(
+                code_query_vector,
+                limit=limit * 2,
+                filters=filters,  # Get more candidates
+            )
+
+            # Convert to chunk_id -> similarity map for fast lookup
+            code_similarity_map = {}
+            for result in code_raw_results:
+                # Calculate similarity from distance
+                distance = result.get("_distance", 1.0)
+                similarity = max(0.0, 1.0 - (distance / 2.0))
+
+                # Apply code-specific threshold
+                if similarity >= code_threshold:
+                    chunk_id = result.get("chunk_id")
+                    if chunk_id:
+                        code_similarity_map[chunk_id] = similarity
+
+            if not code_similarity_map:
+                # No code results above threshold
+                return main_results
+
+            logger.info(
+                f"Code index detected, enriching search results "
+                f"(found {len(code_similarity_map)} code matches above {code_threshold} threshold)"
+            )
+
+            # Boost main results that also appear in code index
+            boosted_count = 0
+            for result in main_results:
+                # Get chunk_id from result (construct from file_path + line range)
+                chunk_id = getattr(result, "chunk_id", None)
+                if not chunk_id:
+                    # Fallback: construct chunk_id from file path and lines
+                    # This matches the chunk_id format used during indexing
+                    chunk_id = (
+                        f"{result.file_path}:{result.start_line}-{result.end_line}"
+                    )
+
+                # If result appears in code index, boost its score
+                if chunk_id in code_similarity_map:
+                    # Boost by 0.15 for appearing in both indices
+                    original_score = result.similarity_score
+                    result.similarity_score = min(1.0, result.similarity_score + 0.15)
+                    boosted_count += 1
+                    logger.debug(
+                        f"Boosted {result.file_path}:{result.start_line} "
+                        f"from {original_score:.3f} to {result.similarity_score:.3f} "
+                        f"(code similarity: {code_similarity_map[chunk_id]:.3f})"
+                    )
+
+            if boosted_count > 0:
+                logger.info(
+                    f"Boosted {boosted_count} results that appear in both main and code indices"
+                )
+                # Re-sort by updated scores
+                main_results.sort(key=lambda r: r.similarity_score, reverse=True)
+
+            return main_results
+
+        except Exception as e:
+            # Non-fatal: code enrichment failure shouldn't break search
+            logger.warning(
+                f"Code enrichment failed (continuing with main results): {e}"
+            )
+            return main_results
+
+    async def _check_code_vectors_backend(self) -> None:
+        """Check if code_vectors.lance table exists for code enrichment.
+
+        This enables automatic code-specific search enrichment when available.
+        """
+        try:
+            # Detect lance path from database persist_directory
+            if hasattr(self.database, "persist_directory"):
+                index_path = self.database.persist_directory
+
+                # Handle both old and new path formats
+                if index_path.name == "lance":
+                    lance_path = index_path
+                else:
+                    lance_path = index_path / "lance"
+
+                # Check if code_vectors.lance table exists
+                code_vectors_path = lance_path / "code_vectors.lance"
+                if code_vectors_path.exists() and code_vectors_path.is_dir():
+                    # Instantiate VectorsBackend for code_vectors with 256D (CodeT5+)
+                    self._code_vectors_backend = VectorsBackend(
+                        lance_path, vector_dim=256, table_name="code_vectors"
+                    )
+                    logger.debug(
+                        "Code vectors table detected, search enrichment enabled"
+                    )
+                else:
+                    logger.debug(
+                        "No code_vectors table found, code enrichment disabled"
+                    )
+            else:
+                logger.debug(
+                    "Database has no persist_directory, code enrichment disabled"
+                )
+        except Exception as e:
+            logger.debug(f"Code vectors backend detection failed: {e}")
+            self._code_vectors_backend = None

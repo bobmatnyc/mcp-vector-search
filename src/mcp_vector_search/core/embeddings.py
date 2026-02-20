@@ -407,25 +407,55 @@ class CodeBERTEmbeddingFunction:
                 expected_dims = "unknown"
                 model_type = "unknown"
 
-            # Log model download for large models (CodeXEmbed is ~1.5GB)
-            if "SFR-Embedding-Code" in model_name or "CodeXEmbed" in model_name:
-                logger.info(
-                    f"Loading {model_name} (~1.5GB download on first use)... "
-                    f"This may take a few minutes."
-                )
+            # Check if this is CodeT5+ model (needs special handling)
+            self.is_codet5p = "codet5p" in model_name.lower()
 
-            # trust_remote_code=True needed for CodeXEmbed and other models with custom code
-            # Suppress stdout to hide "BertModel LOAD REPORT" noise
-            with suppress_stdout_stderr():
-                self.model = SentenceTransformer(
-                    model_name, device=device, trust_remote_code=True
+            if self.is_codet5p:
+                # CodeT5+ embedding model requires AutoModel, not SentenceTransformer
+                # It's an encoder-decoder model with a projection head that outputs 256d
+                logger.info(
+                    f"Loading CodeT5+ embedding model: {model_name} "
+                    f"(encoder-decoder with 256d projection head)"
                 )
+                import torch
+                from transformers import AutoModel, AutoTokenizer
+
+                with suppress_stdout_stderr():
+                    self.model = AutoModel.from_pretrained(  # nosec B615
+                        model_name, trust_remote_code=True
+                    )
+                    self.tokenizer = AutoTokenizer.from_pretrained(  # nosec B615
+                        model_name, trust_remote_code=True
+                    )
+
+                # Move model to device
+                self.model = self.model.to(device)
+                self.model.eval()  # Set to evaluation mode
+
+                # CodeT5+ outputs 256d directly (has projection head)
+                actual_dims = 256
+            else:
+                # Standard SentenceTransformer models
+                # Log model download for large models (CodeXEmbed is ~1.5GB)
+                if "SFR-Embedding-Code" in model_name or "CodeXEmbed" in model_name:
+                    logger.info(
+                        f"Loading {model_name} (~1.5GB download on first use)... "
+                        f"This may take a few minutes."
+                    )
+
+                # trust_remote_code=True needed for CodeXEmbed and other models with custom code
+                # Suppress stdout to hide "BertModel LOAD REPORT" noise
+                with suppress_stdout_stderr():
+                    self.model = SentenceTransformer(
+                        model_name, device=device, trust_remote_code=True
+                    )
+
+                # Get actual dimensions from loaded model
+                actual_dims = self.model.get_sentence_embedding_dimension()
+
             self.model_name = model_name
             self.timeout = timeout
             self.device = device  # Store device for use in encode() calls
-
-            # Get actual dimensions from loaded model
-            actual_dims = self.model.get_sentence_embedding_dimension()
 
             # Log device usage and model details
             if device == "mps":
@@ -516,18 +546,55 @@ class CodeBERTEmbeddingFunction:
 
         Uses optimal batch size for GPU (512 for M4 Max, detected automatically).
         """
-        # Use optimal batch size for GPU throughput (5x faster with 512 vs 32)
-        batch_size = _detect_optimal_batch_size()
-        # CRITICAL: Pass device to ensure input tensors are moved to GPU
-        # Without this, model weights are on GPU but inputs stay on CPU (0% GPU compute)
-        embeddings = self.model.encode(
-            input,
-            convert_to_numpy=True,
-            batch_size=batch_size,
-            show_progress_bar=False,
-            device=self.device,  # Ensure inputs go to GPU
-        )
-        return embeddings.tolist()
+        if self.is_codet5p:
+            # CodeT5+ special handling: use AutoModel + tokenizer
+            import torch
+
+            # Use optimal batch size for GPU throughput
+            batch_size = _detect_optimal_batch_size()
+
+            all_embeddings = []
+            with torch.no_grad():  # Disable gradient computation for inference
+                for i in range(0, len(input), batch_size):
+                    batch_texts = input[i : i + batch_size]
+
+                    # Tokenize batch
+                    inputs = self.tokenizer(
+                        batch_texts,
+                        padding=True,
+                        truncation=True,
+                        max_length=512,
+                        return_tensors="pt",
+                    )
+
+                    # Move inputs to device
+                    inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+                    # Get embeddings from model
+                    # CodeT5+ embedding model outputs embeddings directly (256d)
+                    outputs = self.model(**inputs)
+
+                    # Extract embeddings (output is already 256d from projection head)
+                    # The model outputs a tensor of shape [batch_size, 256]
+                    batch_embeddings = outputs.cpu().numpy()
+
+                    all_embeddings.extend(batch_embeddings.tolist())
+
+            return all_embeddings
+        else:
+            # Standard SentenceTransformer models
+            # Use optimal batch size for GPU throughput (5x faster with 512 vs 32)
+            batch_size = _detect_optimal_batch_size()
+            # CRITICAL: Pass device to ensure input tensors are moved to GPU
+            # Without this, model weights are on GPU but inputs stay on CPU (0% GPU compute)
+            embeddings = self.model.encode(
+                input,
+                convert_to_numpy=True,
+                batch_size=batch_size,
+                show_progress_bar=False,
+                device=self.device,  # Ensure inputs go to GPU
+            )
+            return embeddings.tolist()
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Embed multiple documents (ChromaDB compatibility).

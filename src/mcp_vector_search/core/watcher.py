@@ -263,6 +263,102 @@ class FileWatcher:
         chunks_indexed = await self.indexer.index_file(file_path)
         logger.debug(f"Re-indexed {file_path.name}: {chunks_indexed} chunks")
 
+        # Also update code_vectors if it exists
+        await self._update_code_vectors_for_file(file_path)
+
+    async def _update_code_vectors_for_file(self, file_path: Path) -> None:
+        """Update code_vectors index for a single file if code index exists.
+
+        This keeps code_vectors in sync with the main index when files change.
+        """
+        try:
+            # Check if code_vectors table exists
+            index_path = self.config.index_path
+            if index_path.name == "lance":
+                lance_path = index_path
+            else:
+                lance_path = index_path / "lance"
+
+            code_vectors_path = lance_path / "code_vectors.lance"
+            if not code_vectors_path.exists() or not code_vectors_path.is_dir():
+                # No code_vectors table, skip
+                return
+
+            # Code vectors exists, update it for this file
+            from .chunks_backend import ChunksBackend
+            from .embeddings import create_embedding_function
+            from .vectors_backend import VectorsBackend
+
+            # Get chunks for this file
+            chunks_backend = ChunksBackend(lance_path)
+            await chunks_backend.initialize()
+
+            # Get relative path
+            try:
+                relative_path = str(file_path.relative_to(self.project_root))
+            except ValueError:
+                relative_path = str(file_path)
+
+            # Query chunks for this file
+            chunks = await chunks_backend.get_chunks_by_file(relative_path)
+
+            if not chunks:
+                logger.debug(
+                    f"No chunks found for {file_path.name}, skipping code vectors update"
+                )
+                return
+
+            # Create CodeT5+ embedding function
+            from ..config.defaults import DEFAULT_EMBEDDING_MODELS
+
+            code_model = DEFAULT_EMBEDDING_MODELS["code_specialized"]
+            embedding_func, _ = create_embedding_function(
+                model_name=code_model, cache_dir=None
+            )
+
+            # Generate embeddings for chunks
+            chunk_contents = [chunk["content"] for chunk in chunks]
+            embeddings = embedding_func(chunk_contents)
+
+            # Add vectors to code_vectors backend
+            code_vectors_backend = VectorsBackend(
+                lance_path, vector_dim=256, table_name="code_vectors"
+            )
+            await code_vectors_backend.initialize()
+
+            # Delete existing vectors for this file first
+            await code_vectors_backend.delete_file_vectors(relative_path)
+
+            # Prepare chunks with embeddings
+            chunks_with_vectors = []
+            for chunk, embedding in zip(chunks, embeddings, strict=False):
+                chunk_with_vector = {
+                    "chunk_id": chunk["chunk_id"],
+                    "vector": embedding,
+                    "file_path": chunk["file_path"],
+                    "content": chunk["content"],
+                    "language": chunk["language"],
+                    "start_line": chunk["start_line"],
+                    "end_line": chunk["end_line"],
+                    "chunk_type": chunk["chunk_type"],
+                    "name": chunk["name"],
+                    "hierarchy_path": chunk.get("hierarchy_path", ""),
+                }
+                chunks_with_vectors.append(chunk_with_vector)
+
+            # Add new vectors
+            count = await code_vectors_backend.add_vectors(
+                chunks_with_vectors, model_version=code_model
+            )
+
+            logger.debug(f"Updated {count} code vectors for {file_path.name}")
+            await code_vectors_backend.close()
+            await chunks_backend.close()
+
+        except Exception as e:
+            # Non-fatal: code vectors update failure shouldn't break file watching
+            logger.debug(f"Failed to update code vectors for {file_path.name}: {e}")
+
     async def __aenter__(self):
         """Async context manager entry."""
         await self.start()
