@@ -1,6 +1,9 @@
 """Text file parser for MCP Vector Search."""
 
+import re
 from pathlib import Path
+
+import yaml
 
 from ..config.constants import TEXT_CHUNK_SIZE
 from ..core.models import CodeChunk
@@ -31,6 +34,52 @@ class TextParser(BaseParser):
             # Return empty list if file can't be read
             return []
 
+    def _extract_frontmatter(self, content: str) -> dict:
+        """Extract YAML frontmatter from markdown content.
+
+        Args:
+            content: Markdown content
+
+        Returns:
+            Dictionary of frontmatter data
+        """
+        match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
+        if match:
+            try:
+                return yaml.safe_load(match.group(1)) or {}
+            except yaml.YAMLError:
+                return {}
+        return {}
+
+    def _extract_tags_from_frontmatter(self, frontmatter: dict) -> list[str]:
+        """Extract tags from frontmatter fields.
+
+        Looks for tags, categories, keywords, and labels fields.
+
+        Args:
+            frontmatter: Dictionary of frontmatter data
+
+        Returns:
+            List of deduplicated tags
+        """
+        tags = []
+        for field in ['tags', 'categories', 'keywords', 'labels']:
+            val = frontmatter.get(field, [])
+            if isinstance(val, str):
+                # Handle comma-separated strings
+                tags.extend([t.strip() for t in val.split(',') if t.strip()])
+            elif isinstance(val, list):
+                for item in val:
+                    if isinstance(item, list):
+                        # Handle nested lists
+                        tags.extend(str(t) for t in item if t)
+                    else:
+                        # Handle individual items
+                        if item:
+                            tags.append(str(item))
+        # Deduplicate while preserving order
+        return list(dict.fromkeys(tags))
+
     async def parse_content(self, content: str, file_path: Path) -> list[CodeChunk]:
         """Parse text content into semantic chunks.
 
@@ -46,6 +95,12 @@ class TextParser(BaseParser):
         """
         if not content.strip():
             return []
+
+        # Extract frontmatter tags for markdown files
+        tags = []
+        if str(file_path).endswith(('.md', '.markdown')):
+            frontmatter = self._extract_frontmatter(content)
+            tags = self._extract_tags_from_frontmatter(frontmatter)
 
         chunks = []
         lines = content.splitlines(keepends=True)
@@ -63,6 +118,7 @@ class TextParser(BaseParser):
                     end_line=para_info["end_line"],
                     chunk_type="text",
                 )
+                chunk.tags = tags
                 chunks.append(chunk)
         else:
             # Fall back to line-based chunking for non-paragraph text
@@ -82,6 +138,7 @@ class TextParser(BaseParser):
                         end_line=end_line,
                         chunk_type="text",
                     )
+                    chunk.tags = tags
                     chunks.append(chunk)
 
         return chunks
@@ -187,6 +244,12 @@ class TextParser(BaseParser):
             if not content.strip():
                 return []
 
+            # Extract frontmatter tags for markdown files
+            tags = []
+            if str(file_path).endswith(('.md', '.markdown')):
+                frontmatter = self._extract_frontmatter(content)
+                tags = self._extract_tags_from_frontmatter(frontmatter)
+
             # Try paragraph-based chunking first
             paragraphs = content.split("\n\n")
 
@@ -195,10 +258,16 @@ class TextParser(BaseParser):
 
             if len(valid_paragraphs) >= 2:
                 # Use paragraph-based chunking
-                return self._chunk_by_paragraphs_sync(valid_paragraphs, file_path)
+                chunks = self._chunk_by_paragraphs_sync(valid_paragraphs, file_path)
             else:
                 # Fallback to line-based chunking
-                return self._chunk_by_lines_sync(content, file_path)
+                chunks = self._chunk_by_lines_sync(content, file_path)
+
+            # Set tags on all chunks
+            for chunk in chunks:
+                chunk.tags = tags
+
+            return chunks
 
         except Exception:
             return []

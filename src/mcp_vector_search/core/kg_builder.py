@@ -1139,8 +1139,18 @@ class KGBuilder:
             "REFERENCES": [],
         }
 
+        # Use tags from chunk if available (parsed during chunking)
+        tags_from_frontmatter: list[str] = []
+        related_docs = []
+
+        if chunk.tags:
+            # Use tags from chunk (fast path - already parsed during chunking)
+            tags_from_frontmatter = chunk.tags
+
         # Extract frontmatter metadata from FULL file (not chunk content)
-        # This is necessary because chunking can split frontmatter across multiple chunks
+        # This is necessary for:
+        # 1. Getting related_docs (always needed)
+        # 2. Fallback for chunks parsed before tags field was added
         frontmatter = None
         if chunk.file_path and Path(chunk.file_path).exists():
             try:
@@ -1149,41 +1159,41 @@ class KGBuilder:
             except Exception as e:
                 logger.debug(f"Failed to read full file for frontmatter: {e}")
 
-        tags_from_frontmatter: list[str] = []
-        related_docs = []
-
         if frontmatter:
-            # Extract tags from multiple possible frontmatter fields
-            # Support: tags, categories, keywords, labels
-            tag_fields = ["tags", "categories", "keywords", "labels"]
+            # Only extract tags from frontmatter if chunk doesn't have tags
+            if not chunk.tags:
+                # Extract tags from multiple possible frontmatter fields
+                # Support: tags, categories, keywords, labels
+                tag_fields = ["tags", "categories", "keywords", "labels"]
 
-            for field in tag_fields:
-                tags_data = frontmatter.get(field, [])
+                for field in tag_fields:
+                    tags_data = frontmatter.get(field, [])
 
-                if isinstance(tags_data, list):
-                    # Flatten nested lists and filter to strings only
-                    for tag in tags_data:
-                        if isinstance(tag, str):
-                            tags_from_frontmatter.append(tag)
-                        elif isinstance(tag, list):
-                            # Flatten nested list
-                            for t in tag:
-                                if isinstance(t, str):
-                                    tags_from_frontmatter.append(t)
-                elif isinstance(tags_data, str):
-                    # Handle comma-separated strings (e.g., keywords: "search, vector, embedding")
-                    if "," in tags_data:
-                        tags_from_frontmatter.extend([t.strip() for t in tags_data.split(",")])
-                    else:
-                        tags_from_frontmatter.append(tags_data)
+                    if isinstance(tags_data, list):
+                        # Flatten nested lists and filter to strings only
+                        for tag in tags_data:
+                            if isinstance(tag, str):
+                                tags_from_frontmatter.append(tag)
+                            elif isinstance(tag, list):
+                                # Flatten nested list
+                                for t in tag:
+                                    if isinstance(t, str):
+                                        tags_from_frontmatter.append(t)
+                    elif isinstance(tags_data, str):
+                        # Handle comma-separated strings (e.g., keywords: "search, vector, embedding")
+                        if "," in tags_data:
+                            tags_from_frontmatter.extend([t.strip() for t in tags_data.split(",")])
+                        else:
+                            tags_from_frontmatter.append(tags_data)
 
-            # Remove duplicates while preserving order
-            seen = set()
-            tags_from_frontmatter = [
-                tag for tag in tags_from_frontmatter
-                if not (tag in seen or seen.add(tag))
-            ]
+                # Remove duplicates while preserving order
+                seen = set()
+                tags_from_frontmatter = [
+                    tag for tag in tags_from_frontmatter
+                    if not (tag in seen or seen.add(tag))
+                ]
 
+            # Always extract related_docs
             related = frontmatter.get("related", [])
             if isinstance(related, list):
                 related_docs = related
@@ -1312,8 +1322,18 @@ class KGBuilder:
             chunk: Text chunk to process
             stats: Statistics dictionary to update
         """
+        # Use tags from chunk if available (parsed during chunking)
+        tags_from_frontmatter: list[str] = []
+        related_docs = []
+
+        if chunk.tags:
+            # Use tags from chunk (fast path - already parsed during chunking)
+            tags_from_frontmatter = chunk.tags
+
         # Extract frontmatter metadata from FULL file (not chunk content)
-        # This is necessary because chunking can split frontmatter across multiple chunks
+        # This is necessary for:
+        # 1. Getting related_docs (always needed)
+        # 2. Fallback for chunks parsed before tags field was added
         frontmatter = None
         if chunk.file_path and Path(chunk.file_path).exists():
             try:
@@ -1321,9 +1341,6 @@ class KGBuilder:
                 frontmatter = self._extract_frontmatter(full_content)
             except Exception as e:
                 logger.debug(f"Failed to read full file for frontmatter: {e}")
-
-        tags_from_frontmatter: list[str] = []
-        related_docs = []
 
         if frontmatter:
             # Extract tags from multiple possible frontmatter fields

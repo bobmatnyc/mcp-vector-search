@@ -53,6 +53,9 @@ class CodeChunk:
     last_modified: str | None = None  # ISO timestamp of last modification
     commit_hash: str | None = None  # Commit hash of last modification
 
+    # Enhancement 8: Tags from markdown frontmatter
+    tags: list[str] = None  # Tags extracted from frontmatter (categories, keywords, labels)
+
     def __post_init__(self) -> None:
         """Initialize default values and generate chunk ID."""
         if self.imports is None:
@@ -75,6 +78,8 @@ class CodeChunk:
             self.nlp_code_refs = []
         if self.nlp_technical_terms is None:
             self.nlp_technical_terms = []
+        if self.tags is None:
+            self.tags = []
 
         # Generate chunk ID if not provided
         if self.chunk_id is None:
@@ -129,6 +134,7 @@ class CodeChunk:
             "last_author": self.last_author,
             "last_modified": self.last_modified,
             "commit_hash": self.commit_hash,
+            "tags": self.tags,
         }
 
     @classmethod
@@ -164,6 +170,7 @@ class CodeChunk:
             last_author=data.get("last_author"),
             last_modified=data.get("last_modified"),
             commit_hash=data.get("commit_hash"),
+            tags=data.get("tags", []),
         )
 
 
