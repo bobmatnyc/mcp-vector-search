@@ -1419,7 +1419,7 @@ async def run_dead_code_analysis(
 
 
 # Register engineers command directly (not as nested app)
-from .analyze_engineers import analyze_engineers
+from .analyze_engineers import analyze_engineers  # noqa: E402
 
 analyze_app.command(name="engineers", help="👥 Profile engineers by code quality")(
     analyze_engineers

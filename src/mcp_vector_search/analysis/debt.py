@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from .metrics import ProjectMetrics
 
 
-class DebtCategory(str, Enum):
+class DebtCategory(StrEnum):
     """Categories of technical debt.
 
     These categories align with standard software quality models and help

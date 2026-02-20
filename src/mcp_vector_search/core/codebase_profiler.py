@@ -8,13 +8,13 @@ import os
 import time
 from collections import Counter
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from loguru import logger
 
 
-class CodebaseSize(str, Enum):
+class CodebaseSize(StrEnum):
     """Codebase size categories based on file count."""
 
     SMALL = "small"  # < 1,000 files
@@ -23,7 +23,7 @@ class CodebaseSize(str, Enum):
     ENTERPRISE = "enterprise"  # > 50,000 files
 
 
-class CodebaseType(str, Enum):
+class CodebaseType(StrEnum):
     """Codebase type based on dominant language."""
 
     PYTHON = "python"  # >60% .py files

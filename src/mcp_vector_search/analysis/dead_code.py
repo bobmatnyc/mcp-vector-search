@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     pass
 
 
-class Confidence(str, Enum):
+class Confidence(StrEnum):
     """Confidence level for dead code findings.
 
     Attributes:

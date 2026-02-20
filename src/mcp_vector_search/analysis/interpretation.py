@@ -30,7 +30,7 @@ Example:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from .metrics import ProjectMetrics
 
 
-class ThresholdComparison(str, Enum):
+class ThresholdComparison(StrEnum):
     """Comparison status against thresholds."""
 
     WELL_BELOW = "well_below"  # <50% of threshold
@@ -55,7 +55,7 @@ class ThresholdComparison(str, Enum):
     WELL_ABOVE = "well_above"  # >150% of threshold
 
 
-class RemediationPriority(str, Enum):
+class RemediationPriority(StrEnum):
     """Priority level for remediation."""
 
     LOW = "low"  # Info-level smells, cosmetic issues

@@ -15,12 +15,12 @@ Reference: docs/development/VISUALIZATION_ARCHITECTURE_V2.md
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from loguru import logger
 
 
-class ViewMode(str, Enum):
+class ViewMode(StrEnum):
     """View mode for visualization layout.
 
     Design Decision: Tree-based view modes for file explorer metaphor

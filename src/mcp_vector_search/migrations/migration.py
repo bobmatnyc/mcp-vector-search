@@ -3,12 +3,12 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 
-class MigrationStatus(str, Enum):
+class MigrationStatus(StrEnum):
     """Status of a migration execution."""
 
     PENDING = "pending"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     pass
 
 
-class EntryPointType(str, Enum):
+class EntryPointType(StrEnum):
     """Types of entry points in Python codebases.
 
     Attributes:
