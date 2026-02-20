@@ -163,7 +163,9 @@ def analyze_python_file(file_path: Path) -> list[FunctionMetrics]:
     return metrics
 
 
-def get_function_author(repo_root: Path, file_path: Path, start_line: int) -> str | None:
+def get_function_author(
+    repo_root: Path, file_path: Path, start_line: int
+) -> str | None:
     """Get the primary author of a function using git blame.
 
     Args:
@@ -176,7 +178,7 @@ def get_function_author(repo_root: Path, file_path: Path, start_line: int) -> st
     """
     try:
         # Use --porcelain for machine-readable output
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B607
             [
                 "git",
                 "blame",
@@ -214,7 +216,7 @@ def get_commit_stats(repo_root: Path) -> dict[str, dict[str, str | int]]:
         Dict mapping author name to commit stats (commits, email)
     """
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B607
             ["git", "shortlog", "-sne", "--all"],
             cwd=repo_root,
             capture_output=True,
@@ -266,7 +268,7 @@ def get_total_lines_by_author(repo_root: Path) -> dict[str, int]:
         Dict mapping author name to total lines written
     """
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B607
             [
                 "git",
                 "log",

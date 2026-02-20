@@ -375,7 +375,9 @@ class ChunkProcessor:
         # imports chunks should remain siblings of classes/functions, not parents
         module_chunks = [c for c in chunks if c.chunk_type == "module"]
         class_chunks = [
-            c for c in chunks if c.chunk_type in ("class", "interface", "mixin", "widget")
+            c
+            for c in chunks
+            if c.chunk_type in ("class", "interface", "mixin", "widget")
         ]
         function_chunks = [
             c for c in chunks if c.chunk_type in ("function", "method", "constructor")

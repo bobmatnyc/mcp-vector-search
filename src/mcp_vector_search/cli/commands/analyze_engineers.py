@@ -1,12 +1,10 @@
 """Engineer analysis - profile developers based on code quality metrics."""
 
 import asyncio
-from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import typer
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
@@ -253,7 +251,9 @@ async def run_engineer_analysis(
                         profile.long_parameter_lists += 1
 
         except Exception as e:
-            console.print(f"[yellow]Warning: Failed to analyze {file_path}: {e}[/yellow]")
+            console.print(
+                f"[yellow]Warning: Failed to analyze {file_path}: {e}[/yellow]"
+            )
             continue
 
     console.print(f"[dim]Analyzed {function_count} functions[/dim]\n")
@@ -261,9 +261,7 @@ async def run_engineer_analysis(
     # Step 5: Display results
     if not profiles:
         console.print("[yellow]⚠️  No engineers found matching criteria[/yellow]")
-        console.print(
-            f"[dim]Try lowering --min-commits (current: {min_commits})[/dim]"
-        )
+        console.print(f"[dim]Try lowering --min-commits (current: {min_commits})[/dim]")
         raise typer.Exit(0)
 
     display_results(profiles, show_all, top_n)
@@ -396,13 +394,17 @@ def display_results(
                     "Very High Complexity (>20)", str(worst.very_high_complexity)
                 )
             if worst.long_functions > 0:
-                issue_table.add_row("Long Functions (>50 lines)", str(worst.long_functions))
+                issue_table.add_row(
+                    "Long Functions (>50 lines)", str(worst.long_functions)
+                )
             if worst.very_long_functions > 0:
                 issue_table.add_row(
                     "Very Long Functions (>100 lines)", str(worst.very_long_functions)
                 )
             if worst.deeply_nested > 0:
-                issue_table.add_row("Deeply Nested (>4 levels)", str(worst.deeply_nested))
+                issue_table.add_row(
+                    "Deeply Nested (>4 levels)", str(worst.deeply_nested)
+                )
             if worst.long_parameter_lists > 0:
                 issue_table.add_row(
                     "Long Parameter Lists (>5)", str(worst.long_parameter_lists)
