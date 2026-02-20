@@ -216,6 +216,7 @@ DEFAULT_EMBEDDING_MODELS = {
     # MiniLM is now the default - fast, efficient, good quality
     # GraphCodeBERT available via "code" preset for code-specific understanding
     "code": "sentence-transformers/all-MiniLM-L6-v2",  # Default: fast and efficient (384 dims)
+    "code_specialized": "Salesforce/codet5p-110m-embedding",  # Code-specific with CodeT5+ (256 dims)
     "multilingual": "sentence-transformers/all-MiniLM-L6-v2",  # General purpose
     "fast": "sentence-transformers/all-MiniLM-L6-v2",  # Fastest option (384 dims)
     "graphcodebert": "microsoft/graphcodebert-base",  # Code-specific (768 dims)
@@ -225,6 +226,13 @@ DEFAULT_EMBEDDING_MODELS = {
 
 # Model specifications for dimension auto-detection and validation
 MODEL_SPECIFICATIONS = {
+    # CodeT5+ models (code-specific)
+    "Salesforce/codet5p-110m-embedding": {
+        "dimensions": 256,
+        "context_length": 512,
+        "type": "code",
+        "description": "CodeT5+ 110M: Code-specific embeddings for semantic code search",
+    },
     # CodeXEmbed models (code-specific, state-of-the-art)
     "Salesforce/SFR-Embedding-Code-400M_R": {
         "dimensions": 1024,  # Actual output dimensions from HuggingFace model

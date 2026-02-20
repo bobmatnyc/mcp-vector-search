@@ -96,14 +96,18 @@ class VectorsBackend:
     TABLE_NAME = "vectors"
     DEFAULT_VECTOR_DIMENSION = 768  # GraphCodeBERT (default model)
 
-    def __init__(self, db_path: Path, vector_dim: int | None = None) -> None:
+    def __init__(
+        self, db_path: Path, vector_dim: int | None = None, table_name: str = "vectors"
+    ) -> None:
         """Initialize vectors backend.
 
         Args:
             db_path: Directory for LanceDB database (same as chunks backend)
             vector_dim: Expected vector dimension (auto-detected if not provided)
+            table_name: Name of the vectors table (default: "vectors")
         """
         self.db_path = Path(db_path) if isinstance(db_path, str) else db_path
+        self.table_name = table_name
         self._db = None
         self._table = None
         # Vector dimension is auto-detected from first batch or set explicitly
@@ -249,16 +253,18 @@ class VectorsBackend:
                 else tables_response
             )
 
-            if self.TABLE_NAME in table_names:
+            if self.table_name in table_names:
                 try:
-                    self._table = self._db.open_table(self.TABLE_NAME)
-                    logger.debug(f"Opened existing vectors table at {self.db_path}")
+                    self._table = self._db.open_table(self.table_name)
+                    logger.debug(
+                        f"Opened existing vectors table '{self.table_name}' at {self.db_path}"
+                    )
                 except Exception as e:
                     # Check for corruption and auto-recover
-                    if self._handle_corrupt_table(e, self.TABLE_NAME):
+                    if self._handle_corrupt_table(e, self.table_name):
                         self._table = None
                         logger.info(
-                            "Vectors table corrupted and deleted. Will be recreated on next index."
+                            f"Vectors table '{self.table_name}' corrupted and deleted. Will be recreated on next index."
                         )
                     else:
                         raise
@@ -331,9 +337,9 @@ class VectorsBackend:
                 else tables_response
             )
 
-            if self.TABLE_NAME in table_names:
+            if self.table_name in table_names:
                 # Drop existing table
-                self._db.drop_table(self.TABLE_NAME)
+                self._db.drop_table(self.table_name)
                 logger.info(
                     f"Dropped vectors table (dimension change: {self.vector_dim}D -> {new_dim}D)"
                 )
@@ -460,9 +466,9 @@ class VectorsBackend:
                     else tables_response
                 )
 
-                if self.TABLE_NAME in table_names:
+                if self.table_name in table_names:
                     # Table exists, check if dimensions match before appending
-                    existing_table = self._db.open_table(self.TABLE_NAME)
+                    existing_table = self._db.open_table(self.table_name)
                     existing_schema = existing_table.schema
                     vector_field = existing_schema.field("vector")
 
@@ -488,9 +494,9 @@ class VectorsBackend:
                             f"Vector dimension mismatch: existing table has {existing_dim}D, "
                             f"new data has {self.vector_dim}D. Dropping and recreating table."
                         )
-                        self._db.drop_table(self.TABLE_NAME)
+                        self._db.drop_table(self.table_name)
                         self._table = self._db.create_table(
-                            self.TABLE_NAME, pa_table, schema=schema
+                            self.table_name, pa_table, schema=schema
                         )
                         logger.info(
                             f"Recreated vectors table with {len(normalized_vectors)} vectors (dimension: {self.vector_dim})"
@@ -498,7 +504,7 @@ class VectorsBackend:
                 else:
                     # Create table with first batch using explicit schema
                     self._table = self._db.create_table(
-                        self.TABLE_NAME, pa_table, schema=schema
+                        self.table_name, pa_table, schema=schema
                     )
                     logger.debug(
                         f"Created vectors table with {len(normalized_vectors)} vectors (dimension: {self.vector_dim})"
@@ -519,9 +525,9 @@ class VectorsBackend:
                         f"table has {existing_dim}D, new data has {self.vector_dim}D. "
                         f"Dropping and recreating table."
                     )
-                    self._db.drop_table(self.TABLE_NAME)
+                    self._db.drop_table(self.table_name)
                     self._table = self._db.create_table(
-                        self.TABLE_NAME, pa_table, schema=schema
+                        self.table_name, pa_table, schema=schema
                     )
                     logger.info(
                         f"Recreated vectors table with {len(normalized_vectors)} vectors "
@@ -662,7 +668,7 @@ class VectorsBackend:
 
         except Exception as e:
             # Check for corruption and auto-recover
-            if self._handle_corrupt_table(e, self.TABLE_NAME):
+            if self._handle_corrupt_table(e, self.table_name):
                 logger.error(
                     "Vectors table corrupted. Search unavailable. Run 'mcp-vector-search index' to rebuild."
                 )
@@ -843,7 +849,7 @@ class VectorsBackend:
 
         except Exception as e:
             # Check for corruption and auto-recover
-            if self._handle_corrupt_table(e, self.TABLE_NAME):
+            if self._handle_corrupt_table(e, self.table_name):
                 logger.warning(
                     "Vectors table corrupted. Stats unavailable. Run 'mcp-vector-search index' to rebuild."
                 )
@@ -890,7 +896,7 @@ class VectorsBackend:
 
         except Exception as e:
             # Check for corruption and auto-recover
-            if self._handle_corrupt_table(e, self.TABLE_NAME):
+            if self._handle_corrupt_table(e, self.table_name):
                 logger.warning(
                     "Vectors table corrupted during index rebuild. Skipped. Run 'mcp-vector-search index' to rebuild."
                 )

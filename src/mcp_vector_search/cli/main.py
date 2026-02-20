@@ -122,6 +122,7 @@ from .commands.chat import chat_app  # noqa: E402
 from .commands.config import config_app  # noqa: E402
 from .commands.demo import demo_app  # noqa: E402
 from .commands.index import index_app  # noqa: E402
+from .commands.index_code import app as index_code_app  # noqa: E402
 from .commands.init import init_app  # noqa: E402
 from .commands.install import install_app  # noqa: E402
 from .commands.mcp import mcp_app  # noqa: E402
@@ -188,6 +189,13 @@ app.add_typer(
 
 # 8. INDEX - Index codebase
 app.add_typer(index_app, name="index", help="📇 Index codebase for semantic search")
+
+# 8.1. INDEX-CODE - Build code-specific embeddings
+app.add_typer(
+    index_code_app,
+    name="index-code",
+    help="🔬 Build code-specific embeddings (CodeT5+)",
+)
 
 # 8.2. PROGRESS - Show indexing progress
 app.add_typer(progress_app, name="progress", help="📊 Show indexing progress")

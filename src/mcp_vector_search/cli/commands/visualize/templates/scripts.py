@@ -502,7 +502,6 @@ function buildTreeStructure() {
                     };
                 } else {
                     // Collapse file+chunk into combined name (like directory chains)
-                    console.log(`Collapsing file+chunk: ${node.name}/${onlyChild.name}`);
                     node.name = `${node.name}/${onlyChild.name}`;
                     node.children = null;  // Remove chunk child - now a leaf node
                     node._children = null;
@@ -996,111 +995,6 @@ function getComplexityColor(d, baseHue) {
 
     return `hsl(${baseHue}, ${saturation}%, ${lightness}%)`;
 }
-
-// Get node fill color with complexity shading
-function getNodeFillColor(d) {
-    const nodeData = d.data;
-
-    if (nodeData.type === 'directory') {
-        // Orange (30°) if collapsed, Blue (210°) if expanded
-        const hue = nodeData._children ? 30 : 210;
-        // Directories aggregate complexity from children
-        const avgComplexity = calculateAverageComplexity(nodeData);
-        if (avgComplexity > 0) {
-            const lightness = 55 - (Math.min(avgComplexity, 15) / 15) * 20;
-            return `hsl(${hue}, 70%, ${lightness}%)`;
-        }
-        return nodeData._children ? '#f39c12' : '#3498db';
-    } else if (nodeData.type === 'file') {
-        // Gray files, but show complexity if available
-        const avgComplexity = calculateAverageComplexity(nodeData);
-        if (avgComplexity > 0) {
-            // Gray hue (0° with 0 saturation) to slight red tint for complexity
-            const saturation = Math.min(avgComplexity, 15) * 2;  // 0-30%
-            const lightness = 70 - (Math.min(avgComplexity, 15) / 15) * 25;
-            return `hsl(0, ${saturation}%, ${lightness}%)`;
-        }
-        return nodeData._children ? '#95a5a6' : '#ecf0f1';
-    } else if (chunkTypes.includes(nodeData.type)) {
-        // Purple (280°) for chunks, darker with higher complexity
-        return getComplexityColor(d, 280);
-    }
-
-    return '#95a5a6';
-}
-
-// Calculate average complexity for a node (recursively for dirs/files)
-function calculateAverageComplexity(node) {
-    if (chunkTypes.includes(node.type)) {
-        return node.complexity || 0;
-    }
-
-    const children = node.children || node._children || [];
-    if (children.length === 0) return 0;
-
-    let totalComplexity = 0;
-    let count = 0;
-
-    children.forEach(child => {
-        if (chunkTypes.includes(child.type) && child.complexity) {
-            totalComplexity += child.complexity;
-            count++;
-        } else {
-            const childAvg = calculateAverageComplexity(child);
-            if (childAvg > 0) {
-                totalComplexity += childAvg;
-                count++;
-            }
-        }
-    });
-
-    return count > 0 ? totalComplexity / count : 0;
-}
-
-// Get stroke color based on complexity - red outline for high complexity
-function getNodeStrokeColor(d) {
-    const nodeData = d.data;
-
-    // Only chunks have direct complexity
-    if (chunkTypes.includes(nodeData.type)) {
-        const complexity = nodeData.complexity || 0;
-        // Complexity thresholds:
-        // 0-5: white (simple)
-        // 5-10: orange (moderate)
-        // 10+: red (complex)
-        if (complexity >= 10) {
-            return '#e74c3c';  // Red for high complexity
-        } else if (complexity >= 5) {
-            return '#f39c12';  // Orange for moderate
-        }
-        return '#fff';  // White for low complexity
-    }
-
-    // Files and directories: check average complexity of children
-    if (nodeData.type === 'file' || nodeData.type === 'directory') {
-        const avgComplexity = calculateAverageComplexity(nodeData);
-        if (avgComplexity >= 10) {
-            return '#e74c3c';  // Red
-        } else if (avgComplexity >= 5) {
-            return '#f39c12';  // Orange
-        }
-    }
-
-    return '#fff';  // Default white
-}
-
-// Get stroke width based on complexity - thicker for high complexity
-function getNodeStrokeWidth(d) {
-    const nodeData = d.data;
-    const complexity = chunkTypes.includes(nodeData.type)
-        ? (nodeData.complexity || 0)
-        : calculateAverageComplexity(nodeData);
-
-    if (complexity >= 10) return 3;  // Thick red outline
-    if (complexity >= 5) return 2.5;  // Medium orange outline
-    return 2;  // Default
-}
-
 function getNodeRadius(d) {
     const nodeData = d.data;
 
@@ -1298,24 +1192,31 @@ function renderLinearTree() {
                 .transition()
                 .duration(150)
                 .attr('filter', 'brightness(1.3)')
-                .attr('stroke-width', d => getNodeStrokeWidth(d) + 2);
+                .attr('stroke', '#58a6ff')
+                .attr('stroke-width', 2);
+            handleTreeNodeHover(event, d);
         })
         .on('mouseout', function(event, d) {
-            // Remove hover glow effect
+            // Remove hover glow effect - restore smell-based borders
+            const smellCount = d.data.smell_count || 0;
             d3.select(this).select('circle')
                 .transition()
                 .duration(150)
                 .attr('filter', 'brightness(1)')
-                .attr('stroke-width', d => getNodeStrokeWidth(d));
+                .attr('stroke', getSmellBorderColor(smellCount))
+                .attr('stroke-width', getSmellBorderWidth(smellCount))
+                .attr('stroke-dasharray', getSmellDashArray(smellCount));
+            hideVizTooltip();
         })
         .style('cursor', 'pointer');
 
-    // Node circles - sized proportionally to content, colored by complexity
+    // Node circles - three-axis visual encoding
     nodes.append('circle')
         .attr('r', d => getNodeRadius(d))  // Dynamic size based on content
-        .attr('fill', d => getNodeFillColor(d))  // Complexity-based coloring
-        .attr('stroke', d => getNodeStrokeColor(d))  // Red/orange for high complexity
-        .attr('stroke-width', d => getNodeStrokeWidth(d))
+        .attr('fill', d => getNodeColor(d))  // Axis 1 (red) + Axis 3 (blue) = complexity + quality
+        .attr('stroke', d => getSmellBorderColor(d.data.smell_count))  // Axis 2: smell intensity
+        .attr('stroke-width', d => getSmellBorderWidth(d.data.smell_count))  // Axis 2: thicker for more smells
+        .attr('stroke-dasharray', d => getSmellDashArray(d.data.smell_count))  // Axis 2: dashed for smells
         .attr('class', d => {
             // Add complexity grade class if available
             const grade = d.data.complexity_grade || '';
@@ -1416,6 +1317,9 @@ function renderLinearTree() {
         .style('cursor', 'pointer')
         .style('pointer-events', 'all')
         .on('click', handleNodeClick);
+
+    // Add visual guide legend
+    addVisualGuideLegend(svg, width, height);
 }
 
 // ============================================================================
@@ -1484,24 +1388,31 @@ function renderCircularTree() {
                 .transition()
                 .duration(150)
                 .attr('filter', 'brightness(1.3)')
-                .attr('stroke-width', d => getNodeStrokeWidth(d) + 2);
+                .attr('stroke', '#58a6ff')
+                .attr('stroke-width', 2);
+            handleTreeNodeHover(event, d);
         })
         .on('mouseout', function(event, d) {
-            // Remove hover glow effect
+            // Remove hover glow effect - restore smell-based borders
+            const smellCount = d.data.smell_count || 0;
             d3.select(this).select('circle')
                 .transition()
                 .duration(150)
                 .attr('filter', 'brightness(1)')
-                .attr('stroke-width', d => getNodeStrokeWidth(d));
+                .attr('stroke', getSmellBorderColor(smellCount))
+                .attr('stroke-width', getSmellBorderWidth(smellCount))
+                .attr('stroke-dasharray', getSmellDashArray(smellCount));
+            hideVizTooltip();
         })
         .style('cursor', 'pointer');
 
-    // Node circles - sized proportionally to content, colored by complexity
+    // Node circles - three-axis visual encoding
     nodes.append('circle')
         .attr('r', d => getNodeRadius(d))  // Dynamic size based on content
-        .attr('fill', d => getNodeFillColor(d))  // Complexity-based coloring
-        .attr('stroke', d => getNodeStrokeColor(d))  // Red/orange for high complexity
-        .attr('stroke-width', d => getNodeStrokeWidth(d))
+        .attr('fill', d => getNodeColor(d))  // Axis 1 (red) + Axis 3 (blue) = complexity + quality
+        .attr('stroke', d => getSmellBorderColor(d.data.smell_count))  // Axis 2: smell intensity
+        .attr('stroke-width', d => getSmellBorderWidth(d.data.smell_count))  // Axis 2: thicker for more smells
+        .attr('stroke-dasharray', d => getSmellDashArray(d.data.smell_count))  // Axis 2: dashed for smells
         .attr('class', d => {
             // Add complexity grade class if available
             const grade = d.data.complexity_grade || '';
@@ -1573,6 +1484,9 @@ function renderCircularTree() {
     // Collect and draw external call lines (circular version)
     collectExternalCallData();
     drawExternalCallLinesCircular(g, root);
+
+    // Add visual guide legend
+    addVisualGuideLegend(svg, width, height);
 }
 
 // ============================================================================
@@ -1594,6 +1508,12 @@ function handleNodeClick(event, d) {
 
     const nodeData = d.data;
 
+    // For collapsed nodes, use the deepest ID (last in collapsed_ids) for operations
+    // This ensures we interact with the actual node that has children, not the merged visual node
+    const effectiveId = nodeData.collapsed_ids && nodeData.collapsed_ids.length > 0
+        ? nodeData.collapsed_ids[nodeData.collapsed_ids.length - 1]
+        : nodeData.id;
+
     if (nodeData.type === 'directory') {
         // Check actual children state (not just flags)
         const hasVisibleChildren = nodeData.children && nodeData.children.length > 0;
@@ -1603,7 +1523,7 @@ function handleNodeClick(event, d) {
 
         // Case 1: Has collapsed children but none loaded - fetch them
         if (hasCollapsedChildren && !hasAnyLoadedChildren) {
-            expandNode(nodeData.id).catch(err => {
+            expandNode(effectiveId).catch(err => {
                 console.error('Failed to expand directory:', err);
             });
             return;
@@ -1613,7 +1533,7 @@ function handleNodeClick(event, d) {
         if (hasVisibleChildren) {
             nodeData._children = nodeData.children;
             nodeData.children = null;
-            expandedNodes.delete(nodeData.id);
+            expandedNodes.delete(effectiveId);
             renderVisualization();
             return;
         }
@@ -1622,14 +1542,14 @@ function handleNodeClick(event, d) {
         if (hasHiddenChildren) {
             nodeData.children = nodeData._children;
             nodeData._children = null;
-            expandedNodes.add(nodeData.id);
+            expandedNodes.add(effectiveId);
             renderVisualization();
             return;
         }
 
         // Case 4: Expandable but no children - try fetching
         if (nodeData.expandable) {
-            expandNode(nodeData.id).catch(err => {
+            expandNode(effectiveId).catch(err => {
                 console.error('Failed to expand directory:', err);
             });
             return;
@@ -1641,7 +1561,7 @@ function handleNodeClick(event, d) {
         // Same as directory: use expanded flag, not children array length
         if (nodeData.expandable && !nodeData.expanded) {
             // First time expansion - fetch chunks from server
-            expandNode(nodeData.id).catch(err => {
+            expandNode(effectiveId).catch(err => {
                 console.error('Failed to expand file:', err);
             });
             return;
@@ -1684,13 +1604,13 @@ function handleNodeClick(event, d) {
             nodeData._children = nodeData.children;
             nodeData.children = null;
             // Remove from expandedNodes so it stays collapsed on rebuild
-            expandedNodes.delete(nodeData.id);
+            expandedNodes.delete(effectiveId);
         } else if (nodeData._children) {
             // Currently collapsed - expand it
             nodeData.children = nodeData._children;
             nodeData._children = null;
             // Add to expandedNodes to preserve expansion on rebuild
-            expandedNodes.add(nodeData.id);
+            expandedNodes.add(effectiveId);
         }
 
         // Re-render to show/hide children
@@ -1706,13 +1626,13 @@ function handleNodeClick(event, d) {
                 nodeData._children = nodeData.children;
                 nodeData.children = null;
                 // Remove from expandedNodes so it stays collapsed on rebuild
-                expandedNodes.delete(nodeData.id);
+                expandedNodes.delete(effectiveId);
             } else if (nodeData._children) {
                 // Currently collapsed - expand it
                 nodeData.children = nodeData._children;
                 nodeData._children = null;
                 // Add to expandedNodes to preserve expansion on rebuild
-                expandedNodes.add(nodeData.id);
+                expandedNodes.add(effectiveId);
             }
             // Re-render to show/hide children
             renderVisualization();
@@ -2395,7 +2315,6 @@ function toggleCallLines(show) {
     if (!lineGroup.empty()) {
         lineGroup.style('display', show ? 'block' : 'none');
     }
-    console.log(`Call lines ${show ? 'shown' : 'hidden'}`);
 }
 
 function toggleLayout() {
@@ -2416,7 +2335,6 @@ function toggleLayout() {
         }
     });
 
-    console.log(`Layout switched to: ${currentLayout}`);
     renderVisualization();
 }
 
@@ -2461,15 +2379,10 @@ function setFileFilter(filter) {
 
     // Apply filter to the tree
     applyFileFilter();
-
-    console.log(`File filter set to: ${filter}`);
 }
 
 function applyFileFilter() {
     if (!treeData) return;
-
-    console.log('=== APPLYING FILE FILTER (VISIBILITY) ===');
-    console.log('Current filter:', currentFileFilter);
 
     // Get all node elements in the visualization
     const nodeElements = d3.selectAll('.node');
@@ -2479,7 +2392,6 @@ function applyFileFilter() {
         // Show everything
         nodeElements.style('display', null);
         linkElements.style('display', null);
-        console.log('Showing all nodes');
         return;
     }
 
@@ -2524,7 +2436,6 @@ function applyFileFilter() {
     }
 
     checkNodeAndDescendants(treeData);
-    console.log(`Filter found ${visibleIds.size} visible nodes`);
 
     // Apply visibility to DOM elements
     nodeElements.style('display', function(d) {
@@ -2537,8 +2448,6 @@ function applyFileFilter() {
         const targetVisible = visibleIds.has(d.target.data.id);
         return (sourceVisible && targetVisible) ? null : 'none';
     });
-
-    console.log('=== FILTER COMPLETE (VISIBILITY) ===');
 }
 
 // ============================================================================
@@ -2656,14 +2565,12 @@ function addToNavHistory(item) {
     }
     navigationHistory.push(item);
     navigationIndex = navigationHistory.length - 1;
-    console.log(`Navigation history: ${navigationHistory.length} items, index: ${navigationIndex}`);
 }
 
 function goBack() {
     if (navigationIndex > 0) {
         navigationIndex--;
         const item = navigationHistory[navigationIndex];
-        console.log(`Going back to: ${item.type} - ${item.data.name}`);
         if (item.type === 'directory') {
             displayDirectoryInfo(item.data, false);  // false = don't add to history
             focusNodeInTree(item.data.id);
@@ -2681,7 +2588,6 @@ function goForward() {
     if (navigationIndex < navigationHistory.length - 1) {
         navigationIndex++;
         const item = navigationHistory[navigationIndex];
-        console.log(`Going forward to: ${item.type} - ${item.data.name}`);
         if (item.type === 'directory') {
             displayDirectoryInfo(item.data, false);  // false = don't add to history
             focusNodeInTree(item.data.id);
@@ -2696,20 +2602,17 @@ function goForward() {
 }
 
 function navigateToDirectory(dirData) {
-    console.log(`Navigating to directory: ${dirData.name}`);
     // Focus on the node in the tree (expand path and highlight)
     focusNodeInTree(dirData.id);
 }
 
 function navigateToFile(fileData) {
-    console.log(`Navigating to file: ${fileData.name}`);
     // Focus on the node in the tree (expand path and highlight)
     focusNodeInTree(fileData.id);
 }
 
 // Navigate to a file by its file path (used when clicking on file paths in chunk metadata)
 function navigateToFileByPath(filePath) {
-    console.log(`Navigating to file by path: ${filePath}`);
 
     // Find the file node in allNodes that matches this path
     const fileNode = allNodes.find(n => {
@@ -2730,11 +2633,8 @@ function navigateToFileByPath(filePath) {
     }
 
     if (!targetNode) {
-        console.log(`File node not found for path: ${filePath}`);
         return;
     }
-
-    console.log(`Found file node: ${targetNode.name} (id: ${targetNode.id})`);
 
     // Handle navigation based on current visualization mode
     if (currentVizMode === 'treemap' || currentVizMode === 'sunburst') {
@@ -2752,12 +2652,10 @@ function navigateToFileByPath(filePath) {
         );
 
         if (parentDir) {
-            console.log(`Zooming to parent directory: ${parentDir.name}`);
             currentZoomRootId = parentDir.id;
         } else {
             // If no parent found, zoom to file itself (for file grouping mode)
             // or reset to root
-            console.log(`Parent directory not found, resetting zoom`);
             currentZoomRootId = null;
         }
 
@@ -2994,8 +2892,6 @@ function selectSearchResultByIndex(index) {
 }
 
 function selectSearchResult(node) {
-    console.log(`Search selected: ${node.name} (${node.type})`);
-
     // Close search dropdown
     closeSearchResults();
 
@@ -3040,8 +2936,6 @@ function toggleTheme() {
     } else {
         themeIcon.textContent = '🌙';
     }
-
-    console.log(`Theme toggled to: ${newTheme}`);
 }
 
 function loadThemePreference() {
@@ -3053,8 +2947,6 @@ function loadThemePreference() {
         const themeIcon = document.getElementById('theme-icon');
         if (themeIcon) themeIcon.textContent = '☀️';
     }
-
-    console.log(`Loaded theme preference: ${savedTheme}`);
 }
 
 // ============================================================================
@@ -4552,7 +4444,7 @@ function getComplexityRange(grade) {
 }
 
 function showComingSoon(reportName) {
-    console.log(`${reportName} feature coming soon`);
+    // Feature placeholder
 }
 
 // ============================================================================
@@ -4659,7 +4551,6 @@ function buildFileHierarchy(maxDepth = 3, includeAllForNodeId = null) {
 function buildASTHierarchy() {
     // Return cached version if available
     if (cachedASTHierarchy) {
-        console.log('Using cached AST hierarchy');
         return cachedASTHierarchy;
     }
 
@@ -5031,7 +4922,6 @@ function renderTreemap() {
     addVisualGuideLegend(svg, width, height);
 
     console.timeEnd('renderTreemap');
-    console.log(`Rendered ${displayRoot.descendants().length} treemap cells`);
 }
 
 async function handleTreemapClick(event, d) {
@@ -5042,7 +4932,6 @@ async function handleTreemapClick(event, d) {
 
     // If it's a leaf node with collapsed children, expand it
     if (hasCollapsedChildren && (!d.children || d.children.length === 0)) {
-        console.log(`Progressive loading: expanding ${d.data.name} (${d.data.collapsed_children_count} children)`);
         showLoadingIndicator(`Loading children of ${d.data.name}...`);
 
         try {
@@ -5058,7 +4947,6 @@ async function handleTreemapClick(event, d) {
             }
 
             const newNodes = data.nodes || [];
-            console.log(`Received ${newNodes.length} children for ${d.data.name}`);
 
             // Add new nodes to global arrays
             const existingNodeIds = new Set(allNodes.map(n => n.id));
@@ -5110,6 +4998,55 @@ function handleTreemapHover(event, d) {
     let html = `<div class="viz-tooltip-title">${escapeHtml(d.data.name)}</div>`;
     html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Type:</span> ${d.data.type}</div>`;
     html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Lines:</span> ${d.value}</div>`;
+
+    if (d.data.complexity !== undefined && d.data.complexity !== null) {
+        const grade = getComplexityGrade(d.data.complexity);
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Complexity:</span> ${d.data.complexity.toFixed(1)} (${grade})</div>`;
+    }
+
+    // Show code smells (Axis 2)
+    if (d.data.smell_count !== undefined && d.data.smell_count > 0) {
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Smells:</span> ${d.data.smell_count}</div>`;
+        if (d.data.smells && d.data.smells.length > 0) {
+            const smellNames = d.data.smells.map(s => s.type || s).join(', ');
+            html += `<div class="viz-tooltip-row" style="font-size: 10px; padding-left: 10px;">${escapeHtml(smellNames)}</div>`;
+        }
+    }
+
+    // Show quality score (Axis 3)
+    if (d.data.quality_score !== undefined && d.data.quality_score !== null) {
+        const qualityPercent = (d.data.quality_score * 100).toFixed(0);
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Quality:</span> ${qualityPercent}%</div>`;
+    }
+
+    if (d.data.file_path) {
+        const shortPath = d.data.file_path.split('/').slice(-2).join('/');
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">File:</span> ${escapeHtml(shortPath)}</div>`;
+    }
+
+    if (d.data.collapsed_children_count > 0) {
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Hidden:</span> ${d.data.collapsed_children_count} children (click to load)</div>`;
+    }
+
+    tooltip.innerHTML = html;
+    tooltip.classList.add('visible');
+
+    // Position tooltip
+    const rect = event.target.getBoundingClientRect();
+    tooltip.style.left = (rect.left + rect.width / 2) + 'px';
+    tooltip.style.top = (rect.top - tooltip.offsetHeight - 5) + 'px';
+}
+
+function handleTreeNodeHover(event, d) {
+    const tooltip = document.getElementById('viz-tooltip');
+    if (!tooltip) return;
+
+    let html = `<div class="viz-tooltip-title">${escapeHtml(d.data.name)}</div>`;
+    html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Type:</span> ${d.data.type}</div>`;
+
+    if (d.data.lines_of_code !== undefined && d.data.lines_of_code !== null) {
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Lines:</span> ${d.data.lines_of_code}</div>`;
+    }
 
     if (d.data.complexity !== undefined && d.data.complexity !== null) {
         const grade = getComplexityGrade(d.data.complexity);
@@ -5405,7 +5342,6 @@ function renderSunburst() {
     addVisualGuideLegend(svg, width, height);
 
     console.timeEnd('renderSunburst');
-    console.log(`Rendered ${displayRoot.descendants().length} sunburst arcs`);
 }
 
 async function handleSunburstClick(event, d) {
@@ -5416,7 +5352,6 @@ async function handleSunburstClick(event, d) {
 
     // If it's a leaf node with collapsed children, expand it
     if (hasCollapsedChildren && (!d.children || d.children.length === 0)) {
-        console.log(`Progressive loading: expanding ${d.data.name} (${d.data.collapsed_children_count} children)`);
         showLoadingIndicator(`Loading children of ${d.data.name}...`);
 
         try {
@@ -5432,7 +5367,6 @@ async function handleSunburstClick(event, d) {
             }
 
             const newNodes = data.nodes || [];
-            console.log(`Received ${newNodes.length} children for ${d.data.name}`);
 
             // Add new nodes to global arrays
             const existingNodeIds = new Set(allNodes.map(n => n.id));
@@ -5661,18 +5595,13 @@ function addVisualGuideLegend(svg, width, height) {
 
 // Load data and initialize UI when page loads
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('=== PAGE INITIALIZATION ===');
-    console.log('DOMContentLoaded event fired');
-
     // Load theme preference before anything else
     loadThemePreference();
 
     // Initialize toggle label highlighting for layout toggle
     const labels = document.querySelectorAll('#tree-layout-group .toggle-label');
-    console.log(`Found ${labels.length} layout toggle labels`);
     if (labels[0]) {
         labels[0].classList.add('active');
-        console.log('Activated first toggle label (linear mode)');
     }
 
     // Initialize grouping toggle label highlighting
@@ -5690,9 +5619,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Load graph data
-    console.log('Calling loadGraphData()...');
     loadGraphData();
-    console.log('=== END PAGE INITIALIZATION ===');
 });
 
 // ============================================================================
@@ -5763,7 +5690,6 @@ function setView(view) {
 }
 
 function loadKGData() {
-    console.log('Loading KG data...');
     fetch('/api/kg-graph')
         .then(response => {
             if (!response.ok) {
@@ -5956,8 +5882,6 @@ function renderKG() {
             .attr('x', d => d.x)
             .attr('y', d => d.y);
     });
-
-    console.log('KG rendering complete');
 }
 
 function dragStarted(event, d) {
