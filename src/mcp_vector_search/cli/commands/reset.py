@@ -403,6 +403,8 @@ def reset_main(ctx: typer.Context) -> None:
                 "  Reset the search index (preserves config)\n\n"
                 "[cyan]mcp-vector-search reset health[/cyan]\n"
                 "  Check index health and optionally repair\n\n"
+                "[cyan]mcp-vector-search reset rebuild-metadata[/cyan]\n"
+                "  Rebuild index_metadata.json from chunks database\n\n"
                 "[cyan]mcp-vector-search reset all[/cyan]\n"
                 "  Complete reset (removes everything)\n",
                 title="Reset Commands",
@@ -439,3 +441,173 @@ def health_main(
     - Optionally attempt repairs with --fix
     """
     asyncio.run(check_health(project_root, fix))
+
+
+@reset_app.command("rebuild-metadata")
+def rebuild_metadata(
+    project_root: Path = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Overwrite existing metadata file",
+    ),
+) -> None:
+    """Rebuild index_metadata.json from existing chunks database.
+
+    This command reconstructs the index_metadata.json file by:
+    - Reading all file paths from the chunks.lance database
+    - Getting current modification times from the filesystem
+    - Writing a new index_metadata.json with the correct format
+
+    Use this when:
+    - index_metadata.json is missing or corrupted
+    - After manually restoring a chunks database backup
+    - To fix inconsistent metadata state
+    """
+    root = project_root or Path.cwd()
+
+    try:
+        # Check if project is initialized
+        project_manager = ProjectManager(root)
+        if not project_manager.is_initialized():
+            print_error("Project not initialized. Run 'mcp-vector-search init' first.")
+            raise typer.Exit(1)
+
+        # Get configuration
+        config = project_manager.load_config()
+        db_path = Path(config.index_path)
+
+        # Check if chunks database exists
+        chunks_db = db_path / "lance" / "chunks.lance"
+        if not chunks_db.exists():
+            print_error(
+                f"No chunks database found at {chunks_db}\n"
+                "Nothing to rebuild from. Run 'mcp-vector-search index' to create the index first."
+            )
+            raise typer.Exit(1)
+
+        # Check if metadata file already exists
+        metadata_file = root / ".mcp-vector-search" / "index_metadata.json"
+        if metadata_file.exists() and not force:
+            print_warning(
+                f"Metadata file already exists at {metadata_file.relative_to(root)}\n"
+                "Use --force to overwrite it."
+            )
+            raise typer.Exit(1)
+
+        console.print("[cyan]Rebuilding metadata from chunks database...[/cyan]\n")
+
+        # Run async rebuild function
+        asyncio.run(_rebuild_metadata_async(root, db_path, metadata_file))
+
+    except (SystemExit, typer.Exit):
+        # Let exit signals pass through
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during metadata rebuild: {e}")
+        print_error(f"Unexpected error: {e}")
+        raise typer.Exit(1)
+
+
+async def _rebuild_metadata_async(
+    project_root: Path, db_path: Path, metadata_file: Path
+) -> None:
+    """Async implementation of metadata rebuild.
+
+    Args:
+        project_root: Project root directory
+        db_path: Path to database directory
+        metadata_file: Path to metadata file to write
+    """
+    from ...core.chunks_backend import ChunksBackend
+    from ...core.index_metadata import IndexMetadata
+
+    # Open chunks backend
+    chunks_backend = ChunksBackend(db_path / "lance")
+    await chunks_backend.initialize()
+
+    try:
+        # Query all unique file paths from chunks table
+        console.print("  [dim]Reading file paths from chunks database...[/dim]")
+
+        # Use the table scanner to get all unique file paths efficiently
+        if chunks_backend._table is None:
+            print_error("Chunks table not initialized properly")
+            raise typer.Exit(1)
+
+        # Get all file paths (use scanner to read only the file_path column)
+        scanner = chunks_backend._table.to_lance().scanner(columns=["file_path"])
+        result = scanner.to_table()
+
+        if len(result) == 0:
+            print_warning("No chunks found in database. Nothing to rebuild.")
+            return
+
+        # Convert to pandas and get unique file paths
+
+        df = result.to_pandas()
+        file_paths = df["file_path"].unique().tolist()
+
+        console.print(
+            f"  [green]Found {len(file_paths)} unique files in database[/green]\n"
+        )
+
+        # Build metadata dictionary with current filesystem mtimes
+        console.print("  [dim]Checking filesystem for modification times...[/dim]")
+        metadata: dict[str, float] = {}
+        files_found = 0
+        files_missing = 0
+
+        for file_path_str in file_paths:
+            file_path = project_root / file_path_str
+
+            if file_path.exists():
+                try:
+                    import os
+
+                    mtime = os.path.getmtime(file_path)
+                    metadata[file_path_str] = mtime
+                    files_found += 1
+                except Exception as e:
+                    logger.warning(f"Could not get mtime for {file_path}: {e}")
+                    files_missing += 1
+            else:
+                logger.warning(f"File no longer exists: {file_path_str}")
+                files_missing += 1
+
+        console.print(f"  [green]✓ {files_found} files found on disk[/green]")
+        if files_missing > 0:
+            console.print(
+                f"  [yellow]⚠ {files_missing} files missing or inaccessible[/yellow]\n"
+            )
+        else:
+            console.print()
+
+        # Write metadata file
+        console.print("  [dim]Writing index_metadata.json...[/dim]")
+        index_metadata = IndexMetadata(project_root)
+        index_metadata.save(metadata)
+
+        console.print(
+            Panel(
+                f"[green]✅ Metadata rebuilt successfully![/green]\n\n"
+                f"Summary:\n"
+                f"• Files in database: {len(file_paths)}\n"
+                f"• Files found on disk: {files_found}\n"
+                f"• Files missing: {files_missing}\n"
+                f"• Metadata file: {metadata_file.relative_to(project_root)}\n\n"
+                f"The metadata file now reflects the current state of your chunks database.\n"
+                f"Incremental indexing will work correctly on the next run.",
+                title="[green]Rebuild Complete[/green]",
+                border_style="green",
+            )
+        )
+
+    finally:
+        await chunks_backend.close()

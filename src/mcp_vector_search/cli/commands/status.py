@@ -210,6 +210,23 @@ async def show_status(
         # Get configuration first
         config = project_manager.load_config()
 
+        # Check if metadata is missing but database exists
+
+        metadata_file = project_root / ".mcp-vector-search" / "index_metadata.json"
+        chunks_db = config.index_path / "lance" / "chunks.lance"
+
+        if chunks_db.exists() and not metadata_file.exists():
+            if not json_output:
+                console.print(
+                    "\n[yellow]⚠️  Missing index_metadata.json but chunks database exists[/yellow]"
+                )
+                console.print(
+                    "    [yellow]This can cause full reindexing instead of incremental updates.[/yellow]"
+                )
+                console.print(
+                    "    [cyan]Run 'mcp-vector-search reset rebuild-metadata' to fix this.[/cyan]\n"
+                )
+
         # Get indexing statistics from database (fast, no filesystem scan)
         embedding_function, _ = create_embedding_function(config.embedding_model)
         database = create_database(
