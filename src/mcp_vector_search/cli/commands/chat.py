@@ -85,6 +85,7 @@ class EnhancedChatSession:
         self.messages: list[dict[str, Any]] = []
         self.history_summary: str = ""
         self.current_task: dict[str, str] | None = None  # {description, status}
+        self.search_history: list[str] = []  # Track search queries and findings
 
     def set_task(self, description: str) -> None:
         """Set the current task being worked on.
@@ -192,7 +193,7 @@ class EnhancedChatSession:
     def get_messages(self) -> list[dict[str, Any]]:
         """Build complete message list for API call.
 
-        Structure: [system, history_summary?, task_context?, ...recent_messages]
+        Structure: [system, history_summary?, task_context?, search_history?, ...recent_messages]
 
         Returns:
             List of message dictionaries
@@ -217,15 +218,40 @@ class EnhancedChatSession:
                 }
             )
 
+        # Add search history context if exists
+        if self.search_history:
+            search_context = "\n".join(f"  • {s}" for s in self.search_history)
+            result.append(
+                {
+                    "role": "system",
+                    "content": f"[Recent Searches]\n{search_context}\n[End Searches]",
+                }
+            )
+
         # Add recent messages
         result.extend(self.messages)
 
         return result
 
+    def add_search_summary(self, tool_name: str, query: str, result_count: int) -> None:
+        """Add a search summary to history for context.
+
+        Args:
+            tool_name: Name of the tool used
+            query: Search query
+            result_count: Number of results found
+        """
+        summary = f"{tool_name}('{query[:50]}...') -> {result_count} results"
+        self.search_history.append(summary)
+        # Keep only last 10 searches
+        if len(self.search_history) > 10:
+            self.search_history = self.search_history[-10:]
+
     def clear(self) -> None:
         """Clear conversation history, keeping only system prompt."""
         self.messages = []
         self.history_summary = ""
+        self.search_history = []
         # Keep current_task intact
 
 
@@ -281,18 +307,33 @@ CONVERSATIONAL_SYSTEM_PROMPT = """You are a helpful code assistant. IMPORTANT GU
    - Add brief explanations
 
 4. TOOL USAGE
-   - Use search_code to find relevant code
+   - Use search_code to find relevant code (up to 15 results per call)
+   - Use deep_search to search within specific files from previous results
    - Use read_file for full file context
    - Use write_markdown to create reports
    - Use analyze_code for quality metrics
    - Use web_search for external documentation
+   - Use query_knowledge_graph (if available) to explore code relationships
 
-5. TASK TRACKING
+5. ITERATIVE REFINEMENT STRATEGY
+   - Use findings from previous searches to refine subsequent queries
+   - Start with broad queries, then narrow down based on what you find
+   - Cross-reference results across multiple searches
+   - When you find relevant code, use deep_search or knowledge graph to explore related code
+   - Cite specific files, functions, and line numbers from search results
+   - Build context progressively - each search should inform the next
+
+6. KNOWLEDGE GRAPH USAGE (if available)
+   - After finding a function via search, use query_knowledge_graph to find what calls it and what it depends on
+   - Use the graph to explore imports, inheritance, and containment relationships
+   - The knowledge graph reveals architectural patterns not visible from search alone
+
+7. TASK TRACKING
    - Track ONE task at a time
    - Update when user gives a new task
    - Reference the current task in your responses when relevant
 
-Remember: Be helpful, conversational, and only show code when explicitly requested."""
+Remember: Be helpful, conversational, and only show code when explicitly requested. Use multiple searches iteratively to build a complete understanding."""
 
 
 @chat_app.callback(invoke_without_command=True)
@@ -686,7 +727,7 @@ def _get_tools() -> list[dict[str, Any]]:
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Maximum results (default: 5, max: 10)",
+                            "description": "Maximum results (default: 5, max: 15)",
                             "default": 5,
                         },
                     },
@@ -783,6 +824,60 @@ def _get_tools() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "deep_search",
+                "description": "Search within specific files from previous search results. Use this to find more context in files you've already discovered.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query to refine within the specified files",
+                        },
+                        "file_paths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of file paths to search within (from previous search results)",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum results (default: 10)",
+                            "default": 10,
+                        },
+                    },
+                    "required": ["query", "file_paths"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "query_knowledge_graph",
+                "description": "Query the knowledge graph to explore code relationships. Use this to find what calls a function, what it imports, inheritance relationships, etc. Only available if knowledge graph has been built.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "entity_name": {
+                            "type": "string",
+                            "description": "Name of the function, class, or file to explore",
+                        },
+                        "relationship_type": {
+                            "type": "string",
+                            "description": "Type of relationship to explore: 'calls', 'imports', 'inherits', 'contains', or 'all' (default: 'all')",
+                            "default": "all",
+                        },
+                        "max_hops": {
+                            "type": "integer",
+                            "description": "Maximum relationship hops to traverse (default: 2)",
+                            "default": 2,
+                        },
+                    },
+                    "required": ["entity_name"],
+                },
+            },
+        },
     ]
 
 
@@ -793,6 +888,7 @@ async def _execute_tool(
     database: Any,
     project_root: Path,
     config: Any,
+    session: EnhancedChatSession | None = None,
 ) -> str:
     """Execute a tool and return result.
 
@@ -803,6 +899,7 @@ async def _execute_tool(
         database: Vector database
         project_root: Project root path
         config: Project config
+        session: Chat session for tracking search history
 
     Returns:
         Tool execution result as string
@@ -815,6 +912,7 @@ async def _execute_tool(
             database,
             project_root,
             config,
+            session,
         )
 
     elif tool_name == "read_file":
@@ -848,6 +946,26 @@ async def _execute_tool(
             project_root,
         )
 
+    elif tool_name == "deep_search":
+        return await _tool_deep_search(
+            arguments.get("query", ""),
+            arguments.get("file_paths", []),
+            arguments.get("limit", 10),
+            search_engine,
+            database,
+            project_root,
+            config,
+            session,
+        )
+
+    elif tool_name == "query_knowledge_graph":
+        return await _tool_query_knowledge_graph(
+            arguments.get("entity_name", ""),
+            arguments.get("relationship_type", "all"),
+            arguments.get("max_hops", 2),
+            search_engine,
+        )
+
     else:
         return f"Error: Unknown tool '{tool_name}'"
 
@@ -859,10 +977,11 @@ async def _tool_search_code(
     database: Any,
     project_root: Path,
     config: Any,
+    session: EnhancedChatSession | None = None,
 ) -> str:
     """Execute search_code tool."""
     try:
-        limit = min(limit, 10)
+        limit = min(limit, 15)  # Increased from 10 to 15 for richer context
         async with database:
             results = await search_engine.search(
                 query=query,
@@ -870,6 +989,10 @@ async def _tool_search_code(
                 similarity_threshold=config.similarity_threshold,
                 include_context=True,
             )
+
+        # Track search in session history
+        if session:
+            session.add_search_summary("search_code", query, len(results))
 
         if not results:
             return "No results found for this query."
@@ -889,6 +1012,39 @@ async def _tool_search_code(
                 f"Similarity: {result.similarity_score:.3f}\n"
                 f"```\n{result.content}\n```\n"
             )
+
+        # Add KG context for top 3 results if KG is available
+        if (
+            hasattr(search_engine, "_kg")
+            and search_engine._kg is not None
+            and len(results) > 0
+        ):
+            try:
+                kg = search_engine._kg
+                if not kg._initialized:
+                    await kg.initialize()
+
+                parts.append("\n[Knowledge Graph Context for Top Results]")
+                for i, result in enumerate(results[:3], 1):
+                    # Try to find entity by function name if available
+                    entity_name = result.function_name or result.location
+                    if entity_name:
+                        entity_id = await kg.find_entity_by_name(entity_name)
+                        if entity_id:
+                            # Get basic relationships
+                            related = await kg.find_related(entity_id, max_hops=1)
+                            if related:
+                                parts.append(
+                                    f"\nResult {i} ({entity_name}) is related to:"
+                                )
+                                for rel in related[:5]:
+                                    parts.append(
+                                        f"  • {rel.get('name')} ({rel.get('type')})"
+                                    )
+            except Exception as e:
+                logger.debug(f"Could not add KG context: {e}")
+                # Non-fatal - continue without KG context
+
         return "\n".join(parts)
 
     except Exception as e:
@@ -1109,6 +1265,174 @@ async def _tool_list_files(pattern: str, project_root: Path) -> str:
         return f"Error listing files: {e}"
 
 
+async def _tool_deep_search(
+    query: str,
+    file_paths: list[str],
+    limit: int,
+    search_engine: Any,
+    database: Any,
+    project_root: Path,
+    config: Any,
+    session: EnhancedChatSession | None = None,
+) -> str:
+    """Execute deep_search tool - search within specific files."""
+    try:
+        if not file_paths:
+            return "Error: No file paths provided for deep_search"
+
+        if not query.strip():
+            return "Error: Empty query for deep_search"
+
+        # Perform search with file path filters
+        async with database:
+            results = await search_engine.search(
+                query=query,
+                limit=limit,
+                similarity_threshold=config.similarity_threshold,
+                include_context=True,
+            )
+
+        # Filter results to only include specified files
+        filtered_results = []
+        target_paths = {project_root / fp for fp in file_paths}
+
+        for result in results:
+            if result.file_path in target_paths:
+                filtered_results.append(result)
+
+        # Track search in session history
+        if session:
+            session.add_search_summary(
+                "deep_search",
+                f"{query} in {len(file_paths)} files",
+                len(filtered_results),
+            )
+
+        if not filtered_results:
+            return f"No results found in specified files for query: '{query}'"
+
+        # Format results
+        parts = [f"Deep search in {len(file_paths)} files for: '{query}'\n"]
+        for i, result in enumerate(filtered_results, 1):
+            try:
+                rel_path = str(result.file_path.relative_to(project_root))
+            except ValueError:
+                rel_path = str(result.file_path)
+
+            parts.append(
+                f"[Result {i}: {rel_path}]\n"
+                f"Location: {result.location}\n"
+                f"Lines {result.start_line}-{result.end_line}\n"
+                f"Similarity: {result.similarity_score:.3f}\n"
+                f"```\n{result.content}\n```\n"
+            )
+
+        return "\n".join(parts)
+
+    except Exception as e:
+        logger.error(f"deep_search failed: {e}")
+        return f"Error in deep search: {e}"
+
+
+async def _tool_query_knowledge_graph(
+    entity_name: str,
+    relationship_type: str,
+    max_hops: int,
+    search_engine: Any,
+) -> str:
+    """Execute query_knowledge_graph tool - explore code relationships."""
+    try:
+        # Check if knowledge graph is available
+        if not hasattr(search_engine, "_kg") or search_engine._kg is None:
+            return "Knowledge graph is not available. Build it first with: mcp-vector-search build-kg"
+
+        kg = search_engine._kg
+
+        if not entity_name.strip():
+            return "Error: Empty entity name for knowledge graph query"
+
+        # Ensure KG is initialized
+        if not kg._initialized:
+            await kg.initialize()
+
+        # Find the entity first
+        entity_id = await kg.find_entity_by_name(entity_name)
+        if not entity_id:
+            return f"Entity not found in knowledge graph: '{entity_name}'"
+
+        parts = [f"Knowledge Graph results for: {entity_name}\n"]
+
+        # Handle different relationship types
+        if relationship_type == "all" or relationship_type == "calls":
+            # Get call graph
+            call_results = await kg.get_call_graph(entity_id)
+            if call_results:
+                parts.append("\n=== Call Relationships ===")
+                calls_out = [r for r in call_results if r.get("direction") == "calls"]
+                called_by = [
+                    r for r in call_results if r.get("direction") == "called_by"
+                ]
+
+                if calls_out:
+                    parts.append(f"\nCalls ({len(calls_out)}):")
+                    for rel in calls_out[:10]:
+                        parts.append(f"  → {rel.get('name', 'Unknown')}")
+
+                if called_by:
+                    parts.append(f"\nCalled by ({len(called_by)}):")
+                    for rel in called_by[:10]:
+                        parts.append(f"  ← {rel.get('name', 'Unknown')}")
+
+        if relationship_type == "all" or relationship_type == "inherits":
+            # Get inheritance relationships
+            try:
+                inheritance_results = await kg.get_inheritance_tree(entity_id)
+                if inheritance_results:
+                    parts.append("\n=== Inheritance ===")
+                    parents = [
+                        r
+                        for r in inheritance_results
+                        if r.get("direction") == "inherits"
+                    ]
+                    children = [
+                        r
+                        for r in inheritance_results
+                        if r.get("direction") == "inherited_by"
+                    ]
+
+                    if parents:
+                        parts.append(f"\nInherits from ({len(parents)}):")
+                        for rel in parents[:10]:
+                            parts.append(f"  ↑ {rel.get('name', 'Unknown')}")
+
+                    if children:
+                        parts.append(f"\nInherited by ({len(children)}):")
+                        for rel in children[:10]:
+                            parts.append(f"  ↓ {rel.get('name', 'Unknown')}")
+            except Exception as e:
+                logger.debug(f"Could not get inheritance tree: {e}")
+
+        if relationship_type == "all" or relationship_type == "contains":
+            # Get containment relationships
+            related = await kg.find_related(entity_id, max_hops=1)
+            if related:
+                parts.append(f"\n=== Related Entities (within {max_hops} hops) ===")
+                for rel in related[:15]:
+                    parts.append(
+                        f"  • {rel.get('name', 'Unknown')} ({rel.get('type', 'unknown')}) in {rel.get('file_path', 'unknown')}"
+                    )
+
+        if len(parts) == 1:
+            # No relationships found
+            return f"No relationships found for '{entity_name}' in the knowledge graph"
+
+        return "\n".join(parts)
+
+    except Exception as e:
+        logger.error(f"query_knowledge_graph failed: {e}")
+        return f"Error querying knowledge graph: {e}"
+
+
 async def _process_query(
     query: str,
     llm_client: LLMClient,
@@ -1139,8 +1463,8 @@ async def _process_query(
     # Get conversation context
     messages = session.get_messages()
 
-    # Agentic tool loop
-    max_iterations = 15
+    # Agentic tool loop (increased from 15 to 30 for deeper exploration)
+    max_iterations = 30
     for _iteration in range(max_iterations):
         try:
             response = await llm_client.chat_with_tools(messages, tools)
@@ -1183,6 +1507,7 @@ async def _process_query(
                         database,
                         project_root,
                         config,
+                        session,
                     )
 
                     # Add tool result
