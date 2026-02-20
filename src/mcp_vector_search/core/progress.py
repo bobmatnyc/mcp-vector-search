@@ -5,6 +5,7 @@ to use with Kuzu (which is not thread-safe). It avoids Rich background
 threads (Progress, Live) and uses simple console.print() statements.
 """
 
+import sys
 import time
 
 from rich.console import Console
@@ -127,6 +128,105 @@ class ProgressTracker:
         self.console.print(f"\n[green]✓ {summary}[/green]")
         if time_taken is not None:
             self.console.print(f"  Time: {time_taken:.1f}s")
+
+    def progress_bar(
+        self, current: int, total: int, prefix: str = "", width: int = 40
+    ) -> None:
+        """Display an inline progress bar that updates in place.
+
+        This progress bar updates on the same line without spawning background threads,
+        making it safe to use with Kuzu and other non-thread-safe libraries.
+
+        Args:
+            current: Current progress value
+            total: Total value (100% completion)
+            prefix: Text to display before the progress bar
+            width: Width of the progress bar in characters (default: 40)
+
+        Example:
+            tracker.progress_bar(328, 730, prefix="Parsing files")
+            # Output: Parsing files... ━━━━━━━━━╸          45% 328/730
+        """
+        if total == 0:
+            return
+
+        # Calculate percentage and filled width
+        percentage = min(100, int((current / total) * 100))
+        filled_width = int((current / total) * width)
+
+        # Build progress bar with blocks
+        filled = "━" * filled_width
+        empty = " " * (width - filled_width)
+        bar = f"{filled}{empty}"
+
+        # Format output with percentage and counts
+        output = f"\r  {prefix}... {bar} {percentage}% {current:,}/{total:,}"
+
+        # Write directly to stderr (avoids buffering issues)
+        sys.stderr.write(output)
+        sys.stderr.flush()
+
+        # Print newline when complete
+        if current >= total:
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+
+    def progress_bar_with_eta(
+        self,
+        current: int,
+        total: int,
+        prefix: str = "",
+        width: int = 40,
+        start_time: float | None = None,
+    ) -> None:
+        """Display a progress bar with ETA estimate.
+
+        Args:
+            current: Current progress value
+            total: Total value (100% completion)
+            prefix: Text to display before the progress bar
+            width: Width of the progress bar in characters (default: 40)
+            start_time: Start time for ETA calculation (uses time.time())
+
+        Example:
+            start = time.time()
+            tracker.progress_bar_with_eta(54234, 81238, "Embedding chunks", start_time=start)
+            # Output: Embedding chunks... ━━━━━━━━━━━━━╸       67% 54,234/81,238 [01:23 remaining]
+        """
+        if total == 0:
+            return
+
+        # Calculate percentage and filled width
+        percentage = min(100, int((current / total) * 100))
+        filled_width = int((current / total) * width)
+
+        # Build progress bar
+        filled = "━" * filled_width
+        empty = " " * (width - filled_width)
+        bar = f"{filled}{empty}"
+
+        # Calculate ETA if start_time provided and some progress made
+        eta_str = ""
+        if start_time and current > 0:
+            elapsed = time.time() - start_time
+            rate = current / elapsed
+            if rate > 0:
+                remaining = (total - current) / rate
+                minutes = int(remaining // 60)
+                seconds = int(remaining % 60)
+                eta_str = f" [{minutes:02d}:{seconds:02d} remaining]"
+
+        # Format output
+        output = f"\r  {prefix}... {bar} {percentage}% {current:,}/{total:,}{eta_str}"
+
+        # Write directly to stderr
+        sys.stderr.write(output)
+        sys.stderr.flush()
+
+        # Print newline when complete
+        if current >= total:
+            sys.stderr.write("\n")
+            sys.stderr.flush()
 
 
 class SimpleProgressTracker:

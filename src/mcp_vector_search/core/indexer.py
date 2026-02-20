@@ -89,6 +89,7 @@ class SemanticIndexer:
         auto_optimize: bool = True,
         ignore_patterns: set[str] | None = None,
         skip_blame: bool = False,
+        progress_tracker: Any = None,
     ) -> None:
         """Initialize semantic indexer.
 
@@ -105,6 +106,7 @@ class SemanticIndexer:
             auto_optimize: Enable automatic optimization based on codebase profile (default: True)
             ignore_patterns: Additional patterns to ignore (merged with defaults, e.g., vendor patterns)
             skip_blame: Skip git blame tracking for faster indexing (default: False)
+            progress_tracker: Optional ProgressTracker instance for displaying progress bars
 
         Environment Variables:
             MCP_VECTOR_SEARCH_BATCH_SIZE: Override batch size (default: 256)
@@ -118,6 +120,7 @@ class SemanticIndexer:
         self.cancellation_flag: threading.Event | None = (
             None  # Set externally for cancellation support
         )
+        self.progress_tracker = progress_tracker  # Optional progress bar display
 
         # Set batch size with environment variable override
         if batch_size is None:
@@ -533,6 +536,9 @@ class SemanticIndexer:
                 f"📄 Phase 1: Chunking {len(files_to_index)} files (parsing and extracting code structure)..."
             )
 
+            # Track start time for ETA calculation
+            phase_start_time = time.time()
+
             with metrics_tracker.phase("parsing") as parsing_metrics:
                 # Batch delete optimization (like _phase1_chunk_files)
                 files_to_delete = []
@@ -691,10 +697,19 @@ class SemanticIndexer:
 
                     # Put batch on queue for embedding (blocks if queue is full - backpressure)
                     if batch_chunks:
-                        logger.info(
-                            f"Phase 1 progress: {files_indexed}/{len(files_to_process)} files, "
-                            f"{chunks_created} chunks | Queuing {len(batch_chunks)} chunks for embedding"
-                        )
+                        # Show progress bar if tracker is available
+                        if self.progress_tracker:
+                            self.progress_tracker.progress_bar_with_eta(
+                                current=files_indexed,
+                                total=len(files_to_process),
+                                prefix="Parsing files",
+                                start_time=phase_start_time,
+                            )
+                        else:
+                            logger.info(
+                                f"Phase 1 progress: {files_indexed}/{len(files_to_process)} files, "
+                                f"{chunks_created} chunks | Queuing {len(batch_chunks)} chunks for embedding"
+                            )
                         await chunk_queue.put(
                             {"chunks": batch_chunks, "batch_size": len(batch_chunks)}
                         )
@@ -725,6 +740,8 @@ class SemanticIndexer:
 
             embedding_batch_size = self.batch_size  # Use configured batch size
             consecutive_errors = 0  # Track consecutive errors to detect fatal issues
+            # Track start time for ETA calculation
+            embed_start_time = time.time()
 
             with metrics_tracker.phase("embedding") as embedding_metrics:
                 while True:
@@ -852,9 +869,19 @@ class SemanticIndexer:
                             # Reset consecutive error counter on success
                             consecutive_errors = 0
 
-                            logger.info(
-                                f"Phase 2 progress: {chunks_embedded} chunks embedded"
-                            )
+                            # Show progress bar if tracker is available
+                            # Note: We use chunks_created as an estimate of total (may update as producer runs)
+                            if self.progress_tracker and chunks_created > 0:
+                                self.progress_tracker.progress_bar_with_eta(
+                                    current=chunks_embedded,
+                                    total=chunks_created,
+                                    prefix="Embedding chunks",
+                                    start_time=embed_start_time,
+                                )
+                            else:
+                                logger.info(
+                                    f"Phase 2 progress: {chunks_embedded} chunks embedded"
+                                )
 
                         except Exception as e:
                             consecutive_errors += 1
@@ -938,6 +965,9 @@ class SemanticIndexer:
 
         # Get metrics tracker
         metrics_tracker = get_metrics_tracker()
+
+        # Track start time for progress bar ETA
+        phase_start_time = time.time()
 
         with metrics_tracker.phase("parsing") as parsing_metrics:
             # OPTIMIZATION: Collect files that need deletion and batch delete upfront
@@ -1075,6 +1105,15 @@ class SemanticIndexer:
                         files_processed += 1
                         logger.debug(f"Chunked {count} chunks from {rel_path}")
 
+                        # Show progress bar if tracker is available (update every file)
+                        if self.progress_tracker:
+                            self.progress_tracker.progress_bar_with_eta(
+                                current=files_processed,
+                                total=len(files_to_process),
+                                prefix="Parsing files",
+                                start_time=phase_start_time,
+                            )
+
                 except Exception as e:
                     logger.error(f"Failed to chunk file {file_path}: {e}")
                     continue
@@ -1129,6 +1168,12 @@ class SemanticIndexer:
 
         # Get metrics tracker
         metrics_tracker = get_metrics_tracker()
+
+        # Track start time for progress bar ETA
+        embed_start_time = time.time()
+        # We'll estimate total from first batch and update as we go
+        estimated_total_chunks = 0
+        first_batch = True
 
         with metrics_tracker.phase("embedding") as embedding_metrics:
             while True:
@@ -1273,10 +1318,27 @@ class SemanticIndexer:
                     chunks_embedded += len(pending)
                     batches_processed += 1
 
+                    # Estimate total chunks from first batch if not set
+                    if first_batch:
+                        # If we got a full batch, there are likely more pending
+                        # Use a conservative estimate of 2x current batch as minimum
+                        estimated_total_chunks = max(chunks_embedded * 2, chunks_embedded)
+                        first_batch = False
+
+                    # Show progress bar if tracker is available
+                    if self.progress_tracker and estimated_total_chunks > 0:
+                        self.progress_tracker.progress_bar_with_eta(
+                            current=chunks_embedded,
+                            total=max(estimated_total_chunks, chunks_embedded),
+                            prefix="Embedding chunks",
+                            start_time=embed_start_time,
+                        )
+
                     # Checkpoint logging with memory status
                     if chunks_embedded % checkpoint_interval == 0:
                         self.memory_monitor.log_memory_summary()
-                        logger.info(f"Checkpoint: {chunks_embedded} chunks embedded")
+                        if not self.progress_tracker:
+                            logger.info(f"Checkpoint: {chunks_embedded} chunks embedded")
 
                     # Check memory after each batch and clear references
                     del pending, chunk_ids, contents, vectors, chunks_with_vectors

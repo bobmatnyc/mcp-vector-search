@@ -966,6 +966,9 @@ async def run_indexing(
             "[cyan]📝[/cyan] [dim]Git blame tracking enabled (per-line authorship)[/dim]"
         )
 
+    # Create progress tracker for progress bars (always enabled now)
+    progress_tracker_obj = ProgressTracker(console, verbose=verbose)
+
     indexer = SemanticIndexer(
         database=database,
         project_root=project_root,
@@ -975,6 +978,7 @@ async def run_indexing(
         auto_optimize=auto_optimize,
         ignore_patterns=vendor_patterns_set,
         skip_blame=skip_blame,
+        progress_tracker=progress_tracker_obj,
     )
     # Set cancellation flag for graceful shutdown
     if cancellation_flag:
@@ -992,11 +996,6 @@ async def run_indexing(
                 "[dim]   Running incremental update (only new/modified files)[/dim]"
             )
             console.print("[dim]   Use --force to reindex everything[/dim]\n")
-
-    # Create progress tracker if verbose mode enabled
-    progress_tracker_obj = None
-    if verbose:
-        progress_tracker_obj = ProgressTracker(console, verbose=verbose)
 
     try:
         async with database:
