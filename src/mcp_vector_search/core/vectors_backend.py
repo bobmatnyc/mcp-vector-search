@@ -539,8 +539,8 @@ class VectorsBackend:
             )
 
         try:
-            # Build LanceDB query
-            search = self._table.search(query_vector).limit(limit)
+            # Build LanceDB query with cosine metric
+            search = self._table.search(query_vector).metric("cosine").limit(limit)
 
             # Apply metadata filters if provided
             if filters:
@@ -572,10 +572,11 @@ class VectorsBackend:
             for result in results:
                 # LanceDB returns _distance (L2 distance for vectors)
                 # Since vectors aren't normalized, we get large L2 distances
-                # Convert to similarity: similarity = 1 / (1 + distance)
-                # This ensures similarity is in range [0, 1] where 1 is most similar
+                # Convert cosine distance to similarity score
+                # Cosine distance ranges from 0 (identical) to 2 (opposite)
+                # Convert to similarity: 0 distance -> 1.0 similarity, 2 distance -> 0.0
                 distance = result.get("_distance", 0.0)
-                similarity = 1.0 / (1.0 + distance)
+                similarity = max(0.0, 1.0 - (distance / 2.0))
 
                 search_result = {
                     "chunk_id": result["chunk_id"],
@@ -819,7 +820,7 @@ class VectorsBackend:
             # Create IVF_PQ index for fast vector search
             # This uses Inverted File Index with Product Quantization
             self._table.create_index(
-                metric="L2",  # L2 distance for cosine similarity approximation
+                metric="cosine",  # Cosine distance for semantic similarity
                 num_partitions=256,  # Number of IVF partitions (good default)
                 num_sub_vectors=192,  # PQ sub-vectors (768 / 4 = 192, for GraphCodeBERT)
             )

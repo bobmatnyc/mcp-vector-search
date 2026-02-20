@@ -626,8 +626,8 @@ class LanceVectorDatabase:
             # Generate query embedding
             query_embedding = self.embedding_function([query])[0]
 
-            # Build LanceDB query
-            search = self._table.search(query_embedding).limit(limit)
+            # Build LanceDB query with cosine metric
+            search = self._table.search(query_embedding).metric("cosine").limit(limit)
 
             # Apply metadata filters if provided
             if filters:
@@ -654,11 +654,10 @@ class LanceVectorDatabase:
             # Convert to SearchResult format
             search_results = []
             for rank, result in enumerate(results):
-                # LanceDB returns _distance (L2 distance)
-                # Convert to similarity score (cosine similarity approximation)
-                # For unit vectors: similarity ≈ 1 - (distance² / 2)
+                # LanceDB returns _distance (cosine distance, 0-2 range)
+                # Convert to similarity: 0 distance -> 1.0 similarity, 2 distance -> 0.0
                 distance = result.get("_distance", 0.0)
-                similarity = 1.0 - (distance * distance / 2.0)
+                similarity = max(0.0, 1.0 - (distance / 2.0))
 
                 # Filter by similarity threshold
                 if similarity < similarity_threshold:

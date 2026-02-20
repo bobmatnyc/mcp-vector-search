@@ -109,9 +109,9 @@ class SearchHandler:
         Returns:
             Similarity score between 0 and 1
         """
-        # For cosine distance, use permissive conversion that handles distances > 1.0
-        # Convert to 0-1 similarity score where lower distances = higher similarity
-        return max(0.0, 1.0 / (1.0 + distance))
+        # Cosine distance ranges from 0 (identical) to 2 (opposite)
+        # Convert to similarity: 0 distance -> 1.0 similarity, 2 distance -> 0.0
+        return max(0.0, 1.0 - (distance / 2.0))
 
     @staticmethod
     def _create_search_result(

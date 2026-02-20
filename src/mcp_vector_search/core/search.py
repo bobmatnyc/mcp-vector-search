@@ -663,9 +663,10 @@ class SemanticSearchEngine:
             search_results = []
             for idx, result in enumerate(raw_results):
                 # Calculate similarity score from distance
-                # LanceDB returns _distance (lower is better), convert to similarity (higher is better)
+                # LanceDB returns _distance (cosine distance, 0-2 range)
+                # Convert to similarity: 0 distance -> 1.0 similarity, 2 distance -> 0.0
                 distance = result.get("_distance", 1.0)
-                similarity = 1.0 / (1.0 + distance)  # Convert distance to similarity
+                similarity = max(0.0, 1.0 - (distance / 2.0))
 
                 # Apply threshold filter
                 if similarity < threshold:
