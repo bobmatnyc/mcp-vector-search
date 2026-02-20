@@ -380,7 +380,8 @@ class KGBuilder:
         }
 
         # Extract from code chunks
-        for chunk in code_chunks:
+        start_time = time.time()
+        for i, chunk in enumerate(code_chunks, 1):
             entity, rels, modules = self._extract_code_entity(chunk)
             if entity:
                 code_entities.append(entity)
@@ -389,13 +390,32 @@ class KGBuilder:
             # Add module entities (deduplicated later)
             code_entities.extend(modules)
 
+            # Show progress every 500 chunks or on last chunk
+            if progress_tracker and (i % 500 == 0 or i == len(code_chunks)):
+                progress_tracker.progress_bar_with_eta(
+                    i,
+                    len(code_chunks),
+                    prefix="Scanning code chunks",
+                    start_time=start_time,
+                )
+
         # Extract from text chunks
-        for chunk in text_chunks:
+        text_start_time = time.time()
+        for i, chunk in enumerate(text_chunks, 1):
             docs, chunk_tags, rels = self._extract_doc_sections(chunk)
             doc_sections.extend(docs)
             tags.update(chunk_tags)
             for rel_type, rel_list in rels.items():
                 relationships[rel_type].extend(rel_list)
+
+            # Show progress every 100 chunks or on last chunk
+            if progress_tracker and (i % 100 == 0 or i == len(text_chunks)):
+                progress_tracker.progress_bar_with_eta(
+                    i,
+                    len(text_chunks),
+                    prefix="Scanning text chunks",
+                    start_time=text_start_time,
+                )
 
         total_rels = sum(len(r) for r in relationships.values())
 
@@ -543,13 +563,18 @@ class KGBuilder:
         total_inserted = 0
         total_skipped = 0
 
+        # Count total relationships for progress tracking
+        total_rels_count = sum(len(rels) for rels in relationships.values())
+        processed_rels = 0
+        rel_start_time = time.time()
+
         for rel_type, rels in relationships.items():
             if rels:
                 # Filter relationships to only those with valid source and target IDs
                 valid_rels = []
                 skipped = 0
 
-                for rel in rels:
+                for i, rel in enumerate(rels, 1):
                     source_ok = rel.source_id in valid_entity_ids
                     target_ok = rel.target_id in valid_entity_ids
 
@@ -568,7 +593,26 @@ class KGBuilder:
                                 f"(source_ok={source_ok}, target_ok={target_ok})"
                             )
 
+                    # Show progress every 1000 relationships or on last in this type
+                    processed_rels += 1
+                    if progress_tracker and (
+                        processed_rels % 1000 == 0 or processed_rels == total_rels_count
+                    ):
+                        progress_tracker.progress_bar_with_eta(
+                            processed_rels,
+                            total_rels_count,
+                            prefix=f"Validating {rel_type.lower()}",
+                            start_time=rel_start_time,
+                        )
+
                 if valid_rels:
+                    # Show insertion progress
+                    if progress_tracker and len(valid_rels) > 0:
+                        progress_tracker.item(
+                            f"Inserting {len(valid_rels):,} {rel_type.lower()} relationships...",
+                            done=False,
+                        )
+
                     count = self.kg.add_relationships_batch_sync(
                         valid_rels, batch_size=safe_batch_size
                     )
@@ -576,7 +620,7 @@ class KGBuilder:
                     total_inserted += count
                     if progress_tracker:
                         progress_tracker.item(
-                            f"{count:,} {rel_type.lower()}", done=True
+                            f"{count:,} {rel_type.lower()} inserted", done=True
                         )
                     else:
                         console.print(f"  ✓ {count} {rel_type.lower()} relations")
