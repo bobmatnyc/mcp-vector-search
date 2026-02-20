@@ -19,6 +19,92 @@ from .state_manager import VisualizationState
 console = Console()
 
 
+def compute_quality_metrics(chunk: Any) -> dict[str, Any]:
+    """Compute quality metrics for a chunk (quality_score, smell_count, smells, complexity_grade).
+
+    Args:
+        chunk: CodeChunk object
+
+    Returns:
+        Dictionary with quality_score, smell_count, smells list, and complexity_grade
+
+    Quality metrics:
+    - quality_score: Float 0.0-1.0, derived from complexity (1.0 = excellent, 0.0 = poor)
+    - smell_count: Integer count of code smells detected
+    - smells: List of smell names (e.g., ["Long Method", "Deep Nesting"])
+    - complexity_grade: Letter grade A-F based on complexity
+
+    Smell detection rules:
+    - Long Method: >50 lines
+    - Deep Nesting: >4 levels (if available)
+    - Too Many Parameters: >5 params
+    - Complex Method: cyclomatic_complexity >10 (if available)
+    - God Class: >500 lines (for classes only)
+    """
+    smells = []
+    lines_of_code = chunk.end_line - chunk.start_line + 1
+
+    # Extract complexity metrics if available
+    complexity = getattr(chunk, "complexity_score", 0.0) or 0.0
+    cyclomatic = getattr(chunk, "cyclomatic_complexity", None)
+    nesting_depth = getattr(chunk, "max_nesting_depth", None)
+    param_count = len(getattr(chunk, "parameters", []))
+
+    # 1. Long Method: >50 lines
+    if lines_of_code > 50:
+        smells.append("Long Method")
+
+    # 2. Too Many Parameters: >5 params
+    if param_count > 5:
+        smells.append("Too Many Parameters")
+
+    # 3. Deep Nesting: >4 levels (if available from analysis)
+    if nesting_depth is not None and nesting_depth > 4:
+        smells.append("Deep Nesting")
+
+    # 4. Complex Method: cyclomatic_complexity >10 (if available)
+    if cyclomatic is not None and cyclomatic > 10:
+        smells.append("Complex Method")
+
+    # 5. God Class: >500 lines (only for classes)
+    if chunk.chunk_type == "class" and lines_of_code > 500:
+        smells.append("God Class")
+
+    # Compute complexity-based quality score
+    # Use cyclomatic if available, else fall back to complexity_score
+    effective_complexity = cyclomatic if cyclomatic is not None else complexity
+
+    # Quality formula: 1.0 - min(complexity / 50.0, 1.0)
+    # complexity 0-5 → quality 0.9-1.0 (A grade)
+    # complexity 10 → quality 0.8 (B grade)
+    # complexity 20 → quality 0.6 (C grade)
+    # complexity 50+ → quality 0.0 (F grade)
+    quality_score = max(0.0, 1.0 - min(effective_complexity / 50.0, 1.0))
+
+    # Penalize smells: -0.1 per smell (cap at 0.0)
+    quality_score = max(0.0, quality_score - (len(smells) * 0.1))
+
+    # Compute complexity grade (A-F)
+    if effective_complexity <= 5:
+        complexity_grade = "A"
+    elif effective_complexity <= 10:
+        complexity_grade = "B"
+    elif effective_complexity <= 20:
+        complexity_grade = "C"
+    elif effective_complexity <= 50:
+        complexity_grade = "D"
+    else:
+        complexity_grade = "F"
+
+    return {
+        "quality_score": round(quality_score, 2),
+        "smell_count": len(smells),
+        "smells": smells,
+        "complexity_grade": complexity_grade,
+        "lines_of_code": lines_of_code,
+    }
+
+
 def extract_chunk_name(content: str, fallback: str = "chunk") -> str:
     """Extract first meaningful word from chunk content for labeling.
 
@@ -462,7 +548,18 @@ async def build_graph_data(
             "language": chunk.language,
         }
 
-        # Add structural analysis metrics if available
+        # Compute quality metrics for code chunks (functions, methods, classes)
+        if chunk.chunk_type in ("function", "method", "class"):
+            quality_metrics = compute_quality_metrics(chunk)
+            node.update(quality_metrics)
+            logger.debug(
+                f"Computed quality for {chunk.chunk_type} {chunk_name}: "
+                f"quality={quality_metrics.get('quality_score')}, "
+                f"smells={quality_metrics.get('smell_count')}, "
+                f"grade={quality_metrics.get('complexity_grade')}"
+            )
+
+        # Add structural analysis metrics if available (preserve existing if present)
         if (
             hasattr(chunk, "cognitive_complexity")
             and chunk.cognitive_complexity is not None
@@ -473,15 +570,33 @@ async def build_graph_data(
             and chunk.cyclomatic_complexity is not None
         ):
             node["cyclomatic_complexity"] = chunk.cyclomatic_complexity
-        if hasattr(chunk, "complexity_grade") and chunk.complexity_grade is not None:
+        # Don't override computed quality metrics with chunk attributes
+        # (we already computed them above with compute_quality_metrics)
+        if (
+            hasattr(chunk, "complexity_grade")
+            and chunk.complexity_grade is not None
+            and "complexity_grade" not in node
+        ):
             node["complexity_grade"] = chunk.complexity_grade
-        if hasattr(chunk, "code_smells") and chunk.code_smells:
+        if hasattr(chunk, "code_smells") and chunk.code_smells and "smells" not in node:
             node["smells"] = chunk.code_smells
-        if hasattr(chunk, "smell_count") and chunk.smell_count is not None:
+        if (
+            hasattr(chunk, "smell_count")
+            and chunk.smell_count is not None
+            and "smell_count" not in node
+        ):
             node["smell_count"] = chunk.smell_count
-        if hasattr(chunk, "quality_score") and chunk.quality_score is not None:
+        if (
+            hasattr(chunk, "quality_score")
+            and chunk.quality_score is not None
+            and "quality_score" not in node
+        ):
             node["quality_score"] = chunk.quality_score
-        if hasattr(chunk, "lines_of_code") and chunk.lines_of_code is not None:
+        if (
+            hasattr(chunk, "lines_of_code")
+            and chunk.lines_of_code is not None
+            and "lines_of_code" not in node
+        ):
             node["lines_of_code"] = chunk.lines_of_code
 
         # Add caller information if available

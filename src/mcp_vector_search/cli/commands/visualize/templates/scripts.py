@@ -5841,6 +5841,7 @@ function setView(view) {
 }
 
 function loadKGData() {
+    showLoadingIndicator('Loading Knowledge Graph...');
     fetch('/api/kg-graph')
         .then(response => {
             if (!response.ok) {
@@ -5851,6 +5852,7 @@ function loadKGData() {
         .then(data => {
             if (data.error) {
                 console.error('KG data error:', data.error);
+                hideLoadingIndicator();
                 setView('chunks'); // Fall back to chunks view
                 return;
             }
@@ -5861,7 +5863,8 @@ function loadKGData() {
 
             // Check if graph is too large
             const totalNodes = kgFullData.nodes.length;
-            console.log(`KG loaded: ${totalNodes} nodes, ${kgFullData.links.length} links`);
+            const totalLinks = kgFullData.links.length;
+            console.log(`KG loaded: ${totalNodes} nodes, ${totalLinks} links`);
 
             // Initialize based on size
             if (totalNodes > 500) {
@@ -5871,9 +5874,14 @@ function loadKGData() {
 
             // Initialize view
             initializeKGView();
+
+            // Hide loading indicator and show success message
+            hideLoadingIndicator();
+            console.log(`Knowledge Graph ready: ${totalNodes} nodes, ${totalLinks} links loaded`);
         })
         .catch(error => {
             console.error('Failed to load KG data:', error);
+            hideLoadingIndicator();
             setView('chunks'); // Fall back to chunks view
         });
 }
