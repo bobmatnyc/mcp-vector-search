@@ -2797,6 +2797,58 @@ def get_kg_styles() -> str:
             color: var(--text-secondary);
         }
 
+        /* KG Progressive Loading Styles */
+        .kg-node-collapsed {
+            opacity: 0.7;
+        }
+
+        .kg-node-expanded {
+            stroke: #60a5fa;
+            stroke-width: 2.5px;
+        }
+
+        .kg-node-expandable {
+            stroke-dasharray: 3, 3;
+        }
+
+        .rel-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: white;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        #kg-breadcrumb {
+            background: var(--bg-tertiary);
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+        }
+
+        /* Heatmap cell styles */
+        .heatmap-cell {
+            stroke: var(--border-color);
+            stroke-width: 1;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .heatmap-cell:hover {
+            opacity: 0.8;
+            stroke: #60a5fa;
+            stroke-width: 2;
+        }
+
+        .heatmap-label {
+            font-size: 10px;
+            font-family: monospace;
+            fill: var(--text-primary);
+            pointer-events: none;
+            text-anchor: middle;
+        }
+
         #kg-controls input[type="checkbox"] {
             margin-right: 6px;
             cursor: pointer;

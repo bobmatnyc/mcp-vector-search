@@ -868,7 +868,7 @@ def start_visualization_server(
                 f"[green]✓[/green] Visualization server running\n\n"
                 f"URL: [cyan]{url}[/cyan]\n"
                 f"Directory: [dim]{viz_dir}[/dim]\n\n"
-                f"[dim]Press Ctrl+C to stop[/dim]",
+                f"[yellow]Press Ctrl+C to stop the server[/yellow]",
                 title=f"Server Started v{__version__}",
                 border_style="green",
             )
@@ -890,7 +890,7 @@ def start_visualization_server(
         server.run()
 
     except KeyboardInterrupt:
-        console.print("\n[yellow]Stopping server...[/yellow]")
+        console.print("\n[green]✓ Server stopped[/green]")
     except OSError as e:
         if "Address already in use" in str(e):
             console.print(

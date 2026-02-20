@@ -4743,6 +4743,27 @@ function blendComplexityQuality(complexity, qualityScore) {
     return rgbToHex(blendedR, blendedG, blendedB);
 }
 
+// Helper: Get aggregated smell count for a node (max of all descendants)
+function getAggregatedSmellCount(node) {
+    if (!node.children || node.children.length === 0) {
+        return node.data.smell_count || 0;
+    }
+
+    let maxSmellCount = node.data.smell_count || 0;
+
+    function findMaxSmell(n) {
+        if (n.data.smell_count !== undefined && n.data.smell_count > maxSmellCount) {
+            maxSmellCount = n.data.smell_count;
+        }
+        if (n.children) {
+            n.children.forEach(findMaxSmell);
+        }
+    }
+
+    node.children.forEach(findMaxSmell);
+    return maxSmellCount;
+}
+
 // Get color for a node based on its complexity or type (with quality blending)
 function getNodeColor(d) {
     // If it's a leaf node with complexity, blend complexity with quality score
@@ -4750,7 +4771,38 @@ function getNodeColor(d) {
         return blendComplexityQuality(d.data.complexity, d.data.quality_score);
     }
 
-    // Color by node type for non-leaf nodes
+    // For category/language nodes in AST mode, aggregate complexity from children
+    if ((d.data.type === 'category' || d.data.type === 'language') && d.children && d.children.length > 0) {
+        // Calculate average complexity and quality from all descendants with complexity
+        let totalComplexity = 0;
+        let totalQuality = 0;
+        let complexityCount = 0;
+        let qualityCount = 0;
+
+        function aggregateDescendants(node) {
+            if (node.data.complexity !== undefined && node.data.complexity !== null) {
+                totalComplexity += node.data.complexity;
+                complexityCount++;
+            }
+            if (node.data.quality_score !== undefined && node.data.quality_score !== null) {
+                totalQuality += node.data.quality_score;
+                qualityCount++;
+            }
+            if (node.children) {
+                node.children.forEach(aggregateDescendants);
+            }
+        }
+
+        d.children.forEach(aggregateDescendants);
+
+        if (complexityCount > 0) {
+            const avgComplexity = totalComplexity / complexityCount;
+            const avgQuality = qualityCount > 0 ? totalQuality / qualityCount : undefined;
+            return blendComplexityQuality(avgComplexity, avgQuality);
+        }
+    }
+
+    // Color by node type for other non-leaf nodes
     const typeColors = {
         'monorepo': '#8957e5',     // Purple for monorepo root
         'subproject': '#1f6feb',   // Blue for subprojects
@@ -4805,8 +4857,19 @@ function renderTreemap() {
         if (foundNode) {
             displayRoot = foundNode;
         } else {
-            // Node not found, reset zoom
-            currentZoomRootId = null;
+            // Node not found after rebuild - try parent or reset to root
+            console.warn('Treemap zoom target not found after hierarchy rebuild:', currentZoomRootId);
+            // Attempt to find parent node if zoom ID looks like a path
+            const parentPath = currentZoomRootId.split('/').slice(0, -1).join('/');
+            const parentNode = parentPath ? descendantMap.get(parentPath) : null;
+            if (parentNode) {
+                console.log('Falling back to parent node:', parentPath);
+                displayRoot = parentNode;
+                currentZoomRootId = parentPath;
+            } else {
+                console.log('Resetting zoom to root');
+                currentZoomRootId = null;
+            }
         }
     }
 
@@ -4843,9 +4906,25 @@ function renderTreemap() {
         .attr('width', d => Math.max(0, d.x1 - d.x0))
         .attr('height', d => Math.max(0, d.y1 - d.y0))
         .attr('fill', d => getNodeColor(d))  // Axis 1 (red) + Axis 3 (blue) = complexity + quality
-        .attr('stroke', d => getSmellBorderColor(d.data.smell_count))  // Axis 2: smell intensity
-        .attr('stroke-width', d => getSmellBorderWidth(d.data.smell_count))  // Axis 2: thicker for more smells
-        .attr('stroke-dasharray', d => getSmellDashArray(d.data.smell_count))  // Axis 2: dashed for smells
+        .attr('stroke', d => {
+            // For category/language nodes, aggregate smell count from children
+            const smellCount = (d.data.type === 'category' || d.data.type === 'language')
+                ? getAggregatedSmellCount(d)
+                : (d.data.smell_count || 0);
+            return getSmellBorderColor(smellCount);
+        })  // Axis 2: smell intensity
+        .attr('stroke-width', d => {
+            const smellCount = (d.data.type === 'category' || d.data.type === 'language')
+                ? getAggregatedSmellCount(d)
+                : (d.data.smell_count || 0);
+            return getSmellBorderWidth(smellCount);
+        })  // Axis 2: thicker for more smells
+        .attr('stroke-dasharray', d => {
+            const smellCount = (d.data.type === 'category' || d.data.type === 'language')
+                ? getAggregatedSmellCount(d)
+                : (d.data.smell_count || 0);
+            return getSmellDashArray(smellCount);
+        })  // Axis 2: dashed for smells
         .style('cursor', 'pointer')
         .style('opacity', 1)
         .on('click', handleTreemapClick)
@@ -4859,7 +4938,10 @@ function renderTreemap() {
             handleTreemapHover(event, d);
         })
         .on('mouseout', function(event, d) {
-            const smellCount = d.data.smell_count || 0;
+            // Use aggregated smell count for category/language nodes
+            const smellCount = (d.data.type === 'category' || d.data.type === 'language')
+                ? getAggregatedSmellCount(d)
+                : (d.data.smell_count || 0);
             d3.select(this)
                 .transition()
                 .duration(150)
@@ -4935,6 +5017,12 @@ function renderTreemap() {
 async function handleTreemapClick(event, d) {
     event.stopPropagation();
 
+    // For collapsed nodes, use the deepest ID (last in collapsed_ids) for operations
+    // This ensures we interact with the actual node that has children, not the merged visual node
+    const effectiveId = d.data.collapsed_ids && d.data.collapsed_ids.length > 0
+        ? d.data.collapsed_ids[d.data.collapsed_ids.length - 1]
+        : d.data.id;
+
     // Check if node has collapsed children (progressive loading indicator)
     const hasCollapsedChildren = d.data.collapsed_children_count > 0;
 
@@ -4943,8 +5031,8 @@ async function handleTreemapClick(event, d) {
         showLoadingIndicator(`Loading children of ${d.data.name}...`);
 
         try {
-            // Fetch children from server
-            const response = await fetch(`/api/graph-expand/${encodeURIComponent(d.data.id)}`);
+            // Fetch children from server using effectiveId
+            const response = await fetch(`/api/graph-expand/${encodeURIComponent(effectiveId)}`);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
@@ -4993,10 +5081,14 @@ async function handleTreemapClick(event, d) {
         return;
     }
 
-    // Store the path to this node for zoom (d.data.id or path based)
-    // We need to store a way to find this node after re-building hierarchy
+    // Drill-down: zoom into this node without full hierarchy rebuild
+    // Just update the zoom target and re-render treemap with existing hierarchy
     currentZoomRootId = d.data.id;
-    renderVisualization();
+
+    // Re-render only the treemap (don't rebuild hierarchy - it's already in vizHierarchy)
+    if (currentVisualization === 'treemap') {
+        renderTreemap();
+    }
 }
 
 function handleTreemapHover(event, d) {
@@ -5199,7 +5291,19 @@ function renderSunburst() {
         if (foundNode) {
             displayRoot = foundNode;
         } else {
-            currentZoomRootId = null;
+            // Node not found after rebuild - try parent or reset to root
+            console.warn('Sunburst zoom target not found after hierarchy rebuild:', currentZoomRootId);
+            // Attempt to find parent node if zoom ID looks like a path
+            const parentPath = currentZoomRootId.split('/').slice(0, -1).join('/');
+            const parentNode = parentPath ? descendantMap.get(parentPath) : null;
+            if (parentNode) {
+                console.log('Falling back to parent node:', parentPath);
+                displayRoot = parentNode;
+                currentZoomRootId = parentPath;
+            } else {
+                console.log('Resetting zoom to root');
+                currentZoomRootId = null;
+            }
         }
     }
 
@@ -5229,9 +5333,25 @@ function renderSunburst() {
         .attr('class', 'sunburst-arc')
         .attr('d', arc)
         .attr('fill', d => getNodeColor(d))  // Axis 1 (red) + Axis 3 (blue) = complexity + quality
-        .attr('stroke', d => getSmellBorderColor(d.data.smell_count))  // Axis 2: smell intensity
-        .attr('stroke-width', d => getSmellBorderWidth(d.data.smell_count))  // Axis 2: thicker for more smells
-        .attr('stroke-dasharray', d => getSmellDashArray(d.data.smell_count))  // Axis 2: dashed for smells
+        .attr('stroke', d => {
+            // For category/language nodes, aggregate smell count from children
+            const smellCount = (d.data.type === 'category' || d.data.type === 'language')
+                ? getAggregatedSmellCount(d)
+                : (d.data.smell_count || 0);
+            return getSmellBorderColor(smellCount);
+        })  // Axis 2: smell intensity
+        .attr('stroke-width', d => {
+            const smellCount = (d.data.type === 'category' || d.data.type === 'language')
+                ? getAggregatedSmellCount(d)
+                : (d.data.smell_count || 0);
+            return getSmellBorderWidth(smellCount);
+        })  // Axis 2: thicker for more smells
+        .attr('stroke-dasharray', d => {
+            const smellCount = (d.data.type === 'category' || d.data.type === 'language')
+                ? getAggregatedSmellCount(d)
+                : (d.data.smell_count || 0);
+            return getSmellDashArray(smellCount);
+        })  // Axis 2: dashed for smells
         .style('cursor', 'pointer')
         .style('opacity', 1)
         .on('click', handleSunburstClick)
@@ -5245,7 +5365,10 @@ function renderSunburst() {
             handleSunburstHover(event, d);
         })
         .on('mouseout', function(event, d) {
-            const smellCount = d.data.smell_count || 0;
+            // Use aggregated smell count for category/language nodes
+            const smellCount = (d.data.type === 'category' || d.data.type === 'language')
+                ? getAggregatedSmellCount(d)
+                : (d.data.smell_count || 0);
             d3.select(this)
                 .transition()
                 .duration(150)
@@ -5355,6 +5478,12 @@ function renderSunburst() {
 async function handleSunburstClick(event, d) {
     event.stopPropagation();
 
+    // For collapsed nodes, use the deepest ID (last in collapsed_ids) for operations
+    // This ensures we interact with the actual node that has children, not the merged visual node
+    const effectiveId = d.data.collapsed_ids && d.data.collapsed_ids.length > 0
+        ? d.data.collapsed_ids[d.data.collapsed_ids.length - 1]
+        : d.data.id;
+
     // Check if node has collapsed children (progressive loading indicator)
     const hasCollapsedChildren = d.data.collapsed_children_count > 0;
 
@@ -5363,8 +5492,8 @@ async function handleSunburstClick(event, d) {
         showLoadingIndicator(`Loading children of ${d.data.name}...`);
 
         try {
-            // Fetch children from server
-            const response = await fetch(`/api/graph-expand/${encodeURIComponent(d.data.id)}`);
+            // Fetch children from server using effectiveId
+            const response = await fetch(`/api/graph-expand/${encodeURIComponent(effectiveId)}`);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
@@ -5412,9 +5541,14 @@ async function handleSunburstClick(event, d) {
         return;
     }
 
-    // Zoom into this node by ID
+    // Drill-down: zoom into this node without full hierarchy rebuild
+    // Just update the zoom target and re-render sunburst with existing hierarchy
     currentZoomRootId = d.data.id;
-    renderVisualization();
+
+    // Re-render only the sunburst (don't rebuild hierarchy - it's already in vizHierarchy)
+    if (currentVisualization === 'sunburst') {
+        renderSunburst();
+    }
 }
 
 function handleSunburstHover(event, d) {
@@ -5642,6 +5776,15 @@ let kgNodeElements = null;
 let kgLabelElements = null;
 let currentView = 'chunks';
 
+// Progressive loading state
+let kgViewMode = 'drill-down'; // 'drill-down', 'heatmap', 'relationships'
+let kgExpandedNodes = new Set(); // Track expanded nodes
+let kgVisibleNodes = []; // Currently visible nodes
+let kgVisibleLinks = []; // Currently visible links
+let kgFullData = { nodes: [], links: [] }; // Full graph data (loaded once)
+let kgBreadcrumb = ['Root']; // Navigation breadcrumb
+const MAX_VISIBLE_NODES = 200; // Performance cap
+
 // Color schemes for KG
 const kgNodeColors = {
     1: '#6366f1',  // file - indigo
@@ -5712,15 +5855,476 @@ function loadKGData() {
                 return;
             }
 
-            kgNodes = data.nodes || [];
-            kgLinks = data.links || [];
+            // Store full data
+            kgFullData.nodes = data.nodes || [];
+            kgFullData.links = data.links || [];
 
-            renderKG();
+            // Check if graph is too large
+            const totalNodes = kgFullData.nodes.length;
+            console.log(`KG loaded: ${totalNodes} nodes, ${kgFullData.links.length} links`);
+
+            // Initialize based on size
+            if (totalNodes > 500) {
+                console.log('Large graph detected, defaulting to drill-down mode');
+                kgViewMode = 'drill-down';
+            }
+
+            // Initialize view
+            initializeKGView();
         })
         .catch(error => {
             console.error('Failed to load KG data:', error);
             setView('chunks'); // Fall back to chunks view
         });
+}
+
+
+// ============================================================================
+// PROGRESSIVE KG VISUALIZATION - NEW FUNCTIONS
+// ============================================================================
+
+function setKGViewMode(mode) {
+    kgViewMode = mode;
+
+    // Show/hide relevant controls
+    const drilldownControls = document.getElementById('kg-drilldown-controls');
+    const relationshipControls = document.getElementById('kg-relationship-controls');
+
+    if (mode === 'drill-down') {
+        drilldownControls.style.display = 'block';
+        relationshipControls.style.display = 'none';
+    } else if (mode === 'relationships') {
+        drilldownControls.style.display = 'none';
+        relationshipControls.style.display = 'block';
+    } else if (mode === 'heatmap') {
+        drilldownControls.style.display = 'none';
+        relationshipControls.style.display = 'none';
+    }
+
+    // Reinitialize view
+    initializeKGView();
+}
+
+function initializeKGView() {
+    // Reset state
+    kgExpandedNodes.clear();
+    kgBreadcrumb = ['Root'];
+    updateBreadcrumb();
+
+    if (kgViewMode === 'drill-down') {
+        initDrillDownView();
+    } else if (kgViewMode === 'heatmap') {
+        initHeatmapView();
+    } else if (kgViewMode === 'relationships') {
+        initRelationshipView();
+    }
+}
+
+function updateBreadcrumb() {
+    const breadcrumbEl = document.getElementById('kg-breadcrumb');
+    if (breadcrumbEl) {
+        breadcrumbEl.textContent = kgBreadcrumb.join(' > ');
+    }
+}
+
+function collapseAllKGNodes() {
+    kgExpandedNodes.clear();
+    kgBreadcrumb = ['Root'];
+    updateBreadcrumb();
+    initializeKGView();
+}
+
+// ============================================================================
+// MODE 1: DRILL-DOWN EXPLORER
+// ============================================================================
+
+function initDrillDownView() {
+    // Group nodes by file path to create top-level view
+    const fileGroups = {};
+
+    kgFullData.nodes.forEach(node => {
+        const filePath = node.file_path || 'unknown';
+        if (!fileGroups[filePath]) {
+            fileGroups[filePath] = {
+                id: `file_${filePath}`,
+                name: filePath.split('/').pop() || filePath,
+                type: 'file_group',
+                file_path: filePath,
+                children: [],
+                relationshipCount: 0
+            };
+        }
+        fileGroups[filePath].children.push(node);
+    });
+
+    // Count relationships for each file group
+    kgFullData.links.forEach(link => {
+        const sourceFile = kgFullData.nodes.find(n => n.id === link.source)?.file_path;
+        const targetFile = kgFullData.nodes.find(n => n.id === link.target)?.file_path;
+
+        if (sourceFile && fileGroups[sourceFile]) {
+            fileGroups[sourceFile].relationshipCount++;
+        }
+        if (targetFile && fileGroups[targetFile]) {
+            fileGroups[targetFile].relationshipCount++;
+        }
+    });
+
+    // Create top-level nodes (file groups)
+    kgVisibleNodes = Object.values(fileGroups).slice(0, MAX_VISIBLE_NODES);
+
+    // Create links between file groups
+    kgVisibleLinks = [];
+    const fileGroupIds = new Set(kgVisibleNodes.map(n => n.id));
+
+    kgFullData.links.forEach(link => {
+        const sourceNode = kgFullData.nodes.find(n => n.id === link.source);
+        const targetNode = kgFullData.nodes.find(n => n.id === link.target);
+
+        if (sourceNode && targetNode) {
+            const sourceGroupId = `file_${sourceNode.file_path}`;
+            const targetGroupId = `file_${targetNode.file_path}`;
+
+            if (sourceGroupId !== targetGroupId && fileGroupIds.has(sourceGroupId) && fileGroupIds.has(targetGroupId)) {
+                // Check if link already exists
+                const existingLink = kgVisibleLinks.find(l =>
+                    l.source === sourceGroupId && l.target === targetGroupId
+                );
+
+                if (existingLink) {
+                    existingLink.weight = (existingLink.weight || 1) + 1;
+                } else {
+                    kgVisibleLinks.push({
+                        source: sourceGroupId,
+                        target: targetGroupId,
+                        type: link.type,
+                        weight: 1
+                    });
+                }
+            }
+        }
+    });
+
+    console.log(`Drill-down init: ${kgVisibleNodes.length} file groups, ${kgVisibleLinks.length} links`);
+
+    // Render force-directed graph
+    renderForceDirectedGraph();
+}
+
+function expandKGNode(nodeId) {
+    // Find the node
+    const node = kgVisibleNodes.find(n => n.id === nodeId);
+    if (!node) return;
+
+    if (kgExpandedNodes.has(nodeId)) {
+        // Collapse: remove children
+        collapseKGNode(nodeId);
+        return;
+    }
+
+    // Expand: add children
+    kgExpandedNodes.add(nodeId);
+
+    if (node.type === 'file_group') {
+        // Add child nodes from this file
+        const childNodes = node.children || [];
+
+        // Limit to avoid overload
+        const nodesToAdd = childNodes.slice(0, 30);
+
+        nodesToAdd.forEach(child => {
+            if (!kgVisibleNodes.find(n => n.id === child.id)) {
+                kgVisibleNodes.push({
+                    ...child,
+                    parentId: nodeId,
+                    expanded: false
+                });
+            }
+        });
+
+        // Add links involving these children
+        kgFullData.links.forEach(link => {
+            const sourceInNew = nodesToAdd.find(n => n.id === link.source);
+            const targetInNew = nodesToAdd.find(n => n.id === link.target);
+
+            if (sourceInNew || targetInNew) {
+                const sourceVisible = kgVisibleNodes.find(n => n.id === link.source);
+                const targetVisible = kgVisibleNodes.find(n => n.id === link.target);
+
+                if (sourceVisible && targetVisible) {
+                    if (!kgVisibleLinks.find(l => l.source === link.source && l.target === link.target)) {
+                        kgVisibleLinks.push({
+                            source: link.source,
+                            target: link.target,
+                            type: link.type,
+                            weight: link.weight || 1
+                        });
+                    }
+                }
+            }
+        });
+
+        // Update breadcrumb
+        kgBreadcrumb.push(node.name);
+        updateBreadcrumb();
+    }
+
+    // Cap total visible nodes
+    if (kgVisibleNodes.length > MAX_VISIBLE_NODES) {
+        console.warn(`Reached max visible nodes (${MAX_VISIBLE_NODES}), stopping expansion`);
+        return;
+    }
+
+    // Re-render
+    renderForceDirectedGraph();
+}
+
+function collapseKGNode(nodeId) {
+    kgExpandedNodes.delete(nodeId);
+
+    // Remove children
+    const childIds = kgVisibleNodes
+        .filter(n => n.parentId === nodeId)
+        .map(n => n.id);
+
+    kgVisibleNodes = kgVisibleNodes.filter(n => n.parentId !== nodeId);
+
+    // Remove links involving removed nodes
+    const childIdSet = new Set(childIds);
+    kgVisibleLinks = kgVisibleLinks.filter(l =>
+        !childIdSet.has(l.source) && !childIdSet.has(l.target)
+    );
+
+    // Update breadcrumb (remove last entry)
+    if (kgBreadcrumb.length > 1) {
+        kgBreadcrumb.pop();
+        updateBreadcrumb();
+    }
+
+    // Re-render
+    renderForceDirectedGraph();
+}
+
+// ============================================================================
+// MODE 2: HEATMAP OVERVIEW
+// ============================================================================
+
+function initHeatmapView() {
+    // Group nodes by file and count relationships
+    const fileStats = {};
+
+    kgFullData.nodes.forEach(node => {
+        const filePath = node.file_path || 'unknown';
+        if (!fileStats[filePath]) {
+            fileStats[filePath] = {
+                file: filePath,
+                nodeCount: 0,
+                relationshipCount: 0,
+                complexity: 0
+            };
+        }
+        fileStats[filePath].nodeCount++;
+    });
+
+    kgFullData.links.forEach(link => {
+        const sourceNode = kgFullData.nodes.find(n => n.id === link.source);
+        const targetNode = kgFullData.nodes.find(n => n.id === link.target);
+
+        if (sourceNode?.file_path && fileStats[sourceNode.file_path]) {
+            fileStats[sourceNode.file_path].relationshipCount++;
+        }
+        if (targetNode?.file_path && fileStats[targetNode.file_path]) {
+            fileStats[targetNode.file_path].relationshipCount++;
+        }
+    });
+
+    const statsArray = Object.values(fileStats);
+
+    console.log(`Heatmap init: ${statsArray.length} files`);
+
+    renderHeatmap(statsArray);
+}
+
+function renderHeatmap(fileStats) {
+    const svg = d3.select('#kg-graph');
+    const width = window.innerWidth - 320;
+    const height = window.innerHeight;
+
+    // Clear previous render
+    svg.selectAll('*').remove();
+    if (kgSimulation) {
+        kgSimulation.stop();
+    }
+
+    // Calculate grid layout
+    const cellSize = 80;
+    const padding = 4;
+    const cols = Math.floor(width / (cellSize + padding));
+    const rows = Math.ceil(fileStats.length / cols);
+
+    // Color scale based on relationship count
+    const maxRelationships = Math.max(...fileStats.map(f => f.relationshipCount));
+    const colorScale = d3.scaleSequential(d3.interpolateYlOrRd)
+        .domain([0, maxRelationships]);
+
+    // Size scale based on node count
+    const maxNodes = Math.max(...fileStats.map(f => f.nodeCount));
+    const sizeScale = d3.scaleLinear()
+        .domain([1, maxNodes])
+        .range([0.5, 1]);
+
+    const g = svg.append('g')
+        .attr('transform', `translate(${padding}, ${padding})`);
+
+    // Draw cells
+    fileStats.forEach((stat, i) => {
+        const row = Math.floor(i / cols);
+        const col = i % cols;
+        const x = col * (cellSize + padding);
+        const y = row * (cellSize + padding);
+        const size = cellSize * sizeScale(stat.nodeCount);
+
+        const cell = g.append('g')
+            .attr('class', 'heatmap-cell')
+            .attr('transform', `translate(${x}, ${y})`)
+            .style('cursor', 'pointer')
+            .on('click', () => drillIntoFile(stat.file));
+
+        cell.append('rect')
+            .attr('width', size)
+            .attr('height', size)
+            .attr('x', (cellSize - size) / 2)
+            .attr('y', (cellSize - size) / 2)
+            .attr('fill', colorScale(stat.relationshipCount))
+            .attr('stroke', '#4b5563')
+            .attr('stroke-width', 1)
+            .attr('rx', 4);
+
+        cell.append('text')
+            .attr('x', cellSize / 2)
+            .attr('y', cellSize + 12)
+            .attr('class', 'heatmap-label')
+            .attr('text-anchor', 'middle')
+            .attr('fill', 'var(--text-secondary)')
+            .style('font-size', '10px')
+            .text(stat.file.split('/').pop());
+
+        // Tooltip
+        cell.append('title')
+            .text(`${stat.file}\nNodes: ${stat.nodeCount}\nRelationships: ${stat.relationshipCount}`);
+    });
+
+    // Legend
+    const legend = svg.append('g')
+        .attr('transform', `translate(${width - 200}, 20)`);
+
+    legend.append('text')
+        .attr('x', 0)
+        .attr('y', 0)
+        .text('Relationship Density')
+        .style('fill', 'var(--text-primary)')
+        .style('font-size', '12px')
+        .style('font-weight', 'bold');
+
+    const legendScale = d3.scaleLinear()
+        .domain([0, maxRelationships])
+        .range([0, 150]);
+
+    const legendAxis = d3.axisBottom(legendScale)
+        .ticks(5);
+
+    const legendGradient = legend.append('defs')
+        .append('linearGradient')
+        .attr('id', 'heatmap-gradient')
+        .attr('x1', '0%')
+        .attr('x2', '100%');
+
+    legendGradient.append('stop')
+        .attr('offset', '0%')
+        .attr('stop-color', d3.interpolateYlOrRd(0));
+
+    legendGradient.append('stop')
+        .attr('offset', '100%')
+        .attr('stop-color', d3.interpolateYlOrRd(1));
+
+    legend.append('rect')
+        .attr('x', 0)
+        .attr('y', 10)
+        .attr('width', 150)
+        .attr('height', 20)
+        .style('fill', 'url(#heatmap-gradient)');
+
+    legend.append('g')
+        .attr('transform', 'translate(0, 30)')
+        .call(legendAxis)
+        .selectAll('text')
+        .style('fill', 'var(--text-secondary)')
+        .style('font-size', '10px');
+}
+
+function drillIntoFile(filePath) {
+    console.log(`Drilling into file: ${filePath}`);
+
+    // Switch to drill-down mode and expand this file
+    kgViewMode = 'drill-down';
+    document.getElementById('kg-view-mode').value = 'drill-down';
+    setKGViewMode('drill-down');
+
+    // Find and expand the file group
+    const fileGroup = kgVisibleNodes.find(n => n.file_path === filePath);
+    if (fileGroup) {
+        expandKGNode(fileGroup.id);
+    }
+}
+
+// ============================================================================
+// MODE 3: RELATIONSHIP EXPLORER
+// ============================================================================
+
+function initRelationshipView() {
+    // Filter by first relationship type (calls)
+    filterKGByRelType();
+}
+
+function filterKGByRelType() {
+    // Get selected relationship type
+    const relType = document.querySelector('input[name="kg-rel-type"]:checked')?.value || 'calls';
+
+    // Filter nodes that are connected by this relationship type
+    const relevantLinks = kgFullData.links.filter(l => l.type === relType);
+
+    // Get nodes involved in these relationships
+    const nodeIds = new Set();
+    relevantLinks.forEach(link => {
+        nodeIds.add(link.source);
+        nodeIds.add(link.target);
+    });
+
+    // Limit to first N nodes for performance
+    const nodeIdArray = Array.from(nodeIds).slice(0, MAX_VISIBLE_NODES);
+
+    kgVisibleNodes = kgFullData.nodes.filter(n => nodeIdArray.includes(n.id));
+    kgVisibleLinks = relevantLinks.filter(l =>
+        nodeIdArray.includes(l.source) && nodeIdArray.includes(l.target)
+    );
+
+    console.log(`Relationship view (${relType}): ${kgVisibleNodes.length} nodes, ${kgVisibleLinks.length} links`);
+
+    // Render
+    renderForceDirectedGraph();
+}
+
+// ============================================================================
+// FORCE-DIRECTED GRAPH RENDERER (used by drill-down and relationship modes)
+// ============================================================================
+
+function renderForceDirectedGraph() {
+    // Use the existing renderKG function but with kgVisibleNodes/kgVisibleLinks
+    // We'll set the global variables and call renderKG
+    kgNodes = kgVisibleNodes;
+    kgLinks = kgVisibleLinks;
+
+    renderKG();
 }
 
 function renderKG() {
@@ -5803,7 +6407,10 @@ function renderKG() {
         .join('circle')
         .attr('class', 'kg-node')
         .attr('r', d => {
-            // Larger radius for subproject nodes
+            // Larger radius for file groups and subproject nodes
+            if (d.type === 'file_group') {
+                return 15;
+            }
             if (d.type === 'subproject') {
                 return 20;
             }
@@ -5816,16 +6423,52 @@ function renderKG() {
             }
             return kgNodeColors[d.group] || kgNodeColors[0];
         })
-        .attr('stroke', '#fff')
+        .attr('stroke', d => {
+            // Show expanded state with blue stroke
+            if (kgExpandedNodes.has(d.id)) {
+                return '#60a5fa';
+            }
+            return '#fff';
+        })
         .attr('stroke-width', d => {
-            // Thicker stroke for subproject nodes
-            if (d.type === 'subproject') {
+            // Thicker stroke for expanded or subproject nodes
+            if (kgExpandedNodes.has(d.id)) {
                 return 3;
+            }
+            if (d.type === 'subproject' || d.type === 'file_group') {
+                return 2.5;
             }
             return 1.5;
         })
+        .attr('stroke-dasharray', d => {
+            // Dashed stroke for expandable nodes
+            if (d.type === 'file_group' && !kgExpandedNodes.has(d.id)) {
+                return '3,3';
+            }
+            return null;
+        })
+        .attr('opacity', d => {
+            // Slightly transparent for collapsed nodes
+            if (d.type === 'file_group' && !kgExpandedNodes.has(d.id)) {
+                return 0.7;
+            }
+            return 1;
+        })
         .style('cursor', 'pointer')
-        .on('click', (event, d) => showKGNodeInfo(d))
+        .on('click', (event, d) => {
+            // Handle click based on view mode
+            if (kgViewMode === 'drill-down') {
+                expandKGNode(d.id);
+            } else {
+                showKGNodeInfo(d);
+            }
+        })
+        .on('dblclick', (event, d) => {
+            // Double-click: collapse node in drill-down mode
+            if (kgViewMode === 'drill-down' && kgExpandedNodes.has(d.id)) {
+                collapseKGNode(d.id);
+            }
+        })
         .on('mouseover', function(event, d) {
             d3.select(this)
                 .attr('stroke', '#60a5fa')
@@ -5865,14 +6508,23 @@ function renderKG() {
         .attr('fill', '#e0e0e0')
         .attr('text-anchor', 'middle')
         .attr('dy', d => {
-            // Adjust label position for subproject nodes
+            // Adjust label position for file groups and subproject nodes
+            if (d.type === 'file_group') {
+                return -19;
+            }
             if (d.type === 'subproject') {
                 return -24;
             }
             return -12;
         })
         .style('pointer-events', 'none')
-        .text(d => d.name || d.id);
+        .text(d => {
+            // Show relationship count for file groups
+            if (d.type === 'file_group' && d.relationshipCount > 0) {
+                return `${d.name} (${d.relationshipCount})`;
+            }
+            return d.name || d.id;
+        });
 
     // Update positions on tick
     kgSimulation.on('tick', () => {

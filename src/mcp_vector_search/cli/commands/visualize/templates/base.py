@@ -68,12 +68,31 @@ def generate_html_template() -> str:
 
         <div id="kg-controls" style="display: none;">
             <div class="control-group">
-                <label style="color: var(--text-primary); margin-bottom: 8px;">Relationship Filters</label>
+                <label style="color: var(--text-primary); margin-bottom: 8px;">KG View Mode</label>
+                <select id="kg-view-mode" onchange="setKGViewMode(this.value)" style="width: 100%; padding: 8px; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; font-size: 13px;">
+                    <option value="drill-down">🔍 Drill-Down Explorer</option>
+                    <option value="heatmap">🔥 Heatmap Overview</option>
+                    <option value="relationships">🔗 Relationship Explorer</option>
+                </select>
+            </div>
+
+            <div id="kg-drilldown-controls" class="control-group">
+                <label style="color: var(--text-primary); margin-bottom: 8px;">Navigation</label>
+                <div id="kg-breadcrumb" style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; word-wrap: break-word;">
+                    Root
+                </div>
+                <button onclick="collapseAllKGNodes()" style="width: 100%; padding: 8px; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer;">
+                    Reset View
+                </button>
+            </div>
+
+            <div id="kg-relationship-controls" class="control-group" style="display: none;">
+                <label style="color: var(--text-primary); margin-bottom: 8px;">Relationship Type</label>
                 <div style="display: flex; flex-direction: column; gap: 8px;">
-                    <label style="font-size: 12px;"><input type="checkbox" id="kg-show-calls" checked onchange="filterKGLinks()"> Calls</label>
-                    <label style="font-size: 12px;"><input type="checkbox" id="kg-show-imports" checked onchange="filterKGLinks()"> Imports</label>
-                    <label style="font-size: 12px;"><input type="checkbox" id="kg-show-inherits" checked onchange="filterKGLinks()"> Inherits</label>
-                    <label style="font-size: 12px;"><input type="checkbox" id="kg-show-contains" checked onchange="filterKGLinks()"> Contains</label>
+                    <label style="font-size: 12px;"><input type="radio" name="kg-rel-type" value="calls" checked onchange="filterKGByRelType()"> <span class="rel-badge" style="background: #f59e0b;">Calls</span></label>
+                    <label style="font-size: 12px;"><input type="radio" name="kg-rel-type" value="imports" onchange="filterKGByRelType()"> <span class="rel-badge" style="background: #3b82f6;">Imports</span></label>
+                    <label style="font-size: 12px;"><input type="radio" name="kg-rel-type" value="inherits" onchange="filterKGByRelType()"> <span class="rel-badge" style="background: #ef4444;">Inherits</span></label>
+                    <label style="font-size: 12px;"><input type="radio" name="kg-rel-type" value="contains" onchange="filterKGByRelType()"> <span class="rel-badge" style="background: #6b7280;">Contains</span></label>
                 </div>
             </div>
         </div>
