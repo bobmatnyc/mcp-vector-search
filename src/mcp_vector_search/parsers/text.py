@@ -43,7 +43,7 @@ class TextParser(BaseParser):
         Returns:
             Dictionary of frontmatter data
         """
-        match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
+        match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
         if match:
             try:
                 return yaml.safe_load(match.group(1)) or {}
@@ -63,11 +63,11 @@ class TextParser(BaseParser):
             List of deduplicated tags
         """
         tags = []
-        for field in ['tags', 'categories', 'keywords', 'labels']:
+        for field in ["tags", "categories", "keywords", "labels"]:
             val = frontmatter.get(field, [])
             if isinstance(val, str):
                 # Handle comma-separated strings
-                tags.extend([t.strip() for t in val.split(',') if t.strip()])
+                tags.extend([t.strip() for t in val.split(",") if t.strip()])
             elif isinstance(val, list):
                 for item in val:
                     if isinstance(item, list):
@@ -98,7 +98,7 @@ class TextParser(BaseParser):
 
         # Extract frontmatter tags for markdown files
         tags = []
-        if str(file_path).endswith(('.md', '.markdown')):
+        if str(file_path).endswith((".md", ".markdown")):
             frontmatter = self._extract_frontmatter(content)
             tags = self._extract_tags_from_frontmatter(frontmatter)
 
@@ -246,7 +246,7 @@ class TextParser(BaseParser):
 
             # Extract frontmatter tags for markdown files
             tags = []
-            if str(file_path).endswith(('.md', '.markdown')):
+            if str(file_path).endswith((".md", ".markdown")):
                 frontmatter = self._extract_frontmatter(content)
                 tags = self._extract_tags_from_frontmatter(frontmatter)
 
@@ -350,7 +350,7 @@ class TextParser(BaseParser):
         chunks = []
 
         # Simple line-based chunking
-        chunk_size = TEXT_CHUNK_SIZE // 80  # Approximate lines per chunk
+        chunk_size = TEXT_CHUNK_SIZE  # Use TEXT_CHUNK_SIZE as lines per chunk
 
         for i in range(0, len(lines), chunk_size):
             start_line = i + 1
