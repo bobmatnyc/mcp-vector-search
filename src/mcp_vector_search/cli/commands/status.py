@@ -231,21 +231,39 @@ async def show_status(
         async with database:
             db_stats = await database.get_stats(skip_stats=should_skip_stats)
 
-            # Show warning if large database detected
-            if isinstance(db_stats.total_chunks, str):
+            # Check if index is corrupted
+            if db_stats.last_updated == "corrupted":
                 if not json_output:
                     console.print(
-                        f"\n[yellow]⚠️  Large database detected ({db_stats.index_size_mb:.1f} MB)[/yellow]"
+                        "\n[red]⚠️  Index corrupted (missing data fragments)[/red]"
                     )
                     console.print(
-                        "    [yellow]Detailed statistics skipped to prevent potential crashes.[/yellow]"
+                        "    [yellow]Run 'mcp-vector-search index --force' to rebuild the index.[/yellow]\n"
                     )
-                    if not force_stats:
+                # Set minimal stats for corrupted index
+                index_stats = {
+                    "total_indexable_files": 0,
+                    "indexed_files": 0,
+                    "total_chunks": 0,
+                    "languages": {},
+                    "parser_info": {},
+                }
+            else:
+                # Show warning if large database detected
+                if isinstance(db_stats.total_chunks, str):
+                    if not json_output:
                         console.print(
-                            "    [dim]Use --force-stats to attempt full statistics (may crash).[/dim]\n"
+                            f"\n[yellow]⚠️  Large database detected ({db_stats.index_size_mb:.1f} MB)[/yellow]"
                         )
+                        console.print(
+                            "    [yellow]Detailed statistics skipped to prevent potential crashes.[/yellow]"
+                        )
+                        if not force_stats:
+                            console.print(
+                                "    [dim]Use --force-stats to attempt full statistics (may crash).[/dim]\n"
+                            )
 
-            index_stats = await indexer.get_indexing_stats(db_stats=db_stats)
+                index_stats = await indexer.get_indexing_stats(db_stats=db_stats)
 
         # Get project information with pre-computed file count (avoids filesystem scan)
         project_info = project_manager.get_project_info(file_count=db_stats.total_files)

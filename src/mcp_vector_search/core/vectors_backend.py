@@ -8,6 +8,7 @@ for semantic search. Enables:
 - Efficient vector indexing with IVF_PQ
 """
 
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -108,6 +109,50 @@ class VectorsBackend:
         # Vector dimension is auto-detected from first batch or set explicitly
         self.vector_dim = vector_dim
 
+    def _is_corruption_error(self, error: Exception) -> bool:
+        """Check if error indicates corrupted LanceDB data fragments.
+
+        Args:
+            error: Exception to check
+
+        Returns:
+            True if error indicates corruption (missing .lance file), False otherwise
+        """
+        error_msg = str(error).lower()
+        # Check for lance "Not found" errors with .lance file path pattern
+        return "not found" in error_msg and ".lance" in error_msg
+
+    def _handle_corrupt_table(self, error: Exception, table_name: str) -> bool:
+        """Handle corrupted LanceDB table by deleting and resetting.
+
+        Args:
+            error: The corruption error
+            table_name: Name of the corrupted table
+
+        Returns:
+            True if recovery successful, False if unrecoverable
+        """
+        if not self._is_corruption_error(error):
+            return False
+
+        try:
+            table_path = self.db_path / f"{table_name}.lance"
+            if table_path.exists():
+                logger.warning(
+                    f"Detected corrupted {table_name} table (missing data fragment). "
+                    f"Auto-recovering by deleting: {table_path}"
+                )
+                shutil.rmtree(table_path)
+                logger.info(f"Deleted corrupted table: {table_path}")
+
+            # Reset internal table reference
+            self._table = None
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to recover from corruption: {e}")
+            return False
+
     async def initialize(self) -> None:
         """Create table if not exists with proper schema and vector index.
 
@@ -132,8 +177,18 @@ class VectorsBackend:
             )
 
             if self.TABLE_NAME in table_names:
-                self._table = self._db.open_table(self.TABLE_NAME)
-                logger.debug(f"Opened existing vectors table at {self.db_path}")
+                try:
+                    self._table = self._db.open_table(self.TABLE_NAME)
+                    logger.debug(f"Opened existing vectors table at {self.db_path}")
+                except Exception as e:
+                    # Check for corruption and auto-recover
+                    if self._handle_corrupt_table(e, self.TABLE_NAME):
+                        self._table = None
+                        logger.info(
+                            "Vectors table corrupted and deleted. Will be recreated on next index."
+                        )
+                    else:
+                        raise
             else:
                 # Table will be created on first add_vectors with schema
                 self._table = None
@@ -519,6 +574,15 @@ class VectorsBackend:
             return search_results
 
         except Exception as e:
+            # Check for corruption and auto-recover
+            if self._handle_corrupt_table(e, self.TABLE_NAME):
+                logger.error(
+                    "Vectors table corrupted. Search unavailable. Run 'mcp-vector-search index' to rebuild."
+                )
+                raise SearchError(
+                    "Index corrupted. Run 'mcp-vector-search index' to rebuild."
+                ) from e
+
             logger.error(f"Vector search failed: {e}")
             raise SearchError(f"Vector search failed: {e}") from e
 
@@ -691,6 +755,20 @@ class VectorsBackend:
             }
 
         except Exception as e:
+            # Check for corruption and auto-recover
+            if self._handle_corrupt_table(e, self.TABLE_NAME):
+                logger.warning(
+                    "Vectors table corrupted. Stats unavailable. Run 'mcp-vector-search index' to rebuild."
+                )
+                return {
+                    "total": 0,
+                    "files": 0,
+                    "languages": {},
+                    "chunk_types": {},
+                    "models": {},
+                    "avg_vector_norm": 0.0,
+                }
+
             logger.error(f"Failed to get vector stats: {e}")
             return {
                 "total": 0,
@@ -724,6 +802,13 @@ class VectorsBackend:
             logger.info("Vector index rebuilt successfully")
 
         except Exception as e:
+            # Check for corruption and auto-recover
+            if self._handle_corrupt_table(e, self.TABLE_NAME):
+                logger.warning(
+                    "Vectors table corrupted during index rebuild. Skipped. Run 'mcp-vector-search index' to rebuild."
+                )
+                return
+
             # Non-fatal - search will still work with brute force
             logger.warning(f"Failed to rebuild vector index: {e}")
 

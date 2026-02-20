@@ -11,6 +11,7 @@ LanceDB provides:
 import hashlib
 import json
 import os
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -227,6 +228,50 @@ class LanceVectorDatabase:
         self._write_buffer: list[dict] = []
         self._write_buffer_size = _detect_optimal_write_buffer_size()
 
+    def _is_corruption_error(self, error: Exception) -> bool:
+        """Check if error indicates corrupted LanceDB data fragments.
+
+        Args:
+            error: Exception to check
+
+        Returns:
+            True if error indicates corruption (missing .lance file), False otherwise
+        """
+        error_msg = str(error).lower()
+        # Check for lance "Not found" errors with .lance file path pattern
+        return "not found" in error_msg and ".lance" in error_msg
+
+    def _handle_corrupt_table(self, error: Exception, table_name: str) -> bool:
+        """Handle corrupted LanceDB table by deleting and resetting.
+
+        Args:
+            error: The corruption error
+            table_name: Name of the corrupted table
+
+        Returns:
+            True if recovery successful, False if unrecoverable
+        """
+        if not self._is_corruption_error(error):
+            return False
+
+        try:
+            table_path = self.persist_directory / f"{table_name}.lance"
+            if table_path.exists():
+                logger.warning(
+                    f"Detected corrupted {table_name} table (missing data fragment). "
+                    f"Auto-recovering by deleting: {table_path}"
+                )
+                shutil.rmtree(table_path)
+                logger.info(f"Deleted corrupted table: {table_path}")
+
+            # Reset internal table reference
+            self._table = None
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to recover from corruption: {e}")
+            return False
+
     async def initialize(self) -> None:
         """Initialize LanceDB database and table.
 
@@ -250,10 +295,20 @@ class LanceVectorDatabase:
             )
 
             if self.collection_name in table_names:
-                self._table = self._db.open_table(self.collection_name)
-                logger.debug(
-                    f"LanceDB table '{self.collection_name}' opened at {self.persist_directory}"
-                )
+                try:
+                    self._table = self._db.open_table(self.collection_name)
+                    logger.debug(
+                        f"LanceDB table '{self.collection_name}' opened at {self.persist_directory}"
+                    )
+                except Exception as e:
+                    # Check for corruption and auto-recover
+                    if self._handle_corrupt_table(e, self.collection_name):
+                        self._table = None
+                        logger.info(
+                            f"Table '{self.collection_name}' corrupted and deleted. Will be recreated on next index."
+                        )
+                    else:
+                        raise
             else:
                 # Table will be created on first add_chunks
                 self._table = None
@@ -326,6 +381,14 @@ class LanceVectorDatabase:
             self._table.optimize(cleanup_older_than=timedelta(seconds=0))
             logger.info("LanceDB table optimized successfully")
         except Exception as e:
+            # Check for corruption and auto-recover
+            if self._handle_corrupt_table(e, self.collection_name):
+                logger.warning(
+                    f"Table '{self.collection_name}' corrupted during optimize. Skipped. "
+                    "Run 'mcp-vector-search index' to rebuild."
+                )
+                return
+
             # Non-fatal - optimization failure doesn't affect data integrity
             logger.warning(f"Failed to optimize LanceDB table: {e}")
 
@@ -608,6 +671,16 @@ class LanceVectorDatabase:
             return search_results
 
         except Exception as e:
+            # Check for corruption and auto-recover
+            if self._handle_corrupt_table(e, self.collection_name):
+                logger.error(
+                    f"Table '{self.collection_name}' corrupted. Search unavailable. "
+                    "Run 'mcp-vector-search index' to rebuild."
+                )
+                raise DatabaseError(
+                    "Index corrupted. Run 'mcp-vector-search index' to rebuild."
+                ) from e
+
             logger.error(f"LanceDB search failed: {e}")
             raise DatabaseError(f"Search failed: {e}") from e
 
@@ -727,6 +800,24 @@ class LanceVectorDatabase:
             )
 
         except Exception as e:
+            # Check for corruption and auto-recover
+            if self._handle_corrupt_table(e, self.collection_name):
+                logger.warning(
+                    f"Table '{self.collection_name}' corrupted. Stats unavailable. "
+                    "Run 'mcp-vector-search index' to rebuild."
+                )
+                # Return minimal stats indicating corruption
+                return IndexStats(
+                    total_files=0,
+                    total_chunks=0,
+                    languages={},
+                    file_types={},
+                    index_size_mb=0.0,
+                    last_updated="corrupted",
+                    embedding_model="unknown",
+                    database_size_bytes=0,
+                )
+
             logger.error(f"Failed to get LanceDB stats: {e}")
             # Return minimal stats on error
             return IndexStats(
