@@ -174,6 +174,58 @@ class VectorsBackend:
             logger.error(f"Failed to recover from corruption: {e}")
             return False
 
+    def _delete_chunk_ids(self, chunk_ids: list[str]) -> int:
+        """Delete existing vectors with specified chunk_ids to prevent duplicates.
+
+        This method is called before appending new vectors to ensure no duplicates
+        exist in the vectors table. Uses batched deletes to avoid SQL length limits.
+
+        Args:
+            chunk_ids: List of chunk_ids to delete
+
+        Returns:
+            Number of chunks deleted (estimated, not exact)
+
+        Note:
+            Deletion failures are logged but non-fatal. If deletion fails, append
+            will still proceed, which may result in duplicates. This is acceptable
+            as search will still work (just with some redundancy).
+        """
+        if self._table is None or not chunk_ids:
+            return 0
+
+        deleted_count = 0
+        batch_size = 500  # Limit SQL query length
+
+        try:
+            for i in range(0, len(chunk_ids), batch_size):
+                batch = chunk_ids[i : i + batch_size]
+                # Build SQL IN clause with proper escaping
+                id_list = ", ".join(
+                    f"'{cid.replace(chr(39), chr(39) * 2)}'" for cid in batch
+                )
+
+                try:
+                    # LanceDB delete returns None, so we can't get exact count
+                    self._table.delete(f"chunk_id IN ({id_list})")
+                    deleted_count += len(batch)
+                except Exception as e:
+                    # Log but don't fail - dedup is best-effort
+                    logger.debug(
+                        f"Dedup delete failed for batch {i // batch_size + 1} "
+                        f"(non-fatal, may result in duplicates): {e}"
+                    )
+
+            if deleted_count > 0:
+                logger.debug(
+                    f"Deleted {deleted_count} existing vectors to prevent duplicates"
+                )
+
+        except Exception as e:
+            logger.warning(f"Dedup deletion failed (non-fatal): {e}")
+
+        return deleted_count
+
     async def initialize(self) -> None:
         """Create table if not exists with proper schema and vector index.
 
@@ -395,6 +447,9 @@ class VectorsBackend:
                 normalized_vectors, schema=schema
             )
 
+            # Deduplicate: Extract chunk_ids to remove before adding new vectors
+            chunk_ids_to_add = [row["chunk_id"] for row in normalized_vectors]
+
             # Create or append to table
             if self._table is None:
                 # Check if table exists (it might exist but self._table wasn't opened)
@@ -419,6 +474,10 @@ class VectorsBackend:
                     if existing_dim == self.vector_dim:
                         # Dimensions match, safe to append
                         self._table = existing_table
+
+                        # Deduplicate: Delete existing vectors with same chunk_ids before appending
+                        self._delete_chunk_ids(chunk_ids_to_add)
+
                         self._table.add(pa_table, mode="append")
                         logger.debug(
                             f"Opened existing table and added {len(normalized_vectors)} vectors (append mode)"
@@ -470,6 +529,9 @@ class VectorsBackend:
                     )
                 else:
                     # Dimensions match, safe to append
+                    # Deduplicate: Delete existing vectors with same chunk_ids before appending
+                    self._delete_chunk_ids(chunk_ids_to_add)
+
                     # OPTIMIZATION: Use mode='append' for faster bulk inserts
                     # This defers index updates until later, improving write throughput
                     self._table.add(pa_table, mode="append")
