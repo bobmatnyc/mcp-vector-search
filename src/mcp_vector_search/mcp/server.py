@@ -27,6 +27,7 @@ from .analysis_handlers import AnalysisHandlers
 from .kg_handlers import KGHandlers
 from .project_handlers import ProjectHandlers
 from .search_handlers import SearchHandlers
+from .story_handlers import StoryHandlers
 from .tool_schemas import get_tool_schemas
 from .wiki_handlers import WikiHandlers
 
@@ -90,6 +91,7 @@ class MCPVectorSearchServer:
         self._project_handlers: ProjectHandlers | None = None
         self._wiki_handlers: WikiHandlers | None = None
         self._kg_handlers: KGHandlers | None = None
+        self._story_handlers: StoryHandlers | None = None
 
     async def initialize(self) -> None:
         """Initialize the search engine and database."""
@@ -157,6 +159,7 @@ class MCPVectorSearchServer:
             )
             self._wiki_handlers = WikiHandlers(self.project_root)
             self._kg_handlers = KGHandlers(self.project_root)
+            self._story_handlers = StoryHandlers(self.project_root)
 
             self._initialized = True
             logger.info(f"MCP server initialized for project: {self.project_root}")
@@ -296,6 +299,10 @@ class MCPVectorSearchServer:
                 return await self._kg_handlers.handle_kg_stats(args)
             elif tool_name == "kg_query":
                 return await self._kg_handlers.handle_kg_query(args)
+
+            # Delegate to story handlers
+            elif tool_name == "story_generate":
+                return await self._story_handlers.handle_story_generate(args)
 
             else:
                 return CallToolResult(

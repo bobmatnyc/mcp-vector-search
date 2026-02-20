@@ -133,6 +133,7 @@ from .commands.reset import reset_app  # noqa: E402
 from .commands.search import search_app, search_main  # noqa: E402, F401
 from .commands.setup import setup_app  # noqa: E402
 from .commands.status import main as status_main  # noqa: E402
+from .commands.story import story_app  # noqa: E402
 from .commands.uninstall import uninstall_app  # noqa: E402
 from .commands.vendor_patterns import app as vendor_patterns_app  # noqa: E402
 from .commands.visualize import app as visualize_app  # noqa: E402
@@ -240,6 +241,11 @@ app.add_typer(
 # 12.6. KG - Knowledge graph operations
 if _kg_available and kg_app:
     app.add_typer(kg_app, name="kg", help="📊 Knowledge graph operations")
+
+# 12.7. STORY - Development narrative generation
+app.add_typer(
+    story_app, name="story", help="📖 Generate development narrative from git history"
+)
 
 # 13. HELP - Enhanced help
 # (defined below inline)

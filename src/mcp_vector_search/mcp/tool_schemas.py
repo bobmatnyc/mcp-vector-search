@@ -26,6 +26,7 @@ def get_tool_schemas() -> list[Tool]:
         _get_kg_build_schema(),
         _get_kg_stats_schema(),
         _get_kg_query_schema(),
+        _get_story_generate_schema(),
     ]
 
 
@@ -605,5 +606,48 @@ def _get_kg_query_schema() -> Tool:
                 },
             },
             "required": ["entity"],
+        },
+    )
+
+
+def _get_story_generate_schema() -> Tool:
+    """Get story_generate tool schema."""
+    return Tool(
+        name="story_generate",
+        description="Generate a development narrative from git history enriched with semantic code analysis. Produces a StoryIndex JSON artifact with extraction data, semantic analysis, and optional LLM-generated narrative.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project_path": {
+                    "type": "string",
+                    "description": "Path to the project root directory. Defaults to current project.",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'json', 'markdown', 'html', or 'all'",
+                    "enum": ["json", "markdown", "html", "all"],
+                    "default": "json",
+                },
+                "max_commits": {
+                    "type": "integer",
+                    "description": "Maximum number of commits to analyze",
+                    "default": 200,
+                },
+                "max_issues": {
+                    "type": "integer",
+                    "description": "Maximum number of issues to fetch",
+                    "default": 100,
+                },
+                "use_llm": {
+                    "type": "boolean",
+                    "description": "Whether to use LLM for narrative generation",
+                    "default": True,
+                },
+                "model": {
+                    "type": "string",
+                    "description": "LLM model to use (optional, uses default if not specified)",
+                },
+            },
+            "required": [],
         },
     )
