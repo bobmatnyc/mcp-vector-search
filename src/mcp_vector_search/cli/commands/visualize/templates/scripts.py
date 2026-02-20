@@ -4776,11 +4776,79 @@ function getComplexityColor(complexity) {
     return '#da3633';                         // F - red
 }
 
-// Get color for a node based on its complexity or type
+// Helper: Get stroke-dasharray pattern based on smell count (Axis 2)
+function getSmellDashArray(smellCount) {
+    if (!smellCount || smellCount === 0) return 'none';  // solid border
+    if (smellCount === 1) return '12,4';  // barely dashed
+    if (smellCount === 2) return '8,4';   // lightly dashed
+    if (smellCount === 3) return '4,4';   // medium dashed
+    return '2,4';                          // heavily dashed/dotted (4+)
+}
+
+// Helper: Get border width based on smell count (Axis 2)
+function getSmellBorderWidth(smellCount) {
+    if (!smellCount || smellCount === 0) return 0.5;
+    if (smellCount === 1) return 1.5;
+    if (smellCount === 2) return 2;
+    if (smellCount === 3) return 2.5;
+    return 3;  // 4+ smells
+}
+
+// Helper: Get border color based on smell count (Axis 2)
+function getSmellBorderColor(smellCount) {
+    if (!smellCount || smellCount === 0) return 'rgba(0,0,0,0.3)';  // default subtle
+    if (smellCount === 1) return 'rgba(218, 54, 51, 0.5)';  // light red
+    if (smellCount === 2) return 'rgba(218, 54, 51, 0.7)';  // medium red
+    return 'rgba(218, 54, 51, 1)';  // full red for 3+
+}
+
+// Helper: Parse hex color to RGB
+function hexToRgb(hex) {
+    const result = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(hex);
+    return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+    } : { r: 0, g: 0, b: 0 };
+}
+
+// Helper: RGB to hex
+function rgbToHex(r, g, b) {
+    return '#' + [r, g, b].map(x => {
+        const hex = Math.round(x).toString(16);
+        return hex.length === 1 ? '0' + hex : hex;
+    }).join('');
+}
+
+// Blend complexity color with quality score to create purple for worst code (Axis 3)
+function blendComplexityQuality(complexity, qualityScore) {
+    // Get base complexity color
+    const complexityColor = getComplexityColor(complexity);
+
+    // Default to healthy if no quality score
+    const quality = qualityScore !== undefined && qualityScore !== null ? qualityScore : 1.0;
+
+    // When quality is poor (low score), blend toward blue
+    // quality = 1.0 → no blue (healthy), quality = 0.0 → max blue (poor)
+    const blueAmount = 1.0 - quality;
+
+    // Parse complexity color
+    const rgb = hexToRgb(complexityColor);
+
+    // Blend: add blue proportional to blueAmount
+    // For worst code: red (complexity) + blue (poor quality) = purple
+    const blendedR = rgb.r * (1 - blueAmount * 0.3);  // reduce red slightly
+    const blendedG = rgb.g * (1 - blueAmount * 0.3);  // reduce green slightly
+    const blendedB = Math.min(255, rgb.b + (255 * blueAmount * 0.7));  // add blue
+
+    return rgbToHex(blendedR, blendedG, blendedB);
+}
+
+// Get color for a node based on its complexity or type (with quality blending)
 function getNodeColor(d) {
-    // If it's a leaf node with complexity, use complexity color
+    // If it's a leaf node with complexity, blend complexity with quality score
     if (d.data.complexity !== undefined && d.data.complexity !== null) {
-        return getComplexityColor(d.data.complexity);
+        return blendComplexityQuality(d.data.complexity, d.data.quality_score);
     }
 
     // Color by node type for non-leaf nodes
@@ -4870,14 +4938,15 @@ function renderTreemap() {
         .join('g')
         .attr('transform', d => `translate(${d.x0},${d.y0})`);
 
-    // Add rectangles
+    // Add rectangles (with three-axis visual encoding)
     cell.append('rect')
         .attr('class', 'treemap-cell')
         .attr('width', d => Math.max(0, d.x1 - d.x0))
         .attr('height', d => Math.max(0, d.y1 - d.y0))
-        .attr('fill', d => getNodeColor(d))
-        .attr('stroke', 'rgba(0,0,0,0.3)')
-        .attr('stroke-width', 0.5)
+        .attr('fill', d => getNodeColor(d))  // Axis 1 (red) + Axis 3 (blue) = complexity + quality
+        .attr('stroke', d => getSmellBorderColor(d.data.smell_count))  // Axis 2: smell intensity
+        .attr('stroke-width', d => getSmellBorderWidth(d.data.smell_count))  // Axis 2: thicker for more smells
+        .attr('stroke-dasharray', d => getSmellDashArray(d.data.smell_count))  // Axis 2: dashed for smells
         .style('cursor', 'pointer')
         .style('opacity', 1)
         .on('click', handleTreemapClick)
@@ -4891,12 +4960,14 @@ function renderTreemap() {
             handleTreemapHover(event, d);
         })
         .on('mouseout', function(event, d) {
+            const smellCount = d.data.smell_count || 0;
             d3.select(this)
                 .transition()
                 .duration(150)
                 .style('opacity', 1)
-                .attr('stroke', 'rgba(0,0,0,0.3)')
-                .attr('stroke-width', 0.5);
+                .attr('stroke', getSmellBorderColor(smellCount))
+                .attr('stroke-width', getSmellBorderWidth(smellCount))
+                .attr('stroke-dasharray', getSmellDashArray(smellCount));
             hideVizTooltip();
         })
         .append('title')
@@ -4955,6 +5026,9 @@ function renderTreemap() {
 
     // Create tooltip element if it doesn't exist
     ensureVizTooltip();
+
+    // Add visual guide legend
+    addVisualGuideLegend(svg, width, height);
 
     console.timeEnd('renderTreemap');
     console.log(`Rendered ${displayRoot.descendants().length} treemap cells`);
@@ -5040,6 +5114,21 @@ function handleTreemapHover(event, d) {
     if (d.data.complexity !== undefined && d.data.complexity !== null) {
         const grade = getComplexityGrade(d.data.complexity);
         html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Complexity:</span> ${d.data.complexity.toFixed(1)} (${grade})</div>`;
+    }
+
+    // Show code smells (Axis 2)
+    if (d.data.smell_count !== undefined && d.data.smell_count > 0) {
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Smells:</span> ${d.data.smell_count}</div>`;
+        if (d.data.smells && d.data.smells.length > 0) {
+            const smellNames = d.data.smells.map(s => s.type || s).join(', ');
+            html += `<div class="viz-tooltip-row" style="font-size: 10px; padding-left: 10px;">${escapeHtml(smellNames)}</div>`;
+        }
+    }
+
+    // Show quality score (Axis 3)
+    if (d.data.quality_score !== undefined && d.data.quality_score !== null) {
+        const qualityPercent = (d.data.quality_score * 100).toFixed(0);
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Quality:</span> ${qualityPercent}%</div>`;
     }
 
     if (d.data.file_path) {
@@ -5188,15 +5277,16 @@ function renderSunburst() {
     const g = svg.append('g')
         .attr('transform', `translate(${width / 2}, ${height / 2})`);
 
-    // Create arcs
+    // Create arcs (with three-axis visual encoding)
     const arcs = g.selectAll('path')
         .data(displayRoot.descendants().filter(d => d.depth > 0))  // Exclude root
         .join('path')
         .attr('class', 'sunburst-arc')
         .attr('d', arc)
-        .attr('fill', d => getNodeColor(d))
-        .attr('stroke', '#0d1117')
-        .attr('stroke-width', 0.5)
+        .attr('fill', d => getNodeColor(d))  // Axis 1 (red) + Axis 3 (blue) = complexity + quality
+        .attr('stroke', d => getSmellBorderColor(d.data.smell_count))  // Axis 2: smell intensity
+        .attr('stroke-width', d => getSmellBorderWidth(d.data.smell_count))  // Axis 2: thicker for more smells
+        .attr('stroke-dasharray', d => getSmellDashArray(d.data.smell_count))  // Axis 2: dashed for smells
         .style('cursor', 'pointer')
         .style('opacity', 1)
         .on('click', handleSunburstClick)
@@ -5210,12 +5300,14 @@ function renderSunburst() {
             handleSunburstHover(event, d);
         })
         .on('mouseout', function(event, d) {
+            const smellCount = d.data.smell_count || 0;
             d3.select(this)
                 .transition()
                 .duration(150)
                 .style('opacity', 1)
-                .attr('stroke', '#0d1117')
-                .attr('stroke-width', 0.5);
+                .attr('stroke', getSmellBorderColor(smellCount))
+                .attr('stroke-width', getSmellBorderWidth(smellCount))
+                .attr('stroke-dasharray', getSmellDashArray(smellCount));
             hideVizTooltip();
         });
 
@@ -5309,6 +5401,9 @@ function renderSunburst() {
     // Create tooltip element if it doesn't exist
     ensureVizTooltip();
 
+    // Add visual guide legend
+    addVisualGuideLegend(svg, width, height);
+
     console.timeEnd('renderSunburst');
     console.log(`Rendered ${displayRoot.descendants().length} sunburst arcs`);
 }
@@ -5393,6 +5488,21 @@ function handleSunburstHover(event, d) {
         html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Complexity:</span> ${d.data.complexity.toFixed(1)} (${grade})</div>`;
     }
 
+    // Show code smells (Axis 2)
+    if (d.data.smell_count !== undefined && d.data.smell_count > 0) {
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Smells:</span> ${d.data.smell_count}</div>`;
+        if (d.data.smells && d.data.smells.length > 0) {
+            const smellNames = d.data.smells.map(s => s.type || s).join(', ');
+            html += `<div class="viz-tooltip-row" style="font-size: 10px; padding-left: 10px;">${escapeHtml(smellNames)}</div>`;
+        }
+    }
+
+    // Show quality score (Axis 3)
+    if (d.data.quality_score !== undefined && d.data.quality_score !== null) {
+        const qualityPercent = (d.data.quality_score * 100).toFixed(0);
+        html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">Quality:</span> ${qualityPercent}%</div>`;
+    }
+
     if (d.data.file_path) {
         const shortPath = d.data.file_path.split('/').slice(-2).join('/');
         html += `<div class="viz-tooltip-row"><span class="viz-tooltip-label">File:</span> ${escapeHtml(shortPath)}</div>`;
@@ -5428,6 +5538,121 @@ function hideVizTooltip() {
     if (tooltip) {
         tooltip.classList.remove('visible');
     }
+}
+
+// Add visual guide legend to treemap/sunburst views
+function addVisualGuideLegend(svg, width, height) {
+    const legendWidth = 280;
+    const legendHeight = 140;
+    const padding = 15;
+    const x = width - legendWidth - padding;
+    const y = height - legendHeight - padding;
+
+    const legend = svg.append('g')
+        .attr('class', 'visual-guide-legend')
+        .attr('transform', `translate(${x}, ${y})`);
+
+    // Background
+    legend.append('rect')
+        .attr('width', legendWidth)
+        .attr('height', legendHeight)
+        .attr('fill', 'rgba(13, 17, 23, 0.95)')
+        .attr('stroke', 'var(--border-primary)')
+        .attr('stroke-width', 1)
+        .attr('rx', 6);
+
+    // Title
+    legend.append('text')
+        .attr('x', 10)
+        .attr('y', 20)
+        .text('Visual Guide')
+        .style('fill', 'var(--text-primary)')
+        .style('font-size', '13px')
+        .style('font-weight', 'bold');
+
+    // Axis 1: Fill Color (Complexity + Quality)
+    const axis1Y = 40;
+    legend.append('text')
+        .attr('x', 10)
+        .attr('y', axis1Y)
+        .text('Fill: Complexity + Quality')
+        .style('fill', 'var(--text-secondary)')
+        .style('font-size', '11px')
+        .style('font-weight', 'bold');
+
+    // Color examples
+    const colorExamples = [
+        { color: '#238636', label: 'Simple', x: 10 },
+        { color: '#d29922', label: 'Medium', x: 70 },
+        { color: '#da3633', label: 'Complex', x: 140 },
+        { color: '#8080da', label: 'Complex+Poor', x: 205 }
+    ];
+
+    colorExamples.forEach(ex => {
+        legend.append('rect')
+            .attr('x', ex.x)
+            .attr('y', axis1Y + 5)
+            .attr('width', 45)
+            .attr('height', 12)
+            .attr('fill', ex.color)
+            .attr('stroke', 'rgba(255,255,255,0.2)')
+            .attr('rx', 2);
+
+        legend.append('text')
+            .attr('x', ex.x + 22)
+            .attr('y', axis1Y + 28)
+            .text(ex.label)
+            .style('fill', 'var(--text-tertiary)')
+            .style('font-size', '8px')
+            .style('text-anchor', 'middle');
+    });
+
+    // Axis 2: Border (Code Smells)
+    const axis2Y = 75;
+    legend.append('text')
+        .attr('x', 10)
+        .attr('y', axis2Y)
+        .text('Border: Code Smells')
+        .style('fill', 'var(--text-secondary)')
+        .style('font-size', '11px')
+        .style('font-weight', 'bold');
+
+    const borderExamples = [
+        { dash: 'none', width: 0.5, label: 'Clean', x: 10 },
+        { dash: '8,4', width: 1.5, label: 'Few', x: 80 },
+        { dash: '4,4', width: 2, label: 'Some', x: 145 },
+        { dash: '2,4', width: 3, label: 'Many', x: 210 }
+    ];
+
+    borderExamples.forEach(ex => {
+        legend.append('rect')
+            .attr('x', ex.x)
+            .attr('y', axis2Y + 5)
+            .attr('width', 50)
+            .attr('height', 12)
+            .attr('fill', '#6e7681')
+            .attr('stroke', ex.dash === 'none' ? 'rgba(0,0,0,0.3)' : 'rgba(218, 54, 51, 0.8)')
+            .attr('stroke-width', ex.width)
+            .attr('stroke-dasharray', ex.dash)
+            .attr('rx', 2);
+
+        legend.append('text')
+            .attr('x', ex.x + 25)
+            .attr('y', axis2Y + 28)
+            .text(ex.label)
+            .style('fill', 'var(--text-tertiary)')
+            .style('font-size', '8px')
+            .style('text-anchor', 'middle');
+    });
+
+    // Bottom note
+    legend.append('text')
+        .attr('x', 10)
+        .attr('y', legendHeight - 10)
+        .text('Hover for details • Click to zoom')
+        .style('fill', 'var(--text-tertiary)')
+        .style('font-size', '9px')
+        .style('font-style', 'italic');
 }
 
 // ============================================================================
