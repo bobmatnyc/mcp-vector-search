@@ -64,14 +64,12 @@ function initializeCaches() {
 
     // Pre-filter chunk nodes once (avoids repeated O(n) filtering)
     cachedChunkNodes = allNodes.filter(node => chunkTypes.includes(node.type));
-    console.log(`Cached ${cachedChunkNodes.length} chunk nodes`);
 
     // Build node ID map for O(1) lookups
     nodeIdMap = new Map();
     allNodes.forEach(node => {
         nodeIdMap.set(node.id, node);
     });
-    console.log(`Built nodeIdMap with ${nodeIdMap.size} entries`);
 
     // Clear hierarchy caches (will be built on demand)
     cachedFileHierarchy = null;
@@ -202,7 +200,6 @@ async function loadGraphData() {
         const status = await checkGraphStatus();
 
         if (!status.ready) {
-            console.log('Graph data not ready yet, will poll every 5 seconds...');
             showLoadingIndicator('Generating graph data... This may take a few minutes.');
 
             // Start polling for graph readiness
@@ -210,7 +207,6 @@ async function loadGraphData() {
                 const checkStatus = await checkGraphStatus();
                 if (checkStatus.ready) {
                     clearInterval(graphStatusCheckInterval);
-                    console.log('Graph data is now ready, loading...');
                     showLoadingIndicator('Graph data ready! Loading visualization...');
                     await loadGraphDataActual();
                     hideLoadingIndicator();
@@ -248,38 +244,12 @@ async function loadGraphDataActual() {
 
         // Store metadata for progressive loading
         window.graphMetadata = data.metadata || {};
-        if (window.graphMetadata.total_nodes) {
-            console.log(`Progressive loading: Loaded ${allNodes.length}/${window.graphMetadata.total_nodes} nodes initially`);
-        }
 
         // Store trend data globally for visualization
         window.graphTrendData = data.trends || null;
-        if (window.graphTrendData) {
-            console.log(`Loaded trend data: ${window.graphTrendData.entries_count} entries`);
-        }
-
-        console.log(`Loaded ${allNodes.length} nodes and ${allLinks.length} links (initial view)`);
 
         // Performance optimization: Initialize caches
         initializeCaches();
-
-        // DEBUG: Log first few nodes to see actual structure
-        console.log('=== SAMPLE NODE STRUCTURE ===');
-        if (allNodes.length > 0) {
-            console.log('First node:', JSON.stringify(allNodes[0], null, 2));
-            if (allNodes.length > 1) {
-                console.log('Second node:', JSON.stringify(allNodes[1], null, 2));
-            }
-        }
-
-        // Count node types
-        const typeCounts = {};
-        allNodes.forEach(node => {
-            const type = node.type || 'undefined';
-            typeCounts[type] = (typeCounts[type] || 0) + 1;
-        });
-        console.log('Node type counts:', typeCounts);
-        console.log('=== END SAMPLE NODE STRUCTURE ===');
 
         // REMOVED: Previously marked autoExpand nodes as expanded=true
         // This caused a bug where combined nodes (e.g., src/mcp_vector_search/cli)
@@ -308,13 +278,8 @@ const expandedNodes = new Set();
 async function expandNode(nodeId) {
     // Prevent duplicate expansions
     if (expandedNodes.has(nodeId)) {
-        console.log(`Node ${nodeId} already expanded`);
-        alert(`DEBUG: Node ${nodeId} already expanded, skipping`);
         return;
     }
-
-    console.log(`Expanding node: ${nodeId}`);
-    alert(`DEBUG: Starting expandNode for ${nodeId}`);
 
     try {
         // Show loading indicator
@@ -322,7 +287,6 @@ async function expandNode(nodeId) {
 
         // Fetch children from server
         const url = `/api/graph-expand/${encodeURIComponent(nodeId)}`;
-        console.log(`Fetching: ${url}`);
         const response = await fetch(url);
 
         if (!response.ok) {
@@ -330,20 +294,15 @@ async function expandNode(nodeId) {
         }
 
         const data = await response.json();
-        console.log('Server response:', data);
 
         if (data.error) {
             console.error('Failed to expand node:', data.error);
-            alert(`ERROR: Server returned error: ${data.error}`);
             hideLoadingIndicator();
             return;
         }
 
         const newNodes = data.nodes || [];
         const newLinks = data.links || [];
-
-        console.log(`Received ${newNodes.length} new nodes and ${newLinks.length} new links`);
-        alert(`DEBUG: Received ${newNodes.length} nodes, ${newLinks.length} links`);
 
         // Add new nodes to global arrays (avoid duplicates)
         const existingNodeIds = new Set(allNodes.map(n => n.id));
@@ -369,26 +328,18 @@ async function expandNode(nodeId) {
         const node = allNodes.find(n => n.id === nodeId);
         if (node) {
             node.expanded = true;
-            console.log(`Marked node ${nodeId} as expanded`);
-        } else {
-            console.warn(`Could not find node ${nodeId} in allNodes to mark as expanded`);
         }
-
-        console.log(`expandedNodes set now contains: ${Array.from(expandedNodes).join(', ')}`);
 
         // Rebuild tree structure with new nodes
         // The collapseAllExceptExpanded function will preserve expanded state
-        console.log(`Rebuilding tree structure after expanding ${nodeId}...`);
         buildTreeStructure();
 
         // Re-render visualization
         renderVisualization();
 
         hideLoadingIndicator();
-        alert(`DEBUG: Successfully expanded ${nodeId}, tree rebuilt`);
     } catch (error) {
         console.error('Error expanding node:', error);
-        alert(`ERROR in expandNode: ${error.message}\n${error.stack}`);
         hideLoadingIndicator();
     }
 }
@@ -404,14 +355,6 @@ function buildTreeStructure() {
         return type === 'directory' || type === 'file' || chunkTypes.includes(type);
     });
 
-    console.log(`Filtered to ${treeNodes.length} tree nodes (directories, files, and chunks)`);
-
-    // Count node types for debugging
-    const dirCount = treeNodes.filter(n => n.type === 'directory').length;
-    const fileCount = treeNodes.filter(n => n.type === 'file').length;
-    const chunkCount = treeNodes.filter(n => chunkTypes.includes(n.type)).length;
-    console.log(`Node breakdown: ${dirCount} directories, ${fileCount} files, ${chunkCount} chunks`);
-
     // Create lookup maps
     const nodeMap = new Map();
     treeNodes.forEach(node => {
@@ -424,38 +367,8 @@ function buildTreeStructure() {
     // Build parent-child relationships
     const parentMap = new Map();
 
-    // DEBUG: Analyze link structure
-    console.log('=== LINK STRUCTURE DEBUG ===');
-    console.log(`Total links: ${allLinks.length}`);
-
-    // Get unique link types (handle undefined)
-    const linkTypes = [...new Set(allLinks.map(l => l.type || 'undefined'))];
-    console.log('Link types found:', linkTypes);
-
-    // Count links by type
-    const linkTypeCounts = {};
-    allLinks.forEach(link => {
-        const type = link.type || 'undefined';
-        linkTypeCounts[type] = (linkTypeCounts[type] || 0) + 1;
-    });
-    console.log('Link type counts:', linkTypeCounts);
-
-    // Sample first few links
-    console.log('Sample links (first 5):');
-    allLinks.slice(0, 5).forEach((link, i) => {
-        console.log(`  Link ${i}:`, JSON.stringify(link, null, 2));
-    });
-
-    // Check if links have properties we expect
-    if (allLinks.length > 0) {
-        const firstLink = allLinks[0];
-        console.log('Link properties:', Object.keys(firstLink));
-    }
-    console.log('=== END LINK STRUCTURE DEBUG ===');
-
     // Build parent-child relationships from links
     // Process all containment and hierarchy links to establish the tree structure
-    console.log('=== BUILDING TREE RELATIONSHIPS ===');
 
     let relationshipsProcessed = {
         dir_hierarchy: 0,
@@ -500,9 +413,6 @@ function buildTreeStructure() {
 
         // Both nodes must exist in our tree node set
         if (!parentNode || !childNode) {
-            if (relationshipsProcessed[category] <= 3) {  // Log first few misses
-                console.log(`${category} link skipped - parent: ${link.source} (exists: ${!!parentNode}), child: ${link.target} (exists: ${!!childNode})`);
-            }
             return;
         }
 
@@ -516,14 +426,6 @@ function buildTreeStructure() {
         relationshipsMatched[category]++;
     });
 
-    console.log('Relationship processing summary:');
-    console.log(`  dir_hierarchy: ${relationshipsMatched.dir_hierarchy}/${relationshipsProcessed.dir_hierarchy} matched`);
-    console.log(`  dir_containment: ${relationshipsMatched.dir_containment}/${relationshipsProcessed.dir_containment} matched`);
-    console.log(`  file_containment: ${relationshipsMatched.file_containment}/${relationshipsProcessed.file_containment} matched`);
-    console.log(`  chunk_hierarchy (class→method): ${relationshipsMatched.chunk_hierarchy}/${relationshipsProcessed.chunk_hierarchy} matched`);
-    console.log(`  Total parent-child links: ${parentMap.size}`);
-    console.log('=== END TREE RELATIONSHIPS ===');
-
     // Find root nodes (nodes with no parents)
     // IMPORTANT: Exclude chunk types from roots - they should only appear as children of files
     // Orphaned chunks (without file_containment links) are excluded from the tree
@@ -532,31 +434,6 @@ function buildTreeStructure() {
         .filter(node => !chunkTypes.includes(node.type))  // Exclude orphaned chunks
         .map(node => nodeMap.get(node.id))
         .filter(node => node !== undefined);
-
-    console.log('=== ROOT NODE ANALYSIS ===');
-    console.log(`Found ${rootNodes.length} root nodes (directories and files only)`);
-
-    // DEBUG: Count root node types
-    const rootTypeCounts = {};
-    rootNodes.forEach(node => {
-        const type = node.type || 'undefined';
-        rootTypeCounts[type] = (rootTypeCounts[type] || 0) + 1;
-    });
-    console.log('Root node type breakdown:', rootTypeCounts);
-
-    // If we have chunk nodes as roots, something went wrong
-    const chunkRoots = rootNodes.filter(n => chunkTypes.includes(n.type)).length;
-    if (chunkRoots > 0) {
-        console.warn(`WARNING: ${chunkRoots} chunk nodes are roots - they should be children of files!`);
-    }
-
-    // If we have file nodes as roots (except for top-level files), might be missing dir_containment
-    const fileRoots = rootNodes.filter(n => n.type === 'file').length;
-    if (fileRoots > 0) {
-        console.log(`INFO: ${fileRoots} file nodes are roots (this is normal for files not in subdirectories)`);
-    }
-
-    console.log('=== END ROOT NODE ANALYSIS ===');
 
     // Create virtual root if multiple roots
     if (rootNodes.length === 0) {
@@ -587,7 +464,6 @@ function buildTreeStructure() {
             const onlyChild = node.children[0];
             if (onlyChild.type === 'directory') {
                 // Merge: combine names with "/"
-                console.log(`Collapsing dir chain: ${node.name} + ${onlyChild.name}`);
                 node.name = `${node.name}/${onlyChild.name}`;
                 // Take the child's children as our own
                 node.children = onlyChild.children || [];
@@ -609,7 +485,6 @@ function buildTreeStructure() {
                 // If the chunk has children, promote them to the file level
                 const chunkChildren = onlyChild.children || onlyChild._children || [];
                 if (chunkChildren.length > 0) {
-                    console.log(`Promoting ${chunkChildren.length} children from ${onlyChild.type} to file ${node.name}`);
                     // Replace the single chunk with its children
                     node.children = chunkChildren;
                     // Store info about the collapsed chunk (include ALL relevant properties)
@@ -650,11 +525,9 @@ function buildTreeStructure() {
     }
 
     // Apply single-child chain collapsing to all root children
-    console.log('=== COLLAPSING SINGLE-CHILD CHAINS ===');
     if (treeData.children) {
         treeData.children.forEach(child => collapseSingleChildChains(child));
     }
-    console.log('=== END COLLAPSING SINGLE-CHILD CHAINS ===');
 
     // Collapse all directories and files by default
     function collapseAll(node) {
@@ -680,9 +553,6 @@ function buildTreeStructure() {
             if (!expandedNodes.has(node.id)) {
                 node._children = node.children;
                 node.children = null;
-                console.log(`Collapsed node ${node.id} (not in expandedNodes)`);
-            } else {
-                console.log(`Preserving node ${node.id} (in expandedNodes with ${node.children.length} children)`);
             }
         }
     }
@@ -692,44 +562,15 @@ function buildTreeStructure() {
         treeData.children.forEach(child => collapseAllExceptExpanded(child));
     }
 
-    console.log(`Tree structure built with ${expandedNodes.size} nodes kept expanded`);
-
     // Calculate line counts for all nodes (for proportional node rendering)
     allLineCounts = [];  // Reset for fresh calculation
     calculateNodeSizes(treeData);
     calculatePercentiles();  // Calculate 20th/80th percentile thresholds
-    console.log('Node sizes calculated with percentile-based sizing');
-
-    // DEBUG: Check a few file nodes to see if they have chunks in _children
-    console.log('=== POST-COLLAPSE FILE CHECK ===');
-    let filesChecked = 0;
-    let filesWithChunks = 0;
-
-    function checkFilesRecursive(node) {
-        if (node.type === 'file') {
-            filesChecked++;
-            const chunkCount = (node._children || []).length;
-            if (chunkCount > 0) {
-                filesWithChunks++;
-                console.log(`File ${node.name} has ${chunkCount} chunks in _children`);
-            }
-        }
-
-        // Check both visible and hidden children
-        const childrenToCheck = node.children || node._children || [];
-        childrenToCheck.forEach(child => checkFilesRecursive(child));
-    }
-
-    checkFilesRecursive(treeData);
-    console.log(`Checked ${filesChecked} files, ${filesWithChunks} have chunks`);
-    console.log('=== END POST-COLLAPSE FILE CHECK ===');
 }
 
 // Rebuild tree data after adding new nodes (for progressive loading)
 function rebuildTreeData() {
-    console.log('Rebuilding tree structure with newly loaded nodes...');
     buildTreeStructure();
-    console.log('Tree rebuild complete');
 }
 
 // ============================================================================
@@ -811,9 +652,6 @@ function calculatePercentiles() {
 
     percentile20 = sorted[p20Index] || 1;
     percentile80 = sorted[p80Index] || sorted[sorted.length - 1] || 1;
-
-    console.log(`Line count percentiles (chunks only): 20th=${percentile20}, 80th=${percentile80}, range=${percentile80 - percentile20}`);
-    console.log(`Total chunks: ${allLineCounts.length}, min=${globalMinLines}, max=${globalMaxLines}`);
 }
 
 // Count external calls for a node
@@ -954,13 +792,10 @@ function drawExternalCallLines(svg, root) {
     // Respect the toggle state
     lineGroup.style('display', showCallLines ? 'block' : 'none');
 
-    console.log(`[CallLines] Drawing lines for ${externalCallData.length} nodes with external calls`);
-
     let linesDrawn = 0;
     externalCallData.forEach(data => {
         const sourcePos = getPositionWithFallback(data.nodeId);
         if (!sourcePos) {
-            console.log(`[CallLines] No source position for ${data.nodeId}`);
             return;
         }
 
@@ -998,8 +833,6 @@ function drawExternalCallLines(svg, root) {
             }
         });
     });
-
-    console.log(`[CallLines] Drew ${linesDrawn} call lines`);
 }
 
 // Draw external call lines for CIRCULAR layout
@@ -1080,8 +913,6 @@ function drawExternalCallLinesCircular(svg, root) {
     // Respect the toggle state
     lineGroup.style('display', showCallLines ? 'block' : 'none');
 
-    console.log(`[CallLines Circular] Drawing lines for ${externalCallData.length} nodes with external calls`);
-
     let linesDrawn = 0;
     externalCallData.forEach(data => {
         const sourcePos = getPositionWithFallback(data.nodeId);
@@ -1131,8 +962,6 @@ function drawExternalCallLinesCircular(svg, root) {
             }
         });
     });
-
-    console.log(`[CallLines Circular] Drew ${linesDrawn} call lines`);
 }
 
 // Get color based on complexity (darker = more complex)
@@ -1386,38 +1215,23 @@ function getNodeRadius(d) {
 // ============================================================================
 
 function renderVisualization() {
-    console.log('=== RENDER VISUALIZATION ===');
-    console.log(`Current viz mode: ${currentVizMode}`);
-    console.log(`Current layout: ${currentLayout}`);
-    console.log(`Current grouping: ${currentGroupingMode}`);
-    console.log(`Tree data exists: ${treeData !== null}`);
-    if (treeData) {
-        console.log(`Root node: ${treeData.name}, children: ${(treeData.children || []).length}, _children: ${(treeData._children || []).length}`);
-    }
-
     // Clear existing content
     const graphElement = d3.select('#graph');
-    console.log(`Graph element found: ${!graphElement.empty()}`);
     graphElement.selectAll('*').remove();
 
     // Dispatch to appropriate visualization
     if (currentVizMode === 'treemap') {
-        console.log('Calling renderTreemap()...');
         renderTreemap();
     } else if (currentVizMode === 'sunburst') {
-        console.log('Calling renderSunburst()...');
         renderSunburst();
     } else {
         // Default tree mode
         if (currentLayout === 'linear') {
-            console.log('Calling renderLinearTree()...');
             renderLinearTree();
         } else {
-            console.log('Calling renderCircularTree()...');
             renderCircularTree();
         }
     }
-    console.log('=== END RENDER VISUALIZATION ===');
 }
 
 // ============================================================================
@@ -1425,9 +1239,7 @@ function renderVisualization() {
 // ============================================================================
 
 function renderLinearTree() {
-    console.log('=== RENDER LINEAR TREE ===');
     const { width, height } = getViewportDimensions();
-    console.log(`Viewport dimensions: ${width}x${height}`);
 
     const svg = d3.select('#graph')
         .attr('width', width)
@@ -1441,71 +1253,12 @@ function renderLinearTree() {
     const treeLayout = d3.tree()
         .size([height - margin.top - margin.bottom, width - margin.left - margin.right]);
 
-    console.log(`Tree layout size: ${height - margin.top - margin.bottom} x ${width - margin.left - margin.right}`);
-
     // Create hierarchy from tree data
     // D3 hierarchy automatically respects children vs _children
-    console.log('Creating D3 hierarchy...');
-
-    // DEBUG: Check if treeData children have content property BEFORE D3 processes them
-    console.log('=== PRE-D3 HIERARCHY DEBUG ===');
-    if (treeData.children && treeData.children.length > 0) {
-        const firstChild = treeData.children[0];
-        console.log('First root child:', firstChild.name, 'type:', firstChild.type);
-        console.log('First child keys:', Object.keys(firstChild));
-        console.log('First child has content:', 'content' in firstChild);
-
-        // Find a chunk node in the tree
-        function findFirstChunk(node) {
-            if (chunkTypes.includes(node.type)) {
-                return node;
-            }
-            if (node.children) {
-                for (const child of node.children) {
-                    const found = findFirstChunk(child);
-                    if (found) return found;
-                }
-            }
-            if (node._children) {
-                for (const child of node._children) {
-                    const found = findFirstChunk(child);
-                    if (found) return found;
-                }
-            }
-            return null;
-        }
-
-        const sampleChunk = findFirstChunk(treeData);
-        if (sampleChunk) {
-            console.log('Sample chunk node BEFORE D3:', sampleChunk.name, 'type:', sampleChunk.type);
-            console.log('Sample chunk keys:', Object.keys(sampleChunk));
-            console.log('Sample chunk has content:', 'content' in sampleChunk);
-            console.log('Sample chunk content length:', sampleChunk.content ? sampleChunk.content.length : 0);
-        }
-    }
-    console.log('=== END PRE-D3 HIERARCHY DEBUG ===');
-
     const root = d3.hierarchy(treeData, d => d.children);
-    console.log(`Hierarchy created: ${root.descendants().length} nodes`);
-
-    // DEBUG: Check if content is preserved AFTER D3 processes them
-    console.log('=== POST-D3 HIERARCHY DEBUG ===');
-    const debugDescendants = root.descendants();
-    const chunkDescendants = debugDescendants.filter(d => chunkTypes.includes(d.data.type));
-    console.log(`Found ${chunkDescendants.length} chunk nodes in D3 hierarchy`);
-    if (chunkDescendants.length > 0) {
-        const firstChunkD3 = chunkDescendants[0];
-        console.log('First chunk in D3 hierarchy:', firstChunkD3.data.name, 'type:', firstChunkD3.data.type);
-        console.log('First chunk d.data keys:', Object.keys(firstChunkD3.data));
-        console.log('First chunk has content in d.data:', 'content' in firstChunkD3.data);
-        console.log('First chunk content length:', firstChunkD3.data.content ? firstChunkD3.data.content.length : 0);
-    }
-    console.log('=== END POST-D3 HIERARCHY DEBUG ===');
 
     // Apply tree layout
-    console.log('Applying tree layout...');
     treeLayout(root);
-    console.log('Tree layout applied');
 
     // Add zoom behavior
     const zoom = d3.zoom()
@@ -1518,7 +1271,6 @@ function renderLinearTree() {
 
     // Draw links
     const links = root.links();
-    console.log(`Drawing ${links.length} links`);
     g.selectAll('.link')
         .data(links)
         .enter()
@@ -1533,7 +1285,6 @@ function renderLinearTree() {
 
     // Draw nodes
     const descendants = root.descendants();
-    console.log(`Drawing ${descendants.length} nodes`);
     const nodes = g.selectAll('.node')
         .data(descendants)
         .enter()
@@ -1541,9 +1292,23 @@ function renderLinearTree() {
         .attr('class', 'node')
         .attr('transform', d => `translate(${d.y},${d.x})`)
         .on('click', handleNodeClick)
+        .on('mouseover', function(event, d) {
+            // Add hover glow effect
+            d3.select(this).select('circle')
+                .transition()
+                .duration(150)
+                .attr('filter', 'brightness(1.3)')
+                .attr('stroke-width', d => getNodeStrokeWidth(d) + 2);
+        })
+        .on('mouseout', function(event, d) {
+            // Remove hover glow effect
+            d3.select(this).select('circle')
+                .transition()
+                .duration(150)
+                .attr('filter', 'brightness(1)')
+                .attr('stroke-width', d => getNodeStrokeWidth(d));
+        })
         .style('cursor', 'pointer');
-
-    console.log(`Created ${nodes.size()} node elements`);
 
     // Node circles - sized proportionally to content, colored by complexity
     nodes.append('circle')
@@ -1651,9 +1416,6 @@ function renderLinearTree() {
         .style('cursor', 'pointer')
         .style('pointer-events', 'all')
         .on('click', handleNodeClick);
-
-    console.log(`Created ${labels.size()} label elements`);
-    console.log('=== END RENDER LINEAR TREE ===');
 }
 
 // ============================================================================
@@ -1716,6 +1478,22 @@ function renderCircularTree() {
             translate(${d.y},0)
         `)
         .on('click', handleNodeClick)
+        .on('mouseover', function(event, d) {
+            // Add hover glow effect
+            d3.select(this).select('circle')
+                .transition()
+                .duration(150)
+                .attr('filter', 'brightness(1.3)')
+                .attr('stroke-width', d => getNodeStrokeWidth(d) + 2);
+        })
+        .on('mouseout', function(event, d) {
+            // Remove hover glow effect
+            d3.select(this).select('circle')
+                .transition()
+                .duration(150)
+                .attr('filter', 'brightness(1)')
+                .attr('stroke-width', d => getNodeStrokeWidth(d));
+        })
         .style('cursor', 'pointer');
 
     // Node circles - sized proportionally to content, colored by complexity
@@ -1804,13 +1582,17 @@ function renderCircularTree() {
 function handleNodeClick(event, d) {
     event.stopPropagation();
 
-    const nodeData = d.data;
+    // Add click feedback - brief scale animation
+    const clickedNode = d3.select(event.currentTarget);
+    clickedNode.select('circle')
+        .transition()
+        .duration(100)
+        .attr('r', getNodeRadius(d) * 1.2)
+        .transition()
+        .duration(100)
+        .attr('r', getNodeRadius(d));
 
-    console.log('=== NODE CLICK DEBUG ===');
-    console.log(`Clicked node: ${nodeData.name} (type: ${nodeData.type}, id: ${nodeData.id})`);
-    console.log(`Has children: ${nodeData.children ? nodeData.children.length : 0}`);
-    console.log(`Has _children: ${nodeData._children ? nodeData._children.length : 0}`);
-    console.log(`Expandable: ${nodeData.expandable}, Expanded: ${nodeData.expanded}`);
+    const nodeData = d.data;
 
     if (nodeData.type === 'directory') {
         // Check actual children state (not just flags)
@@ -1819,22 +1601,16 @@ function handleNodeClick(event, d) {
         const hasCollapsedChildren = nodeData.collapsed_children_count > 0;
         const hasAnyLoadedChildren = hasVisibleChildren || hasHiddenChildren;
 
-        console.log(`Directory click: ${nodeData.name}`);
-        console.log(`  visible: ${hasVisibleChildren}, hidden: ${hasHiddenChildren}, collapsed_count: ${nodeData.collapsed_children_count || 0}`);
-
         // Case 1: Has collapsed children but none loaded - fetch them
         if (hasCollapsedChildren && !hasAnyLoadedChildren) {
-            console.log(`Fetching ${nodeData.collapsed_children_count} collapsed children for ${nodeData.name}`);
             expandNode(nodeData.id).catch(err => {
-                console.error('expandNode failed:', err);
-                alert(`ERROR: Failed to expand ${nodeData.name}: ${err.message}`);
+                console.error('Failed to expand directory:', err);
             });
             return;
         }
 
         // Case 2: Has visible children - collapse them
         if (hasVisibleChildren) {
-            console.log(`Collapsing directory (${nodeData.children.length} children)`);
             nodeData._children = nodeData.children;
             nodeData.children = null;
             expandedNodes.delete(nodeData.id);
@@ -1844,7 +1620,6 @@ function handleNodeClick(event, d) {
 
         // Case 3: Has hidden children - show them
         if (hasHiddenChildren) {
-            console.log(`Expanding directory (${nodeData._children.length} children)`);
             nodeData.children = nodeData._children;
             nodeData._children = null;
             expandedNodes.add(nodeData.id);
@@ -1854,32 +1629,26 @@ function handleNodeClick(event, d) {
 
         // Case 4: Expandable but no children - try fetching
         if (nodeData.expandable) {
-            console.log(`No children for ${nodeData.name}, trying to fetch...`);
             expandNode(nodeData.id).catch(err => {
-                console.error('expandNode failed:', err);
+                console.error('Failed to expand directory:', err);
             });
             return;
         }
 
-        console.log(`Directory ${nodeData.name} has no children and is not expandable`);
         // Don't auto-open viewer panel for directories - just expand/collapse
     } else if (nodeData.type === 'file') {
         // Check if needs progressive loading (not yet fetched)
         // Same as directory: use expanded flag, not children array length
         if (nodeData.expandable && !nodeData.expanded) {
             // First time expansion - fetch chunks from server
-            console.log('Progressive loading: fetching file chunks from server');
-            alert(`DEBUG: Fetching chunks for file: ${nodeData.name}`);
             expandNode(nodeData.id).catch(err => {
-                console.error('expandNode failed:', err);
-                alert(`ERROR: Failed to expand ${nodeData.name}: ${err.message}`);
+                console.error('Failed to expand file:', err);
             });
             return;
         }
 
         // Check if this file has a collapsed chunk (single chunk with no children)
         if (nodeData.collapsed_chunk) {
-            console.log(`Collapsed file+chunk: ${nodeData.name}, showing content directly`);
             displayChunkContent({
                 ...nodeData.collapsed_chunk,
                 name: nodeData.collapsed_chunk.name,
@@ -1895,8 +1664,6 @@ function handleNodeClick(event, d) {
             const onlyChild = childrenArray[0];
 
             if (chunkTypes.includes(onlyChild.type)) {
-                console.log(`Single-chunk file: ${nodeData.name}, showing content directly`);
-
                 // Expand the file visually (for tree consistency)
                 if (nodeData._children) {
                     nodeData.children = nodeData._children;
@@ -1914,20 +1681,16 @@ function handleNodeClick(event, d) {
         // Toggle file: swap children <-> _children
         if (nodeData.children) {
             // Currently expanded - collapse it
-            console.log('Collapsing file');
             nodeData._children = nodeData.children;
             nodeData.children = null;
             // Remove from expandedNodes so it stays collapsed on rebuild
             expandedNodes.delete(nodeData.id);
         } else if (nodeData._children) {
             // Currently collapsed - expand it
-            console.log('Expanding file');
             nodeData.children = nodeData._children;
             nodeData._children = null;
             // Add to expandedNodes to preserve expansion on rebuild
             expandedNodes.add(nodeData.id);
-        } else {
-            console.log('WARNING: File has neither children nor _children!');
         }
 
         // Re-render to show/hide children
@@ -1940,14 +1703,12 @@ function handleNodeClick(event, d) {
         if (nodeData.children || nodeData._children) {
             if (nodeData.children) {
                 // Currently expanded - collapse it
-                console.log(`Collapsing ${nodeData.type} chunk`);
                 nodeData._children = nodeData.children;
                 nodeData.children = null;
                 // Remove from expandedNodes so it stays collapsed on rebuild
                 expandedNodes.delete(nodeData.id);
             } else if (nodeData._children) {
                 // Currently collapsed - expand it
-                console.log(`Expanding ${nodeData.type} chunk to show ${nodeData._children.length} children`);
                 nodeData.children = nodeData._children;
                 nodeData._children = null;
                 // Add to expandedNodes to preserve expansion on rebuild
@@ -1958,11 +1719,8 @@ function handleNodeClick(event, d) {
         }
 
         // Also show chunk content in side panel
-        console.log('Displaying chunk content');
         displayChunkContent(nodeData);
     }
-
-    console.log('=== END NODE CLICK DEBUG ===');
 }
 
 function displayDirectoryInfo(dirData, addToHistory = true) {
@@ -2387,12 +2145,9 @@ function displayChunkContent(chunkData, addToHistory = true) {
 
 // Focus on a node in the tree (expand path, scroll, highlight)
 function focusNodeInTree(nodeId) {
-    console.log(`Focusing on node in tree: ${nodeId}`);
-
     // Find the node in allNodes (the original data)
     const targetNodeData = allNodes.find(n => n.id === nodeId);
     if (!targetNodeData) {
-        console.log(`Node ${nodeId} not found in allNodes`);
         return;
     }
 
@@ -2401,13 +2156,10 @@ function focusNodeInTree(nodeId) {
     const pathToNode = findPathToNode(treeData, nodeId);
 
     if (pathToNode.length > 0) {
-        console.log(`Found path to node: ${pathToNode.map(n => n.name).join(' -> ')}`);
-
         // Expand all nodes along the path (except the target node itself)
         pathToNode.slice(0, -1).forEach(node => {
             if (node._children) {
                 // Node is collapsed, expand it
-                console.log(`Expanding ${node.name} to reveal path`);
                 node.children = node._children;
                 node._children = null;
             }
@@ -2420,8 +2172,6 @@ function focusNodeInTree(nodeId) {
         setTimeout(() => {
             highlightNodeInTree(nodeId);
         }, 100);
-    } else {
-        console.log(`Path to node ${nodeId} not found in tree - it may be orphaned`);
     }
 
     // Display the content in the viewer panel
@@ -2467,20 +2217,14 @@ function findPathToNode(node, targetId, path = []) {
 
 // Expand path to a node and highlight it (without triggering content display)
 function expandAndHighlightNode(nodeId) {
-    console.log('=== EXPAND AND HIGHLIGHT ===');
-    console.log('Target nodeId:', nodeId);
-
     // Find the path to this node in the tree structure
     const pathToNode = findPathToNode(treeData, nodeId);
 
     if (pathToNode.length > 0) {
-        console.log('Found path:', pathToNode.map(n => n.name).join(' -> '));
-
         // Expand all nodes along the path (except the target node itself)
         let needsRerender = false;
         pathToNode.slice(0, -1).forEach(node => {
             if (node._children) {
-                console.log('Expanding:', node.name);
                 node.children = node._children;
                 node._children = null;
                 needsRerender = true;
@@ -2496,16 +2240,12 @@ function expandAndHighlightNode(nodeId) {
             highlightNodeInTree(nodeId);
         }, 50);
     } else {
-        console.log('Path not found - trying direct highlight');
         highlightNodeInTree(nodeId);
     }
 }
 
 // Highlight and scroll to a node in the rendered tree
 function highlightNodeInTree(nodeId, persistent = true) {
-    console.log('=== HIGHLIGHT NODE ===');
-    console.log('Looking for nodeId:', nodeId);
-
     // Remove any existing highlight
     d3.selectAll('.node-highlight').classed('node-highlight', false);
     if (persistent) {
@@ -2515,19 +2255,15 @@ function highlightNodeInTree(nodeId, persistent = true) {
     // Find and highlight the target node in the rendered SVG
     const svg = d3.select('#graph');
     const allNodes = svg.selectAll('.node');
-    console.log('Total nodes in SVG:', allNodes.size());
 
     const targetNode = allNodes.filter(d => d.data.id === nodeId);
-    console.log('Matching nodes found:', targetNode.size());
 
     if (!targetNode.empty()) {
         // Add highlight class (persistent = orange glow that stays)
         if (persistent) {
             targetNode.classed('node-selected', true);
-            console.log('Applied .node-selected class');
         } else {
             targetNode.classed('node-highlight', true);
-            console.log('Applied .node-highlight class');
         }
 
         // Pulse the node circle - scale up from current size
@@ -2566,10 +2302,6 @@ function highlightNodeInTree(nodeId, persistent = true) {
                     d3.zoomIdentity.translate(centerX, centerY)
                 );
         }
-
-        console.log(`Highlighted node ${nodeId}`);
-    } else {
-        console.log(`Node ${nodeId} not found in rendered tree`);
     }
 }
 
@@ -4820,7 +4552,7 @@ function getComplexityRange(grade) {
 }
 
 function showComingSoon(reportName) {
-    alert(`${reportName} - Coming Soon!\n\nThis feature will display detailed ${reportName.toLowerCase()} in a future release.`);
+    console.log(`${reportName} feature coming soon`);
 }
 
 // ============================================================================
@@ -4850,7 +4582,6 @@ function setVisualizationMode(mode) {
         groupingGroup.style.display = (mode === 'treemap' || mode === 'sunburst') ? 'block' : 'none';
     }
 
-    console.log(`Visualization mode changed to: ${mode}`);
     renderVisualization();
 }
 
@@ -4865,7 +4596,6 @@ function toggleGroupingMode() {
     if (astLabel) astLabel.classList.toggle('active', currentGroupingMode === 'ast');
 
     currentZoomRootId = null;  // Reset zoom when grouping changes
-    console.log(`Grouping mode changed to: ${currentGroupingMode}`);
     renderVisualization();
 }
 
@@ -5149,9 +4879,26 @@ function renderTreemap() {
         .attr('stroke', 'rgba(0,0,0,0.3)')
         .attr('stroke-width', 0.5)
         .style('cursor', 'pointer')
+        .style('opacity', 1)
         .on('click', handleTreemapClick)
-        .on('mouseover', handleTreemapHover)
-        .on('mouseout', hideVizTooltip)
+        .on('mouseover', function(event, d) {
+            d3.select(this)
+                .transition()
+                .duration(150)
+                .style('opacity', 0.8)
+                .attr('stroke', '#58a6ff')
+                .attr('stroke-width', 2);
+            handleTreemapHover(event, d);
+        })
+        .on('mouseout', function(event, d) {
+            d3.select(this)
+                .transition()
+                .duration(150)
+                .style('opacity', 1)
+                .attr('stroke', 'rgba(0,0,0,0.3)')
+                .attr('stroke-width', 0.5);
+            hideVizTooltip();
+        })
         .append('title')
         .text(d => `${d.data.name}\\n${d.value} lines`);
 
@@ -5260,7 +5007,6 @@ async function handleTreemapClick(event, d) {
             hideLoadingIndicator();
         } catch (err) {
             console.error('Failed to expand node:', err);
-            alert(`Failed to expand ${d.data.name}: ${err.message}`);
             hideLoadingIndicator();
         }
         return;
@@ -5452,9 +5198,26 @@ function renderSunburst() {
         .attr('stroke', '#0d1117')
         .attr('stroke-width', 0.5)
         .style('cursor', 'pointer')
+        .style('opacity', 1)
         .on('click', handleSunburstClick)
-        .on('mouseover', handleSunburstHover)
-        .on('mouseout', hideVizTooltip);
+        .on('mouseover', function(event, d) {
+            d3.select(this)
+                .transition()
+                .duration(150)
+                .style('opacity', 0.8)
+                .attr('stroke', '#58a6ff')
+                .attr('stroke-width', 2);
+            handleSunburstHover(event, d);
+        })
+        .on('mouseout', function(event, d) {
+            d3.select(this)
+                .transition()
+                .duration(150)
+                .style('opacity', 1)
+                .attr('stroke', '#0d1117')
+                .attr('stroke-width', 0.5);
+            hideVizTooltip();
+        });
 
     // Add title for tooltip
     arcs.append('title')
@@ -5597,7 +5360,6 @@ async function handleSunburstClick(event, d) {
             hideLoadingIndicator();
         } catch (err) {
             console.error('Failed to expand node:', err);
-            alert(`Failed to expand ${d.data.name}: ${err.message}`);
             hideLoadingIndicator();
         }
         return;
@@ -5787,26 +5549,22 @@ function loadKGData() {
         .then(data => {
             if (data.error) {
                 console.error('KG data error:', data.error);
-                alert('Knowledge graph not found. Run: mcp-vector-search kg build');
                 setView('chunks'); // Fall back to chunks view
                 return;
             }
 
             kgNodes = data.nodes || [];
             kgLinks = data.links || [];
-            console.log(`Loaded ${kgNodes.length} KG nodes, ${kgLinks.length} KG links`);
 
             renderKG();
         })
         .catch(error => {
             console.error('Failed to load KG data:', error);
-            alert('Failed to load knowledge graph: ' + error.message);
             setView('chunks'); // Fall back to chunks view
         });
 }
 
 function renderKG() {
-    console.log('Rendering KG...');
 
     const svg = d3.select('#kg-graph');
     const width = window.innerWidth - 320; // Account for sidebar
