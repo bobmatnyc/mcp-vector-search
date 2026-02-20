@@ -89,6 +89,7 @@ Repository = "https://github.com/bobmatnyc/mcp-vector-search"
 
 [project.scripts]
 mcp-vector-search = "mcp_vector_search.cli.main:cli_with_suggestions"
+mvs = "mcp_vector_search.cli.main:cli_with_suggestions"
 mcp-vector-search-mcp = "mcp_vector_search.mcp.__main__:main"
 
 [tool.hatch.version]

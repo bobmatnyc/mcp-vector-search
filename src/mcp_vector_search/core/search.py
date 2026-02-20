@@ -651,6 +651,43 @@ class SemanticSearchEngine:
                     "Cannot access embedding function from database for vector search"
                 )
 
+            # Check for model mismatch
+            current_model = getattr(embedding_func, "model_name", "unknown")
+
+            # Try to read stored model from first vector in table
+            if self._vectors_backend._table is not None:
+                try:
+                    # Get first row to check stored model_version
+                    df = self._vectors_backend._table.to_pandas().head(1)
+                    if not df.empty and "model_version" in df.columns:
+                        stored_model = df.iloc[0]["model_version"]
+
+                        # Check for model name mismatch
+                        if (
+                            stored_model != current_model
+                            and stored_model not in current_model
+                        ):
+                            logger.warning(
+                                f"Model mismatch: Index was built with '{stored_model}', "
+                                f"searching with '{current_model}'. Results may be poor. "
+                                f"Reindex with --force to rebuild with current model."
+                            )
+
+                        # Check for dimension mismatch
+                        stored_vector = df.iloc[0]["vector"]
+                        stored_dim = len(stored_vector)
+                        query_dim = len(embedding_func([query])[0])
+
+                        if stored_dim != query_dim:
+                            raise SearchError(
+                                f"Dimension mismatch: Index has {stored_dim}D vectors, "
+                                f"current model produces {query_dim}D. "
+                                f"Reindex with --force to rebuild with current model."
+                            )
+                except Exception as e:
+                    # Non-fatal: log and continue
+                    logger.debug(f"Could not check model version: {e}")
+
             # Generate embedding
             query_vector = embedding_func([query])[0]
 

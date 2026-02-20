@@ -352,7 +352,7 @@ class VectorsBackend:
     async def add_vectors(
         self,
         chunks_with_vectors: list[dict[str, Any]],
-        model_version: str = "graphcodebert-base",
+        model_version: str = "all-MiniLM-L6-v2",
     ) -> int:
         """Add embedded chunks to vectors table.
 

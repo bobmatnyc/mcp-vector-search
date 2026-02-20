@@ -373,8 +373,12 @@ class User extends BaseModel {
     test_file.unlink()
 
     class_chunks = [c for c in chunks if c.chunk_type == "class"]
-    assert len(class_chunks) >= 1, f"Should find User class, got chunks: {[c.chunk_type for c in chunks]}"
-    assert any("User" in (c.class_name or "") for c in class_chunks), "Should find class named User"
+    assert len(class_chunks) >= 1, (
+        f"Should find User class, got chunks: {[c.chunk_type for c in chunks]}"
+    )
+    assert any("User" in (c.class_name or "") for c in class_chunks), (
+        "Should find class named User"
+    )
 
 
 @pytest.mark.asyncio
@@ -400,7 +404,9 @@ class UserRepository implements Repository, Serializable {
     test_file.unlink()
 
     class_chunks = [c for c in chunks if c.chunk_type == "class"]
-    assert len(class_chunks) >= 1, f"Should find UserRepository class, got: {[c.chunk_type for c in chunks]}"
+    assert len(class_chunks) >= 1, (
+        f"Should find UserRepository class, got: {[c.chunk_type for c in chunks]}"
+    )
 
 
 @pytest.mark.asyncio
@@ -422,7 +428,9 @@ class UserService with LoggerMixin, CacheMixin {
     test_file.unlink()
 
     class_chunks = [c for c in chunks if c.chunk_type == "class"]
-    assert len(class_chunks) >= 1, f"Should find UserService class, got: {[c.chunk_type for c in chunks]}"
+    assert len(class_chunks) >= 1, (
+        f"Should find UserService class, got: {[c.chunk_type for c in chunks]}"
+    )
 
 
 @pytest.mark.asyncio
@@ -444,7 +452,9 @@ abstract class Repository {
     test_file.unlink()
 
     class_chunks = [c for c in chunks if c.chunk_type == "class"]
-    assert len(class_chunks) >= 1, f"Should find abstract Repository class, got: {[c.chunk_type for c in chunks]}"
+    assert len(class_chunks) >= 1, (
+        f"Should find abstract Repository class, got: {[c.chunk_type for c in chunks]}"
+    )
 
 
 @pytest.mark.asyncio
@@ -468,7 +478,9 @@ class Box<T> extends Container<T> {
     test_file.unlink()
 
     class_chunks = [c for c in chunks if c.chunk_type == "class"]
-    assert len(class_chunks) >= 1, f"Should find Box<T> class, got: {[c.chunk_type for c in chunks]}"
+    assert len(class_chunks) >= 1, (
+        f"Should find Box<T> class, got: {[c.chunk_type for c in chunks]}"
+    )
 
 
 @pytest.mark.asyncio
@@ -494,7 +506,9 @@ class AppWidget<T> extends BaseWidget<T> with AnimationMixin implements Disposab
     test_file.unlink()
 
     class_chunks = [c for c in chunks if c.chunk_type == "class"]
-    assert len(class_chunks) >= 1, f"Should find AppWidget class, got: {[c.chunk_type for c in chunks]}"
+    assert len(class_chunks) >= 1, (
+        f"Should find AppWidget class, got: {[c.chunk_type for c in chunks]}"
+    )
 
 
 @pytest.mark.asyncio
@@ -521,7 +535,9 @@ class User with _$User {
     test_file.unlink()
 
     class_chunks = [c for c in chunks if c.chunk_type == "class"]
-    assert len(class_chunks) >= 1, f"Should find freezed User class, got: {[c.chunk_type for c in chunks]}"
+    assert len(class_chunks) >= 1, (
+        f"Should find freezed User class, got: {[c.chunk_type for c in chunks]}"
+    )
 
 
 @pytest.mark.asyncio
@@ -557,7 +573,9 @@ class Address extends Equatable {
     test_file.unlink()
 
     class_chunks = [c for c in chunks if c.chunk_type == "class"]
-    assert len(class_chunks) >= 1, f"Should find Address class, got: {[c.chunk_type for c in chunks]}"
+    assert len(class_chunks) >= 1, (
+        f"Should find Address class, got: {[c.chunk_type for c in chunks]}"
+    )
 
 
 @pytest.mark.asyncio
@@ -593,12 +611,14 @@ async def test_dart_widget_hierarchy_linking():
 
     processor = ChunkProcessor(
         parser_registry=get_parser_registry(),
-        monorepo_detector=MonorepoDetector(Path.cwd())
+        monorepo_detector=MonorepoDetector(Path.cwd()),
     )
     result = processor.build_chunk_hierarchy(chunks)
 
     # Both chunks should be in the result - widget should not be lost
-    assert len(result) >= 2, f"Both widget and class chunks should be preserved, got {len(result)}"
+    assert len(result) >= 2, (
+        f"Both widget and class chunks should be preserved, got {len(result)}"
+    )
     widget_chunks = [c for c in result if c.chunk_type == "widget"]
     assert len(widget_chunks) >= 1, "Widget chunk should be preserved in hierarchy"
 
@@ -610,15 +630,22 @@ async def test_dart_generated_file_exclusion():
 
     generated_patterns = ["*.g.dart", "*.freezed.dart", "*.mocks.dart", "*.gr.dart"]
     for pattern in generated_patterns:
-        assert pattern in DEFAULT_IGNORE_FILES, f"{pattern} should be in DEFAULT_IGNORE_FILES"
+        assert pattern in DEFAULT_IGNORE_FILES, (
+            f"{pattern} should be in DEFAULT_IGNORE_FILES"
+        )
 
 
 @pytest.mark.asyncio
 async def test_dart_arb_extension():
     """Test that .arb extension is recognized."""
-    from mcp_vector_search.config.defaults import DEFAULT_FILE_EXTENSIONS, LANGUAGE_MAPPINGS
+    from mcp_vector_search.config.defaults import (
+        DEFAULT_FILE_EXTENSIONS,
+        LANGUAGE_MAPPINGS,
+    )
 
-    assert ".arb" in DEFAULT_FILE_EXTENSIONS, ".arb should be in DEFAULT_FILE_EXTENSIONS"
+    assert ".arb" in DEFAULT_FILE_EXTENSIONS, (
+        ".arb should be in DEFAULT_FILE_EXTENSIONS"
+    )
     assert ".arb" in LANGUAGE_MAPPINGS, ".arb should be in LANGUAGE_MAPPINGS"
     assert LANGUAGE_MAPPINGS[".arb"] == "json", ".arb should map to json"
 

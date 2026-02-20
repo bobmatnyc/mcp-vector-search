@@ -31,7 +31,9 @@ class TestPipelineParallelism:
     async def test_pipeline_parameter_exists(self, mock_database, temp_project_dir):
         """Test that the pipeline parameter exists with correct default."""
         indexer = SemanticIndexer(
-            database=mock_database, project_root=temp_project_dir, file_extensions=[".py"]
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
         )
 
         # Check signature
@@ -50,7 +52,9 @@ class TestPipelineParallelism:
     ):
         """Test that pipeline mode is enabled by default when phase='all'."""
         indexer = SemanticIndexer(
-            database=mock_database, project_root=temp_project_dir, file_extensions=[".py"]
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
         )
 
         with patch.object(
@@ -81,7 +85,9 @@ class TestPipelineParallelism:
     async def test_pipeline_mode_explicit_true(self, mock_database, temp_project_dir):
         """Test that pipeline=True uses pipeline mode."""
         indexer = SemanticIndexer(
-            database=mock_database, project_root=temp_project_dir, file_extensions=[".py"]
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
         )
 
         with patch.object(
@@ -96,7 +102,9 @@ class TestPipelineParallelism:
     async def test_sequential_mode_when_disabled(self, mock_database, temp_project_dir):
         """Test that pipeline=False uses sequential execution."""
         indexer = SemanticIndexer(
-            database=mock_database, project_root=temp_project_dir, file_extensions=[".py"]
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
         )
 
         with patch.object(
@@ -127,7 +135,9 @@ class TestPipelineParallelism:
     async def test_no_pipeline_for_chunk_phase(self, mock_database, temp_project_dir):
         """Test that pipeline is not used when phase='chunk'."""
         indexer = SemanticIndexer(
-            database=mock_database, project_root=temp_project_dir, file_extensions=[".py"]
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
         )
 
         with patch.object(
@@ -154,7 +164,9 @@ class TestPipelineParallelism:
     async def test_no_pipeline_for_embed_phase(self, mock_database, temp_project_dir):
         """Test that pipeline is not used when phase='embed'."""
         indexer = SemanticIndexer(
-            database=mock_database, project_root=temp_project_dir, file_extensions=[".py"]
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
         )
 
         with patch.object(
@@ -182,7 +194,9 @@ class TestPipelineParallelism:
     async def test_pipeline_method_exists(self, mock_database, temp_project_dir):
         """Test that _index_with_pipeline method exists."""
         indexer = SemanticIndexer(
-            database=mock_database, project_root=temp_project_dir, file_extensions=[".py"]
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
         )
 
         # Check method exists
@@ -199,7 +213,9 @@ class TestPipelineParallelism:
     async def test_pipeline_return_type(self, mock_database, temp_project_dir):
         """Test that _index_with_pipeline returns correct tuple."""
         indexer = SemanticIndexer(
-            database=mock_database, project_root=temp_project_dir, file_extensions=[".py"]
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
         )
 
         # Mock the internal methods
@@ -229,7 +245,9 @@ class TestPipelineParallelism:
     async def test_backward_compatibility(self, mock_database, temp_project_dir):
         """Test that existing code without pipeline parameter still works."""
         indexer = SemanticIndexer(
-            database=mock_database, project_root=temp_project_dir, file_extensions=[".py"]
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
         )
 
         with patch.object(
@@ -245,7 +263,9 @@ class TestPipelineParallelism:
     async def test_pipeline_with_force_reindex(self, mock_database, temp_project_dir):
         """Test that pipeline works with force_reindex=True."""
         indexer = SemanticIndexer(
-            database=mock_database, project_root=temp_project_dir, file_extensions=[".py"]
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
         )
 
         with patch.object(
@@ -278,7 +298,9 @@ class TestPipelineInternals:
     async def test_producer_consumer_pattern(self, mock_database, temp_project_dir):
         """Test that pipeline completes successfully with no files."""
         indexer = SemanticIndexer(
-            database=mock_database, project_root=temp_project_dir, file_extensions=[".py"]
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
         )
 
         with patch.object(
@@ -296,7 +318,9 @@ class TestPipelineInternals:
     async def test_pipeline_handles_empty_files(self, mock_database, temp_project_dir):
         """Test that pipeline handles empty file list gracefully."""
         indexer = SemanticIndexer(
-            database=mock_database, project_root=temp_project_dir, file_extensions=[".py"]
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
         )
 
         with patch.object(

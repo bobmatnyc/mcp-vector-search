@@ -31,7 +31,9 @@ async def test_lancedb_basic_operations():
 
     # Create embedding function
     print("📦 Loading embedding model...")
-    embedding_function, _ = create_embedding_function("jinaai/jina-embeddings-v2-base-code")
+    embedding_function, _ = create_embedding_function(
+        "jinaai/jina-embeddings-v2-base-code"
+    )
 
     # Create LanceDB instance
     async with LanceVectorDatabase(
@@ -90,9 +92,15 @@ async def test_lancedb_basic_operations():
         # Check all required fields are present
         assert stats.total_chunks == 3, f"Expected 3 chunks, got {stats.total_chunks}"
         assert stats.total_files == 2, f"Expected 2 files, got {stats.total_files}"
-        assert "python" in stats.languages, f"Expected 'python' in languages, got {stats.languages}"
-        assert ".py" in stats.file_types, f"Expected '.py' in file_types, got {stats.file_types}"
-        assert stats.index_size_mb >= 0, f"Expected non-negative index size, got {stats.index_size_mb}"
+        assert "python" in stats.languages, (
+            f"Expected 'python' in languages, got {stats.languages}"
+        )
+        assert ".py" in stats.file_types, (
+            f"Expected '.py' in file_types, got {stats.file_types}"
+        )
+        assert stats.index_size_mb >= 0, (
+            f"Expected non-negative index size, got {stats.index_size_mb}"
+        )
         assert stats.last_updated is not None, f"Expected last_updated to be set"
         assert stats.embedding_model is not None, f"Expected embedding_model to be set"
         print("✅ Stats correct (all required fields present)\n")
@@ -106,8 +114,12 @@ async def test_lancedb_basic_operations():
         )
         print(f"  Found {len(results)} results")
         if results:
-            print(f"  Top result: {results[0].function_name} (score: {results[0].similarity_score:.3f})")
-            assert results[0].function_name == "hello_world", f"Expected 'hello_world', got {results[0].function_name}"
+            print(
+                f"  Top result: {results[0].function_name} (score: {results[0].similarity_score:.3f})"
+            )
+            assert results[0].function_name == "hello_world", (
+                f"Expected 'hello_world', got {results[0].function_name}"
+            )
         print("✅ Search works\n")
 
         # Test 4: Search with filters
@@ -121,7 +133,9 @@ async def test_lancedb_basic_operations():
         print(f"  Found {len(results)} results in async_test.py")
         if results:
             print(f"  Result: {results[0].function_name}")
-            assert "async_test.py" in str(results[0].file_path), f"Expected async_test.py, got {results[0].file_path}"
+            assert "async_test.py" in str(results[0].file_path), (
+                f"Expected async_test.py, got {results[0].file_path}"
+            )
         print("✅ Filtered search works\n")
 
         # Test 5: Get all chunks
@@ -139,7 +153,9 @@ async def test_lancedb_basic_operations():
 
         stats = await db.get_stats()
         print(f"  Remaining chunks: {stats.total_chunks}")
-        assert stats.total_chunks == 1, f"Expected 1 chunk remaining, got {stats.total_chunks}"
+        assert stats.total_chunks == 1, (
+            f"Expected 1 chunk remaining, got {stats.total_chunks}"
+        )
         print("✅ Delete by file works\n")
 
         # Test 7: Health check
@@ -154,13 +170,16 @@ async def test_lancedb_basic_operations():
         await db.reset()
         stats = await db.get_stats()
         print(f"  Chunks after reset: {stats.total_chunks}")
-        assert stats.total_chunks == 0, f"Expected 0 chunks after reset, got {stats.total_chunks}"
+        assert stats.total_chunks == 0, (
+            f"Expected 0 chunks after reset, got {stats.total_chunks}"
+        )
         print("✅ Reset works\n")
 
     print("🎉 All tests passed!")
 
     # Cleanup
     import shutil
+
     shutil.rmtree(test_dir)
     print(f"🧹 Cleaned up test directory: {test_dir}")
 

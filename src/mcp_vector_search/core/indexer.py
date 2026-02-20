@@ -296,6 +296,30 @@ class SemanticIndexer:
         """
         return self._kg_build_status
 
+    def get_embedding_model_name(self) -> str:
+        """Get the current embedding model name from the database.
+
+        Returns:
+            Model name (e.g., "all-MiniLM-L6-v2", "graphcodebert-base")
+        """
+        # Try multiple paths to get the model name
+        if hasattr(self.database, "_embedding_function") and hasattr(
+            self.database._embedding_function, "model_name"
+        ):
+            return self.database._embedding_function.model_name
+        elif hasattr(self.database, "_collection") and hasattr(
+            self.database._collection, "_embedding_function"
+        ):
+            return self.database._collection._embedding_function.model_name
+        elif hasattr(self.database, "embedding_function") and hasattr(
+            self.database.embedding_function, "model_name"
+        ):
+            return self.database.embedding_function.model_name
+
+        # Fallback: extract from model name if available
+        # This handles cases where the embedding function doesn't expose model_name
+        return "all-MiniLM-L6-v2"  # Default fallback
+
     def apply_auto_optimizations(self) -> tuple[Any, Any] | None:
         """Apply automatic optimizations based on codebase profile.
 
@@ -819,7 +843,10 @@ class SemanticIndexer:
                                 chunks_with_vectors.append(chunk_with_vec)
 
                             # Store to vectors.lance
-                            await self.vectors_backend.add_vectors(chunks_with_vectors)
+                            model_name = self.get_embedding_model_name()
+                            await self.vectors_backend.add_vectors(
+                                chunks_with_vectors, model_version=model_name
+                            )
                             chunks_embedded += len(emb_batch)
 
                             # Reset consecutive error counter on success
@@ -1235,7 +1262,10 @@ class SemanticIndexer:
                         chunks_with_vectors.append(chunk_with_vec)
 
                     # Store vectors to vectors.lance
-                    await self.vectors_backend.add_vectors(chunks_with_vectors)
+                    model_name = self.get_embedding_model_name()
+                    await self.vectors_backend.add_vectors(
+                        chunks_with_vectors, model_version=model_name
+                    )
 
                     # Mark as complete in chunks.lance
                     await self.chunks_backend.mark_chunks_complete(chunk_ids)
@@ -2060,7 +2090,10 @@ class SemanticIndexer:
                         chunks_with_vectors.append(chunk_dict)
 
                     # Store vectors to vectors.lance
-                    await self.vectors_backend.add_vectors(chunks_with_vectors)
+                    model_name = self.get_embedding_model_name()
+                    await self.vectors_backend.add_vectors(
+                        chunks_with_vectors, model_version=model_name
+                    )
 
                 batch_elapsed = time.perf_counter() - batch_start
                 logger.info(
@@ -2220,7 +2253,10 @@ class SemanticIndexer:
                     chunks_with_vectors.append(chunk_dict)
 
                 # Store vectors to vectors.lance
-                await self.vectors_backend.add_vectors(chunks_with_vectors)
+                model_name = self.get_embedding_model_name()
+                await self.vectors_backend.add_vectors(
+                    chunks_with_vectors, model_version=model_name
+                )
 
             # Update metadata after successful indexing
             metadata_dict = self.metadata.load()
@@ -2859,7 +2895,10 @@ class SemanticIndexer:
                                 chunks_with_vectors.append(chunk_dict)
 
                             # Store vectors to vectors.lance
-                            await self.vectors_backend.add_vectors(chunks_with_vectors)
+                            model_name = self.get_embedding_model_name()
+                            await self.vectors_backend.add_vectors(
+                                chunks_with_vectors, model_version=model_name
+                            )
                         time_embedding_total += time.time() - t_start
 
                         logger.debug(

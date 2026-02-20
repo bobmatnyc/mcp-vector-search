@@ -133,7 +133,9 @@ class TestSemanticIndexerMultiprocessing:
         stats = await indexer.get_indexing_stats()
         assert stats["total_chunks"] >= 0  # May have some valid chunks
 
-    @pytest.mark.skip(reason="Requires full backend initialization - vectors_backend needed")
+    @pytest.mark.skip(
+        reason="Requires full backend initialization - vectors_backend needed"
+    )
     @pytest.mark.asyncio
     async def test_single_file_uses_async_path(self, mock_database, temp_project_dir):
         """Test that single file indexing doesn't use multiprocessing unnecessarily."""

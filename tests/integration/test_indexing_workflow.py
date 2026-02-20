@@ -115,7 +115,9 @@ class TestIndexingWorkflow:
             # May or may not find results depending on embedding similarity
             assert isinstance(results, list)
 
-    @pytest.mark.skip(reason="Atomic rebuild stats broken - lance.new directory reference after finalization")
+    @pytest.mark.skip(
+        reason="Atomic rebuild stats broken - lance.new directory reference after finalization"
+    )
     @pytest.mark.asyncio
     async def test_force_reindexing_workflow(
         self, temp_project_dir, real_embedding_function

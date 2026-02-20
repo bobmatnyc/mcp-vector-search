@@ -5,7 +5,9 @@ import pytest
 from mcp_vector_search.parsers.python import PythonParser
 
 
-@pytest.mark.skip(reason="NLP extraction no longer integrated in parser - feature removed/changed")
+@pytest.mark.skip(
+    reason="NLP extraction no longer integrated in parser - feature removed/changed"
+)
 class TestNLPIntegration:
     """Test NLP entity extraction integrated with parsers."""
 

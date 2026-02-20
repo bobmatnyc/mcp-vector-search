@@ -289,6 +289,38 @@ async def show_status(
         index_version = indexer.get_index_version()
         needs_reindex = indexer.needs_reindex_for_version()
 
+        # Get model information from vectors.lance
+        stored_model = None
+        model_mismatch = False
+        try:
+            from ...core.vectors_backend import VectorsBackend
+
+            vectors_path = config.index_path / "lance"
+            vectors_backend = VectorsBackend(vectors_path)
+            await vectors_backend.initialize()
+
+            if vectors_backend._table is not None:
+                # Read first row to get stored model
+                df = vectors_backend._table.to_pandas().head(1)
+                if not df.empty and "model_version" in df.columns:
+                    stored_model = df.iloc[0]["model_version"]
+
+                    # Check for mismatch with current config
+                    current_model = (
+                        config.embedding_model
+                        if config.embedding_model
+                        else "sentence-transformers/all-MiniLM-L6-v2"
+                    )
+                    if (
+                        stored_model != current_model
+                        and stored_model not in current_model
+                    ):
+                        model_mismatch = True
+
+            await vectors_backend.close()
+        except Exception as e:
+            logger.debug(f"Could not read model version from vectors.lance: {e}")
+
         # Compile status data
         status_data = {
             "project": {
@@ -317,6 +349,8 @@ async def show_status(
                 "index_version": index_version,
                 "current_version": __version__,
                 "needs_reindex": needs_reindex,
+                "stored_model": stored_model,
+                "model_mismatch": model_mismatch,
             },
         }
 
@@ -402,6 +436,19 @@ def _display_status(
 
     console.print(f"  Index Size: {index_data['index_size_mb']:.2f} MB")
 
+    # Model information
+    stored_model = index_data.get("stored_model")
+    model_mismatch = index_data.get("model_mismatch", False)
+    if stored_model:
+        if model_mismatch:
+            console.print(
+                f"  Index Model: [yellow]{stored_model}[/yellow] [yellow]⚠️  Mismatch detected[/yellow]"
+            )
+        else:
+            console.print(f"  Index Model: [green]{stored_model}[/green]")
+    else:
+        console.print("  Index Model: [dim]Not available[/dim]")
+
     # Version information
     index_version = index_data.get("index_version")
     current_version = index_data.get("current_version", __version__)
@@ -429,6 +476,17 @@ def _display_status(
     if needs_reindex:
         console.print(
             "[yellow]💡 Tip: Run 'mcp-vector-search index' to reindex with the latest improvements[/yellow]"
+        )
+        console.print()
+
+    # Show model mismatch warning if needed
+    if model_mismatch:
+        console.print(
+            f"[yellow]⚠️  Model mismatch: Index was built with '{stored_model}', "
+            f"but config uses '{config_data['embedding_model']}'[/yellow]"
+        )
+        console.print(
+            "[yellow]   Run 'mcp-vector-search index --force' to rebuild with current model[/yellow]"
         )
         console.print()
 

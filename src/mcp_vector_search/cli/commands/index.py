@@ -1544,6 +1544,7 @@ async def _run_batch_indexing(
     else:
         # KG not built - show hint
         from ..output import console as output_console
+
         output_console.print()
         output_console.print(
             "[dim]💡 Run 'mcp-vector-search kg build' to enable graph queries[/dim]"

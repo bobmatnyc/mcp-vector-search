@@ -279,8 +279,7 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
                     for text in texts:
                         # Create a simple hash-based embedding (384-dimensional)
                         embedding = [
-                            float(hash(text + str(i)) % 100) / 100.0
-                            for i in range(384)
+                            float(hash(text + str(i)) % 100) / 100.0 for i in range(384)
                         ]
                         embeddings.append(embedding)
                     return embeddings

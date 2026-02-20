@@ -375,7 +375,7 @@ class CodeBERTEmbeddingFunction:
 
     def __init__(
         self,
-        model_name: str = "microsoft/graphcodebert-base",
+        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         timeout: float = 300.0,  # 5 minutes default timeout
     ) -> None:
         """Initialize embedding function.
@@ -793,10 +793,10 @@ class BatchEmbeddingProcessor:
 def _default_model_for_device() -> str:
     """Return the default embedding model.
 
-    GraphCodeBERT provides superior code understanding (data-flow aware).
-    Use --preset fast for MiniLM if indexing speed is preferred.
+    MiniLM provides fast, efficient embeddings with good quality.
+    Use --model graphcodebert for code-specific understanding (data-flow aware).
     """
-    return "microsoft/graphcodebert-base"
+    return "sentence-transformers/all-MiniLM-L6-v2"
 
 
 def get_model_dimension(model_name: str | None = None) -> int:
@@ -806,7 +806,7 @@ def get_model_dimension(model_name: str | None = None) -> int:
         model_name: Model name (None = use default)
 
     Returns:
-        Embedding dimension (384 for MiniLM, 768 for code models)
+        Embedding dimension (384 for MiniLM, 768 for GraphCodeBERT, 1024 for SFR)
     """
     if model_name is None:
         model_name = _default_model_for_device()
