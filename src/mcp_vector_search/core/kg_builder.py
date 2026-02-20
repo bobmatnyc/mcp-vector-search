@@ -3147,10 +3147,10 @@ class KGBuilder:
         persons: dict[str, Person],
         stats: dict,
     ) -> None:
-        """Extract AUTHORED relationships using git log (fast).
+        """Extract AUTHORED and MODIFIED relationships using git log (async).
 
-        Uses git log --name-only instead of git blame per file.
-        Maps most recent commit author to each file.
+        The first (oldest) author of a file gets AUTHORED relationship.
+        All subsequent authors get MODIFIED relationships.
 
         Args:
             code_entities: List of (entity_id, file_path) tuples
@@ -3158,6 +3158,7 @@ class KGBuilder:
             stats: Statistics dictionary to update
         """
         authored_count = 0
+        modified_count = 0
 
         # Build file -> entity mapping
         file_to_entities: dict[str, list[str]] = {}
@@ -3175,18 +3176,17 @@ class KGBuilder:
                 file_to_entities[rel_str] = []
             file_to_entities[rel_str].append(entity_id)
 
-        # Get file -> author mapping from git log (single command, very fast)
-        # Maps file path -> (person_id, timestamp, sha)
-        file_author_map: dict[str, tuple[str, str, str]] = {}
+        # Collect ALL authors per file (list of tuples: person_id, timestamp, commit_sha)
+        file_authors_map: dict[str, list[tuple[str, str, str]]] = {}
 
         try:
-            # Get commits with files in one command
+            # Get commits with files - use more history for better authorship detection
             result = subprocess.run(
-                ["git", "log", "--format=%H|%an|%ae|%aI", "--name-only", "-n", "500"],
+                ["git", "log", "--format=%H|%an|%ae|%aI", "--name-only", "-n", "5000"],
                 cwd=self.project_root,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=60,
             )
 
             if result.returncode != 0:
@@ -3206,19 +3206,20 @@ class KGBuilder:
                     current_email = parts[2]
                     current_time = parts[3]
                 elif line.strip() and current_email:
-                    # File line
+                    # File line - collect ALL authors, not just first
                     file_path = line.strip()
-                    if file_path not in file_author_map:
-                        # First (most recent) author for this file
-                        email_hash = self._hash_email(current_email)
-                        person_id = f"person:{email_hash}"
-                        file_author_map[file_path] = (
-                            person_id,
-                            current_time,
-                            current_commit,
-                        )
+                    email_hash = self._hash_email(current_email)
+                    person_id = f"person:{email_hash}"
 
-            logger.info(f"Mapped {len(file_author_map)} files to authors from git log")
+                    if file_path not in file_authors_map:
+                        file_authors_map[file_path] = []
+
+                    # Add author to list (most recent commits first from git log)
+                    file_authors_map[file_path].append(
+                        (person_id, current_time, current_commit)
+                    )
+
+            logger.info(f"Mapped {len(file_authors_map)} files to authors from git log")
 
         except subprocess.TimeoutExpired:
             logger.warning("git log timed out")
@@ -3227,23 +3228,63 @@ class KGBuilder:
             logger.warning(f"git log failed: {e}")
             return
 
-        # Create AUTHORED relationships
+        # Create AUTHORED and MODIFIED relationships
         for file_path, entity_ids in file_to_entities.items():
-            if file_path in file_author_map:
-                person_id, timestamp, commit_sha = file_author_map[file_path]
+            if file_path not in file_authors_map:
+                continue
+
+            authors = file_authors_map[file_path]
+            if not authors:
+                continue
+
+            # Sort authors chronologically (oldest first)
+            authors_sorted = sorted(authors, key=lambda x: x[1])  # Sort by timestamp
+
+            # Get unique authors (person may have multiple commits)
+            seen_persons: set[str] = set()
+            unique_authors: list[tuple[str, str, str]] = []
+            for author in authors_sorted:
+                person_id = author[0]
+                if person_id not in seen_persons:
+                    seen_persons.add(person_id)
+                    unique_authors.append(author)
+
+            if not unique_authors:
+                continue
+
+            # First author (oldest) gets AUTHORED relationship
+            first_author = unique_authors[0]
+            person_id, timestamp, commit_sha = first_author
+
+            if person_id in persons:
+                for entity_id in entity_ids[:5]:  # Limit per file
+                    try:
+                        await self.kg.add_authored_relationship(
+                            person_id, entity_id, timestamp, commit_sha, 0
+                        )
+                        authored_count += 1
+                    except Exception:
+                        pass
+
+            # Subsequent authors get MODIFIED relationships
+            for author in unique_authors[1:]:
+                person_id, timestamp, commit_sha = author
 
                 if person_id in persons:
                     for entity_id in entity_ids[:5]:  # Limit per file
                         try:
-                            await self.kg.add_authored_relationship(
+                            await self.kg.add_modified_relationship(
                                 person_id, entity_id, timestamp, commit_sha, 0
                             )
-                            authored_count += 1
+                            modified_count += 1
                         except Exception:
                             pass
 
         stats["authored"] = authored_count
-        logger.info(f"✓ Created {authored_count} AUTHORED relationships")
+        stats["modified"] = modified_count
+        logger.info(
+            f"✓ Created {authored_count} AUTHORED and {modified_count} MODIFIED relationships"
+        )
 
     def _extract_authorship_sync(
         self,
@@ -3252,7 +3293,10 @@ class KGBuilder:
         stats: dict,
         progress_tracker: Optional["ProgressTracker"] = None,
     ) -> None:
-        """Extract AUTHORED relationships using git log (synchronous).
+        """Extract AUTHORED and MODIFIED relationships using git log (synchronous).
+
+        The first (oldest) author of a file gets AUTHORED relationship.
+        All subsequent authors get MODIFIED relationships.
 
         Args:
             code_entities: List of CodeEntity objects
@@ -3261,6 +3305,7 @@ class KGBuilder:
             progress_tracker: Optional progress tracker for status updates
         """
         authored_count = 0
+        modified_count = 0
 
         # Build file -> entity mapping
         file_to_entities: dict[str, list[str]] = {}
@@ -3278,17 +3323,18 @@ class KGBuilder:
                 file_to_entities[rel_str] = []
             file_to_entities[rel_str].append(entity.id)
 
-        # Get file -> author mapping from git log (single command, very fast)
-        file_author_map: dict[str, tuple[str, str, str]] = {}
+        # Collect ALL authors per file (list of tuples: person_id, timestamp, commit_sha)
+        file_authors_map: dict[str, list[tuple[str, str, str]]] = {}
 
         try:
-            # Get commits with files in one command
+            # Get commits with files - use more history for better authorship detection
+            # Increased from 500 to 5000 to capture more authorship information
             result = subprocess.run(
-                ["git", "log", "--format=%H|%an|%ae|%aI", "--name-only", "-n", "500"],
+                ["git", "log", "--format=%H|%an|%ae|%aI", "--name-only", "-n", "5000"],
                 cwd=self.project_root,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=60,
             )
 
             if result.returncode != 0:
@@ -3308,17 +3354,18 @@ class KGBuilder:
                     current_email = parts[2]
                     current_time = parts[3]
                 elif line.strip() and current_email:
-                    # File line
+                    # File line - collect ALL authors, not just first
                     file_path = line.strip()
-                    if file_path not in file_author_map:
-                        # First (most recent) author for this file
-                        email_hash = self._hash_email(current_email)
-                        person_id = f"person:{email_hash}"
-                        file_author_map[file_path] = (
-                            person_id,
-                            current_time,
-                            current_commit,
-                        )
+                    email_hash = self._hash_email(current_email)
+                    person_id = f"person:{email_hash}"
+
+                    if file_path not in file_authors_map:
+                        file_authors_map[file_path] = []
+
+                    # Add author to list (most recent commits first from git log)
+                    file_authors_map[file_path].append(
+                        (person_id, current_time, current_commit)
+                    )
 
         except subprocess.TimeoutExpired:
             logger.warning("git log timed out")
@@ -3327,24 +3374,63 @@ class KGBuilder:
             logger.warning(f"git log failed: {e}")
             return
 
-        # Create AUTHORED relationships (sync - called per entity)
+        # Create AUTHORED and MODIFIED relationships
         for file_path, entity_ids in file_to_entities.items():
-            if file_path in file_author_map:
-                person_id, timestamp, commit_sha = file_author_map[file_path]
+            if file_path not in file_authors_map:
+                continue
+
+            authors = file_authors_map[file_path]
+            if not authors:
+                continue
+
+            # Sort authors chronologically (oldest first)
+            # git log gives us most recent first, so reverse to get oldest first
+            authors_sorted = sorted(authors, key=lambda x: x[1])  # Sort by timestamp
+
+            # Get unique authors (person may have multiple commits)
+            seen_persons: set[str] = set()
+            unique_authors: list[tuple[str, str, str]] = []
+            for author in authors_sorted:
+                person_id = author[0]
+                if person_id not in seen_persons:
+                    seen_persons.add(person_id)
+                    unique_authors.append(author)
+
+            if not unique_authors:
+                continue
+
+            # First author (oldest) gets AUTHORED relationship
+            first_author = unique_authors[0]
+            person_id, timestamp, commit_sha = first_author
+
+            if person_id in persons:
+                for entity_id in entity_ids[:5]:  # Limit per file
+                    self.kg.add_authored_relationship_sync(
+                        person_id, entity_id, timestamp, commit_sha, 0
+                    )
+                    authored_count += 1
+
+            # Subsequent authors get MODIFIED relationships
+            for author in unique_authors[1:]:
+                person_id, timestamp, commit_sha = author
 
                 if person_id in persons:
                     for entity_id in entity_ids[:5]:  # Limit per file
-                        # Add relationship using sync method
-                        self.kg.add_authored_relationship_sync(
+                        self.kg.add_modified_relationship_sync(
                             person_id, entity_id, timestamp, commit_sha, 0
                         )
-                        authored_count += 1
+                        modified_count += 1
 
         stats["authored"] = authored_count
+        stats["modified"] = modified_count
         if progress_tracker:
-            progress_tracker.item(f"{authored_count:,} authored", done=True)
+            progress_tracker.item(
+                f"{authored_count:,} authored, {modified_count:,} modified", done=True
+            )
         else:
-            logger.info(f"✓ Created {authored_count} AUTHORED relationships")
+            logger.info(
+                f"✓ Created {authored_count} AUTHORED and {modified_count} MODIFIED relationships"
+            )
 
     def _extract_part_of_sync(
         self,
@@ -3380,8 +3466,10 @@ class KGBuilder:
     ) -> None:
         """Extract AUTHORED relationships from git blame (detailed, per-line).
 
-        This is the slower, more accurate version that uses git blame per file.
-        Kept for reference - use _extract_authorship_fast for production.
+        NOTE: This is the slower version that uses git blame per file.
+        It only extracts AUTHORED relationships (most recent author per line).
+        Use _extract_authorship_fast for production - it includes both AUTHORED
+        and MODIFIED relationships.
 
         Args:
             code_entities: List of (entity_id, file_path) tuples

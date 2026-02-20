@@ -1899,6 +1899,48 @@ class KnowledgeGraph:
         except Exception as e:
             logger.debug(f"Failed to add AUTHORED relationship: {e}")
 
+    def add_modified_relationship_sync(
+        self,
+        person_id: str,
+        entity_id: str,
+        timestamp: str,
+        commit_sha: str,
+        lines: int,
+    ) -> None:
+        """Add a MODIFIED relationship (synchronous).
+
+        Args:
+            person_id: ID of the Person node
+            entity_id: ID of the CodeEntity node
+            timestamp: ISO timestamp of modification
+            commit_sha: Git commit SHA
+            lines: Number of lines changed
+        """
+        if not self._initialized:
+            raise RuntimeError(
+                "KnowledgeGraph not initialized. Call initialize_sync() first."
+            )
+
+        try:
+            self._execute_query(
+                """
+                MATCH (p:Person {id: $person_id}), (e:CodeEntity {id: $entity_id})
+                CREATE (p)-[r:MODIFIED]->(e)
+                SET r.timestamp = $timestamp,
+                    r.commit_sha = $commit_sha,
+                    r.lines_changed = $lines
+                """,
+                {
+                    "person_id": person_id,
+                    "entity_id": entity_id,
+                    "timestamp": timestamp,
+                    "commit_sha": commit_sha,
+                    "lines": lines,
+                },
+            )
+        except Exception as e:
+            logger.debug(f"Failed to add MODIFIED relationship: {e}")
+
     def add_part_of_batch_sync(
         self, entity_ids: list[str], project_id: str, batch_size: int = 500
     ) -> int:
