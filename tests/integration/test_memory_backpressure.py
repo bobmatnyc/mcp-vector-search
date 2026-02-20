@@ -174,17 +174,28 @@ async def test_event_loop_responsiveness_during_memory_wait():
 
 
 def test_sync_context_usage_raises_warning():
-    """Verify that wait_for_memory_available can't be called from sync context.
+    """Verify that wait_for_memory_available returns a coroutine.
 
     This test verifies that the function signature is async, preventing
     accidental synchronous usage that would cause the 2.5.18 hang bug.
     """
+    import inspect
+
     monitor = MemoryMonitor(max_memory_gb=1.0)
 
-    # Attempting to call without await should fail
-    with pytest.raises(TypeError, match="coroutine"):
-        # This should raise: "coroutine 'wait_for_memory_available' was never awaited"
-        monitor.wait_for_memory_available()  # Missing await
+    # Verify the method is a coroutine function
+    assert inspect.iscoroutinefunction(monitor.wait_for_memory_available), (
+        "wait_for_memory_available should be an async function"
+    )
+
+    # Calling without await returns a coroutine object
+    result = monitor.wait_for_memory_available()
+    assert inspect.iscoroutine(result), (
+        "Calling wait_for_memory_available without await should return a coroutine"
+    )
+
+    # Clean up the coroutine to avoid warning
+    result.close()
 
 
 if __name__ == "__main__":

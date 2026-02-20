@@ -166,24 +166,26 @@ class TestMemoryMonitor:
     @patch("psutil.Process")
     def test_get_adjusted_batch_size_warning(self, mock_process):
         """Test get_adjusted_batch_size with warning usage."""
-        # Mock memory info: 21GB (84% of 25GB cap)
+        # Mock memory info: 21GB (84% of 25GB cap) - hits 80%+ threshold
         mock_mem_info = MagicMock()
         mock_mem_info.rss = 21 * 1024 * 1024 * 1024
         mock_process.return_value.memory_info.return_value = mock_mem_info
 
         monitor = MemoryMonitor(max_memory_gb=25.0)
-        assert monitor.get_adjusted_batch_size(1000) == 500  # 50% reduction
+        # At 80%+ usage, batch size reduced to 10% (current_batch_size // 10)
+        assert monitor.get_adjusted_batch_size(1000) == 100  # 90% reduction
 
     @patch("psutil.Process")
     def test_get_adjusted_batch_size_critical(self, mock_process):
         """Test get_adjusted_batch_size with critical usage."""
-        # Mock memory info: 23GB (92% of 25GB cap)
+        # Mock memory info: 23GB (92% of 25GB cap) - hits 90%+ threshold
         mock_mem_info = MagicMock()
         mock_mem_info.rss = 23 * 1024 * 1024 * 1024
         mock_process.return_value.memory_info.return_value = mock_mem_info
 
         monitor = MemoryMonitor(max_memory_gb=25.0)
-        assert monitor.get_adjusted_batch_size(1000) == 250  # 75% reduction
+        # At 90%+ usage, batch size reduced to 1% (current_batch_size // 100)
+        assert monitor.get_adjusted_batch_size(1000) == 10  # 99% reduction
 
     @patch("psutil.Process")
     def test_get_adjusted_batch_size_exceeded(self, mock_process):

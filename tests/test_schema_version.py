@@ -179,6 +179,6 @@ def test_schema_version_separate_from_package():
     assert isinstance(SCHEMA_VERSION, str)
     assert "." in SCHEMA_VERSION  # Should be in semver format
 
-    # Schema version should be 2.3.0 (last schema change)
-    # even if package version is higher (e.g., 2.3.7)
-    assert SCHEMA_VERSION == "2.3.0"
+    # Schema version should be 2.4.0 (last schema change: added git blame fields)
+    # even if package version is higher (e.g., 2.5.x)
+    assert SCHEMA_VERSION == "2.4.0"

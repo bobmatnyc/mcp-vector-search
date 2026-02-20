@@ -317,6 +317,12 @@ def main(
         help="Model preset: 'fast' (MiniLM, 384d, ~10x faster) or 'quality' (GraphCodeBERT, 768d, better code understanding). Default: quality.",
         rich_help_panel="⚡ Performance",
     ),
+    model: str = typer.Option(
+        "",
+        "--model",
+        help="Embedding model: 'fast' (MiniLM, default), 'code' (GraphCodeBERT), 'precise' (SFR), or full model name (e.g., 'microsoft/graphcodebert-base')",
+        rich_help_panel="⚡ Performance",
+    ),
     debug: bool = typer.Option(
         False,
         "--debug",
@@ -497,6 +503,7 @@ def main(
                     force_reindex=force,
                     batch_size=batch_size,
                     preset=preset,
+                    model=model,
                     show_progress=True,
                     debug=debug,
                     verbose=verbose,
@@ -661,6 +668,7 @@ async def run_indexing(
     force_reindex: bool = False,
     batch_size: int = 0,  # 0 = auto-tune based on CPU/RAM
     preset: str = "",
+    model: str = "",
     show_progress: bool = True,
     debug: bool = False,
     verbose: bool = False,
@@ -699,25 +707,49 @@ async def run_indexing(
 
     config = project_manager.load_config()
 
-    # Handle preset
-    if preset == "fast":
-        # Override to MiniLM for fast indexing
-        print_info("Preset: fast (MiniLM-L6-v2, 384d)")
-        config_model = "sentence-transformers/all-MiniLM-L6-v2"
-    elif preset == "quality" or preset == "":
-        # Default: GraphCodeBERT for best code understanding
-        config_model = config.embedding_model  # None = auto-select (GraphCodeBERT)
-    else:
-        print_warning(f"Unknown preset '{preset}', using default (quality)")
+    # Model selection priority: --model > --preset > config default > global default
+    config_model = None
+
+    # Handle --model flag (highest priority after embedding_model_override)
+    if model:
+        # Map preset names to full model names
+        model_presets = {
+            "fast": "sentence-transformers/all-MiniLM-L6-v2",
+            "code": "microsoft/graphcodebert-base",
+            "graphcodebert": "microsoft/graphcodebert-base",
+            "precise": "Salesforce/SFR-Embedding-Code-400M_R",
+        }
+
+        if model in model_presets:
+            config_model = model_presets[model]
+            print_info(f"Model preset: {model} → {config_model}")
+        else:
+            # Assume it's a full model name
+            config_model = model
+            print_info(f"Custom model: {model}")
+
+    # Handle --preset flag (fallback if --model not specified)
+    elif preset:
+        if preset == "fast":
+            config_model = "sentence-transformers/all-MiniLM-L6-v2"
+            print_info("Preset: fast (MiniLM-L6-v2, 384d)")
+        elif preset == "quality":
+            config_model = "microsoft/graphcodebert-base"
+            print_info("Preset: quality (GraphCodeBERT, 768d)")
+        else:
+            print_warning(f"Unknown preset '{preset}', using default")
+
+    # Use config default if neither --model nor --preset specified
+    if config_model is None:
         config_model = config.embedding_model
 
-    # Override embedding model if specified (takes precedence over preset)
+    # Override embedding model if specified (takes precedence over everything)
     if embedding_model_override:
         logger.info(f"Overriding embedding model: {embedding_model_override}")
         config_model = embedding_model_override
 
     # Apply the model selection
-    if config_model != config.embedding_model:
+    if config_model and config_model != config.embedding_model:
         config = config.model_copy(update={"embedding_model": config_model})
 
     # Auto-tune batch size if not explicitly set (batch_size == 0 is sentinel)
@@ -832,15 +864,11 @@ async def run_indexing(
     print_info(f"Indexing project: {project_root}")
     print_info(f"File extensions: {', '.join(config.file_extensions)}")
 
-    # Display embedding model with preset info
-    if preset == "fast":
-        print_info(
-            "Embedding model: sentence-transformers/all-MiniLM-L6-v2 (fast preset)"
-        )
-    elif config.embedding_model:
+    # Display embedding model
+    if config.embedding_model:
         print_info(f"Embedding model: {config.embedding_model}")
     else:
-        print_info("Embedding model: auto (GraphCodeBERT - code-optimized)")
+        print_info("Embedding model: auto (all-MiniLM-L6-v2 - fast default)")
 
     # Load vendor patterns if not disabled
     vendor_patterns_set: set[str] | None = None
@@ -1515,8 +1543,9 @@ async def _run_batch_indexing(
             logger.debug(f"Could not load KG stats: {e}")
     else:
         # KG not built - show hint
-        console.print()
-        console.print(
+        from ..output import console as output_console
+        output_console.print()
+        output_console.print(
             "[dim]💡 Run 'mcp-vector-search kg build' to enable graph queries[/dim]"
         )
 
