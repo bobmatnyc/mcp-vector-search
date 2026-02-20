@@ -18,6 +18,7 @@ class RubyParser(BaseParser):
         self._parser = None
         self._language = None
         self._initialized = False
+        self._use_tree_sitter = False
         self._initialize_parser()
 
     def _initialize_parser(self) -> None:
@@ -29,9 +30,10 @@ class RubyParser(BaseParser):
             # Get the language and parser objects
             self._language = get_language("ruby")
             self._parser = get_parser("ruby")
+            self._use_tree_sitter = True
             return
         except Exception:
-            pass
+            self._use_tree_sitter = False
 
         try:
             # Fallback to manual tree-sitter setup (requires language binaries)
@@ -39,9 +41,11 @@ class RubyParser(BaseParser):
             # For now, we'll skip this and rely on fallback parsing
             self._parser = None
             self._language = None
+            self._use_tree_sitter = False
         except Exception:
             self._parser = None
             self._language = None
+            self._use_tree_sitter = False
 
     def _ensure_parser_initialized(self) -> None:
         """Ensure tree-sitter parser is initialized (lazy loading)."""
