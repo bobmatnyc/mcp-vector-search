@@ -1153,19 +1153,36 @@ class KGBuilder:
         related_docs = []
 
         if frontmatter:
-            tags_data = frontmatter.get("tags", [])
-            if isinstance(tags_data, list):
-                # Flatten nested lists and filter to strings only
-                for tag in tags_data:
-                    if isinstance(tag, str):
-                        tags_from_frontmatter.append(tag)
-                    elif isinstance(tag, list):
-                        # Flatten nested list
-                        for t in tag:
-                            if isinstance(t, str):
-                                tags_from_frontmatter.append(t)
-            elif isinstance(tags_data, str):
-                tags_from_frontmatter = [tags_data]
+            # Extract tags from multiple possible frontmatter fields
+            # Support: tags, categories, keywords, labels
+            tag_fields = ["tags", "categories", "keywords", "labels"]
+
+            for field in tag_fields:
+                tags_data = frontmatter.get(field, [])
+
+                if isinstance(tags_data, list):
+                    # Flatten nested lists and filter to strings only
+                    for tag in tags_data:
+                        if isinstance(tag, str):
+                            tags_from_frontmatter.append(tag)
+                        elif isinstance(tag, list):
+                            # Flatten nested list
+                            for t in tag:
+                                if isinstance(t, str):
+                                    tags_from_frontmatter.append(t)
+                elif isinstance(tags_data, str):
+                    # Handle comma-separated strings (e.g., keywords: "search, vector, embedding")
+                    if "," in tags_data:
+                        tags_from_frontmatter.extend([t.strip() for t in tags_data.split(",")])
+                    else:
+                        tags_from_frontmatter.append(tags_data)
+
+            # Remove duplicates while preserving order
+            seen = set()
+            tags_from_frontmatter = [
+                tag for tag in tags_from_frontmatter
+                if not (tag in seen or seen.add(tag))
+            ]
 
             related = frontmatter.get("related", [])
             if isinstance(related, list):
@@ -1309,20 +1326,36 @@ class KGBuilder:
         related_docs = []
 
         if frontmatter:
-            # Extract tags for HAS_TAG relationships
-            tags = frontmatter.get("tags", [])
-            if isinstance(tags, list):
-                # Flatten nested lists and filter to strings only
-                for tag in tags:
-                    if isinstance(tag, str):
-                        tags_from_frontmatter.append(tag)
-                    elif isinstance(tag, list):
-                        # Flatten nested list
-                        for t in tag:
-                            if isinstance(t, str):
-                                tags_from_frontmatter.append(t)
-            elif isinstance(tags, str):
-                tags_from_frontmatter = [tags]
+            # Extract tags from multiple possible frontmatter fields
+            # Support: tags, categories, keywords, labels
+            tag_fields = ["tags", "categories", "keywords", "labels"]
+
+            for field in tag_fields:
+                tags_data = frontmatter.get(field, [])
+
+                if isinstance(tags_data, list):
+                    # Flatten nested lists and filter to strings only
+                    for tag in tags_data:
+                        if isinstance(tag, str):
+                            tags_from_frontmatter.append(tag)
+                        elif isinstance(tag, list):
+                            # Flatten nested list
+                            for t in tag:
+                                if isinstance(t, str):
+                                    tags_from_frontmatter.append(t)
+                elif isinstance(tags_data, str):
+                    # Handle comma-separated strings (e.g., keywords: "search, vector, embedding")
+                    if "," in tags_data:
+                        tags_from_frontmatter.extend([t.strip() for t in tags_data.split(",")])
+                    else:
+                        tags_from_frontmatter.append(tags_data)
+
+            # Remove duplicates while preserving order
+            seen = set()
+            tags_from_frontmatter = [
+                tag for tag in tags_from_frontmatter
+                if not (tag in seen or seen.add(tag))
+            ]
 
             # Extract related docs for LINKS_TO relationships
             related = frontmatter.get("related", [])
