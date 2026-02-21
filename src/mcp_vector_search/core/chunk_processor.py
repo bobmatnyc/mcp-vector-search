@@ -102,7 +102,9 @@ def _deduplicate_chunks(chunks: list[CodeChunk]) -> list[CodeChunk]:
 
     removed_count = len(chunks) - len(unique_chunks)
     if removed_count > 0:
-        logger.debug(
+        # Use TRACE level (below DEBUG) to avoid cluttering progress displays
+        # This log fires per-file during indexing and breaks Rich progress bars
+        logger.trace(
             f"Removed {removed_count} duplicate chunks (kept {len(unique_chunks)})"
         )
 
@@ -365,7 +367,8 @@ class ChunkProcessor:
                     chunk.commit_hash = blame.commit_hash
             except Exception as e:
                 # Non-fatal: log and continue without blame data
-                logger.debug(
+                # Use TRACE level to avoid cluttering progress displays
+                logger.trace(
                     f"Failed to get blame for {file_path}:{chunk.start_line}-{chunk.end_line}: {e}"
                 )
 
@@ -439,7 +442,8 @@ class ChunkProcessor:
                             f"[DEBUG] ✓ Linked '{func.function_name}' to class '{parent_class.class_name}'",
                             file=sys.stderr,
                         )
-                    logger.debug(
+                    # Use TRACE level to avoid cluttering progress displays
+                    logger.trace(
                         f"Linked method '{func.function_name}' (ID: {func.chunk_id[:8]}) to class '{parent_class.class_name}' (ID: {parent_class.chunk_id[:8]})"
                     )
             else:

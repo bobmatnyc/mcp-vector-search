@@ -1401,6 +1401,10 @@ async def _run_batch_indexing(
             total_chunks_created = 0
             start_time = time.time()
 
+            # Suppress DEBUG logs during progress display to prevent interleaving
+            # We've changed per-file logs to TRACE level, but this adds extra protection
+            logger.disable("mcp_vector_search.core.chunk_processor")
+
             # Simple progress bar - no Layout, no Panel, just Progress
             with Progress(
                 SpinnerColumn(),
@@ -1450,6 +1454,9 @@ async def _run_batch_indexing(
                         advance=1,
                         status=f"{indexed_count}/{total_files} files • {total_chunks_created:,} chunks • {rate:.1f}/s",
                     )
+
+            # Re-enable chunk_processor logs after progress display
+            logger.enable("mcp_vector_search.core.chunk_processor")
 
             # Progress complete - show summary
             elapsed = time.time() - start_time

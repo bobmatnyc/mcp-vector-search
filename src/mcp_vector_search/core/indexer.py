@@ -635,7 +635,8 @@ class SemanticIndexer:
                             chunks = await self.chunk_processor.parse_file(file_path)
 
                             if not chunks:
-                                logger.debug(f"No chunks extracted from {file_path}")
+                                # Use TRACE to avoid cluttering progress displays
+                                logger.trace(f"No chunks extracted from {file_path}")
                                 continue
 
                             # Build hierarchical relationships (CPU-bound, run in thread pool)
@@ -687,7 +688,8 @@ class SemanticIndexer:
                                 batch_chunks.extend(chunk_dicts)
                                 chunks_created += count
                                 batch_files_processed += 1
-                                logger.debug(f"Chunked {count} chunks from {rel_path}")
+                                # Use TRACE to avoid cluttering progress displays
+                                logger.trace(f"Chunked {count} chunks from {rel_path}")
 
                         except Exception as e:
                             logger.error(f"Failed to chunk file {file_path}: {e}")
