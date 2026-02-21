@@ -213,6 +213,37 @@ class ProjectManager:
             config_data["project_root"] = Path(config_data["project_root"])
             config_data["index_path"] = Path(config_data["index_path"])
 
+            # BUGFIX: Auto-correct stale paths from another machine/user
+            # When project is cloned/shared, config may contain absolute paths
+            # from the original user (e.g., /Users/kartik/... vs /Users/masa/...)
+            loaded_root = config_data["project_root"].resolve()
+            actual_root = self.project_root.resolve()
+
+            if loaded_root != actual_root:
+                logger.warning(
+                    f"Config contains stale path from another machine ({loaded_root}). "
+                    f"Auto-correcting to: {actual_root}"
+                )
+                config_data["project_root"] = actual_root
+                config_data["index_path"] = actual_root / ".mcp-vector-search"
+
+                # Save corrected config back to disk
+                try:
+                    corrected_config = config_data.copy()
+                    corrected_config["project_root"] = str(actual_root)
+                    corrected_config["index_path"] = str(
+                        actual_root / ".mcp-vector-search"
+                    )
+
+                    with open(config_path, "wb") as f:
+                        f.write(
+                            orjson.dumps(corrected_config, option=orjson.OPT_INDENT_2)
+                        )
+
+                    logger.info("Auto-corrected config saved successfully")
+                except Exception as e:
+                    logger.warning(f"Could not save corrected config: {e}")
+
             # Merge new file extensions from DEFAULT_FILE_EXTENSIONS
             # This ensures upgrades automatically pick up newly-supported file types
             if "file_extensions" in config_data:

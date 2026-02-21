@@ -783,6 +783,14 @@ async def run_indexing(
                 try:
                     shutil.rmtree(config.index_path)
                     logger.info(f"Removed old database at {config.index_path}")
+                except PermissionError:
+                    # Stale path from another machine/user - provide helpful fix
+                    console.print(
+                        f"[red]Error: Cannot remove database at {config.index_path}[/red]\n"
+                        f"[yellow]Your config contains a stale path from another machine.[/yellow]\n"
+                        f"[dim]Fix: rm -rf .mcp-vector-search && mcp-vector-search index[/dim]"
+                    )
+                    sys.exit(1)
                 except Exception as e:
                     logger.error(f"Failed to remove database: {e}")
                     raise
