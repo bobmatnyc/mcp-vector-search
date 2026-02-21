@@ -19,6 +19,7 @@ Examples:
 """
 
 import asyncio
+import shutil as stdlib_shutil
 from pathlib import Path
 
 import typer
@@ -93,6 +94,67 @@ install_app = create_enhanced_typer(
 # ==============================================================================
 # Helper Functions
 # ==============================================================================
+
+# Known deprecated MCP servers to automatically remove
+DEPRECATED_MCP_SERVERS = {"mcp-browser", "mcp-browser-tools"}
+
+
+def cleanup_stale_mcp_servers(platform_info: PlatformInfo) -> list[str]:
+    """Remove stale/deprecated MCP server entries from platform configuration.
+
+    This function:
+    1. Removes known deprecated servers (e.g., mcp-browser)
+    2. Removes servers where the command binary doesn't exist on the system
+
+    Args:
+        platform_info: Platform information with config path
+
+    Returns:
+        List of server names that were removed
+    """
+    removed_servers = []
+
+    try:
+        installer = MCPInstaller(platform=platform_info.platform)
+
+        # Get all configured servers for this platform
+        all_servers = installer.list_servers()
+
+        for server_name in all_servers:
+            should_remove = False
+            reason = ""
+
+            # Check if it's a known deprecated server
+            if server_name in DEPRECATED_MCP_SERVERS:
+                should_remove = True
+                reason = "deprecated server"
+            else:
+                # Check if the command binary exists
+                server_config = installer.get_server(server_name)
+                if server_config and "command" in server_config:
+                    command = server_config["command"]
+
+                    # Use shutil.which to check if command exists in PATH
+                    if not stdlib_shutil.which(command):
+                        should_remove = True
+                        reason = f"command not found: {command}"
+
+            # Remove if needed
+            if should_remove:
+                try:
+                    installer.uninstall_server(server_name)
+                    removed_servers.append(server_name)
+                    logger.debug(
+                        f"Removed stale MCP server '{server_name}' from "
+                        f"{platform_info.platform.value}: {reason}"
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to remove stale server '{server_name}': {e}")
+
+    except Exception as e:
+        logger.debug(f"Failed to cleanup stale servers: {e}")
+
+    return removed_servers
 
 
 def detect_project_root(start_path: Path | None = None) -> Path:
@@ -571,6 +633,12 @@ def _install_to_platform(
             print_success(f"  ✅ Installed to {platform_info.platform.value}")
             if result.config_path:
                 print_info(f"     Config: {result.config_path}")
+
+            # Clean up stale/deprecated MCP servers
+            removed = cleanup_stale_mcp_servers(platform_info)
+            if removed:
+                for server_name in removed:
+                    print_info(f"     🧹 Removed stale MCP server: {server_name}")
 
             # Validate installation
             inspector = MCPInspector(platform_info)
