@@ -6,7 +6,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Elastic-2.0](https://img.shields.io/badge/License-Elastic--2.0-blue.svg)](LICENSE)
 
-> ⚠️ **Production Release (v2.1.9)**: Stable and actively maintained. LanceDB is now the default backend for better performance and stability.
+> ⚠️ **Production Release (v2.5.56)**: Stable and actively maintained. LanceDB is now the default backend for better performance and stability.
 
 A modern, fast, and intelligent code search tool that understands your codebase through semantic analysis and AST parsing. Built with Python, powered by LanceDB, and designed for developer productivity.
 
@@ -15,7 +15,10 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 ### 🚀 **Core Capabilities**
 - **Semantic Search**: Find code by meaning, not just keywords
 - **AST-Aware Parsing**: Understands code structure (functions, classes, methods)
-- **Multi-Language Support**: 11 languages - Python, JavaScript, TypeScript, C#, Dart/Flutter, PHP, Ruby, Java, Go, Rust, HTML, and Markdown/Text (with extensible architecture)
+- **Multi-Language Support**: 13 languages - Python, JavaScript, TypeScript, C#, Dart/Flutter, PHP, Ruby, Java, Go, Rust, HTML, and Markdown/Text (with extensible architecture)
+- **Knowledge Graph**: Temporal knowledge graph with KuzuDB for entity extraction and relationship mapping (`kg build`, `kg status`, `kg query`)
+- **Interactive Visualization**: D3.js-powered visualization with 5+ views (Treemap, Sunburst, Force Graph, Knowledge Graph, Heatmap)
+- **Development Narratives**: Generate git history narratives with `story` command (markdown, JSON, HTML output)
 - **Real-time Indexing**: File watching with automatic index updates
 - **Automatic Version Tracking**: Smart reindexing on tool upgrades
 - **Local-First**: Complete privacy with on-device processing
@@ -24,9 +27,12 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 ### 🛠️ **Developer Experience**
 - **CLI-First Design**: Simple commands for immediate productivity
 - **Rich Output**: Syntax highlighting, similarity scores, context
-- **Fast Performance**: Sub-second search responses, efficient indexing
+- **Fast Performance**: Sub-second search responses, efficient indexing with pipeline parallelism (37% faster)
 - **Modern Architecture**: Async-first, type-safe, modular design
 - **Semi-Automatic Reindexing**: Multiple strategies without daemon processes
+- **17 MCP Tools**: Comprehensive MCP integration for AI assistants (search, analysis, documentation, KG, story generation)
+- **Chat Mode**: LLM-powered code Q&A with iterative refinement (up to 30 queries), deep search, and KG query tools
+- **CodeT5+ Embeddings**: Code-specific embeddings via `index-code` command (Salesforce/codet5p-110m-embedding)
 
 ### 🔧 **Technical Features**
 - **Vector Database**: LanceDB (serverless, file-based)
@@ -183,11 +189,32 @@ mcp-vector-search search "error handling patterns"
 # Index your codebase (if not done during setup)
 mcp-vector-search index
 
+# Index with code-specific embeddings (CodeT5+)
+mcp-vector-search index-code
+
 # Check project status
 mcp-vector-search status
 
 # Start file watching (auto-update index)
 mcp-vector-search watch
+
+# Interactive visualization (5+ views)
+mcp-vector-search visualize
+
+# Generate development narrative from git history
+mcp-vector-search story
+
+# Knowledge graph operations
+mcp-vector-search kg build
+mcp-vector-search kg status
+mcp-vector-search kg query "find all Python functions"
+
+# Chat mode with LLM
+mcp-vector-search chat "explain the authentication flow"
+
+# Code analysis
+mcp-vector-search analyze complexity
+mcp-vector-search analyze dead-code
 ```
 
 ### Smart CLI with "Did You Mean" Suggestions
@@ -418,6 +445,102 @@ mcp-vector-search config models
 mcp-vector-search config list-keys
 ```
 
+#### `index-code` - Code-Specific Embeddings
+```bash
+# Index with CodeT5+ embeddings (code-optimized)
+mcp-vector-search index-code
+
+# Feature-flagged via environment variable
+export MCP_CODE_ENRICHMENT=true
+mcp-vector-search index-code
+```
+
+#### `visualize` - Interactive D3.js Visualization
+```bash
+# Launch visualization server
+mcp-vector-search visualize
+
+# Start on custom port
+mcp-vector-search visualize --port 8080
+
+# Available views:
+# - Treemap: Hierarchical view with size/complexity encoding
+# - Sunburst: Radial hierarchical view
+# - Force Graph: Network visualization of code relationships
+# - Knowledge Graph: Entity and relationship visualization
+# - Heatmap: Complexity and quality heatmap
+```
+
+#### `story` - Development Narrative Generation
+```bash
+# Generate development narrative from git history
+mcp-vector-search story
+
+# Output formats
+mcp-vector-search story --format markdown
+mcp-vector-search story --format json
+mcp-vector-search story --format html
+
+# Serve as HTTP endpoint
+mcp-vector-search story --serve
+
+# Extract-only mode (no LLM)
+mcp-vector-search story --no-llm
+
+# Custom LLM model
+mcp-vector-search story --model gpt-4o
+```
+
+#### `kg` - Knowledge Graph Operations
+```bash
+# Build knowledge graph
+mcp-vector-search kg build
+
+# Check knowledge graph status
+mcp-vector-search kg status
+
+# Query knowledge graph
+mcp-vector-search kg query "find all Python functions"
+mcp-vector-search kg query "show classes in module auth"
+
+# Knowledge graph entities:
+# - CodeFile, Function, Class, Person
+# - ProgrammingLanguage, ProgrammingFramework
+```
+
+#### `chat` - LLM-Powered Code Q&A
+```bash
+# Ask questions about your codebase
+mcp-vector-search chat "explain the authentication flow"
+mcp-vector-search chat "how does error handling work?"
+
+# Iterative refinement (up to 30 queries)
+# Automatically uses deep search and KG query tools
+
+# Advanced reasoning mode
+mcp-vector-search chat "architectural patterns" --think
+
+# Filter by files
+mcp-vector-search chat "validation logic" --files "src/*.py"
+```
+
+#### `analyze` - Code Analysis
+```bash
+# Complexity analysis
+mcp-vector-search analyze complexity
+
+# Dead code detection
+mcp-vector-search analyze dead-code
+
+# Output formats
+mcp-vector-search analyze complexity --json
+mcp-vector-search analyze complexity --sarif
+mcp-vector-search analyze complexity --output-format markdown
+
+# CI/CD integration
+mcp-vector-search analyze complexity --fail-on-smell
+```
+
 ## 🚀 Performance Features
 
 ### LanceDB Backend (Default in v2.1+)
@@ -586,25 +709,22 @@ mcp-vector-search config set force_include_patterns '["repos/**/*.java", "repos/
 
 ### Supported Languages
 
-MCP Vector Search supports **8 programming languages** with full semantic search capabilities:
+MCP Vector Search supports **13 programming languages** with full semantic search capabilities:
 
 | Language   | Extensions | Status | Features |
 |------------|------------|--------|----------|
 | Python     | `.py`, `.pyw` | ✅ Full | Functions, classes, methods, docstrings |
 | JavaScript | `.js`, `.jsx`, `.mjs` | ✅ Full | Functions, classes, JSDoc, ES6+ syntax |
 | TypeScript | `.ts`, `.tsx` | ✅ Full | Interfaces, types, generics, decorators |
+| C#         | `.cs` | ✅ Full | Classes, interfaces, structs, enums, methods, XML docs, attributes |
 | Dart       | `.dart` | ✅ Full | Functions, classes, widgets, async, dartdoc |
 | PHP        | `.php`, `.phtml` | ✅ Full | Classes, methods, traits, PHPDoc, Laravel patterns |
 | Ruby       | `.rb`, `.rake`, `.gemspec` | ✅ Full | Modules, classes, methods, RDoc, Rails patterns |
+| Java       | `.java` | ✅ Full | Classes, methods, annotations, interfaces |
+| Go         | `.go` | ✅ Full | Functions, structs, interfaces, packages |
+| Rust       | `.rs` | ✅ Full | Functions, structs, traits, implementations |
 | HTML       | `.html`, `.htm` | ✅ Full | Semantic content extraction, heading hierarchy, text chunking |
 | Text/Markdown | `.txt`, `.md`, `.markdown` | ✅ Basic | Semantic chunking for documentation |
-
-**Planned Languages:**
-| Language   | Status | Features |
-|------------|--------|----------|
-| Java       | 🔄 Planned | Classes, methods, annotations |
-| Go         | 🔄 Planned | Functions, structs, interfaces |
-| Rust       | 🔄 Planned | Functions, structs, traits |
 
 #### New Language Support
 
@@ -704,24 +824,31 @@ Please [open an issue](https://github.com/bobmatnyc/mcp-vector-search/issues) or
 
 ## 🔮 Roadmap
 
-### v2.x: Production (Current) ✅
+### v2.5: Production (Current) ✅
 - [x] Core CLI interface
-- [x] Multi-language parsing (8+ languages)
+- [x] Multi-language parsing (13 languages: Python, JavaScript, TypeScript, C#, Dart, PHP, Ruby, Java, Go, Rust, HTML, Markdown, Text)
 - [x] LanceDB default backend (ChromaDB legacy support)
-- [x] Apple Silicon M4 Max optimizations
+- [x] Apple Silicon optimizations (2-4x speedup with MPS)
 - [x] File watching and auto-reindexing
-- [x] MCP server implementation
+- [x] MCP server implementation with 17 tools
 - [x] Advanced search modes (semantic, contextual, similar code)
-- [x] Code analysis tools (complexity, dead code detection)
-- [x] Interactive D3.js visualization
-- [x] Production-ready performance (write buffering, GPU acceleration)
+- [x] Code analysis tools (complexity, dead code detection, code smells)
+- [x] Interactive D3.js visualization (5+ views: Treemap, Sunburst, Force Graph, KG, Heatmap)
+- [x] Knowledge Graph with KuzuDB (entity extraction, relationship mapping)
+- [x] Development narrative generation (`story` command)
+- [x] Chat mode with LLM integration (iterative refinement, up to 30 queries)
+- [x] CodeT5+ code-specific embeddings
+- [x] Pipeline parallelism (37% faster indexing)
+- [x] Production-ready performance (write buffering, GPU acceleration, async pipeline)
 
-### v2.x+: Enhancements 🔮
-- [ ] Hybrid search (vector + keyword)
-- [ ] Additional language support (more languages)
+### v2.6+: Enhancements 🔮
+- [ ] Hybrid search (vector + keyword + BM25)
+- [ ] Additional language support (more languages beyond 13)
 - [ ] IDE extensions (VS Code, JetBrains)
 - [ ] Team collaboration features
 - [ ] Advanced code refactoring suggestions
+- [ ] Real-time collaboration on knowledge graph
+- [ ] Multi-project knowledge graph federation
 
 ## 🛠️ Development
 

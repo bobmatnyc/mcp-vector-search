@@ -8,14 +8,153 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **C# Language Support** - Full Tree-sitter AST parsing for C# (.cs files)
-  - Extracts classes, interfaces, structs, enums, methods, constructors, and properties
-  - XML documentation comment extraction (`///`) as docstrings
-  - C# attribute extraction (`[HttpGet]`, `[Authorize]`, etc.) stored as decorators
-  - Cyclomatic complexity calculation for methods
-  - Parameter and return type extraction
-  - Regex fallback when Tree-sitter unavailable
-  - Now supports 11 languages: C#, Dart, Go, HTML, Java, JavaScript, PHP, Python, Ruby, Rust, TypeScript
+
+#### Major Features
+- **`story` Command** — Generate development narratives from git history
+  - Three-act narrative structure with markdown, JSON, and interactive HTML output
+  - Contributor analysis and timeline visualization
+  - Supports `--no-llm` mode for extraction-only output
+  - Output formats: `--format markdown|json|html`, `--serve` for HTTP server
+  - Model selection via `--model`, support for `--no-llm` extraction-only mode
+
+- **Knowledge Graph (KuzuDB)** — Temporal knowledge graph with entity extraction and relationship mapping
+  - Entities: CodeFile, Function, Class, Person, ProgrammingLanguage, ProgrammingFramework
+  - Commands: `kg build`, `kg status`, `kg query`
+  - 3 MCP tools for knowledge graph operations
+  - Ontology navigation and semantic entity extraction
+  - Person nodes populated from git contributors with Authored/Modified relationships
+  - Frontmatter tag extraction for KG enrichment
+
+- **Interactive D3.js Visualization** — `visualize` command with multiple views
+  - 5+ visualization types: Treemap, Sunburst, Force Graph, Knowledge Graph, Heatmap
+  - Three-axis visual encoding:
+    - Fill color: complexity (green→yellow→red gradient)
+    - Border dash: code smells (solid=clean, dashed=smells detected)
+    - Blue intensity: quality score (darker=higher quality)
+  - Progressive loading with drill-down/zoom capabilities
+  - Dark/light mode support
+  - Loading indicators for KG visualization
+
+- **Chat Mode Enhancements** — Iterative refinement and advanced tools
+  - Iterative refinement up to 30 queries (increased from 10/25)
+  - Deep search tool for comprehensive code analysis
+  - Knowledge graph query tool integration
+  - Search history tracking
+  - Synthesized responses at max iterations
+  - `/wiki` command for ontology navigation in chat mode
+
+- **CodeT5+ Code Embeddings** — Code-specific embeddings via `index-code` command
+  - Uses Salesforce/codet5p-110m-embedding model
+  - Separate code_vectors.lance index for code-only embeddings
+  - Feature-flagged via `MCP_CODE_ENRICHMENT=true` environment variable
+  - Unified visualization across all index types
+
+- **Pipeline Parallelism** — Async pipeline for 37% faster indexing
+  - Async pipeline with `asyncio.to_thread()` for GPU/CPU overlap
+  - Parallel parsing and embedding generation
+  - Significantly reduced indexing time on multi-core systems
+
+- **Progress Tracking** — Rich progress bars with detailed metrics
+  - Progress bars for indexing, KG build, and embedding phases
+  - ETA calculation and chunks/sec throughput metrics
+  - Real-time feedback during long operations
+
+- **Language Support Expansions**
+  - **C# Language Support** — Full Tree-sitter AST parsing for C# (.cs files)
+    - Classes, interfaces, structs, enums, methods, constructors, properties
+    - XML documentation comment extraction (`///`) as docstrings
+    - C# attribute extraction (`[HttpGet]`, `[Authorize]`, etc.)
+    - Cyclomatic complexity calculation for methods
+    - Regex fallback when Tree-sitter unavailable
+  - **Dart/Flutter Support** — Full Tree-sitter parser with Flutter patterns
+    - Flutter widget detection (StatelessWidget, StatefulWidget)
+    - Async/stream pattern recognition
+    - Annotation extraction
+    - Dartdoc comment parsing
+  - **Now supports 13 languages**: C#, Dart, Go, HTML, Java, JavaScript, PHP, Python, Ruby, Rust, TypeScript, plus Markdown/Text
+
+- **Git Blame Integration** — Author attribution per code chunk
+  - Per-chunk git blame data for author tracking
+  - Contributor analysis in knowledge graph
+
+- **Monorepo Support** — Multi-root visualization and KG support
+  - Handle multiple project roots in single repository
+  - Unified visualization across monorepo structure
+
+- **AWS Bedrock Support** — LLM integration via AWS Bedrock
+  - AWS Bedrock integration for chat and story synthesis
+  - Additional LLM backend option beyond OpenRouter
+
+- **17 MCP Tools** — Expanded MCP server capabilities
+  - Search tools (3): semantic search, code search, similar code
+  - Project management (2): index, status
+  - Analysis (6): complexity, dead code, dependencies, trends, code smells, metrics
+  - Documentation (2): generate docs, update docs
+  - Knowledge graph (3): kg build, kg query, kg status
+  - Story generation (1): generate development narrative
+
+#### Enhancements
+- **CLI Short Flags** — 11 high-priority short flags added
+  - Search: `-j` (json), `-L` (limit), `-s` (similarity), `-c` (context), `-e` (extension)
+  - Story: `-n` (no-llm), `-s` (serve), `-m` (message), `-M` (model)
+  - Status: `-j` (json)
+  - Main: `-q` (quiet)
+- **NLP Entity Extraction** — Semantic entity extraction from docstrings and comments
+  - Enriches knowledge graph with semantic entities from documentation
+- **Write Buffer Optimization** — LanceDB write buffer flush and transaction compaction
+  - Improved indexing performance with better buffer management
+
+### Changed
+- **Default Backend** — LanceDB is now the default vector database
+  - Serverless, file-based architecture
+  - Better performance for large codebases
+  - ChromaDB still supported via `MCP_VECTOR_SEARCH_BACKEND=chromadb`
+- **Default Embedding Model** — Switched to MiniLM for local, GraphCodeBERT for GPU
+  - Local: all-MiniLM-L6-v2 (fast, efficient)
+  - GPU: GraphCodeBERT (code-optimized)
+- **Apple Silicon Optimization** — MPS re-enabled on Apple Silicon with PyTorch version guard
+  - 2-4x speedup on M4 Max and other Apple Silicon devices
+  - Automatic MPS backend detection and configuration
+
+### Fixed
+- **Visualization Data Pipeline** — Fixed complexity=0 bug
+  - LanceDB column name mismatch resolved: `complexity` vs `complexity_score`
+  - Grade distribution now realistic: A:62K, B:6.3K, C:3.6K, D:1.5K, F:415
+  - Proper complexity score calculation across all visualization views
+
+- **Quality Metrics in Visualizer** — Added `compute_quality_metrics()` function
+  - Proper quality_score calculation
+  - Accurate smell_count tracking
+  - Code smell detection across all views
+  - Propagated quality_score, smell_count, smells to treemap/sunburst views
+
+- **KG Loading Progress** — Added loading indicator to KG visualization
+  - Improved UX during knowledge graph load operations
+
+- **`--json` Output** — Fixed Rich formatting wrapping raw JSON output
+  - Clean, parseable JSON output without Rich formatting interference
+
+- **Kuzu Segfaults** — Isolated Kuzu operations in dedicated threads
+  - Prevents segmentation faults during KG operations
+  - Improved stability for knowledge graph features
+
+- **Schema Mismatch** — Auto-reset on schema version mismatch with config preservation
+  - Automatic schema migration on version changes
+  - Preserves user configuration during schema updates
+
+- **Duplicate Vectors** — Prevention of duplicate vectors in vectors.lance during indexing
+  - Deduplication logic during indexing phase
+
+- **Progressive Loading** — Fixed expansion state preservation and drill-down
+  - Treemap/sunburst views correctly maintain expansion state
+  - Drill-down navigation works reliably
+
+- **Dead Code Analyzer** — Fixed false positives for class methods
+  - Improved accuracy in dead code detection
+  - Reduced false positive rate for class method analysis
+
+- **Visualizer Cache Staleness** — Fixed cache not invalidating on data changes
+  - Proper cache invalidation ensures fresh visualization data
 
 ## [2.2.4] - 2026-02-04
 
