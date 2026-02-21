@@ -574,7 +574,7 @@ class KGBuilder:
                 valid_rels = []
                 skipped = 0
 
-                for i, rel in enumerate(rels, 1):
+                for _i, rel in enumerate(rels, 1):
                     source_ok = rel.source_id in valid_entity_ids
                     target_ok = rel.target_id in valid_entity_ids
 
@@ -1226,14 +1226,17 @@ class KGBuilder:
                     elif isinstance(tags_data, str):
                         # Handle comma-separated strings (e.g., keywords: "search, vector, embedding")
                         if "," in tags_data:
-                            tags_from_frontmatter.extend([t.strip() for t in tags_data.split(",")])
+                            tags_from_frontmatter.extend(
+                                [t.strip() for t in tags_data.split(",")]
+                            )
                         else:
                             tags_from_frontmatter.append(tags_data)
 
                 # Remove duplicates while preserving order
                 seen = set()
                 tags_from_frontmatter = [
-                    tag for tag in tags_from_frontmatter
+                    tag
+                    for tag in tags_from_frontmatter
                     if not (tag in seen or seen.add(tag))
                 ]
 
@@ -1407,14 +1410,17 @@ class KGBuilder:
                 elif isinstance(tags_data, str):
                     # Handle comma-separated strings (e.g., keywords: "search, vector, embedding")
                     if "," in tags_data:
-                        tags_from_frontmatter.extend([t.strip() for t in tags_data.split(",")])
+                        tags_from_frontmatter.extend(
+                            [t.strip() for t in tags_data.split(",")]
+                        )
                     else:
                         tags_from_frontmatter.append(tags_data)
 
             # Remove duplicates while preserving order
             seen = set()
             tags_from_frontmatter = [
-                tag for tag in tags_from_frontmatter
+                tag
+                for tag in tags_from_frontmatter
                 if not (tag in seen or seen.add(tag))
             ]
 

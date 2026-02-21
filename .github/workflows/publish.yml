@@ -1,0 +1,78 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - 'v*'
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  publish:
+    name: Build and Publish to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # For trusted publishing
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "Extracted version: $VERSION"
+          else
+            echo "Not a version tag, skipping version extraction"
+            exit 1
+          fi
+
+      - name: Build package
+        run: uv build
+
+      - name: Check package
+        run: uv run twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Uses GitHub's trusted publishing (OIDC)
+          # No need for API tokens - configure at https://pypi.org/manage/account/publishing/
+          skip-existing: true
+          print-hash: true
+
+      - name: Create success notification
+        if: success()
+        run: |
+          echo "════════════════════════════════════════════"
+          echo "✅ Package Published to PyPI Successfully"
+          echo "════════════════════════════════════════════"
+          echo ""
+          echo "Version: v${{ steps.version.outputs.version }}"
+          echo "Package: mcp-vector-search"
+          echo ""
+          echo "Users can now install with:"
+          echo "  pip install mcp-vector-search==${{ steps.version.outputs.version }}"
+          echo "  uv pip install mcp-vector-search==${{ steps.version.outputs.version }}"
+          echo ""
+          echo "════════════════════════════════════════════"

@@ -7,19 +7,19 @@ to frontend rendering. All renderers consume this single schema.
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class ConfidenceLevel(str, Enum):
+class ConfidenceLevel(StrEnum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
 
 
-class TimelineEventType(str, Enum):
+class TimelineEventType(StrEnum):
     COMMIT = "commit"
     ISSUE = "issue"
     PR = "pull_request"

@@ -54,7 +54,9 @@ class CodeChunk:
     commit_hash: str | None = None  # Commit hash of last modification
 
     # Enhancement 8: Tags from markdown frontmatter
-    tags: list[str] = None  # Tags extracted from frontmatter (categories, keywords, labels)
+    tags: list[str] = (
+        None  # Tags extracted from frontmatter (categories, keywords, labels)
+    )
 
     def __post_init__(self) -> None:
         """Initialize default values and generate chunk ID."""
