@@ -363,6 +363,7 @@ def main(
     quiet: bool = typer.Option(
         False,
         "--quiet",
+        "-q",
         help="Suppress non-error output",
         rich_help_panel="🔧 Global Options",
     ),

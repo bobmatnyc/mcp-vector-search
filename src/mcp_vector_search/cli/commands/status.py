@@ -73,6 +73,7 @@ def main(
     json_output: bool = typer.Option(
         False,
         "--json",
+        "-j",
         help="Output status in JSON format",
         rich_help_panel="📊 Display Options",
     ),

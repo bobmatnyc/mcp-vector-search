@@ -49,6 +49,7 @@ def story_main(
     max_commits: int = typer.Option(
         200,
         "--max-commits",
+        "-m",
         help="Maximum commits to analyze",
         min=1,
         max=5000,
@@ -57,6 +58,7 @@ def story_main(
     max_issues: int = typer.Option(
         100,
         "--max-issues",
+        "-M",
         help="Maximum issues to fetch from GitHub",
         min=0,
         max=500,
@@ -65,6 +67,7 @@ def story_main(
     no_llm: bool = typer.Option(
         False,
         "--no-llm",
+        "-n",
         help="Skip LLM synthesis (extraction + analysis only)",
         rich_help_panel="⚡ Performance Options",
     ),
@@ -77,6 +80,7 @@ def story_main(
     serve: bool = typer.Option(
         False,
         "--serve",
+        "-s",
         help="Start local HTTP server for HTML visualization",
         rich_help_panel="🌐 Server Options",
     ),

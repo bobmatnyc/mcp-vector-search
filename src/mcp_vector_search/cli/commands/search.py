@@ -70,6 +70,7 @@ def search_main(
     language: str | None = typer.Option(
         None,
         "--language",
+        "-L",
         help="Filter by programming language (python, javascript, typescript)",
         rich_help_panel="🔍 Filters",
     ),
@@ -97,12 +98,14 @@ def search_main(
     similar: bool = typer.Option(
         False,
         "--similar",
+        "-s",
         help="Find code similar to the query (treats query as file path)",
         rich_help_panel="🎯 Search Options",
     ),
     context: bool = typer.Option(
         False,
         "--context",
+        "-c",
         help="Search for code based on contextual description",
         rich_help_panel="🎯 Search Options",
     ),
@@ -121,12 +124,14 @@ def search_main(
     json_output: bool = typer.Option(
         False,
         "--json",
+        "-j",
         help="Output results in JSON format",
         rich_help_panel="📊 Result Options",
     ),
     export_format: str | None = typer.Option(
         None,
         "--export",
+        "-e",
         help="Export results to file (json, csv, markdown, summary)",
         rich_help_panel="💾 Export Options",
     ),
@@ -612,7 +617,7 @@ async def run_search(
                 from ..output import print_json
 
                 results_data = [result.to_dict() for result in results]
-                print_json(results_data, title="Search Results")
+                print_json(results_data)  # No title = raw JSON to stdout
             else:
                 print_search_results(
                     results=results,
@@ -758,7 +763,7 @@ async def run_similar_search(
             from ..output import print_json
 
             results_data = [result.to_dict() for result in results]
-            print_json(results_data, title="Similar Code Results")
+            print_json(results_data)  # No title = raw JSON to stdout
         else:
             query_desc = f"{file_path}"
             if function_name:
@@ -867,7 +872,7 @@ async def run_context_search(
             from ..output import print_json
 
             results_data = [result.to_dict() for result in results]
-            print_json(results_data, title="Context Search Results")
+            print_json(results_data)  # No title = raw JSON to stdout
         else:
             query_desc = description
             if focus_areas:
