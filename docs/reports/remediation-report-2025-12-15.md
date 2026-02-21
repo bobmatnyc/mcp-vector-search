@@ -29,7 +29,6 @@ These functions/methods have complexity scores that make them difficult to maint
 | 🟠 D | `_extract_class_skeleton` | /Users/masa/Projects/mcp-vector-search/src/mcp_vector_search/parsers/python.py | 39 | 129 |
 | 🟠 D | `_extract_class_skeleton_regex` | /Users/masa/Projects/mcp-vector-search/src/mcp_vector_search/parsers/python.py | 31 | 144 |
 | 🟠 D | `test_visualization` | /Users/masa/Projects/mcp-vector-search/tests/manual/test_graph_visualization_playwright.py | 33 | 340 |
-| 🟡 C | `_cleanConditionally` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 27 | 199 |
 | 🟡 C | `BuildManager` | /Users/masa/Projects/mcp-vector-search/scripts/comprehensive_build.py | 22 | 243 |
 | 🟡 C | `SearchPerformanceMonitor` | /Users/masa/Projects/mcp-vector-search/scripts/search_performance_monitor.py | 28 | 294 |
 | 🟡 C | `DocumentationUpdater` | /Users/masa/Projects/mcp-vector-search/scripts/update_docs.py | 29 | 213 |
@@ -70,9 +69,6 @@ These functions/methods have complexity scores that make them difficult to maint
 | 🟡 C | `TestChromaConnectionPool` | /Users/masa/Projects/mcp-vector-search/tests/unit/core/test_connection_pool.py | 25 | 368 |
 | 🟡 C | `TestSemanticSearchEngine` | /Users/masa/Projects/mcp-vector-search/tests/unit/core/test_search.py | 21 | 436 |
 | 🟡 C | `CommandBuilder` | /Users/masa/Projects/mcp-vector-search/vendor/py-mcp-installer-service/src/py_mcp_installer/command_builder.py | 27 | 419 |
-| 🔴 F | `_grabArticle` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 78 | 567 |
-| 🔴 F | `ConnectionManager` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 102 | 1083 |
-| 🔴 F | `executeCommandOnTab` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 43 | 385 |
 | 🔴 F | `ChangesetManager` | /Users/masa/Projects/mcp-vector-search/scripts/changeset.py | 47 | 318 |
 | 🔴 F | `HomebrewFormulaUpdater` | /Users/masa/Projects/mcp-vector-search/scripts/update_homebrew_formula.py | 67 | 610 |
 | 🔴 F | `LCOM4Calculator` | /Users/masa/Projects/mcp-vector-search/src/mcp_vector_search/analysis/collectors/cohesion.py | 45 | 313 |
@@ -352,27 +348,6 @@ These functions/methods have complexity scores that make them difficult to maint
 | 🔴 Deep Nesting | `VISUALIZATION_VIEWER_PANEL_2025-12-09.md` | /Users/masa/Projects/mcp-vector-search/docs/summaries/VISUALIZATION_VIEWER_PANEL_2025-12-09.md | Depth: 7 (recommended: <4) |
 | 🔴 Long Method | `demonstrate_connection_pooling` | /Users/masa/Projects/mcp-vector-search/examples/connection_pooling_example.py | 265 lines (recommended: <50) |
 | 🔴 Long Method | `demonstrate_semi_automatic_reindexing` | /Users/masa/Projects/mcp-vector-search/examples/semi_automatic_reindexing_demo.py | 262 lines (recommended: <50) |
-| 🔴 Deep Nesting | `background-enhanced.js` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | Depth: 7 (recommended: <4) |
-| 🔴 Long Method | `PortSelector` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 199 lines (recommended: <50) |
-| 🔴 Long Method | `ConnectionManager` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 1083 lines (recommended: <50) |
-| 🔴 High Complexity | `ConnectionManager` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | Complexity: 102 (recommended: <15) |
-| 🔴 God Class | `ConnectionManager` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 1083 lines - consider breaking into smaller classes |
-| 🔴 Long Method | `connectToBackend` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 118 lines (recommended: <50) |
-| 🔴 Long Method | `_setupMessageHandler` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 110 lines (recommended: <50) |
-| 🔴 Long Method | `setupWebSocketHandlers` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 140 lines (recommended: <50) |
-| 🔴 Long Method | `executeCommandOnTab` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 385 lines (recommended: <50) |
-| 🔴 High Complexity | `executeCommandOnTab` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | Complexity: 43 (recommended: <15) |
-| 🔴 Deep Nesting | `content.js` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/content.js | Depth: 7 (recommended: <4) |
-| 🔴 Deep Nesting | `manifest.json` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/manifest.json | Depth: 7 (recommended: <4) |
-| 🔴 Deep Nesting | `popup-enhanced.js` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/popup-enhanced.js | Depth: 7 (recommended: <4) |
-| 🔴 Deep Nesting | `Readability.js` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | Depth: 7 (recommended: <4) |
-| 🔴 Long Method | `_prepArticle` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 103 lines (recommended: <50) |
-| 🔴 Long Method | `_grabArticle` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 567 lines (recommended: <50) |
-| 🔴 High Complexity | `_grabArticle` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | Complexity: 78 (recommended: <15) |
-| 🔴 Long Method | `_getJSONLD` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 116 lines (recommended: <50) |
-| 🔴 Long Method | `_getArticleMetadata` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 107 lines (recommended: <50) |
-| 🔴 Long Method | `_cleanConditionally` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 199 lines (recommended: <50) |
-| 🔴 High Complexity | `_cleanConditionally` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | Complexity: 27 (recommended: <15) |
 | 🔴 Long Method | `PerformanceAnalyzer` | /Users/masa/Projects/mcp-vector-search/scripts/analyze_search_bottlenecks.py | 255 lines (recommended: <50) |
 | 🔴 Long Method | `benchmark_model` | /Users/masa/Projects/mcp-vector-search/scripts/benchmark_llm_models.py | 146 lines (recommended: <50) |
 | 🔴 Long Method | `Changeset` | /Users/masa/Projects/mcp-vector-search/scripts/changeset.py | 104 lines (recommended: <50) |
@@ -1060,26 +1035,6 @@ These functions/methods have complexity scores that make them difficult to maint
 | 🟡 Long Method | `main` | /Users/masa/Projects/mcp-vector-search/examples/metrics_store_usage.py | 73 lines (recommended: <50) |
 | 🟡 Deep Nesting | `semi_automatic_reindexing_demo.py` | /Users/masa/Projects/mcp-vector-search/examples/semi_automatic_reindexing_demo.py | Depth: 6 (recommended: <4) |
 | 🟡 Deep Nesting | `threshold_config_demo.py` | /Users/masa/Projects/mcp-vector-search/examples/threshold_config_demo.py | Depth: 6 (recommended: <4) |
-| 🟡 High Complexity | `PortSelector` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | Complexity: 19 (recommended: <15) |
-| 🟡 Long Method | `disconnectBackend` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 61 lines (recommended: <50) |
-| 🟡 High Complexity | `_setupMessageHandler` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | Complexity: 16 (recommended: <15) |
-| 🟡 Long Method | `_setupCloseHandler` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 64 lines (recommended: <50) |
-| 🟡 Long Method | `probePort` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 87 lines (recommended: <50) |
-| 🟡 Long Method | `connectToServer` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/background-enhanced.js | 77 lines (recommended: <50) |
-| 🟡 Long Method | `updateBackendList` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/popup-enhanced.js | 68 lines (recommended: <50) |
-| 🟡 Long Method | `handleConnectToBackend` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/popup-enhanced.js | 90 lines (recommended: <50) |
-| 🟡 Long Method | `handleScanBackends` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/popup-enhanced.js | 84 lines (recommended: <50) |
-| 🟡 Long Method | `Readability` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 83 lines (recommended: <50) |
-| 🟡 Long Method | `_fixRelativeUris` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 80 lines (recommended: <50) |
-| 🟡 Long Method | `_getArticleTitle` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 89 lines (recommended: <50) |
-| 🟡 Long Method | `_replaceBrs` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 55 lines (recommended: <50) |
-| 🟡 High Complexity | `_initializeNode` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | Complexity: 20 (recommended: <15) |
-| 🟡 High Complexity | `_getJSONLD` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | Complexity: 19 (recommended: <15) |
-| 🟡 Long Method | `_unwrapNoscriptImages` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 77 lines (recommended: <50) |
-| 🟡 Long Method | `_markDataTables` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 59 lines (recommended: <50) |
-| 🟡 Long Method | `_fixLazyImages` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 81 lines (recommended: <50) |
-| 🟡 High Complexity | `_fixLazyImages` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | Complexity: 16 (recommended: <15) |
-| 🟡 Long Method | `parse` | /Users/masa/Projects/mcp-vector-search/mcp-browser-extensions/chrome/Readability.js | 59 lines (recommended: <50) |
 | 🟡 Deep Nesting | `mcp-vector-search-analysis-fixes.md` | /Users/masa/Projects/mcp-vector-search/mcp-vector-search-analysis-fixes.md | Depth: 5 (recommended: <4) |
 | 🟡 Deep Nesting | `mcp-vector-search-analysis.md` | /Users/masa/Projects/mcp-vector-search/mcp-vector-search-analysis.md | Depth: 5 (recommended: <4) |
 | 🟡 Deep Nesting | `MAKEFILE_EXTRACTION_REPORT.md` | /Users/masa/Projects/mcp-vector-search/project-template/MAKEFILE_EXTRACTION_REPORT.md | Depth: 6 (recommended: <4) |

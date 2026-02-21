@@ -136,18 +136,17 @@ srcNode.dispatchEvent(event);
 
 ### For Automated Verification (Future)
 
-**Option 1**: Install MCP Browser Extension
-```bash
-npx mcp-browser quickstart
-```
-Benefits:
+**Option 1**: Use Playwright/Puppeteer
+- More reliable than AppleScript for browser automation
 - Real DOM inspection during click events
 - Console log capture
 - Network request monitoring
 - Screenshot correlation with console state
 
-**Option 2**: Use Playwright/Puppeteer
-- More reliable than AppleScript for browser automation
+**Option 2**: Use Browser DevTools
+- Open DevTools (F12 or Cmd+Option+I)
+- Monitor DOM changes in Elements panel
+- Track events in Console panel
 - Full access to browser console and DOM
 - Can programmatically wait for state changes
 - Better screenshot correlation

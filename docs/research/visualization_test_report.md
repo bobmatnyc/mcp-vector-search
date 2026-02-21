@@ -160,9 +160,9 @@ ls -lh .mcp-vector-search/visualization/
        });
    ```
 
-4. **Install Browser Extension**
+4. **Use Browser Developer Tools**
    - Required for console monitoring
-   - Run: `npx mcp-browser quickstart`
+   - Open browser DevTools (F12 or Cmd+Option+I)
    - Enables real-time error detection
 
 ### Long-term Solutions
