@@ -39,6 +39,8 @@ class SearchHandlers:
         class_name = args.get("class_name")
         files = args.get("files")
         expand = args.get("expand", True)
+        use_rerank = args.get("use_rerank", True)
+        rerank_top_n = args.get("rerank_top_n", 50)
 
         if not query:
             return CallToolResult(
@@ -130,6 +132,8 @@ class SearchHandlers:
             similarity_threshold=similarity_threshold,
             filters=filters,
             expand=expand,
+            use_rerank=use_rerank,
+            rerank_top_n=rerank_top_n,
             search_mode=search_mode,
             hybrid_alpha=hybrid_alpha,
         )

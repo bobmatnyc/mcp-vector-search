@@ -198,6 +198,20 @@ def search_main(
         help="Enable query expansion with code synonyms (default: enabled)",
         rich_help_panel="🎯 Search Options",
     ),
+    rerank: bool = typer.Option(
+        True,
+        "--rerank/--no-rerank",
+        help="Enable cross-encoder reranking for higher precision (default: enabled)",
+        rich_help_panel="🎯 Search Options",
+    ),
+    rerank_top_n: int = typer.Option(
+        50,
+        "--rerank-top-n",
+        help="Number of candidates to retrieve before reranking (default: 50)",
+        min=10,
+        max=200,
+        rich_help_panel="🎯 Search Options",
+    ),
     search_mode: str = typer.Option(
         "hybrid",
         "--search-mode",
@@ -346,6 +360,8 @@ def search_main(
                     use_mmr=not no_mmr,
                     diversity=diversity,
                     expand=expand,
+                    use_rerank=rerank,
+                    rerank_top_n=rerank_top_n,
                     search_mode=search_mode,
                     hybrid_alpha=hybrid_alpha,
                 )
@@ -424,6 +440,8 @@ async def run_search(
     use_mmr: bool = True,
     diversity: float = 0.5,
     expand: bool = True,
+    use_rerank: bool = True,
+    rerank_top_n: int = 50,
     search_mode: str = "hybrid",
     hybrid_alpha: float = 0.7,
 ) -> None:
@@ -517,6 +535,8 @@ async def run_search(
                 use_mmr=use_mmr,
                 diversity=diversity,
                 expand=expand,
+                use_rerank=use_rerank,
+                rerank_top_n=rerank_top_n,
                 search_mode=mode,
                 hybrid_alpha=hybrid_alpha,
             )

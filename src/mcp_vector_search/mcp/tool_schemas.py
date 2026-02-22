@@ -94,6 +94,18 @@ def _get_search_code_schema() -> Tool:
                     "description": "Enable query expansion with code synonyms (default: true)",
                     "default": True,
                 },
+                "use_rerank": {
+                    "type": "boolean",
+                    "description": "Enable cross-encoder reranking for higher precision (default: true)",
+                    "default": True,
+                },
+                "rerank_top_n": {
+                    "type": "integer",
+                    "description": "Number of candidates to retrieve before reranking (default: 50)",
+                    "default": 50,
+                    "minimum": 10,
+                    "maximum": 200,
+                },
                 "search_mode": {
                     "type": "string",
                     "description": "Search mode: 'vector' (semantic only), 'bm25' (keyword only), or 'hybrid' (combined, default)",

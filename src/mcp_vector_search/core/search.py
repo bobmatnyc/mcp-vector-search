@@ -20,6 +20,7 @@ from .models import SearchResult
 from .query_analyzer import QueryAnalyzer
 from .query_expander import QueryExpander
 from .query_processor import QueryProcessor
+from .reranker import CrossEncoderReranker
 from .result_enhancer import ResultEnhancer
 from .result_ranker import ResultRanker
 from .search_retry_handler import SearchRetryHandler
@@ -117,6 +118,9 @@ class SemanticSearchEngine:
         self._bm25_backend: BM25Backend | None = None
         self._bm25_backend_checked = False
 
+        # Cross-encoder reranker (lazy initialization)
+        self._reranker: CrossEncoderReranker | None = None
+
     async def search(
         self,
         query: str,
@@ -127,6 +131,8 @@ class SemanticSearchEngine:
         search_mode: SearchMode = SearchMode.HYBRID,
         hybrid_alpha: float = 0.7,
         expand: bool = True,
+        use_rerank: bool = True,
+        rerank_top_n: int = 50,
         use_mmr: bool = True,
         diversity: float = 0.5,
     ) -> list[SearchResult]:
@@ -142,6 +148,9 @@ class SemanticSearchEngine:
             hybrid_alpha: Weight for vector search in hybrid mode (0.0-1.0, default 0.7)
                          1.0 = pure vector, 0.0 = pure BM25
             expand: Whether to expand query with synonyms (default: True)
+            use_rerank: Whether to apply cross-encoder reranking (default: True)
+            rerank_top_n: Number of candidates to retrieve before reranking (default: 50)
+                         Reranking over-retrieves then reranks to top limit*3 for MMR
             use_mmr: Whether to apply MMR diversity filtering (default: True)
             diversity: Diversity parameter for MMR (0.0-1.0, default 0.5)
                       0.0 = pure relevance, 1.0 = maximum diversity
@@ -192,6 +201,10 @@ class SemanticSearchEngine:
             else:
                 query_variants = [processed_query]
 
+            # Determine retrieval limit based on reranking
+            # If reranking enabled, over-retrieve to get more candidates
+            retrieval_limit = rerank_top_n if use_rerank else limit
+
             # Search with all query variants and merge results
             all_results: dict[str, SearchResult] = {}  # chunk_id -> result (best score)
 
@@ -200,26 +213,26 @@ class SemanticSearchEngine:
                 if search_mode == SearchMode.BM25:
                     # Pure BM25 search
                     variant_results = await self._search_bm25(
-                        variant_query, limit, filters, threshold
+                        variant_query, retrieval_limit, filters, threshold
                     )
                 elif search_mode == SearchMode.HYBRID:
                     # Hybrid search with RRF fusion
                     variant_results = await self._search_hybrid(
-                        variant_query, limit, filters, threshold, hybrid_alpha
+                        variant_query, retrieval_limit, filters, threshold, hybrid_alpha
                     )
                 else:
                     # Pure vector search (default)
                     # Use VectorsBackend if available, otherwise fall back to ChromaDB
                     if self._vectors_backend:
                         variant_results = await self._search_vectors_backend(
-                            variant_query, limit, filters, threshold
+                            variant_query, retrieval_limit, filters, threshold
                         )
                     else:
                         # Legacy ChromaDB search
                         variant_results = await self._retry_handler.search_with_retry(
                             database=self.database,
                             query=variant_query,
-                            limit=limit,
+                            limit=retrieval_limit,
                             filters=filters,
                             threshold=threshold,
                         )
@@ -247,13 +260,31 @@ class SemanticSearchEngine:
                 all_results.values(), key=lambda r: r.similarity_score, reverse=True
             )
 
-            # Limit to requested number of results
-            results = results[:limit]
-
             if expand and self.enable_query_expansion and len(query_variants) > 1:
                 logger.debug(
                     f"Query expansion merged {len(all_results)} unique results from {len(query_variants)} variants"
                 )
+
+            # Apply cross-encoder reranking if enabled and we have results
+            # Reranking improves precision by scoring (query, document) pairs jointly
+            if use_rerank and results and len(results) > 1:
+                try:
+                    results = await self._apply_cross_encoder_reranking(
+                        results=results,
+                        query=processed_query,
+                        requested_limit=limit,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Cross-encoder reranking failed, continuing with original results: {e}"
+                    )
+
+            # Limit to requested number of results (after reranking, before MMR)
+            # Keep limit*3 for MMR to have candidates to diversify from
+            if use_mmr and len(results) > limit:
+                results = results[: limit * 3]
+            else:
+                results = results[:limit]
 
             # Apply MMR diversity filtering if enabled and we have enough results
             # MMR improves diversity by penalizing results similar to already-selected ones
@@ -1013,6 +1044,74 @@ class SemanticSearchEngine:
         except Exception as e:
             logger.debug(f"Code vectors backend detection failed: {e}")
             self._code_vectors_backend = None
+
+    async def _apply_cross_encoder_reranking(
+        self,
+        results: list[SearchResult],
+        query: str,
+        requested_limit: int,
+    ) -> list[SearchResult]:
+        """Apply cross-encoder reranking for higher precision results.
+
+        Cross-encoders score (query, document) pairs jointly, producing more
+        accurate relevance scores than bi-encoder similarity. This improves
+        precision at the cost of some latency.
+
+        Args:
+            results: Initial search results to rerank
+            query: Original search query
+            requested_limit: Requested number of final results
+
+        Returns:
+            Reranked results with updated scores
+
+        Note:
+            - Lazy-initializes cross-encoder on first use
+            - Reranks all candidates, returns top limit*3 for MMR
+            - Updates similarity_score with cross-encoder scores
+            - Gracefully falls back on failure (non-fatal)
+        """
+        # Lazy-initialize reranker
+        if self._reranker is None:
+            if not CrossEncoderReranker().is_available:
+                logger.debug(
+                    "Cross-encoder reranking unavailable (sentence-transformers not installed)"
+                )
+                return results
+
+            self._reranker = CrossEncoderReranker()
+            logger.debug(
+                f"Initialized cross-encoder reranker: {self._reranker.model_name}"
+            )
+
+        # Extract document contents for reranking
+        documents = [result.content for result in results]
+
+        # Rerank all candidates
+        # Returns list of (original_index, score) tuples sorted by score
+        reranked_indices = self._reranker.rerank(
+            query=query,
+            documents=documents,
+            top_k=min(len(results), requested_limit * 3),  # Keep 3x for MMR
+        )
+
+        # Build reranked results with updated scores
+        reranked_results = []
+        for rank, (original_idx, score) in enumerate(reranked_indices, start=1):
+            result = results[original_idx]
+            # Update similarity score to cross-encoder score
+            result.similarity_score = score
+            result.rank = rank
+            reranked_results.append(result)
+
+        logger.info(
+            f"Cross-encoder reranked {len(results)} candidates → "
+            f"top {len(reranked_results)} results "
+            f"(score range: {reranked_results[0].similarity_score:.3f} - "
+            f"{reranked_results[-1].similarity_score:.3f})"
+        )
+
+        return reranked_results
 
     async def _apply_mmr_reranking(
         self,
