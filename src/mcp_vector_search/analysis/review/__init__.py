@@ -19,12 +19,14 @@ Usage:
         print(f"{finding.severity}: {finding.title}")
 """
 
+from .cache import ReviewCache
 from .engine import ReviewEngine
 from .models import ReviewFinding, ReviewResult, ReviewType, Severity
 from .prompts import get_review_prompt
 
 __all__ = [
     "ReviewEngine",
+    "ReviewCache",
     "ReviewType",
     "ReviewResult",
     "ReviewFinding",

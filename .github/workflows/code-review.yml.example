@@ -1,0 +1,376 @@
+# AI-Powered Code Review Workflow
+#
+# This workflow performs automated code review on pull requests using MCP Vector Search.
+# It analyzes code changes with full codebase context, using vector search to find related
+# patterns, dependencies, and potential issues.
+#
+# Features:
+#   - Context-aware code review using semantic search
+#   - Knowledge graph relationships for dependency analysis
+#   - SARIF upload to GitHub Security tab
+#   - Inline PR comments on specific lines
+#   - Configurable blocking thresholds
+#   - Custom review instructions support
+#
+# Setup:
+#   1. Copy this file to .github/workflows/code-review.yml (remove .example)
+#   2. Add OPENROUTER_API_KEY secret to your repository
+#   3. Optionally customize review instructions in .mcp-vector-search/review-instructions.yaml
+#   4. Adjust blocking thresholds and review types as needed
+#
+# Configuration:
+#   - OPENROUTER_API_KEY: Required for LLM-based analysis (add to repository secrets)
+#   - Review types: security, quality, architecture, performance
+#   - Blocking policy: Set BLOCK_ON_CRITICAL_HIGH to true/false
+
+name: AI Code Review
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+    types: [opened, synchronize, reopened]
+
+# Required permissions for PR comments and SARIF upload
+permissions:
+  contents: read          # Read repository contents
+  pull-requests: write    # Post PR comments
+  security-events: write  # Upload SARIF to Security tab
+  checks: write          # Create check runs
+
+jobs:
+  code-review:
+    name: Review PR Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # LLM API configuration
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+      # Review configuration
+      REVIEW_TYPES: "security,quality"  # Comma-separated: security,quality,architecture,performance
+      BLOCK_ON_CRITICAL_HIGH: "true"    # Block merge on critical/high severity issues
+      MAX_CHUNKS: 30                     # Max context chunks for review (higher = more context, slower)
+
+      # Output paths
+      REVIEW_OUTPUT: pr-review.json
+      GITHUB_OUTPUT: github-review.json
+      SARIF_OUTPUT: code-review.sarif
+
+    steps:
+      # ============================================================================
+      # 1. Checkout
+      # ============================================================================
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for git diff and context
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # ============================================================================
+      # 2. Set up Python environment
+      # ============================================================================
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ============================================================================
+      # 3. Install mcp-vector-search
+      # ============================================================================
+      - name: Install mcp-vector-search
+        run: |
+          pip install --upgrade pip
+          pip install mcp-vector-search
+
+      # ============================================================================
+      # 4. Index codebase (fast, CPU-only)
+      # ============================================================================
+      - name: Index codebase
+        run: |
+          echo "🔍 Indexing codebase for semantic search..."
+          mvs index --no-gpu
+          echo "✅ Indexing complete"
+
+      # ============================================================================
+      # 5. Run PR review
+      # ============================================================================
+      - name: Review PR changes
+        id: review
+        run: |
+          echo "🤖 Reviewing PR: ${{ github.event.pull_request.title }}"
+          echo "📊 Base: ${{ github.event.pull_request.base.ref }} → Head: ${{ github.event.pull_request.head.ref }}"
+
+          # Check if custom instructions exist
+          INSTRUCTIONS_ARG=""
+          if [ -f ".mcp-vector-search/review-instructions.yaml" ]; then
+            echo "📋 Using custom review instructions"
+            INSTRUCTIONS_ARG="--instructions .mcp-vector-search/review-instructions.yaml"
+          fi
+
+          # Run review
+          mvs analyze review-pr \
+            --baseline "${{ github.event.pull_request.base.ref }}" \
+            --head "${{ github.event.pull_request.head.ref }}" \
+            --format json \
+            --output "${{ env.REVIEW_OUTPUT }}" \
+            $INSTRUCTIONS_ARG \
+            --verbose || {
+              echo "❌ Review failed"
+              exit 1
+            }
+
+          echo "✅ Review complete"
+
+          # Extract metadata for later steps
+          VERDICT=$(jq -r '.verdict' "${{ env.REVIEW_OUTPUT }}")
+          BLOCKING=$(jq -r '.blocking_issues' "${{ env.REVIEW_OUTPUT }}")
+          WARNINGS=$(jq -r '.warnings' "${{ env.REVIEW_OUTPUT }}")
+          SCORE=$(jq -r '.overall_score' "${{ env.REVIEW_OUTPUT }}")
+
+          echo "verdict=${VERDICT}" >> $GITHUB_OUTPUT
+          echo "blocking_issues=${BLOCKING}" >> $GITHUB_OUTPUT
+          echo "warnings=${WARNINGS}" >> $GITHUB_OUTPUT
+          echo "score=${SCORE}" >> $GITHUB_OUTPUT
+
+          echo "📈 Verdict: ${VERDICT}"
+          echo "🚫 Blocking issues: ${BLOCKING}"
+          echo "⚠️  Warnings: ${WARNINGS}"
+          echo "⭐ Score: ${SCORE}"
+
+      # ============================================================================
+      # 6. Generate GitHub-compatible review format
+      # ============================================================================
+      - name: Generate GitHub review format
+        if: always()
+        run: |
+          echo "📝 Generating GitHub-compatible review format..."
+          mvs analyze review-pr \
+            --baseline "${{ github.event.pull_request.base.ref }}" \
+            --head "${{ github.event.pull_request.head.ref }}" \
+            --format github-json \
+            --output "${{ env.GITHUB_OUTPUT }}" \
+            --verbose || true
+
+      # ============================================================================
+      # 7. Generate SARIF for GitHub Security tab
+      # ============================================================================
+      - name: Generate SARIF
+        if: always()
+        run: |
+          echo "🔒 Generating SARIF for Security tab..."
+
+          # Convert JSON review to SARIF format
+          python3 << 'EOF'
+          import json
+          from pathlib import Path
+
+          # Read review results
+          with open("${{ env.REVIEW_OUTPUT }}") as f:
+              review = json.load(f)
+
+          # Build SARIF document
+          sarif = {
+              "version": "2.1.0",
+              "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+              "runs": [{
+                  "tool": {
+                      "driver": {
+                          "name": "MCP Vector Search",
+                          "version": "2.7.2",
+                          "informationUri": "https://github.com/masa-su/mcp-vector-search",
+                          "rules": []
+                      }
+                  },
+                  "results": []
+              }]
+          }
+
+          # Map severity to SARIF levels
+          severity_map = {
+              "critical": "error",
+              "high": "error",
+              "medium": "warning",
+              "low": "note",
+              "info": "note"
+          }
+
+          # Convert comments to SARIF results
+          for comment in review.get("comments", []):
+              if not comment.get("file_path"):
+                  continue  # Skip overall PR comments
+
+              severity = comment.get("severity", "info")
+              sarif_level = severity_map.get(severity, "note")
+
+              result = {
+                  "ruleId": f"{comment.get('category', 'general')}",
+                  "level": sarif_level,
+                  "message": {
+                      "text": comment.get("comment", "")
+                  },
+                  "locations": [{
+                      "physicalLocation": {
+                          "artifactLocation": {
+                              "uri": comment.get("file_path")
+                          },
+                          "region": {
+                              "startLine": comment.get("line_number", 1)
+                          }
+                      }
+                  }]
+              }
+
+              if comment.get("suggestion"):
+                  result["fixes"] = [{
+                      "description": {
+                          "text": comment.get("suggestion")
+                      }
+                  }]
+
+              sarif["runs"][0]["results"].append(result)
+
+          # Write SARIF file
+          with open("${{ env.SARIF_OUTPUT }}", "w") as f:
+              json.dump(sarif, f, indent=2)
+
+          print(f"✅ Generated SARIF with {len(sarif['runs'][0]['results'])} findings")
+          EOF
+
+      # ============================================================================
+      # 8. Upload SARIF to GitHub Security tab
+      # ============================================================================
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ${{ env.SARIF_OUTPUT }}
+          category: "mcp-vector-search"
+
+      # ============================================================================
+      # 9. Post PR comment with summary
+      # ============================================================================
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Read review results
+            let review;
+            try {
+              review = JSON.parse(fs.readFileSync('${{ env.REVIEW_OUTPUT }}', 'utf8'));
+            } catch (e) {
+              console.log('❌ Failed to read review results:', e);
+              return;
+            }
+
+            // Build summary comment
+            const verdict = review.verdict || 'comment';
+            const score = (review.overall_score || 0).toFixed(2);
+            const blocking = review.blocking_issues || 0;
+            const warnings = review.warnings || 0;
+            const suggestions = review.suggestions || 0;
+
+            const verdictEmoji = {
+              'approve': '✅',
+              'request_changes': '❌',
+              'comment': '💬'
+            }[verdict] || '💬';
+
+            const body = `## ${verdictEmoji} AI Code Review
+
+            ${review.summary || 'Code review completed.'}
+
+            ### 📊 Summary
+
+            | Metric | Value |
+            |--------|-------|
+            | **Verdict** | \`${verdict.toUpperCase()}\` |
+            | **Score** | ${score}/1.0 ⭐ |
+            | **Blocking Issues** | ${blocking} 🚫 |
+            | **Warnings** | ${warnings} ⚠️ |
+            | **Suggestions** | ${suggestions} 💡 |
+            | **Context Files** | ${review.context_files_used || 0} 📁 |
+            | **Duration** | ${(review.duration_seconds || 0).toFixed(1)}s ⏱️ |
+            | **Model** | \`${review.model_used || 'unknown'}\` 🤖 |
+
+            ### 📝 Comments
+
+            ${review.comments && review.comments.length > 0 ? `Found ${review.comments.length} review comments. Check the "Files changed" tab for inline comments.` : 'No specific issues found.'}
+
+            ---
+
+            <sub>🤖 Powered by [MCP Vector Search](https://github.com/masa-su/mcp-vector-search) | Context-aware code review using semantic search</sub>
+            `;
+
+            // Post comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+
+      # ============================================================================
+      # 10. Block merge on critical/high issues (optional)
+      # ============================================================================
+      - name: Check blocking policy
+        if: env.BLOCK_ON_CRITICAL_HIGH == 'true' && steps.review.outputs.blocking_issues != '0'
+        run: |
+          echo "❌ PR has ${{ steps.review.outputs.blocking_issues }} blocking issues"
+          echo "🚫 Merge blocked by review policy"
+          exit 1
+
+      # ============================================================================
+      # 11. Create check run with detailed status
+      # ============================================================================
+      - name: Create check run
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const verdict = '${{ steps.review.outputs.verdict }}';
+            const blocking = parseInt('${{ steps.review.outputs.blocking_issues }}') || 0;
+            const score = parseFloat('${{ steps.review.outputs.score }}') || 0;
+
+            // Determine check conclusion
+            let conclusion = 'success';
+            if (blocking > 0 && '${{ env.BLOCK_ON_CRITICAL_HIGH }}' === 'true') {
+              conclusion = 'failure';
+            } else if (verdict === 'request_changes') {
+              conclusion = 'neutral';
+            }
+
+            // Create check run
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'AI Code Review',
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion: conclusion,
+              output: {
+                title: `Code Review: ${verdict.toUpperCase()} (${score}/1.0)`,
+                summary: `Verdict: **${verdict}**\n\nBlocking: ${blocking}, Score: ${score}\n\nSee PR comment for details.`,
+                text: 'Full review available in PR comments and Security tab.'
+              }
+            });
+
+      # ============================================================================
+      # 12. Upload artifacts for debugging
+      # ============================================================================
+      - name: Upload review artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-review-results
+          path: |
+            ${{ env.REVIEW_OUTPUT }}
+            ${{ env.GITHUB_OUTPUT }}
+            ${{ env.SARIF_OUTPUT }}
+          retention-days: 30

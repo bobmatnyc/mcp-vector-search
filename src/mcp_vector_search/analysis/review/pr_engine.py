@@ -29,6 +29,7 @@ from ...core.git import GitManager
 from ...core.knowledge_graph import KnowledgeGraph
 from ...core.llm_client import LLMClient
 from ...core.search import SemanticSearchEngine
+from .cache import ReviewCache
 from .instructions import InstructionsLoader
 from .models import Severity
 from .pr_models import (
@@ -157,6 +158,7 @@ class PRReviewEngine:
         self.llm_client = llm_client
         self.project_root = project_root
         self.instructions_loader = InstructionsLoader(project_root)
+        self.cache = ReviewCache(project_root)
 
     async def review_pr(
         self,

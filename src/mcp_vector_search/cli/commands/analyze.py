@@ -1431,7 +1431,7 @@ analyze_app.command(name="engineers", help="👥 Profile engineers by code quali
 def review_code(
     review_type: str = typer.Argument(
         None,
-        help="Type of review: security, architecture, or performance (optional if using --types)",
+        help="Type of review: security, architecture, performance, quality, testing, or documentation (optional if using --types)",
     ),
     project_root: Path | None = typer.Option(
         None,
@@ -1497,6 +1497,18 @@ def review_code(
         "-v",
         help="Show detailed progress",
         rich_help_panel="📊 Display Options",
+    ),
+    no_cache: bool = typer.Option(
+        False,
+        "--no-cache",
+        help="Bypass cache and re-review all chunks",
+        rich_help_panel="⚡ Performance Options",
+    ),
+    clear_cache: bool = typer.Option(
+        False,
+        "--clear-cache",
+        help="Clear review cache before running",
+        rich_help_panel="⚡ Performance Options",
     ),
 ) -> None:
     """🔍 AI-powered code review using vector search and LLM analysis.
@@ -2026,7 +2038,14 @@ def _export_pr_review_json(result, output_file: Path | None) -> None:
 
 
 def _export_pr_review_github(result, output_file: Path | None) -> None:
-    """Export PR review in GitHub-compatible JSON format."""
+    """Export PR review in GitHub-compatible JSON format.
+
+    Format designed for GitHub Actions workflows:
+    - event: APPROVE, REQUEST_CHANGES, or COMMENT
+    - body: Overall PR review summary
+    - comments: Inline file comments with path and line
+    - Metadata: verdict, score, blocking_issues for workflow logic
+    """
     import json
 
     # GitHub PR review comment format
@@ -2058,14 +2077,29 @@ def _export_pr_review_github(result, output_file: Path | None) -> None:
     else:
         body = result.summary
 
+    # Map verdict to GitHub event type
+    event_map = {
+        "approve": "APPROVE",
+        "request_changes": "REQUEST_CHANGES",
+        "comment": "COMMENT",
+    }
+
     data = {
-        "event": "APPROVE"
-        if result.verdict == "approve"
-        else "REQUEST_CHANGES"
-        if result.verdict == "request_changes"
-        else "COMMENT",
+        # GitHub review event
+        "event": event_map.get(result.verdict, "COMMENT"),
         "body": body,
         "comments": comments,
+        # Metadata for workflow logic
+        "verdict": result.verdict,
+        "overall_score": result.overall_score,
+        "blocking_issues": result.blocking_issues,
+        "warnings": result.warnings,
+        "suggestions": result.suggestions,
+        # Context metadata
+        "context_files_used": result.context_files_used,
+        "kg_relationships_used": result.kg_relationships_used,
+        "model_used": result.model_used,
+        "duration_seconds": result.duration_seconds,
     }
 
     if output_file:
@@ -2223,6 +2257,13 @@ async def run_review_analysis(
             project_root=project_root,
         )
 
+        # Handle cache flags
+        if clear_cache:
+            if verbose:
+                console.print("[bold blue]Clearing review cache...[/bold blue]")
+            cleared = review_engine.cache.clear()
+            console.print(f"[green]Cleared {cleared} cached review entries[/green]")
+
         # Convert review type string to enum
         review_type_enum = ReviewType(review_type)
 
@@ -2273,6 +2314,7 @@ async def run_review_analysis(
                 scope=scope_str,
                 max_chunks=max_chunks,
                 file_filter=file_filter,
+                use_cache=not no_cache,
             )
 
         # Format output based on format
@@ -2340,9 +2382,15 @@ def _print_review_console(result, console) -> None:
         console.print(f"   → {finding.recommendation}\n")
 
     # Metadata
+    cache_info = ""
+    if result.cache_hits > 0 or result.cache_misses > 0:
+        total = result.cache_hits + result.cache_misses
+        hit_rate = (result.cache_hits / total * 100) if total > 0 else 0
+        cache_info = f", cache: {result.cache_hits}/{total} hits ({hit_rate:.0f}%)"
+
     console.print(
         f"\n[dim]Summary: Analyzed {result.context_chunks_used} code chunks, "
-        f"{result.kg_relationships_used} KG relationships[/dim]"
+        f"{result.kg_relationships_used} KG relationships{cache_info}[/dim]"
     )
     console.print(
         f"[dim]Review completed in {result.duration_seconds:.1f}s using {result.model_used}[/dim]\n"
@@ -2769,6 +2817,7 @@ async def run_batch_review_analysis(
                     scope=scope_str,
                     max_chunks=max_chunks,
                     file_filter=file_filter,
+                    use_cache=not no_cache,
                 )
                 all_results.append(result)
 

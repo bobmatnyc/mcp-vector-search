@@ -10,6 +10,9 @@ class ReviewType(str, Enum):
     SECURITY = "security"
     ARCHITECTURE = "architecture"
     PERFORMANCE = "performance"
+    QUALITY = "quality"
+    TESTING = "testing"
+    DOCUMENTATION = "documentation"
 
 
 class Severity(str, Enum):
@@ -52,3 +55,5 @@ class ReviewResult:
     kg_relationships_used: int
     model_used: str
     duration_seconds: float
+    cache_hits: int = 0
+    cache_misses: int = 0

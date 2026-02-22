@@ -12,6 +12,7 @@ from ...core.exceptions import SearchError
 from ...core.knowledge_graph import KnowledgeGraph
 from ...core.llm_client import LLMClient
 from ...core.search import SemanticSearchEngine
+from .cache import ReviewCache
 from .models import ReviewFinding, ReviewResult, ReviewType, Severity
 from .prompts import get_review_prompt
 
@@ -38,6 +39,30 @@ REVIEW_SEARCH_QUERIES = {
         "async await concurrent parallel",
         "file read write io operation",
         "sort search algorithm complexity",
+    ],
+    ReviewType.QUALITY: [
+        "duplicate code repeated logic",
+        "long method function lines",
+        "magic number hardcoded value",
+        "dead code unreachable",
+        "complex boolean condition",
+        "error handling exception",
+    ],
+    ReviewType.TESTING: [
+        "test function method coverage",
+        "edge case boundary null empty",
+        "mock fixture setup teardown",
+        "assert expect verify test",
+        "integration test e2e",
+        "pytest unittest spec test",
+    ],
+    ReviewType.DOCUMENTATION: [
+        "docstring documentation comment",
+        "TODO FIXME HACK",
+        "parameter return type annotation",
+        "example usage demo",
+        "module package description",
+        "api endpoint documentation",
     ],
 }
 
@@ -72,6 +97,7 @@ class ReviewEngine:
         self.knowledge_graph = knowledge_graph
         self.llm_client = llm_client
         self.project_root = project_root
+        self.cache = ReviewCache(project_root)
 
     async def run_review(
         self,
@@ -79,6 +105,7 @@ class ReviewEngine:
         scope: str | None = None,
         max_chunks: int = 30,
         file_filter: list[str] | None = None,
+        use_cache: bool = True,
     ) -> ReviewResult:
         """Run a code review using vector search, KG, and LLM analysis.
 
@@ -87,6 +114,7 @@ class ReviewEngine:
             scope: Optional path filter (e.g., "src/auth" to review only auth module)
             max_chunks: Maximum code chunks to analyze (default: 30)
             file_filter: Optional list of file paths to restrict review to (for --changed-only)
+            use_cache: Whether to use cached results for unchanged code (default: True)
 
         Returns:
             ReviewResult with findings and metadata
@@ -120,29 +148,99 @@ class ReviewEngine:
         kg_relationships = await self._gather_kg_relationships(search_results)
         logger.info(f"Gathered {len(kg_relationships)} knowledge graph relationships")
 
-        # Step 3: Format context for LLM
-        code_context = self._format_code_context(search_results)
-        kg_context = self._format_kg_context(kg_relationships)
+        # Step 3: Check cache for each chunk and separate cached vs. uncached
+        cached_findings: list[ReviewFinding] = []
+        uncached_results: list[Any] = []
+        cache_hits = 0
+        cache_misses = 0
 
-        # Step 4: Call LLM with specialized review prompt
-        findings = await self._analyze_with_llm(review_type, code_context, kg_context)
+        if use_cache:
+            for result in search_results:
+                content_hash = ReviewCache.compute_hash(result.content)
+                cached = self.cache.get(
+                    result.file_path, content_hash, review_type.value
+                )
 
-        logger.info(f"Review completed with {len(findings)} findings")
+                if cached:
+                    # Deserialize cached findings
+                    for finding_dict in cached:
+                        cached_findings.append(
+                            ReviewFinding(
+                                title=finding_dict["title"],
+                                description=finding_dict["description"],
+                                severity=Severity(finding_dict["severity"]),
+                                file_path=finding_dict["file_path"],
+                                start_line=finding_dict["start_line"],
+                                end_line=finding_dict["end_line"],
+                                category=finding_dict["category"],
+                                recommendation=finding_dict["recommendation"],
+                                confidence=finding_dict["confidence"],
+                                cwe_id=finding_dict.get("cwe_id"),
+                                code_snippet=finding_dict.get("code_snippet"),
+                                related_files=finding_dict.get("related_files", []),
+                            )
+                        )
+                    cache_hits += 1
+                else:
+                    uncached_results.append(result)
+                    cache_misses += 1
+
+            logger.info(
+                f"Cache results: {cache_hits} hits, {cache_misses} misses "
+                f"({cache_hits / len(search_results) * 100:.1f}% hit rate)"
+            )
+        else:
+            uncached_results = search_results
+            cache_misses = len(search_results)
+
+        # Step 4: Process uncached chunks with LLM
+        fresh_findings: list[ReviewFinding] = []
+        if uncached_results:
+            # Gather KG relationships only for uncached results
+            kg_relationships = await self._gather_kg_relationships(uncached_results)
+            logger.info(
+                f"Gathered {len(kg_relationships)} knowledge graph relationships"
+            )
+
+            # Format context for LLM
+            code_context = self._format_code_context(uncached_results)
+            kg_context = self._format_kg_context(kg_relationships)
+
+            # Call LLM with specialized review prompt
+            fresh_findings = await self._analyze_with_llm(
+                review_type, code_context, kg_context
+            )
+
+            # Cache fresh findings per chunk
+            if use_cache:
+                self._cache_findings(fresh_findings, uncached_results, review_type)
+        else:
+            kg_relationships = []
+
+        # Combine cached and fresh findings
+        all_findings = cached_findings + fresh_findings
+
+        logger.info(
+            f"Review completed with {len(all_findings)} findings "
+            f"({len(cached_findings)} cached, {len(fresh_findings)} fresh)"
+        )
 
         duration = time.time() - start_time
 
         # Generate summary
-        summary = self._generate_summary(findings, review_type)
+        summary = self._generate_summary(all_findings, review_type)
 
         return ReviewResult(
             review_type=review_type,
-            findings=findings,
+            findings=all_findings,
             summary=summary,
             scope=scope or "entire project",
             context_chunks_used=len(search_results),
             kg_relationships_used=len(kg_relationships),
             model_used=self.llm_client.model,
             duration_seconds=duration,
+            cache_hits=cache_hits,
+            cache_misses=cache_misses,
         )
 
     async def _gather_code_chunks(
@@ -481,6 +579,68 @@ class ReviewEngine:
                 parts.append(f"  - {severity.value.upper()}: {count}")
 
         return "\n".join(parts)
+
+    def _cache_findings(
+        self,
+        findings: list[ReviewFinding],
+        search_results: list[Any],
+        review_type: ReviewType,
+    ) -> None:
+        """Cache findings for each chunk.
+
+        Groups findings by file and caches them per chunk.
+
+        Args:
+            findings: List of ReviewFinding objects from LLM
+            search_results: List of SearchResult objects that were analyzed
+            review_type: Type of review performed
+        """
+        # Group findings by file path
+        findings_by_file: dict[str, list[ReviewFinding]] = {}
+        for finding in findings:
+            if finding.file_path not in findings_by_file:
+                findings_by_file[finding.file_path] = []
+            findings_by_file[finding.file_path].append(finding)
+
+        # Cache findings for each chunk
+        for result in search_results:
+            content_hash = ReviewCache.compute_hash(result.content)
+            file_findings = findings_by_file.get(result.file_path, [])
+
+            # Filter findings to only those in this chunk's line range
+            chunk_findings = [
+                f
+                for f in file_findings
+                if f.start_line >= result.start_line and f.end_line <= result.end_line
+            ]
+
+            # Serialize findings for cache
+            findings_dicts = [
+                {
+                    "title": f.title,
+                    "description": f.description,
+                    "severity": f.severity.value,
+                    "file_path": f.file_path,
+                    "start_line": f.start_line,
+                    "end_line": f.end_line,
+                    "category": f.category,
+                    "recommendation": f.recommendation,
+                    "confidence": f.confidence,
+                    "cwe_id": f.cwe_id,
+                    "code_snippet": f.code_snippet,
+                    "related_files": f.related_files,
+                }
+                for f in chunk_findings
+            ]
+
+            # Cache the findings
+            self.cache.set(
+                result.file_path,
+                content_hash,
+                review_type.value,
+                findings_dicts,
+                self.llm_client.model,
+            )
 
     @staticmethod
     def _get_chunk_id(result: Any) -> str:
