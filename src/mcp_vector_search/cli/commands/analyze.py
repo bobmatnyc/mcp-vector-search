@@ -1640,6 +1640,495 @@ def review_code(
         raise typer.Exit(2)
 
 
+@analyze_app.command(name="review-pr")
+def review_pull_request(
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory (auto-detected if not specified)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        rich_help_panel="🔧 Global Options",
+    ),
+    baseline: str = typer.Option(
+        "main",
+        "--baseline",
+        "-b",
+        help="Base branch/ref to compare against (e.g., 'main', 'develop')",
+        rich_help_panel="🔍 Filters",
+    ),
+    head: str = typer.Option(
+        "HEAD",
+        "--head",
+        "-h",
+        help="Head branch/ref to review (default: HEAD)",
+        rich_help_panel="🔍 Filters",
+    ),
+    instructions: Path | None = typer.Option(
+        None,
+        "--instructions",
+        "-i",
+        help="Path to custom review instructions YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        rich_help_panel="🔧 Global Options",
+    ),
+    format: str = typer.Option(
+        "console",
+        "--format",
+        "-f",
+        help="Output format: console, json, github-json, markdown",
+        rich_help_panel="📊 Display Options",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file path (stdout for console)",
+        rich_help_panel="📊 Display Options",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show detailed progress",
+        rich_help_panel="📊 Display Options",
+    ),
+) -> None:
+    """🔍 Review a pull request using codebase context.
+
+    Reviews code changes between two git refs (branches, commits, tags) with
+    full codebase context. Uses vector search to find related code (callers,
+    similar patterns, dependencies) and applies custom review instructions.
+
+    [bold cyan]Basic Examples:[/bold cyan]
+
+    [green]Review current changes vs main:[/green]
+        $ mvs analyze review-pr
+
+    [green]Review specific branches:[/green]
+        $ mvs analyze review-pr --baseline develop --head feature-branch
+
+    [green]Review specific commit range:[/green]
+        $ mvs analyze review-pr --baseline abc123 --head def456
+
+    [bold cyan]Custom Instructions:[/bold cyan]
+
+    [green]Use custom review rules:[/green]
+        $ mvs analyze review-pr --instructions .mcp-vector-search/review-instructions.yaml
+
+    [green]Create example instructions file:[/green]
+        $ cp .mcp-vector-search/review-instructions.yaml.example \\
+             .mcp-vector-search/review-instructions.yaml
+
+    [bold cyan]Output Formats:[/bold cyan]
+
+    [green]Export to JSON:[/green]
+        $ mvs analyze review-pr --format json --output pr-review.json
+
+    [green]Export GitHub-compatible comments:[/green]
+        $ mvs analyze review-pr --format github-json --output comments.json
+
+    [green]Export to Markdown:[/green]
+        $ mvs analyze review-pr --format markdown --output pr-review.md
+
+    [dim]💡 Tip: The review uses vector search to find related code and knowledge graph
+    to identify dependencies, providing context-aware feedback.[/dim]
+    """
+    try:
+        # Use provided project_root or current working directory
+        if project_root is None:
+            project_root = Path.cwd()
+
+        # Validate format
+        valid_formats = ["console", "json", "github-json", "markdown"]
+        format_lower = format.lower()
+        if format_lower not in valid_formats:
+            print_error(
+                f"Invalid format: {format}. Must be one of: {', '.join(valid_formats)}"
+            )
+            raise typer.Exit(1)
+
+        # Load custom instructions if provided
+        custom_instructions = None
+        if instructions:
+            try:
+                import yaml
+
+                with open(instructions) as f:
+                    instructions_data = yaml.safe_load(f)
+
+                # Convert to formatted text
+                from ...analysis.review.instructions import InstructionsLoader
+
+                loader = InstructionsLoader(project_root)
+                loader.instructions = instructions_data
+                custom_instructions = loader.format_for_prompt()
+                if verbose:
+                    print_info(f"Loaded custom instructions from {instructions}")
+            except Exception as e:
+                print_error(f"Failed to load instructions from {instructions}: {e}")
+                raise typer.Exit(1)
+
+        # Run PR review
+        asyncio.run(
+            run_pr_review_analysis(
+                project_root=project_root,
+                base_ref=baseline,
+                head_ref=head,
+                custom_instructions=custom_instructions,
+                output_format=format_lower,
+                output_file=output,
+                verbose=verbose,
+            )
+        )
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        logger.error(f"PR review failed: {e}")
+        print_error(f"PR review failed: {e}")
+        raise typer.Exit(2)
+
+
+async def run_pr_review_analysis(
+    project_root: Path,
+    base_ref: str,
+    head_ref: str,
+    custom_instructions: str | None,
+    output_format: str = "console",
+    output_file: Path | None = None,
+    verbose: bool = False,
+) -> None:
+    """Run PR review workflow.
+
+    Args:
+        project_root: Root directory of the project
+        base_ref: Base branch/ref
+        head_ref: Head branch/ref
+        custom_instructions: Custom review instructions text
+        output_format: Output format (console, json, github-json, markdown)
+        output_file: Output file path (None for stdout)
+        verbose: Show detailed progress
+    """
+    from rich.console import Console
+
+    from ...analysis.review.pr_engine import PRReviewEngine
+    from ...core.embeddings import create_embedding_function
+    from ...core.factory import create_database
+    from ...core.llm_client import LLMClient
+    from ...core.search import SemanticSearchEngine
+
+    console = Console()
+
+    try:
+        # Check if project is initialized
+        project_manager = ProjectManager(project_root)
+        if not project_manager.is_initialized():
+            print_error(
+                f"Project not initialized at {project_root}. Run 'mvs init' first."
+            )
+            raise typer.Exit(1)
+
+        config = project_manager.load_config()
+
+        # Initialize search engine
+        if verbose:
+            console.print("[bold blue]Initializing search engine...[/bold blue]")
+
+        embedding_function, _ = create_embedding_function(config.embedding_model)
+        database = create_database(
+            persist_directory=config.index_path / "lance",
+            embedding_function=embedding_function,
+            collection_name="vectors",
+        )
+        await database.initialize()
+
+        search_engine = SemanticSearchEngine(
+            database=database,
+            project_root=project_root,
+            similarity_threshold=config.similarity_threshold,
+        )
+
+        # Initialize LLM client
+        if verbose:
+            console.print("[bold blue]Initializing LLM client...[/bold blue]")
+
+        llm_client = LLMClient()
+
+        # Try to initialize knowledge graph (optional)
+        knowledge_graph = None
+        try:
+            from ...core.knowledge_graph import KnowledgeGraph
+
+            kg_path = config.index_path / "kg.db"
+            if kg_path.exists():
+                knowledge_graph = KnowledgeGraph(kg_path)
+                if verbose:
+                    console.print("[bold blue]Knowledge graph loaded[/bold blue]")
+        except Exception as e:
+            logger.debug(f"Knowledge graph not available: {e}")
+            if verbose:
+                console.print(
+                    "[yellow]Knowledge graph not available (optional)[/yellow]"
+                )
+
+        # Create PR review engine
+        pr_engine = PRReviewEngine(
+            search_engine=search_engine,
+            knowledge_graph=knowledge_graph,
+            llm_client=llm_client,
+            project_root=project_root,
+        )
+
+        # Run review
+        if verbose:
+            console.print(
+                f"\n[bold blue]Reviewing changes: {base_ref} → {head_ref}[/bold blue]"
+            )
+
+        async with database:
+            result = await pr_engine.review_from_git(
+                base_ref=base_ref,
+                head_ref=head_ref,
+                custom_instructions=custom_instructions,
+            )
+
+        # Format output
+        if output_format == "console":
+            _print_pr_review_console(result, console)
+        elif output_format == "json":
+            _export_pr_review_json(result, output_file)
+        elif output_format == "github-json":
+            _export_pr_review_github(result, output_file)
+        elif output_format == "markdown":
+            _export_pr_review_markdown(result, output_file)
+
+    except ProjectNotFoundError as e:
+        print_error(str(e))
+        raise typer.Exit(1)
+    except Exception as e:
+        logger.error(f"PR review failed: {e}", exc_info=True)
+        print_error(f"PR review failed: {e}")
+        raise typer.Exit(2)
+
+
+def _print_pr_review_console(result, console) -> None:
+    """Print PR review results to console."""
+    from ...analysis.review.models import Severity
+
+    # Header
+    console.print("\n[bold blue]🔍 Pull Request Review[/bold blue]")
+    console.print("━" * 80)
+
+    # Summary
+    console.print(f"\n{result.summary}\n")
+    console.print(
+        f"[bold]Verdict:[/bold] {result.verdict.upper()} "
+        f"(score: {result.overall_score:.2f}/1.0)"
+    )
+    console.print(
+        f"[bold]Context:[/bold] {result.context_files_used} files, "
+        f"{result.kg_relationships_used} relationships"
+    )
+    console.print(
+        f"[bold]Duration:[/bold] {result.duration_seconds:.1f}s using {result.model_used}"
+    )
+    console.print()
+
+    if not result.comments:
+        console.print("[green]✓ No issues found. Code looks good![/green]")
+        return
+
+    # Group comments by file
+    file_comments: dict[str | None, list] = {}
+    for comment in result.comments:
+        key = comment.file_path or "Overall PR"
+        if key not in file_comments:
+            file_comments[key] = []
+        file_comments[key].append(comment)
+
+    # Print comments by file
+    for file_path, comments in file_comments.items():
+        console.print(f"\n[bold cyan]{'─' * 80}[/bold cyan]")
+        console.print(f"[bold cyan]{file_path}[/bold cyan]")
+        console.print(f"[bold cyan]{'─' * 80}[/bold cyan]\n")
+
+        for comment in comments:
+            # Color by severity
+            severity_colors = {
+                Severity.CRITICAL: "red",
+                Severity.HIGH: "yellow",
+                Severity.MEDIUM: "blue",
+                Severity.LOW: "green",
+                Severity.INFO: "dim",
+            }
+            color = severity_colors.get(comment.severity, "white")
+
+            # Format comment
+            blocking_marker = " 🚫 BLOCKING" if comment.is_blocking else ""
+            line_info = f":{comment.line_number}" if comment.line_number else ""
+
+            console.print(
+                f"[{color}]■[/{color}] "
+                f"[bold {color}]{comment.severity.value.upper()}[/bold {color}]{blocking_marker} "
+                f"[dim]({comment.category}){line_info}[/dim]"
+            )
+            console.print(f"  {comment.comment}")
+
+            if comment.suggestion:
+                console.print(f"  [dim]💡 Suggestion:[/dim] {comment.suggestion}")
+
+            console.print()
+
+
+def _export_pr_review_json(result, output_file: Path | None) -> None:
+    """Export PR review to JSON."""
+    import json
+
+    data = {
+        "summary": result.summary,
+        "verdict": result.verdict,
+        "overall_score": result.overall_score,
+        "comments": [
+            {
+                "file_path": c.file_path,
+                "line_number": c.line_number,
+                "comment": c.comment,
+                "severity": c.severity.value,
+                "category": c.category,
+                "suggestion": c.suggestion,
+                "is_blocking": c.is_blocking,
+            }
+            for c in result.comments
+        ],
+        "blocking_issues": result.blocking_issues,
+        "warnings": result.warnings,
+        "suggestions": result.suggestions,
+        "context_files_used": result.context_files_used,
+        "kg_relationships_used": result.kg_relationships_used,
+        "review_instructions_applied": result.review_instructions_applied,
+        "model_used": result.model_used,
+        "duration_seconds": result.duration_seconds,
+    }
+
+    if output_file:
+        with open(output_file, "w") as f:
+            json.dump(data, f, indent=2)
+        print_info(f"PR review exported to {output_file}")
+    else:
+        print(json.dumps(data, indent=2))
+
+
+def _export_pr_review_github(result, output_file: Path | None) -> None:
+    """Export PR review in GitHub-compatible JSON format."""
+    import json
+
+    # GitHub PR review comment format
+    comments = []
+    for c in result.comments:
+        if c.file_path and c.line_number:
+            # Inline comment
+            comments.append(
+                {
+                    "path": c.file_path,
+                    "line": c.line_number,
+                    "body": f"**{c.severity.value.upper()}** ({c.category})\n\n"
+                    f"{c.comment}"
+                    + (
+                        f"\n\n💡 **Suggestion:** {c.suggestion}" if c.suggestion else ""
+                    ),
+                }
+            )
+
+    # Overall PR comment
+    overall_comments = [c for c in result.comments if not c.file_path]
+    if overall_comments:
+        body_parts = [result.summary, ""]
+        for c in overall_comments:
+            body_parts.append(
+                f"**{c.severity.value.upper()}** ({c.category}): {c.comment}"
+            )
+        body = "\n".join(body_parts)
+    else:
+        body = result.summary
+
+    data = {
+        "event": "APPROVE"
+        if result.verdict == "approve"
+        else "REQUEST_CHANGES"
+        if result.verdict == "request_changes"
+        else "COMMENT",
+        "body": body,
+        "comments": comments,
+    }
+
+    if output_file:
+        with open(output_file, "w") as f:
+            json.dump(data, f, indent=2)
+        print_info(f"GitHub-compatible review exported to {output_file}")
+    else:
+        print(json.dumps(data, indent=2))
+
+
+def _export_pr_review_markdown(result, output_file: Path | None) -> None:
+    """Export PR review to Markdown."""
+    lines = [
+        "# Pull Request Review",
+        "",
+        result.summary,
+        "",
+        f"**Verdict:** {result.verdict.upper()} (score: {result.overall_score:.2f}/1.0)",
+        f"**Context:** {result.context_files_used} files, {result.kg_relationships_used} relationships",
+        f"**Duration:** {result.duration_seconds:.1f}s using {result.model_used}",
+        "",
+    ]
+
+    if result.comments:
+        # Group by file
+        file_comments: dict[str | None, list] = {}
+        for comment in result.comments:
+            key = comment.file_path or "Overall PR"
+            if key not in file_comments:
+                file_comments[key] = []
+            file_comments[key].append(comment)
+
+        for file_path, comments in file_comments.items():
+            lines.append(f"## {file_path}")
+            lines.append("")
+
+            for comment in comments:
+                blocking = " 🚫 BLOCKING" if comment.is_blocking else ""
+                line_info = f":{comment.line_number}" if comment.line_number else ""
+                lines.append(
+                    f"### {comment.severity.value.upper()}{blocking} - {comment.category}{line_info}"
+                )
+                lines.append("")
+                lines.append(comment.comment)
+
+                if comment.suggestion:
+                    lines.append("")
+                    lines.append(f"💡 **Suggestion:** {comment.suggestion}")
+
+                lines.append("")
+    else:
+        lines.append("✓ No issues found. Code looks good!")
+
+    markdown = "\n".join(lines)
+
+    if output_file:
+        with open(output_file, "w") as f:
+            f.write(markdown)
+        print_info(f"Markdown report exported to {output_file}")
+    else:
+        print(markdown)
+
+
 async def run_review_analysis(
     project_root: Path,
     review_type: str,

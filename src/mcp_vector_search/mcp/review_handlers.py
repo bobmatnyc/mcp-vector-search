@@ -8,6 +8,7 @@ from loguru import logger
 from mcp.types import CallToolResult, TextContent
 
 from ..analysis.review import ReviewEngine, ReviewType
+from ..analysis.review.pr_engine import PRReviewEngine
 from ..core.embeddings import create_embedding_function
 from ..core.exceptions import ProjectNotFoundError, SearchError
 from ..core.factory import create_database
@@ -209,6 +210,151 @@ class ReviewHandlers:
             )
         except Exception as e:
             logger.error(f"Review handler error: {e}", exc_info=True)
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Unexpected error: {e}")],
+                isError=True,
+            )
+
+    async def handle_review_pull_request(self, args: dict[str, Any]) -> CallToolResult:
+        """Handle review_pull_request tool call.
+
+        Args:
+            args: Tool call arguments containing base_ref, head_ref, custom_instructions
+
+        Returns:
+            CallToolResult with PR review or error
+        """
+        try:
+            # Extract arguments
+            base_ref = args.get("base_ref", "main")
+            head_ref = args.get("head_ref", "HEAD")
+            custom_instructions = args.get("custom_instructions")
+
+            # Check if project is initialized
+            project_manager = ProjectManager(self.project_root)
+            if not project_manager.is_initialized():
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=f"Project not initialized at {self.project_root}. Run index_project first.",
+                        )
+                    ],
+                    isError=True,
+                )
+
+            config = project_manager.load_config()
+
+            # Initialize search engine if not provided
+            search_engine = self.search_engine
+            if not search_engine:
+                embedding_function, _ = create_embedding_function(
+                    config.embedding_model
+                )
+                database = create_database(
+                    persist_directory=config.index_path / "lance",
+                    embedding_function=embedding_function,
+                    collection_name="vectors",
+                )
+                await database.initialize()
+
+                search_engine = SemanticSearchEngine(
+                    database=database,
+                    project_root=self.project_root,
+                    similarity_threshold=config.similarity_threshold,
+                )
+
+            # Initialize LLM client if not provided
+            llm_client = self.llm_client
+            if not llm_client:
+                llm_client = LLMClient()
+
+            # Try to load knowledge graph (optional)
+            knowledge_graph = None
+            try:
+                from ..core.knowledge_graph import KnowledgeGraph
+
+                kg_path = config.index_path / "kg.db"
+                if kg_path.exists():
+                    knowledge_graph = KnowledgeGraph(kg_path)
+            except Exception as e:
+                logger.debug(f"Knowledge graph not available: {e}")
+
+            # Create PR review engine
+            pr_engine = PRReviewEngine(
+                search_engine=search_engine,
+                knowledge_graph=knowledge_graph,
+                llm_client=llm_client,
+                project_root=self.project_root,
+            )
+
+            # Run review
+            result = await pr_engine.review_from_git(
+                base_ref=base_ref,
+                head_ref=head_ref,
+                custom_instructions=custom_instructions,
+            )
+
+            # Format response as JSON
+            response_data = {
+                "status": "success",
+                "summary": result.summary,
+                "verdict": result.verdict,
+                "overall_score": result.overall_score,
+                "comments": [
+                    {
+                        "file_path": c.file_path,
+                        "line_number": c.line_number,
+                        "comment": c.comment,
+                        "severity": c.severity.value,
+                        "category": c.category,
+                        "suggestion": c.suggestion,
+                        "is_blocking": c.is_blocking,
+                    }
+                    for c in result.comments
+                ],
+                "blocking_issues": result.blocking_issues,
+                "warnings": result.warnings,
+                "suggestions": result.suggestions,
+                "context_files_used": result.context_files_used,
+                "kg_relationships_used": result.kg_relationships_used,
+                "review_instructions_applied": result.review_instructions_applied,
+                "model_used": result.model_used,
+                "duration_seconds": result.duration_seconds,
+            }
+
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text=json.dumps(response_data, indent=2))
+                ],
+                isError=False,
+            )
+
+        except (GitNotAvailableError, GitNotRepoError, GitError) as e:
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Git error: {e}. Ensure the project is a git repository and refs exist.",
+                    )
+                ],
+                isError=True,
+            )
+        except ProjectNotFoundError as e:
+            return CallToolResult(
+                content=[TextContent(type="text", text=str(e))],
+                isError=True,
+            )
+        except SearchError as e:
+            logger.error(f"PR review failed: {e}")
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text=f"PR review analysis failed: {e}")
+                ],
+                isError=True,
+            )
+        except Exception as e:
+            logger.error(f"PR review handler error: {e}", exc_info=True)
             return CallToolResult(
                 content=[TextContent(type="text", text=f"Unexpected error: {e}")],
                 isError=True,

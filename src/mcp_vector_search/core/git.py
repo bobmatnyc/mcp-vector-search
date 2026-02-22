@@ -378,3 +378,142 @@ class GitManager:
 
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return None
+
+    def get_diff(
+        self, base_ref: str = "main", head_ref: str = "HEAD", context_lines: int = 3
+    ) -> str:
+        """Get unified diff between two git refs.
+
+        Args:
+            base_ref: Base reference (e.g., "main", "develop")
+            head_ref: Head reference (default: "HEAD")
+            context_lines: Number of context lines around changes (default: 3)
+
+        Returns:
+            Unified diff text
+
+        Raises:
+            GitReferenceError: If references don't exist
+            GitError: If git diff command fails
+
+        Example:
+            >>> manager = GitManager(Path.cwd())
+            >>> diff = manager.get_diff("main", "HEAD")
+            >>> print(diff)
+        """
+        # Verify refs exist
+        if not self.ref_exists(base_ref):
+            raise GitReferenceError(f"Base ref '{base_ref}' does not exist")
+        if not self.ref_exists(head_ref):
+            raise GitReferenceError(f"Head ref '{head_ref}' does not exist")
+
+        cmd = [
+            "git",
+            "diff",
+            f"-U{context_lines}",  # Unified diff with N context lines
+            f"{base_ref}...{head_ref}",  # Three-dot diff (merge base)
+        ]
+
+        try:
+            result = subprocess.run(  # nosec B607
+                cmd,
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            )
+
+            return result.stdout
+
+        except subprocess.CalledProcessError as e:
+            error_msg = e.stderr.strip() if e.stderr else "Unknown error"
+            logger.error(f"Git diff failed: {error_msg}")
+            raise GitError(f"Failed to get diff: {error_msg}")
+        except subprocess.TimeoutExpired:
+            logger.error("Git diff command timed out")
+            raise GitError("Git diff command timed out after 30 seconds")
+
+    def get_file_at_ref(self, file_path: str, ref: str) -> str | None:
+        """Get file content at a specific git reference.
+
+        Args:
+            file_path: Path to file relative to project root
+            ref: Git reference (branch, tag, commit)
+
+        Returns:
+            File content as string, or None if file doesn't exist at ref
+
+        Example:
+            >>> manager = GitManager(Path.cwd())
+            >>> old_content = manager.get_file_at_ref("src/auth.py", "main")
+        """
+        cmd = ["git", "show", f"{ref}:{file_path}"]
+
+        try:
+            result = subprocess.run(  # nosec B607
+                cmd,
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+
+            return result.stdout
+
+        except subprocess.CalledProcessError:
+            # File doesn't exist at this ref (could be new file or deleted)
+            return None
+        except subprocess.TimeoutExpired:
+            logger.error(f"Git show timed out for {file_path} at {ref}")
+            return None
+
+    def parse_diff_stats(self, diff_text: str) -> dict[str, tuple[int, int]]:
+        """Parse diff text to extract per-file addition/deletion stats.
+
+        Args:
+            diff_text: Unified diff text from git diff
+
+        Returns:
+            Dictionary mapping file paths to (additions, deletions) tuples
+
+        Example:
+            >>> manager = GitManager(Path.cwd())
+            >>> diff = manager.get_diff("main", "HEAD")
+            >>> stats = manager.parse_diff_stats(diff)
+            >>> stats["src/auth.py"]
+            (15, 3)  # 15 additions, 3 deletions
+        """
+        stats: dict[str, tuple[int, int]] = {}
+        current_file: str | None = None
+        additions = 0
+        deletions = 0
+
+        for line in diff_text.splitlines():
+            # Detect file header: diff --git a/path b/path
+            if line.startswith("diff --git "):
+                # Save previous file stats
+                if current_file:
+                    stats[current_file] = (additions, deletions)
+
+                # Parse new file path (from b/ path)
+                parts = line.split()
+                if len(parts) >= 4:
+                    # b/path is the new file path
+                    current_file = parts[3][2:]  # Remove "b/" prefix
+                    additions = 0
+                    deletions = 0
+
+            # Count additions/deletions
+            elif current_file:
+                if line.startswith("+") and not line.startswith("+++"):
+                    additions += 1
+                elif line.startswith("-") and not line.startswith("---"):
+                    deletions += 1
+
+        # Save last file stats
+        if current_file:
+            stats[current_file] = (additions, deletions)
+
+        return stats

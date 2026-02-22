@@ -317,6 +317,9 @@ class MCPVectorSearchServer:
             elif tool_name == "review_repository":
                 return await self._review_handlers.handle_review_repository(args)
 
+            elif tool_name == "review_pull_request":
+                return await self._review_handlers.handle_review_pull_request(args)
+
             else:
                 return CallToolResult(
                     content=[

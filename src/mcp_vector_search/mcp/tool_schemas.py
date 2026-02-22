@@ -24,6 +24,7 @@ def get_tool_schemas() -> list[Tool]:
         _get_interpret_analysis_schema(),
         _get_save_report_schema(),
         _get_review_repository_schema(),
+        _get_review_pull_request_schema(),
         _get_wiki_generate_schema(),
         _get_kg_build_schema(),
         _get_kg_stats_schema(),
@@ -770,6 +771,94 @@ def _get_kg_query_schema() -> Tool:
                 },
             },
             "required": ["entity"],
+        },
+    )
+
+
+def _get_review_pull_request_schema() -> Tool:
+    """Get review_pull_request tool schema."""
+    return Tool(
+        name="review_pull_request",
+        description="""Review a pull request/merge request using full codebase context.
+
+**What it does:**
+- Analyzes code changes between two git refs (branches, commits, tags)
+- Uses vector search to find related code (callers, similar patterns, dependencies)
+- Uses knowledge graph to identify impact and relationships
+- Applies customizable review instructions from user config
+- Returns structured, actionable comments with severity levels
+
+**Key Features:**
+- **Context-Aware**: For each changed file, finds callers, similar code, tests, dependencies
+- **Customizable**: Applies user-defined review standards from .mcp-vector-search/review-instructions.yaml
+- **Structured Output**: Returns inline comments (file + line) and overall PR comments
+- **Severity Levels**: critical, high, medium, low, info with blocking semantics
+- **Verdict**: approve, request_changes, or comment based on findings
+
+**Review Focus:**
+- Security vulnerabilities (SQL injection, XSS, hardcoded secrets)
+- Code quality (error handling, input validation, test coverage)
+- Style consistency with similar codebase patterns
+- Architecture issues (coupling, separation of concerns)
+- Performance problems (N+1 queries, inefficient algorithms)
+
+**Example usage:**
+{"base_ref": "main", "head_ref": "HEAD"}  # Review current changes vs main
+{"base_ref": "develop", "head_ref": "feature-branch"}  # Review feature branch
+{"base_ref": "abc123", "head_ref": "def456"}  # Review specific commits
+{"base_ref": "main", "head_ref": "HEAD", "custom_instructions": "..."}  # Custom rules
+
+**Example response:**
+{
+  "status": "success",
+  "summary": "Found 2 security issues and 3 style improvements",
+  "verdict": "request_changes",
+  "overall_score": 0.65,
+  "comments": [
+    {
+      "file_path": "src/auth.py",
+      "line_number": 42,
+      "comment": "SQL injection vulnerability: use parameterized queries",
+      "severity": "critical",
+      "category": "security",
+      "suggestion": "cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))",
+      "is_blocking": true
+    },
+    {
+      "file_path": null,
+      "line_number": null,
+      "comment": "Consider adding integration tests for auth flow",
+      "severity": "info",
+      "category": "quality",
+      "suggestion": null,
+      "is_blocking": false
+    }
+  ],
+  "blocking_issues": 2,
+  "warnings": 0,
+  "suggestions": 3,
+  "context_files_used": 15,
+  "kg_relationships_used": 8
+}""",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "base_ref": {
+                    "type": "string",
+                    "description": "Base git ref to compare against (e.g., 'main', 'develop', commit hash)",
+                    "default": "main",
+                },
+                "head_ref": {
+                    "type": "string",
+                    "description": "Head git ref to review (default: 'HEAD')",
+                    "default": "HEAD",
+                },
+                "custom_instructions": {
+                    "type": "string",
+                    "description": "Override default review instructions with custom text (multi-line string)",
+                },
+            },
+            "required": [],
         },
     )
 
