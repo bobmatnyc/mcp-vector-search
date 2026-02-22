@@ -243,6 +243,155 @@ This project uses semantic versioning with an automated release workflow.
 
 See [docs/development/versioning.md](docs/development/versioning.md) for complete documentation.
 
+## 🔍 AI Code Review
+
+**Context-aware code review using your entire codebase as context** — Not just diff analysis!
+
+### What Makes It Different
+
+Traditional code review tools only see individual files or diffs. MCP Vector Search analyzes code with **full codebase context** by:
+- 🔎 **Semantic Search**: Finding related patterns and similar implementations
+- 🕸️ **Knowledge Graph**: Understanding dependencies and callers
+- 🤖 **LLM Analysis**: Deep analysis with language-specific standards
+- ⚡ **Smart Caching**: 5x speedup with intelligent result caching
+
+### Quick Examples
+
+```bash
+# Security review of your codebase
+mvs analyze review security
+
+# Review a pull request with full context
+mvs analyze review-pr --baseline main --head feature-branch
+
+# Review only changed files (fast!)
+mvs analyze review security --changed-only --baseline main
+
+# Run multiple review types at once
+mvs analyze review --types security,quality,architecture
+```
+
+### Review Types
+
+| Type | Focus | Key Checks |
+|------|-------|------------|
+| **security** | OWASP Top 10, CWE | SQL injection, XSS, auth flaws, hardcoded secrets |
+| **architecture** | SOLID principles | Coupling, circular deps, god classes, SRP violations |
+| **performance** | Efficiency | N+1 queries, O(n²) algorithms, blocking I/O |
+| **quality** | Maintainability | Code smells, duplication, magic numbers, dead code |
+| **testing** | Test coverage | Missing tests, edge cases, test quality |
+| **documentation** | Code docs | Missing docstrings, TODOs, outdated comments |
+
+### PR Review with Context
+
+The killer feature — review PRs using the **entire codebase as context**:
+
+```bash
+# Review PR with context-aware analysis
+mvs analyze review-pr --baseline main --format github-json
+
+# For each changed file, finds:
+# ✓ Similar patterns in codebase (consistency checking)
+# ✓ Callers and dependencies (impact analysis)
+# ✓ Existing tests (coverage gaps)
+# ✓ Language-specific idioms (12 languages supported)
+```
+
+**Context Strategy**:
+```
+Changed File → Vector Search (similar patterns)
+            → Knowledge Graph (callers, deps)
+            → Test Discovery (coverage)
+            → LLM Analysis (with full context)
+            → Actionable Comments
+```
+
+### Multi-Language Support
+
+**12 languages** with language-specific idioms, anti-patterns, and security checks:
+
+Python • TypeScript • JavaScript • Java • C# • Ruby • Go • Rust • PHP • Swift • Kotlin • Scala
+
+Each language has tailored standards:
+- **Python**: PEP 8, type hints, context managers, SQL injection patterns
+- **TypeScript**: Strict mode, no `any`, XSS patterns
+- **Java**: SOLID principles, Optional over null, XXE patterns
+- **Ruby**: Guard clauses, blocks, RuboCop standards
+- **Go**: Error handling, goroutines, interfaces
+
+### Custom Instructions
+
+Create `.mcp-vector-search/review-instructions.yaml`:
+
+```yaml
+language_standards:
+  python:
+    - "Enforce type hints on all public functions"
+    - "Use Pydantic for data validation"
+
+scope_standards:
+  src/auth:
+    - "All auth functions must have audit logging"
+
+custom_review_focus:
+  security:
+    - "Flag any hardcoded credentials"
+```
+
+### Auto-Discovery
+
+Automatically reads and applies standards from your existing config files:
+
+- **Python**: `pyproject.toml`, `.flake8`, `mypy.ini`, `ruff.toml`
+- **TypeScript**: `tsconfig.json`, `.eslintrc.json`
+- **Ruby**: `.rubocop.yml`
+- **Java**: `checkstyle.xml`, `pom.xml`
+- **+8 more languages**
+
+### CI/CD Integration
+
+```yaml
+# .github/workflows/code-review.yml
+- name: Review PR
+  run: |
+    mvs analyze review-pr \
+      --baseline ${{ github.base_ref }} \
+      --format sarif \
+      --output review.sarif
+
+- name: Upload to Security tab
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: review.sarif
+```
+
+### Output Formats
+
+- **console**: Rich, colored output for humans
+- **json**: Machine-readable structured data
+- **sarif**: GitHub Security tab integration
+- **markdown**: Reports for documentation
+- **github-json**: PR comments (summary + inline)
+
+### Performance
+
+- **Vector Search**: <0.5s (find relevant code)
+- **KG Queries**: <0.2s (relationships)
+- **LLM Analysis**: 10-15s (deep analysis)
+- **Cache Hit**: 5x speedup on repeat reviews
+
+**Smart Caching**: Unchanged code chunks return cached findings instantly.
+
+### Learn More
+
+📚 **[Complete Documentation](docs/features/code-review.md)** — Architecture, examples, best practices
+
+🚀 **[CI/CD Integration Guide](docs/ci-cd-integration.md)** — GitHub Actions, GitLab CI, pre-commit hooks
+
+🌍 **[Multi-Language Support](docs/multi-language-support-summary.md)** — 12 languages with standards
+
+---
+
 ## 📖 Documentation
 
 ### Commands

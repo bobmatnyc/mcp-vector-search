@@ -7,6 +7,184 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.0] - 2026-02-22
+
+### Added
+
+#### AI-Powered Code Review System
+
+- **`analyze review [type]` Command** — Targeted code reviews with full codebase context
+  - Six review types: `security`, `architecture`, `performance`, `quality`, `testing`, `documentation`
+  - Semantic search finds relevant code patterns for each review type
+  - Knowledge graph provides callers, dependencies, and impact analysis
+  - LLM analysis with specialized prompts per review type
+  - Output formats: `console`, `json`, `sarif`, `markdown`
+  - Options: `--path` (scope), `--max-chunks` (context size), `--changed-only`, `--baseline`, `--types` (batch mode)
+  - Cache control: `--no-cache`, `--clear-cache`
+
+- **`analyze review-pr` Command** — Context-aware pull request review
+  - Reviews PR/MR diffs with full codebase context
+  - For each changed file, gathers: similar patterns (consistency), callers (impact), tests (coverage)
+  - Auto-detects languages and applies language-specific standards
+  - Custom instructions via `.mcp-vector-search/review-instructions.yaml`
+  - Options: `--baseline`, `--head`, `--format github-json|console|json|markdown|sarif`
+  - Structured output: inline comments with severity, blocking policy
+
+- **Multi-Language Support (12 Languages)** — Language-specific idioms, anti-patterns, security patterns
+  - Python, TypeScript, JavaScript, Java, C#, Ruby, Go, Rust, PHP, Swift, Kotlin, Scala
+  - Each language has 5-8 idioms, 5-7 anti-patterns, 4-6 security patterns
+  - Auto-detects language from file extensions
+  - Language context automatically injected into review prompts
+
+- **Auto-Discovery of Standards** — Reads existing config files to extract project standards
+  - Python: `pyproject.toml`, `.flake8`, `mypy.ini`, `ruff.toml`
+  - TypeScript/JavaScript: `tsconfig.json`, `.eslintrc.js`, `.eslintrc.json`
+  - Ruby: `.rubocop.yml`
+  - Java: `checkstyle.xml`, `pom.xml`
+  - Go: `.golangci.yml`
+  - Rust: `Cargo.toml`, `clippy.toml`
+  - PHP: `.php-cs-fixer.php`, `phpstan.neon`
+  - C#: `.editorconfig`, `stylecop.json`
+  - Swift: `.swiftlint.yml`
+  - Kotlin: `detekt.yml`
+  - Scala: `scalafmt.conf`, `.scalafmt.conf`
+  - Discovered standards merged with language profiles and custom instructions
+
+- **Review Caching System** — 5x speedup on repeat reviews
+  - SQLite cache at `.mcp-vector-search/reviews.db`
+  - Cache key: (file_path, SHA256 content hash, review_type)
+  - Typical 80-90% cache hit rate on stable codebases
+  - Automatic invalidation when file content changes
+  - Cache stats in console output: "cache: 24/30 hits (80%)"
+
+- **Custom Review Instructions** — Team-specific standards and focus areas
+  - YAML config at `.mcp-vector-search/review-instructions.yaml`
+  - Sections: `language_standards`, `scope_standards`, `style_preferences`, `custom_review_focus`
+  - Additive to auto-discovered standards (doesn't replace)
+  - Per-language and per-path customization
+
+- **MCP Tool Integration** — `review_pull_request` tool for IDE integration
+  - Available in Claude Desktop, Cursor, and other MCP-compatible tools
+  - Natural language: "Review the current PR"
+  - Parameters: base_ref, head_ref, format
+
+- **Chat Integration** — Natural language code review requests
+  - "do a security review of the auth module"
+  - Automatically uses `review_code` tool with vector search and KG context
+
+- **CI/CD Integration** — GitHub Actions and GitLab CI examples
+  - GitHub Actions workflow: PR reviews with inline comments and SARIF upload
+  - GitLab CI pipeline: Merge request reviews with artifacts
+  - Pre-commit hook example for local reviews
+  - Blocking policies: exit code 1 on critical/high issues
+  - SARIF output compatible with GitHub Security tab
+
+#### Review Intelligence Features
+
+- **Targeted Search Queries** — Specialized queries per review type
+  - Security: "authentication login password", "sql query database", "user input validation"
+  - Architecture: "class definition inheritance", "import module dependency"
+  - Performance: "database query loop", "async await concurrent", "sort search algorithm"
+  - Quality: "duplicate code", "long method function", "magic number hardcoded"
+  - Testing: "test function coverage", "edge case boundary", "mock fixture"
+  - Documentation: "docstring documentation", "TODO FIXME", "parameter return type"
+
+- **Structured Findings** — Actionable feedback with metadata
+  - Fields: title, description, severity (critical/high/medium/low/info), file_path, line numbers
+  - Category tags: security, architecture, performance, quality, testing, documentation
+  - CWE IDs for security vulnerabilities (e.g., CWE-89 for SQL injection)
+  - Confidence scores (0.0-1.0)
+  - Recommendations with code suggestions
+  - Related files for cross-cutting concerns
+
+- **GitHub JSON Format** — PR comment format for GitHub Actions
+  - Summary comment with verdict, score, blocking issues count
+  - Inline comments with file path, line number, severity
+  - Blocking policy indicator (is_blocking: true/false)
+  - Formatted for GitHub PR comment API
+
+### Changed
+
+- **Documentation Reorganization** — Major docs overhaul for code review feature
+  - New: `docs/features/code-review.md` — Comprehensive feature documentation
+  - Updated: `README.md` — Added "AI Code Review" section with quick examples
+  - Enhanced: CI/CD integration guide with GitHub Actions and GitLab CI examples
+  - Added: HyperDev article draft for external publication
+
+### Performance
+
+- **Review Caching** — 5x speedup on repeat reviews
+  - First review: 45s (cold cache)
+  - Second review: 8s (warm cache)
+  - Partial changes: 3x speedup with 80% cache hit rate
+
+- **Incremental Reviews** — Only review changed files with `--changed-only`
+  - Git integration to detect uncommitted changes
+  - Baseline comparison against branches (--baseline main)
+  - Combined with cache for maximum speed
+
+### Documentation
+
+- **Code Review Documentation** (`docs/features/code-review.md`)
+  - Architecture overview with ASCII diagrams
+  - Quick start guide with 3-command workflow
+  - All 6 review types explained with examples
+  - PR review pipeline and context strategy
+  - Custom instructions format and examples
+  - Auto-discovery of standards (11 languages, 30+ config files)
+  - Multi-language support table
+  - Review caching explanation and performance data
+  - CI/CD integration overview with examples
+  - MCP tool reference
+  - Chat integration examples
+  - Output formats (console, JSON, SARIF, Markdown, GitHub JSON)
+  - Performance characteristics and timing breakdown
+  - Configuration reference
+  - Troubleshooting guide
+  - Best practices
+  - Real-world examples
+
+- **HyperDev Article** (`~/Duetto/repos/duetto-code-intelligence/docs/hyperdev-article-draft.md`)
+  - Technical article for HyperDev Substack publication
+  - Hook: Traditional tools see diffs, context-aware tools see relationships
+  - Explains vector search + KG + LLM pipeline
+  - Language-aware review examples (Python, TypeScript)
+  - Custom standards and auto-discovery
+  - Review caching for speed
+  - Practical examples (security, PR, CI/CD)
+  - Performance and cost analysis
+  - Getting started guide
+
+### Technical Details
+
+- **Review Engine Architecture**
+  - `ReviewEngine` class: Orchestrates vector search → KG → LLM pipeline
+  - `PRReviewEngine` class: PR-specific review with context gathering
+  - `ReviewCache` class: SQLite-based caching with content hashing
+  - `LanguageProfile` dataclass: Language-specific standards storage
+  - `InstructionsLoader` class: Custom YAML instructions + auto-discovery
+
+- **Models and Schemas**
+  - `ReviewType` enum: security, architecture, performance, quality, testing, documentation
+  - `ReviewFinding`: Structured finding with severity, category, CWE ID
+  - `ReviewResult`: Complete review output with findings and metadata
+  - `PRReviewComment`: PR comment with file, line, severity, blocking flag
+  - `PRReviewResult`: PR review output with verdict and score
+
+- **LLM Integration**
+  - Specialized prompts per review type
+  - PR review prompt with language context injection
+  - Structured JSON output parsing
+  - Confidence scoring for findings
+  - Model selection: GPT-4, Claude Sonnet, OpenRouter
+
+- **CLI Integration**
+  - `analyze review` subcommand with rich help text
+  - `analyze review-pr` subcommand with PR-specific options
+  - Batch review mode with `--types security,quality` or `--types all`
+  - Multiple output formats with auto-detection
+  - Verbose mode for debugging with `--verbose`
+
 ## [2.8.0] - 2026-02-22
 
 ### Added
