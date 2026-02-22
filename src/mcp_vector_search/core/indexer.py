@@ -2684,7 +2684,6 @@ class SemanticIndexer:
         print("📋 Preparing first batch for indexing...", flush=True)
         chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=10)
         batch_count = 0
-        producer_done_count = 0  # Track how many producers finished
 
         # PERFORMANCE: Multiple parallel producers to keep GPU fed
         # Configurable via MCP_VECTOR_SEARCH_NUM_PRODUCERS env var (default: 4)
@@ -2706,7 +2705,7 @@ class SemanticIndexer:
                 file_range: Subset of files_to_index this producer handles
                 producer_id: Unique ID for this producer (for logging)
             """
-            nonlocal batch_count, producer_done_count
+            nonlocal batch_count
 
             logger.info(
                 f"Producer {producer_id}: Starting with {len(file_range)} files"
@@ -2716,9 +2715,8 @@ class SemanticIndexer:
                 # Check for cancellation at the start of each batch
                 if self.cancellation_flag and self.cancellation_flag.is_set():
                     logger.info(f"Producer {producer_id}: Indexing cancelled by user")
-                    producer_done_count += 1
-                    if producer_done_count >= num_producers:
-                        await chunk_queue.put(None)  # Signal consumer only once
+                    # Each producer sends its own sentinel when cancelled
+                    await chunk_queue.put(None)
                     return
 
                 batch = file_range[i : i + self.batch_size]
@@ -2849,26 +2847,30 @@ class SemanticIndexer:
                     }
                 )
 
-            # Signal completion (only last producer sends sentinel)
-            producer_done_count += 1
-            logger.info(
-                f"Producer {producer_id}: Completed ({producer_done_count}/{num_producers} producers done)"
-            )
-            if producer_done_count >= num_producers:
-                logger.info("All producers finished, signaling consumer to stop")
-                await chunk_queue.put(None)
+            # Signal completion - each producer sends its own sentinel
+            logger.info(f"Producer {producer_id}: Completed, sending sentinel")
+            await chunk_queue.put(None)
 
         async def embed_consumer():
             """Consumer coroutine: Take chunks from queue, embed, and store."""
             nonlocal time_parsing_total, time_embedding_total, time_storage_total
 
+            sentinels_seen = 0
             while True:
                 # Get next batch from queue (blocks until available)
                 batch_data = await chunk_queue.get()
 
-                # Check for completion signal
+                # Check for completion signal (sentinel from producer)
                 if batch_data is None:
-                    break
+                    sentinels_seen += 1
+                    logger.info(
+                        f"Consumer: producer finished ({sentinels_seen}/{num_producers})"
+                    )
+                    if sentinels_seen >= num_producers:
+                        logger.info("Consumer: all producers done, finishing")
+                        break
+                    # Continue processing - more producers still active
+                    continue
 
                 # Check for cancellation
                 if self.cancellation_flag and self.cancellation_flag.is_set():
