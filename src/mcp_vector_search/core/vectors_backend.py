@@ -766,6 +766,61 @@ class VectorsBackend:
             logger.warning(f"Failed to get vector for chunk {chunk_id}: {e}")
             return None
 
+    async def get_chunk_vectors_batch(
+        self, chunk_ids: list[str]
+    ) -> dict[str, list[float]]:
+        """Get vectors for multiple chunks in a single query.
+
+        More efficient than calling get_chunk_vector() in a loop.
+
+        Args:
+            chunk_ids: List of chunk identifiers
+
+        Returns:
+            Dictionary mapping chunk_id to vector embedding
+            Only includes chunk_ids that were found in the table
+        """
+        if self._table is None or not chunk_ids:
+            return {}
+
+        try:
+            # Build SQL IN clause with proper escaping
+            # Batch into chunks of 500 to avoid SQL query length limits
+            batch_size = 500
+            all_vectors: dict[str, list[float]] = {}
+
+            for i in range(0, len(chunk_ids), batch_size):
+                batch = chunk_ids[i : i + batch_size]
+                id_list = ", ".join(
+                    f"'{cid.replace(chr(39), chr(39) * 2)}'" for cid in batch
+                )
+
+                # Query for this batch
+                df = self._table.to_pandas().query(f"chunk_id in [{id_list}]")
+
+                # Extract vectors from results
+                for _, row in df.iterrows():
+                    chunk_id = row["chunk_id"]
+                    vector = row["vector"]
+
+                    # Convert to list if needed
+                    if isinstance(vector, list):
+                        all_vectors[chunk_id] = vector
+                    else:
+                        try:
+                            all_vectors[chunk_id] = vector.tolist()
+                        except AttributeError:
+                            all_vectors[chunk_id] = list(vector)
+
+            logger.debug(
+                f"Retrieved {len(all_vectors)} vectors from {len(chunk_ids)} requested chunk_ids"
+            )
+            return all_vectors
+
+        except Exception as e:
+            logger.warning(f"Failed to get vectors for batch: {e}")
+            return {}
+
     async def has_vector(self, chunk_id: str) -> bool:
         """Check if chunk already has a vector.
 

@@ -22,6 +22,7 @@ from ..analysis.trends import TrendTracker
 from ..config.settings import ProjectConfig
 from ..parsers.registry import get_parser_registry
 from ..utils.monorepo import MonorepoDetector
+from .bm25_backend import BM25Backend
 from .chunk_processor import ChunkProcessor
 from .chunks_backend import ChunksBackend, compute_file_hash
 from .database import VectorDatabase
@@ -513,6 +514,13 @@ class SemanticIndexer:
 
         if not files_to_index:
             logger.info("All files are up to date")
+            # Still build BM25 index if it doesn't exist
+            bm25_path = self.config.index_path / "bm25_index.pkl"
+            if not bm25_path.exists():
+                logger.info(f"BM25 index not found at {bm25_path}, building now...")
+                await self._build_bm25_index()
+            else:
+                logger.info(f"BM25 index already exists at {bm25_path}")
             return 0, 0, 0
 
         # PIPELINE IMPLEMENTATION: Producer-consumer pattern
@@ -1909,6 +1917,9 @@ class SemanticIndexer:
         if atomic_rebuild_active and indexed_count > 0:
             await self._finalize_atomic_rebuild()
 
+        # Phase 3: Build BM25 index for hybrid search
+        await self._build_bm25_index()
+
         return indexed_count
 
     async def _parse_and_prepare_file(
@@ -3035,3 +3046,65 @@ class SemanticIndexer:
             f"  - Pipeline efficiency: {pipeline_efficiency:.1f}% time saved ({time_saved:.2f}s) through stage overlap\n",
             flush=True,
         )
+
+    async def _build_bm25_index(self) -> None:
+        """Build BM25 index from all chunks for keyword search.
+
+        This is Phase 3 of indexing (after chunks and vectors are built).
+        BM25 index enables hybrid search by combining keyword and semantic search.
+        """
+        try:
+            # Get all chunks from vectors.lance table
+            # VectorsBackend has the vectors table with all chunk data including content
+            if self.vectors_backend._db is None or self.vectors_backend._table is None:
+                logger.warning(
+                    "Vectors backend not initialized, skipping BM25 index build"
+                )
+                return
+
+            logger.info("📚 Phase 3: Building BM25 index for keyword search...")
+
+            # Query all records from vectors.lance table (to_pandas is most efficient for bulk reads)
+            import asyncio
+
+            df = await asyncio.to_thread(self.vectors_backend._table.to_pandas)
+
+            if df.empty:
+                logger.info("No chunks in vectors table, skipping BM25 index build")
+                return
+
+            # Convert DataFrame rows to dicts for BM25Backend
+            # BM25Backend expects: chunk_id, content, name, file_path, chunk_type
+            chunks_for_bm25 = []
+            for _, row in df.iterrows():
+                chunk_dict = {
+                    "chunk_id": row["chunk_id"],
+                    "content": row["content"],
+                    "name": row.get("name", ""),  # vectors.lance uses "name" field
+                    "file_path": row["file_path"],
+                    "chunk_type": row.get("chunk_type", "code"),
+                }
+                chunks_for_bm25.append(chunk_dict)
+
+            logger.info(
+                f"📚 Phase 3: Building BM25 index from {len(chunks_for_bm25)} chunks..."
+            )
+
+            # Build BM25 index
+            bm25_backend = BM25Backend()
+            bm25_backend.build_index(chunks_for_bm25)
+
+            # Save to disk
+            bm25_path = self.config.index_path / "bm25_index.pkl"
+            bm25_backend.save(bm25_path)
+
+            stats = bm25_backend.get_stats()
+            logger.info(
+                f"✓ Phase 3 complete: BM25 index built with {stats['chunk_count']} chunks "
+                f"(avg doc length: {stats['avg_doc_length']:.1f} tokens)"
+            )
+
+        except Exception as e:
+            # Non-fatal: BM25 failure shouldn't break indexing
+            logger.warning(f"BM25 index building failed (non-fatal): {e}")
+            logger.warning("Hybrid search will fall back to vector-only mode")

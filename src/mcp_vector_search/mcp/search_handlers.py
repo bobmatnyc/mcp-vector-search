@@ -38,6 +38,7 @@ class SearchHandlers:
         function_name = args.get("function_name")
         class_name = args.get("class_name")
         files = args.get("files")
+        expand = args.get("expand", True)
 
         if not query:
             return CallToolResult(
@@ -110,12 +111,27 @@ class SearchHandlers:
         if files:
             filters["file_pattern"] = files
 
+        # Get search mode and hybrid_alpha parameters
+        search_mode_str = args.get("search_mode", "hybrid")
+        hybrid_alpha = args.get("hybrid_alpha", 0.7)
+
+        # Convert search_mode string to enum
+        from ..core.search import SearchMode
+
+        try:
+            search_mode = SearchMode(search_mode_str.lower())
+        except ValueError:
+            search_mode = SearchMode.HYBRID
+
         # Perform search
         results = await self.search_engine.search(
             query=query,
             limit=limit,
             similarity_threshold=similarity_threshold,
             filters=filters,
+            expand=expand,
+            search_mode=search_mode,
+            hybrid_alpha=hybrid_alpha,
         )
 
         # Format results

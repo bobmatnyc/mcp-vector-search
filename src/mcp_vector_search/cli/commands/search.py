@@ -13,7 +13,7 @@ from ...core.exceptions import ProjectNotFoundError
 from ...core.factory import create_database
 from ...core.indexer import SemanticIndexer
 from ...core.project import ProjectManager
-from ...core.search import SemanticSearchEngine
+from ...core.search import SearchMode, SemanticSearchEngine
 from ..didyoumean import create_enhanced_typer
 from ..output import (
     print_error,
@@ -176,6 +176,43 @@ def search_main(
         max=1.0,
         rich_help_panel="🎯 Quality Filters",
     ),
+    diversity: float = typer.Option(
+        0.5,
+        "--diversity",
+        "-D",
+        help="Diversity for MMR reranking (0.0=pure relevance, 1.0=max diversity, default=0.5)",
+        min=0.0,
+        max=1.0,
+        rich_help_panel="🎯 Search Options",
+    ),
+    no_mmr: bool = typer.Option(
+        False,
+        "--no-mmr",
+        help="Disable MMR diversity filtering",
+        rich_help_panel="🎯 Search Options",
+    ),
+    expand: bool = typer.Option(
+        True,
+        "--expand/--no-expand",
+        "-E/-N",
+        help="Enable query expansion with code synonyms (default: enabled)",
+        rich_help_panel="🎯 Search Options",
+    ),
+    search_mode: str = typer.Option(
+        "hybrid",
+        "--search-mode",
+        "-S",
+        help="Search mode: vector, bm25, or hybrid (default: hybrid)",
+        rich_help_panel="🎯 Search Options",
+    ),
+    hybrid_alpha: float = typer.Option(
+        0.7,
+        "--hybrid-alpha",
+        help="Weight for vector search in hybrid mode (0.0=pure BM25, 1.0=pure vector, default=0.7)",
+        min=0.0,
+        max=1.0,
+        rich_help_panel="🎯 Search Options",
+    ),
 ) -> None:
     """🔍 Search your codebase semantically.
 
@@ -306,6 +343,11 @@ def search_main(
                     grade=grade,
                     min_quality=min_quality,
                     quality_weight=quality_weight,
+                    use_mmr=not no_mmr,
+                    diversity=diversity,
+                    expand=expand,
+                    search_mode=search_mode,
+                    hybrid_alpha=hybrid_alpha,
                 )
             )
 
@@ -379,6 +421,11 @@ async def run_search(
     grade: str | None = None,
     min_quality: int | None = None,
     quality_weight: float = 0.3,
+    use_mmr: bool = True,
+    diversity: float = 0.5,
+    expand: bool = True,
+    search_mode: str = "hybrid",
+    hybrid_alpha: float = 0.7,
 ) -> None:
     """Run semantic search with optional quality filters and quality-aware ranking."""
     # Load project configuration
@@ -458,12 +505,20 @@ async def run_search(
 
     try:
         async with database:
+            # Convert search_mode string to SearchMode enum
+            mode = SearchMode(search_mode.lower())
+
             results = await search_engine.search(
                 query=query,
                 limit=limit,
                 filters=filters if filters else None,
                 similarity_threshold=similarity_threshold,
                 include_context=show_content,
+                use_mmr=use_mmr,
+                diversity=diversity,
+                expand=expand,
+                search_mode=mode,
+                hybrid_alpha=hybrid_alpha,
             )
 
             # Post-filter results by file pattern if specified
