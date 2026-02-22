@@ -260,45 +260,23 @@ def _build_kg_in_subprocess(
     return _do_build_sync()
 
 
-@kg_app.command("build")
-def build_kg(
-    project_root: Path = typer.Option(
-        ".", help="Project root directory", exists=True, file_okay=False
-    ),
-    force: bool = typer.Option(
-        False, "-f", "--force", help="Force rebuild even if graph exists"
-    ),
-    limit: int | None = typer.Option(
-        None, help="Limit number of chunks to process (for testing)"
-    ),
-    skip_documents: bool = typer.Option(
-        False,
-        "--skip-documents",
-        help="Skip expensive DOCUMENTS relationship extraction (faster build)",
-    ),
-    incremental: bool = typer.Option(
-        False,
-        "--incremental",
-        help="Only process new chunks not in previous build (incremental build)",
-    ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Enable verbose debug output (shows detailed progress)",
-    ),
-):
-    """Build knowledge graph from indexed chunks.
+def _build_kg_impl(
+    project_root: Path,
+    force: bool,
+    limit: int | None,
+    skip_documents: bool,
+    incremental: bool,
+    verbose: bool,
+) -> None:
+    """Shared implementation for build/index commands.
 
-    This command extracts entities and relationships from your indexed
-    codebase and builds a queryable knowledge graph.
-
-    Example:
-        mcp-vector-search kg build
-        mcp-vector-search kg build --force
-        mcp-vector-search kg build --limit 100  # Test with 100 chunks
-        mcp-vector-search kg build --skip-documents  # Faster build for large repos
-        mcp-vector-search kg build --incremental  # Only process new chunks
+    Args:
+        project_root: Project root directory
+        force: Force rebuild even if graph exists
+        limit: Limit number of chunks to process (for testing)
+        skip_documents: Skip expensive DOCUMENTS relationship extraction
+        incremental: Only process new chunks not in previous build
+        verbose: Enable verbose debug output
     """
     project_root = project_root.resolve()
 
@@ -560,6 +538,92 @@ def build_kg(
 
     if verbose:
         console.print("[green]✓ Build completed successfully in subprocess[/green]")
+
+
+@kg_app.command("build")
+def build_kg(
+    project_root: Path = typer.Option(
+        ".", help="Project root directory", exists=True, file_okay=False
+    ),
+    force: bool = typer.Option(
+        False, "-f", "--force", help="Force rebuild even if graph exists"
+    ),
+    limit: int | None = typer.Option(
+        None, help="Limit number of chunks to process (for testing)"
+    ),
+    skip_documents: bool = typer.Option(
+        False,
+        "--skip-documents",
+        help="Skip expensive DOCUMENTS relationship extraction (faster build)",
+    ),
+    incremental: bool = typer.Option(
+        False,
+        "--incremental",
+        help="Only process new chunks not in previous build (incremental build)",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose debug output (shows detailed progress)",
+    ),
+):
+    """Build knowledge graph from indexed chunks.
+
+    This command extracts entities and relationships from your indexed
+    codebase and builds a queryable knowledge graph.
+
+    Example:
+        mcp-vector-search kg build
+        mcp-vector-search kg build --force
+        mcp-vector-search kg build --limit 100  # Test with 100 chunks
+        mcp-vector-search kg build --skip-documents  # Faster build for large repos
+        mcp-vector-search kg build --incremental  # Only process new chunks
+    """
+    _build_kg_impl(project_root, force, limit, skip_documents, incremental, verbose)
+
+
+@kg_app.command("index")
+def index_kg(
+    project_root: Path = typer.Option(
+        ".", help="Project root directory", exists=True, file_okay=False
+    ),
+    force: bool = typer.Option(
+        False, "-f", "--force", help="Force rebuild even if graph exists"
+    ),
+    limit: int | None = typer.Option(
+        None, help="Limit number of chunks to process (for testing)"
+    ),
+    skip_documents: bool = typer.Option(
+        False,
+        "--skip-documents",
+        help="Skip expensive DOCUMENTS relationship extraction (faster build)",
+    ),
+    incremental: bool = typer.Option(
+        False,
+        "--incremental",
+        help="Only process new chunks not in previous build (incremental build)",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose debug output (shows detailed progress)",
+    ),
+):
+    """Build knowledge graph from indexed chunks (alias for 'kg build').
+
+    This command extracts entities and relationships from your indexed
+    codebase and builds a queryable knowledge graph.
+
+    Example:
+        mcp-vector-search kg index
+        mcp-vector-search kg index --force
+        mcp-vector-search kg index --limit 100  # Test with 100 chunks
+        mcp-vector-search kg index --skip-documents  # Faster build for large repos
+        mcp-vector-search kg index --incremental  # Only process new chunks
+    """
+    _build_kg_impl(project_root, force, limit, skip_documents, incremental, verbose)
 
 
 @kg_app.command("query")

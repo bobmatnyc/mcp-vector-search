@@ -1,6 +1,14 @@
 """Reindex command for MCP Vector Search CLI — full pipeline (chunk + embed)."""
 
 import asyncio
+import gc
+import json
+import shutil
+import subprocess
+import tempfile
+import threading
+import time
+from dataclasses import asdict
 from pathlib import Path
 
 import typer
@@ -22,7 +30,7 @@ from ..output import (
 )
 
 reindex_app = typer.Typer(
-    help="Full reindex: chunk all files + embed all chunks",
+    help="Full reindex: chunk files + embed chunks + build knowledge graph",
     invoke_without_command=True,
 )
 
@@ -56,10 +64,11 @@ def reindex_main(
         help="Show verbose output",
     ),
 ) -> None:
-    """🔄 Full reindex: chunk all files and embed all chunks.
+    """🔄 Full reindex: chunk files, embed chunks, and build knowledge graph.
 
-    Runs both phases of indexing sequentially. By default starts fresh
-    (clears existing data). Use --incremental to only process changes.
+    Runs all three phases of indexing sequentially (chunk → embed → KG build).
+    By default starts fresh (clears existing data). Use --incremental to only
+    process changes.
 
     [bold cyan]Examples:[/bold cyan]
 
@@ -167,6 +176,166 @@ async def _run_reindex(
             f"{embedded:,} embeddings ({duration:.1f}s)"
         )
 
+        # Build knowledge graph (always run, fresh or incremental)
+        try:
+            console.print()
+            console.print("[cyan]🔗 Building knowledge graph...[/cyan]")
+            await _build_knowledge_graph(project_root, database, fresh, verbose)
+            console.print("[green]✓ Knowledge graph built successfully[/green]")
+        except Exception as e:
+            logger.warning(f"Knowledge graph build failed: {e}")
+            print_warning(f"⚠ Knowledge graph build failed: {e}")
+            print_info(
+                "You can rebuild it later with: mcp-vector-search kg build --force"
+            )
+
     except Exception as e:
         logger.error(f"Reindex error: {e}")
         raise
+
+
+async def _build_knowledge_graph(
+    project_root: Path, database, fresh: bool, verbose: bool = False
+) -> None:
+    """Build knowledge graph from indexed chunks using subprocess approach.
+
+    Args:
+        project_root: Project root directory
+        database: Database instance (should be open)
+        fresh: If True, force rebuild from scratch; if False, incremental
+        verbose: Show verbose output
+
+    Raises:
+        Exception: If KG build fails
+    """
+    # Load chunks from database and save to temp file
+    if verbose:
+        console.print("[dim]Loading chunks from database...[/dim]")
+
+    chunk_count = database.get_chunk_count()
+    if chunk_count == 0:
+        console.print("[yellow]⚠ No chunks found, skipping KG build[/yellow]")
+        return
+
+    if verbose:
+        console.print(f"[dim]Found {chunk_count} chunks to process[/dim]")
+
+    # Load all chunks in batches
+    chunks = []
+    for batch in database.iter_chunks_batched(batch_size=5000):
+        chunks.extend(batch)
+
+    if verbose:
+        console.print(f"[dim]Loaded {len(chunks)} chunks[/dim]")
+
+    # Serialize chunks to temp JSON file
+    temp_fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="kg_chunks_")
+    try:
+        with open(temp_path, "w") as f:
+            # Serialize chunks to JSON (use asdict for dataclasses)
+            chunks_data = [asdict(chunk) for chunk in chunks]
+            # Convert Path objects to strings for JSON serialization
+            for chunk_dict in chunks_data:
+                chunk_dict["file_path"] = str(chunk_dict["file_path"])
+            json.dump(chunks_data, f)
+        if verbose:
+            console.print(f"[dim]Saved chunks to {temp_path}[/dim]")
+    finally:
+        import os
+
+        os.close(temp_fd)
+
+    # Close database to prevent thread conflicts with Kuzu
+    if verbose:
+        console.print("[dim]Closing database connection...[/dim]")
+    await database.close()
+
+    # Force cleanup of asyncio resources and background threads
+    gc.collect()
+
+    # Close all asyncio event loops
+    try:
+        loop = asyncio.get_event_loop()
+        if loop and not loop.is_closed():
+            loop.close()
+            if verbose:
+                console.print("[dim]Closed asyncio event loop[/dim]")
+    except RuntimeError:
+        pass  # No event loop in current thread
+
+    # Set new event loop policy to ensure clean state
+    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+
+    # Give background threads time to terminate
+    max_wait = 3.0  # Wait up to 3 seconds
+    start_time_wait = time.time()
+    threads = threading.enumerate()
+
+    while len(threads) > 1 and (time.time() - start_time_wait) < max_wait:
+        time.sleep(0.2)
+        gc.collect()
+        threads = threading.enumerate()
+
+    if verbose and len(threads) > 1:
+        background = [t for t in threads if t != threading.main_thread()]
+        if background:
+            console.print(
+                f"[yellow]⚠ Warning: {len(background)} background thread(s) still active[/yellow]"
+            )
+
+    # Find correct Python interpreter
+    mcp_cmd = shutil.which("mcp-vector-search")
+    if mcp_cmd:
+        with open(mcp_cmd) as f:
+            shebang = f.readline().strip()
+            if shebang.startswith("#!"):
+                python_executable = shebang[2:].strip()
+            else:
+                import sys
+
+                python_executable = sys.executable
+    else:
+        import sys
+
+        python_executable = sys.executable
+
+    if verbose:
+        console.print(f"[dim]Using Python: {python_executable}[/dim]")
+
+    # Build command to execute subprocess
+    subprocess_script = Path(__file__).parent / "_kg_subprocess.py"
+    cmd = [
+        python_executable,
+        str(subprocess_script),
+        str(project_root.absolute()),
+        temp_path,
+    ]
+
+    # Only force rebuild if fresh reindex
+    if fresh:
+        cmd.append("--force")
+
+    if verbose:
+        cmd.append("--verbose")
+        console.print(f"[dim]Command: {' '.join(cmd)}[/dim]")
+
+    # Run subprocess
+    result = subprocess.run(
+        cmd,
+        check=False,
+        stdout=None,  # Inherit stdout
+        stderr=None,  # Inherit stderr
+    )
+
+    if result.returncode != 0:
+        # Clean up temp file
+        try:
+            Path(temp_path).unlink()
+        except Exception as e:
+            logger.debug("Failed to clean up temp file %s: %s", temp_path, e)
+        raise Exception(
+            f"KG build subprocess failed with exit code {result.returncode}"
+        )
+
+    if verbose:
+        console.print("[green]✓ KG build subprocess completed[/green]")
