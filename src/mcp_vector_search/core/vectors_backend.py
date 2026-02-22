@@ -49,6 +49,11 @@ def _create_vectors_schema(vector_dim: int) -> pa.Schema:
             pa.field("end_line", pa.int32()),
             pa.field("chunk_type", pa.string()),
             pa.field("name", pa.string()),
+            pa.field("function_name", pa.string()),  # Separate function name field
+            pa.field("class_name", pa.string()),  # Separate class name field
+            pa.field(
+                "project_name", pa.string()
+            ),  # Monorepo subproject name (empty for single projects)
             pa.field("hierarchy_path", pa.string()),
             # Metadata
             pa.field("embedded_at", pa.string()),  # ISO timestamp
@@ -433,6 +438,9 @@ class VectorsBackend:
                 }
 
                 # Optional fields with defaults
+                normalized["function_name"] = chunk.get("function_name", "")
+                normalized["class_name"] = chunk.get("class_name", "")
+                normalized["project_name"] = chunk.get("project_name", "")
                 normalized["hierarchy_path"] = chunk.get("hierarchy_path", "")
 
                 # Metadata
@@ -478,16 +486,38 @@ class VectorsBackend:
                         existing_dim = vector_field.type.list_size
 
                     if existing_dim == self.vector_dim:
-                        # Dimensions match, safe to append
-                        self._table = existing_table
+                        # Dimensions match, now check schema compatibility
+                        # Check if all required columns exist in the existing table
+                        existing_field_names = set(existing_schema.names)
+                        new_field_names = set(schema.names)
+                        missing_columns = new_field_names - existing_field_names
 
-                        # Deduplicate: Delete existing vectors with same chunk_ids before appending
-                        self._delete_chunk_ids(chunk_ids_to_add)
+                        if missing_columns:
+                            # Schema evolution: existing table is missing new columns
+                            # Drop and recreate table to match new schema
+                            logger.warning(
+                                f"Schema evolution detected: existing table missing columns {missing_columns}. "
+                                f"Dropping and recreating table."
+                            )
+                            self._db.drop_table(self.table_name)
+                            self._table = self._db.create_table(
+                                self.table_name, pa_table, schema=schema
+                            )
+                            logger.info(
+                                f"Recreated vectors table with {len(normalized_vectors)} vectors "
+                                f"(dimension: {self.vector_dim}, schema updated)"
+                            )
+                        else:
+                            # Schema compatible, safe to append
+                            self._table = existing_table
 
-                        self._table.add(pa_table, mode="append")
-                        logger.debug(
-                            f"Opened existing table and added {len(normalized_vectors)} vectors (append mode)"
-                        )
+                            # Deduplicate: Delete existing vectors with same chunk_ids before appending
+                            self._delete_chunk_ids(chunk_ids_to_add)
+
+                            self._table.add(pa_table, mode="append")
+                            logger.debug(
+                                f"Opened existing table and added {len(normalized_vectors)} vectors (append mode)"
+                            )
                     else:
                         # Dimension mismatch - drop and recreate table
                         logger.warning(
@@ -534,16 +564,38 @@ class VectorsBackend:
                         f"(dimension: {self.vector_dim})"
                     )
                 else:
-                    # Dimensions match, safe to append
-                    # Deduplicate: Delete existing vectors with same chunk_ids before appending
-                    self._delete_chunk_ids(chunk_ids_to_add)
+                    # Dimensions match, now check schema compatibility
+                    # Check if all required columns exist in the existing table
+                    existing_field_names = set(existing_schema.names)
+                    new_field_names = set(schema.names)
+                    missing_columns = new_field_names - existing_field_names
 
-                    # OPTIMIZATION: Use mode='append' for faster bulk inserts
-                    # This defers index updates until later, improving write throughput
-                    self._table.add(pa_table, mode="append")
-                    logger.debug(
-                        f"Added {len(normalized_vectors)} vectors to table (append mode)"
-                    )
+                    if missing_columns:
+                        # Schema evolution: existing table is missing new columns
+                        # Drop and recreate table to match new schema
+                        logger.warning(
+                            f"Schema evolution detected during append: existing table missing columns {missing_columns}. "
+                            f"Dropping and recreating table."
+                        )
+                        self._db.drop_table(self.table_name)
+                        self._table = self._db.create_table(
+                            self.table_name, pa_table, schema=schema
+                        )
+                        logger.info(
+                            f"Recreated vectors table with {len(normalized_vectors)} vectors "
+                            f"(dimension: {self.vector_dim}, schema updated)"
+                        )
+                    else:
+                        # Schema compatible, dimensions match, safe to append
+                        # Deduplicate: Delete existing vectors with same chunk_ids before appending
+                        self._delete_chunk_ids(chunk_ids_to_add)
+
+                        # OPTIMIZATION: Use mode='append' for faster bulk inserts
+                        # This defers index updates until later, improving write throughput
+                        self._table.add(pa_table, mode="append")
+                        logger.debug(
+                            f"Added {len(normalized_vectors)} vectors to table (append mode)"
+                        )
 
             return len(normalized_vectors)
 
@@ -569,6 +621,8 @@ class VectorsBackend:
                 - language (str): Filter by programming language
                 - file_path (str): Filter by file path
                 - chunk_type (str): Filter by chunk type (function, class, etc.)
+                - function_name (str): Filter by function name
+                - class_name (str): Filter by class name
 
         Returns:
             List of matching chunks with similarity scores, sorted by relevance:
@@ -582,6 +636,8 @@ class VectorsBackend:
                     "language": "python",
                     "chunk_type": "function",
                     "name": "foo",
+                    "function_name": "foo",
+                    "class_name": "",
                     "hierarchy_path": "MyClass.foo",
                     "similarity": 0.95,
                     "_distance": 0.05
@@ -655,6 +711,9 @@ class VectorsBackend:
                     "language": result["language"],
                     "chunk_type": result["chunk_type"],
                     "name": result["name"],
+                    "function_name": result.get("function_name", ""),
+                    "class_name": result.get("class_name", ""),
+                    "project_name": result.get("project_name", ""),
                     "hierarchy_path": result.get("hierarchy_path", ""),
                     "similarity": similarity,
                     "_distance": distance,

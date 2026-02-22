@@ -93,6 +93,9 @@ from sentence_transformers import SentenceTransformer
 from ..config.defaults import get_model_dimensions, is_code_specific_model
 from .exceptions import EmbeddingError
 
+# Module-level flag to ensure PyTorch warnings are only shown once
+_pytorch_warning_shown = False
+
 
 def _detect_device() -> str:
     """Detect optimal compute device (MPS > CUDA > CPU).
@@ -116,10 +119,13 @@ def _detect_device() -> str:
     if torch.backends.mps.is_available() and torch.backends.mps.is_built():
         # Check for PyTorch 2.10.0 regression
         if torch.__version__.startswith("2.10.0"):
-            logger.warning(
-                "PyTorch 2.10.0 detected — falling back to CPU due to known MPS regression. "
-                "Upgrade PyTorch to restore GPU acceleration."
-            )
+            global _pytorch_warning_shown
+            if not _pytorch_warning_shown:
+                logger.warning(
+                    "PyTorch 2.10.0 detected — falling back to CPU due to known MPS regression. "
+                    "Upgrade PyTorch to restore GPU acceleration."
+                )
+                _pytorch_warning_shown = True
             return "cpu"
 
         logger.info("Apple Silicon detected. Using MPS for GPU-accelerated inference.")

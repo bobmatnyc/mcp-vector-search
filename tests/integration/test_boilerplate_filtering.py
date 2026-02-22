@@ -96,7 +96,9 @@ class TestBoilerplateFilteringIntegration:
         with patch.object(
             search_engine, "_read_file_lines_cached", new=AsyncMock(return_value=[])
         ):
-            results = await search_engine.search("user data processing", limit=10)
+            results = await search_engine.search(
+                "user data processing", limit=10, use_rerank=False
+            )
 
         # The custom method should rank higher than __init__ after reranking
         # because __init__ gets a -0.15 penalty
@@ -137,7 +139,9 @@ class TestBoilerplateFilteringIntegration:
         with patch.object(
             search_engine, "_read_file_lines_cached", new=AsyncMock(return_value=[])
         ):
-            results = await search_engine.search("show __init__ methods", limit=10)
+            results = await search_engine.search(
+                "show __init__ methods", limit=10, use_rerank=False
+            )
 
         # __init__ should maintain higher ranking because query contains "__init__"
         assert len(results) == 2
@@ -174,7 +178,9 @@ class TestBoilerplateFilteringIntegration:
         with patch.object(
             search_engine, "_read_file_lines_cached", new=AsyncMock(return_value=[])
         ):
-            results = await search_engine.search("user authentication", limit=10)
+            results = await search_engine.search(
+                "user authentication", limit=10, use_rerank=False
+            )
 
         # Custom method should rank higher after constructor penalty
         assert len(results) == 2
@@ -220,7 +226,9 @@ class TestBoilerplateFilteringIntegration:
         with patch.object(
             search_engine, "_read_file_lines_cached", new=AsyncMock(return_value=[])
         ):
-            results = await search_engine.search("data processing", limit=10)
+            results = await search_engine.search(
+                "data processing", limit=10, use_rerank=False
+            )
 
         # Custom method should rank highest
         assert len(results) == 3
@@ -261,7 +269,9 @@ class TestBoilerplateFilteringIntegration:
         with patch.object(
             search_engine, "_read_file_lines_cached", new=AsyncMock(return_value=[])
         ):
-            results = await search_engine.search("database initialization", limit=10)
+            results = await search_engine.search(
+                "database initialization", limit=10, use_rerank=False
+            )
 
         # Results should maintain original order (no function_name penalty applied)
         assert len(results) == 2

@@ -159,6 +159,71 @@ class ProjectHandlers:
                 isError=True,
             )
 
+    async def handle_embed_chunks(
+        self, args: dict[str, Any], cleanup_callback, initialize_callback
+    ) -> CallToolResult:
+        """Handle embed_chunks tool call.
+
+        Args:
+            args: Tool call arguments containing fresh, batch_size
+            cleanup_callback: Async function to cleanup resources
+            initialize_callback: Async function to reinitialize after embedding
+
+        Returns:
+            CallToolResult with embedding result or error
+        """
+        fresh = args.get("fresh", False)
+        batch_size = args.get("batch_size", 512)
+
+        try:
+            from ..core.embeddings import create_embedding_function
+            from ..core.factory import create_database
+            from ..core.indexer import SemanticIndexer
+            from ..core.project import ProjectManager
+
+            project_manager = ProjectManager(self.project_root)
+            config = project_manager.load_config()
+
+            embedding_function, _ = create_embedding_function(
+                model_name=config.embedding_model,
+            )
+
+            database = create_database(
+                persist_directory=config.index_path,
+                embedding_function=embedding_function,
+            )
+
+            indexer = SemanticIndexer(
+                database=database,
+                project_root=self.project_root,
+                config=config,
+                batch_size=batch_size,
+            )
+
+            async with database:
+                result = await indexer.embed_chunks(fresh=fresh, batch_size=batch_size)
+
+            # Reinitialize search engine after embedding
+            await cleanup_callback()
+            await initialize_callback()
+
+            embedded = result.get("chunks_embedded", 0)
+            batches = result.get("batches_processed", 0)
+            duration = result.get("duration_seconds", 0)
+
+            if embedded > 0:
+                msg = f"Embedding complete: {embedded:,} chunks embedded in {batches} batches ({duration:.1f}s)"
+            else:
+                msg = "No pending chunks to embed. Run index_project first to chunk files."
+
+            return CallToolResult(content=[TextContent(type="text", text=msg)])
+
+        except Exception as e:
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Embedding failed: {str(e)}")],
+                isError=True,
+            )
+
     def _format_project_status(self, status_info: dict) -> str:
         """Format project status information.
 

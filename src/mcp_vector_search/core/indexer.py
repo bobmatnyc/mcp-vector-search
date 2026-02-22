@@ -1161,6 +1161,32 @@ class SemanticIndexer:
             parts.append(chunk.function_name)
         return ".".join(parts) if parts else ""
 
+    def _get_project_name(self, rel_path: str) -> str:
+        """Get monorepo subproject name for a file path.
+
+        Args:
+            rel_path: Relative file path (e.g., 'packages/frontend/src/App.tsx')
+
+        Returns:
+            Subproject name or empty string for non-monorepo projects.
+        """
+        if not self.monorepo_detector.is_monorepo():
+            return ""
+
+        try:
+            subprojects = self.monorepo_detector.detect_subprojects()
+            file_path = Path(rel_path)
+            for sp in subprojects:
+                # Check if file is under this subproject's path
+                try:
+                    file_path.relative_to(sp.relative_path)
+                    return sp.name
+                except ValueError:
+                    continue
+            return ""  # File not in any subproject (root-level file)
+        except Exception:
+            return ""
+
     async def _phase2_embed_chunks(
         self, batch_size: int = 10000, checkpoint_interval: int = 50000
     ) -> tuple[int, int]:
@@ -1189,9 +1215,10 @@ class SemanticIndexer:
 
         # Track start time for progress bar ETA
         embed_start_time = time.time()
-        # We'll estimate total from first batch and update as we go
-        estimated_total_chunks = 0
-        first_batch = True
+
+        # Get total pending chunks count BEFORE starting (for accurate progress bar)
+        total_pending_chunks = await self.chunks_backend.count_pending_chunks()
+        logger.info(f"Found {total_pending_chunks:,} pending chunks to embed")
 
         with metrics_tracker.phase("embedding") as embedding_metrics:
             while True:
@@ -1310,6 +1337,27 @@ class SemanticIndexer:
                     # Add to vectors table with embeddings
                     chunks_with_vectors = []
                     for chunk, vec in zip(pending, vectors, strict=True):
+                        # Derive function_name and class_name from chunk data
+                        chunk_type = chunk.get("chunk_type", "")
+                        chunk_name = chunk.get("name", "")
+                        hierarchy = chunk.get("hierarchy_path", "")
+
+                        # Determine function_name and class_name based on chunk_type
+                        if chunk_type in ("function", "method"):
+                            fn_name = chunk_name
+                            cls_name = ""
+                            # If hierarchy has a dot, the part before is the class
+                            if "." in hierarchy:
+                                parts = hierarchy.split(".")
+                                cls_name = parts[0]
+                                fn_name = parts[-1]
+                        elif chunk_type == "class":
+                            fn_name = ""
+                            cls_name = chunk_name
+                        else:
+                            fn_name = ""
+                            cls_name = ""
+
                         chunk_with_vec = {
                             "chunk_id": chunk["chunk_id"],
                             "vector": vec,
@@ -1320,6 +1368,9 @@ class SemanticIndexer:
                             "end_line": chunk["end_line"],
                             "chunk_type": chunk["chunk_type"],
                             "name": chunk["name"],
+                            "function_name": fn_name,
+                            "class_name": cls_name,
+                            "project_name": self._get_project_name(chunk["file_path"]),
                             "hierarchy_path": chunk["hierarchy_path"],
                         }
                         chunks_with_vectors.append(chunk_with_vec)
@@ -1336,20 +1387,11 @@ class SemanticIndexer:
                     chunks_embedded += len(pending)
                     batches_processed += 1
 
-                    # Estimate total chunks from first batch if not set
-                    if first_batch:
-                        # If we got a full batch, there are likely more pending
-                        # Use a conservative estimate of 2x current batch as minimum
-                        estimated_total_chunks = max(
-                            chunks_embedded * 2, chunks_embedded
-                        )
-                        first_batch = False
-
                     # Show progress bar if tracker is available
-                    if self.progress_tracker and estimated_total_chunks > 0:
+                    if self.progress_tracker and total_pending_chunks > 0:
                         self.progress_tracker.progress_bar_with_eta(
                             current=chunks_embedded,
-                            total=max(estimated_total_chunks, chunks_embedded),
+                            total=total_pending_chunks,
                             prefix="Embedding chunks",
                             start_time=embed_start_time,
                         )
@@ -1639,6 +1681,286 @@ class SemanticIndexer:
             # Reset flag after rollback attempt
             self._atomic_rebuild_active = False
             raise
+
+    async def chunk_files(self, fresh: bool = False) -> dict:
+        """Chunk files independently without embedding.
+
+        Discovers files, parses/chunks them, saves to chunks.lance,
+        and builds the BM25 index. Can run independently from embed.
+
+        Args:
+            fresh: If True, clear existing chunks and re-chunk all files.
+                   If False, only chunk new/changed files (incremental).
+
+        Returns:
+            Dict with stats: files_processed, chunks_created, files_skipped, errors
+        """
+        logger.info(
+            f"Starting chunk_files (fresh={fresh}) for project: {self.project_root}"
+        )
+
+        # Handle atomic rebuild for fresh mode FIRST (replaces backend objects)
+        if fresh:
+            # Pre-initialize backends so _atomic_rebuild_databases can create new ones
+            await self.chunks_backend.initialize()
+            await self.vectors_backend.initialize()
+            atomic_rebuild_active = await self._atomic_rebuild_databases(True)
+            self._atomic_rebuild_active = atomic_rebuild_active
+        else:
+            atomic_rebuild_active = False
+
+        # Initialize backends (new backends after atomic rebuild, or original ones)
+        if self.chunks_backend._db is None:
+            await self.chunks_backend.initialize()
+        if self.vectors_backend._db is None:
+            await self.vectors_backend.initialize()
+
+        # Run auto migrations
+        await self._run_auto_migrations()
+
+        # Apply auto-optimizations if enabled
+        if self.auto_optimize:
+            self.apply_auto_optimizations()
+
+        # Clean up stale lock files
+        cleanup_stale_locks(self.project_root)
+
+        # Discover all indexable files
+        all_files = self.file_discovery.find_indexable_files()
+
+        # Track stats
+        files_processed = 0
+        chunks_created = 0
+        files_skipped = 0
+        errors = []
+
+        if not all_files:
+            logger.warning("No indexable files found")
+            return {
+                "files_processed": 0,
+                "chunks_created": 0,
+                "files_skipped": 0,
+                "errors": [],
+            }
+
+        # Filter files for incremental mode
+        files_to_index = all_files
+        if not fresh:
+            # Incremental: only process changed files
+            logger.info(
+                f"Incremental mode: checking {len(all_files)} files for changes..."
+            )
+            filtered_files = []
+            for f in all_files:
+                try:
+                    file_hash = compute_file_hash(f)
+                    rel_path = str(f.relative_to(self.project_root))
+                    if await self.chunks_backend.file_changed(rel_path, file_hash):
+                        filtered_files.append(f)
+                    else:
+                        files_skipped += 1
+                except Exception as e:
+                    logger.warning(f"Error checking file {f}: {e}, will re-index")
+                    filtered_files.append(f)
+                    errors.append(str(e))
+            files_to_index = filtered_files
+            logger.info(f"Found {len(files_to_index)} changed files to index")
+
+        # Process files through Phase 1
+        if files_to_index:
+            indexed_count, created = await self._phase1_chunk_files(
+                files_to_index, force=fresh
+            )
+            files_processed = indexed_count
+            chunks_created = created
+
+        # Update metadata after chunking
+        if files_processed > 0:
+            # Update directory index
+            try:
+                logger.debug("Updating directory index after chunking...")
+                chunk_stats = {}
+                for file_path in files_to_index:
+                    try:
+                        mtime = os.path.getmtime(file_path)
+                        chunk_stats[str(file_path)] = {
+                            "modified": mtime,
+                            "chunks": 1,  # Placeholder
+                        }
+                    except OSError:
+                        pass
+
+                self.directory_index.rebuild_from_files(
+                    files_to_index, self.project_root, chunk_stats=chunk_stats
+                )
+                self.directory_index.save()
+                dir_stats = self.directory_index.get_stats()
+                logger.info(
+                    f"Directory index updated: {dir_stats['total_directories']} directories, "
+                    f"{dir_stats['total_files']} files"
+                )
+            except Exception as e:
+                logger.error(f"Failed to update directory index: {e}")
+                errors.append(f"Directory index update failed: {e}")
+
+        # Build BM25 index
+        await self._build_bm25_index()
+
+        # Finalize atomic rebuild if fresh and we processed files
+        if fresh and atomic_rebuild_active and files_processed > 0:
+            await self._finalize_atomic_rebuild()
+
+            # CRITICAL: Re-initialize backends after finalization
+            # After _finalize_atomic_rebuild(), the .new directories have been renamed
+            # to final paths, but backend objects still point to old .new paths.
+            # We must reinitialize backends to point to the correct final paths.
+            base_path = self.project_root / ".mcp-vector-search"
+            lance_path = base_path / "lance"
+
+            # Create fresh backend instances pointing to final paths
+            from .chunks_backend import ChunksBackend
+            from .vectors_backend import VectorsBackend
+
+            self.chunks_backend = ChunksBackend(lance_path)
+            self.vectors_backend = VectorsBackend(lance_path)
+
+            # Initialize new backends
+            await self.chunks_backend.initialize()
+            await self.vectors_backend.initialize()
+            logger.debug("Backends re-initialized after atomic rebuild finalization")
+
+        logger.info(
+            f"✓ chunk_files complete: {files_processed} files processed, "
+            f"{chunks_created} chunks created, {files_skipped} files skipped"
+        )
+
+        return {
+            "files_processed": files_processed,
+            "chunks_created": chunks_created,
+            "files_skipped": files_skipped,
+            "errors": errors,
+        }
+
+    async def embed_chunks(self, fresh: bool = False, batch_size: int = 512) -> dict:
+        """Embed pending chunks independently without re-chunking.
+
+        Reads chunks with embedding_status='pending' from chunks.lance,
+        generates embeddings via GPU, and saves to vectors.lance.
+        Can run independently from chunk_files.
+
+        Args:
+            fresh: If True, clear vectors table and reset all chunks to pending.
+                   If False, only embed chunks that haven't been embedded yet.
+            batch_size: Number of chunks per embedding batch.
+
+        Returns:
+            Dict with stats: chunks_embedded, chunks_skipped, batches_processed, errors, duration_seconds
+        """
+        from ..config.defaults import get_model_dimensions
+
+        logger.info(
+            f"Starting embed_chunks (fresh={fresh}) for project: {self.project_root}"
+        )
+
+        # Initialize backends (skip if already initialized)
+        if self.chunks_backend._db is None:
+            await self.chunks_backend.initialize()
+        if self.vectors_backend._db is None:
+            await self.vectors_backend.initialize()
+
+        # Run auto migrations
+        await self._run_auto_migrations()
+
+        # Apply auto-optimizations if enabled
+        if self.auto_optimize:
+            self.apply_auto_optimizations()
+
+        # Track start time
+        start_time = time.time()
+        errors = []
+
+        # Handle fresh mode: clear vectors and reset chunks
+        if fresh:
+            try:
+                # Get current embedding model dimensions using robust model detection
+                model_name = self.get_embedding_model_name()
+                expected_dim = get_model_dimensions(model_name)
+                logger.info(
+                    f"Fresh mode: recreating vectors table with {expected_dim}D for model {model_name}"
+                )
+
+                # Recreate vectors table with correct dimensions
+                await self.vectors_backend.recreate_table_with_new_dimensions(
+                    expected_dim
+                )
+
+                # Reset all chunks to pending
+                await self.chunks_backend.reset_all_to_pending()
+                logger.info("Reset all chunks to pending status")
+            except Exception as e:
+                logger.error(f"Failed to prepare fresh embedding: {e}")
+                errors.append(str(e))
+                return {
+                    "chunks_embedded": 0,
+                    "chunks_skipped": 0,
+                    "batches_processed": 0,
+                    "errors": errors,
+                    "duration_seconds": time.time() - start_time,
+                }
+
+        # Run Phase 2 embedding
+        chunks_embedded, batches_processed = await self._phase2_embed_chunks(
+            batch_size=batch_size, checkpoint_interval=50000
+        )
+
+        # Build BM25 index after embedding (vectors have changed)
+        await self._build_bm25_index()
+
+        duration = time.time() - start_time
+        logger.info(
+            f"✓ embed_chunks complete: {chunks_embedded} chunks embedded in "
+            f"{batches_processed} batches ({duration:.1f}s)"
+        )
+
+        return {
+            "chunks_embedded": chunks_embedded,
+            "chunks_skipped": 0,  # We don't track skipped in current implementation
+            "batches_processed": batches_processed,
+            "errors": errors,
+            "duration_seconds": duration,
+        }
+
+    async def chunk_and_embed(self, fresh: bool = False, batch_size: int = 512) -> dict:
+        """Full index pipeline: chunk files then embed chunks.
+
+        Convenience wrapper that runs both phases sequentially.
+        Equivalent to running chunk_files() followed by embed_chunks().
+
+        Args:
+            fresh: If True, start from scratch (clear chunks + vectors).
+            batch_size: Number of chunks per embedding batch.
+
+        Returns:
+            Combined stats dict from both phases.
+        """
+        logger.info(
+            f"Starting chunk_and_embed (fresh={fresh}) for project: {self.project_root}"
+        )
+
+        # Run both phases
+        chunk_result = await self.chunk_files(fresh=fresh)
+        embed_result = await self.embed_chunks(fresh=fresh, batch_size=batch_size)
+
+        # Combine results
+        return {
+            "files_processed": chunk_result["files_processed"],
+            "chunks_created": chunk_result["chunks_created"],
+            "files_skipped": chunk_result["files_skipped"],
+            "chunks_embedded": embed_result["chunks_embedded"],
+            "batches_processed": embed_result["batches_processed"],
+            "duration_seconds": embed_result["duration_seconds"],
+            "errors": chunk_result["errors"] + embed_result["errors"],
+        }
 
     async def index_project(
         self,
@@ -3119,27 +3441,28 @@ class SemanticIndexer:
     async def _build_bm25_index(self) -> None:
         """Build BM25 index from all chunks for keyword search.
 
-        This is Phase 3 of indexing (after chunks and vectors are built).
+        This is Phase 3 of indexing (after chunks are built).
         BM25 index enables hybrid search by combining keyword and semantic search.
+        BM25 only needs text content, not embeddings, so reads from chunks.lance.
         """
         try:
-            # Get all chunks from vectors.lance table
-            # VectorsBackend has the vectors table with all chunk data including content
-            if self.vectors_backend._db is None or self.vectors_backend._table is None:
+            # Get all chunks from chunks.lance table
+            # ChunksBackend has all chunk data including content (vectors not needed for BM25)
+            if self.chunks_backend._db is None or self.chunks_backend._table is None:
                 logger.warning(
-                    "Vectors backend not initialized, skipping BM25 index build"
+                    "Chunks backend not initialized, skipping BM25 index build"
                 )
                 return
 
             logger.info("📚 Phase 3: Building BM25 index for keyword search...")
 
-            # Query all records from vectors.lance table (to_pandas is most efficient for bulk reads)
+            # Query all records from chunks.lance table (to_pandas is most efficient for bulk reads)
             import asyncio
 
-            df = await asyncio.to_thread(self.vectors_backend._table.to_pandas)
+            df = await asyncio.to_thread(self.chunks_backend._table.to_pandas)
 
             if df.empty:
-                logger.info("No chunks in vectors table, skipping BM25 index build")
+                logger.info("No chunks in chunks table, skipping BM25 index build")
                 return
 
             # Convert DataFrame rows to dicts for BM25Backend
@@ -3149,7 +3472,7 @@ class SemanticIndexer:
                 chunk_dict = {
                     "chunk_id": row["chunk_id"],
                     "content": row["content"],
-                    "name": row.get("name", ""),  # vectors.lance uses "name" field
+                    "name": row.get("name", ""),  # chunks.lance has "name" field
                     "file_path": row["file_path"],
                     "chunk_type": row.get("chunk_type", "code"),
                 }

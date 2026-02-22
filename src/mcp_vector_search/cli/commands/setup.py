@@ -1048,22 +1048,8 @@ async def _run_smart_setup(
     # Determine if indexing is needed:
     # 1. Not already initialized (new setup)
     # 2. Force flag is set
-    # 3. Index database doesn't exist
-    # 4. Index exists but is empty
-    # 5. Files have changed (incremental indexing will handle this)
-    needs_indexing = not already_initialized or force
-
-    if already_initialized and not force:
-        # Check if index exists and has content
-        index_db_path = project_root / ".mcp-vector-search" / "chroma.sqlite3"
-        if not index_db_path.exists():
-            print_info("   Index database not found, will create...")
-            needs_indexing = True
-        else:
-            # Check if index is empty or files have changed
-            # Run incremental indexing to catch any changes
-            print_info("   Checking for file changes...")
-            needs_indexing = True  # Always run incremental to catch changes
+    # Note: We do NOT auto-index on subsequent runs to keep setup fast
+    needs_indexing = (not already_initialized) or force
 
     if needs_indexing:
         console.print("\n[bold blue]🔍 Indexing codebase...[/bold blue]")
@@ -1165,18 +1151,28 @@ async def _run_smart_setup(
         console.print(f"  ✅ {item}")
 
     # Next steps
-    next_steps = [
-        "[cyan]mcp-vector-search search 'your query'[/cyan] - Search your code",
-        "[cyan]mcp-vector-search status[/cyan] - Check project status",
-    ]
-
-    if llm_configured:
-        next_steps.insert(
-            1, "[cyan]mcp-vector-search chat 'question'[/cyan] - Ask AI about your code"
-        )
+    next_steps = []
 
     if "claude-code" in configured_platforms:
-        next_steps.insert(0, "Open Claude Code in this directory to use MCP tools")
+        next_steps.append("Open Claude Code in this directory to use MCP tools")
+
+    # If we didn't index (already initialized and no --force), remind user to index
+    if already_initialized and not force:
+        next_steps.append(
+            "[cyan]mcp-vector-search index[/cyan] - Index new/changed files"
+        )
+        next_steps.append("[cyan]mcp-vector-search embed[/cyan] - Update embeddings")
+
+    next_steps.append(
+        "[cyan]mcp-vector-search search 'your query'[/cyan] - Search your code"
+    )
+
+    if llm_configured:
+        next_steps.append(
+            "[cyan]mcp-vector-search chat 'question'[/cyan] - Ask AI about your code"
+        )
+
+    next_steps.append("[cyan]mcp-vector-search status[/cyan] - Check project status")
 
     print_next_steps(next_steps, title="Ready to Use")
 
@@ -1184,6 +1180,12 @@ async def _run_smart_setup(
     if "claude-code" in configured_platforms:
         console.print(
             "\n[dim]💡 Tip: Commit .mcp.json to share configuration with your team[/dim]"
+        )
+
+    # Show indexing tip if we skipped indexing
+    if already_initialized and not force:
+        console.print(
+            "\n[dim]💡 Tip: Run 'mvs setup --force' to rebuild the entire index[/dim]"
         )
 
 

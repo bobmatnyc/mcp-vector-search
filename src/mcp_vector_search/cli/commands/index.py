@@ -469,6 +469,14 @@ def main(
             print_error(f"Invalid phase: {phase}. Must be 'all', 'chunk', or 'embed'")
             raise typer.Exit(1)
 
+        # Deprecation warning for --phase flag
+        if phase != "all":
+            print_warning(
+                f"⚠️  The --phase={phase} flag is deprecated. "
+                "Use 'mcp-vector-search index' for chunking, "
+                "then 'mcp-vector-search embed' for embedding."
+            )
+
         # Reset cancellation flag
         # NOTE: ESC listener disabled - it conflicts with Rich's terminal handling
         # causing cursor position issues. Use Ctrl+C for cancellation instead.
@@ -1107,420 +1115,136 @@ async def _run_batch_indexing(
         from ..output import console
 
         console.print()
-        console.print("[cyan]📂[/cyan] Scanning directories...", end="")
+        console.print("[cyan]📦[/cyan] Starting chunking process...")
 
-        # Phase 1: File discovery
+        # Phase 1: Chunking with progress
         if progress_tracker:
-            progress_tracker.phase("Discovering files")
+            progress_tracker.phase("Chunking files")
 
-        dirs_scanned = 0
-        files_found = 0
+        start_time = time.time()
 
-        def update_discovery_progress_simple(dirs: int, files: int):
-            nonlocal dirs_scanned, files_found
-            dirs_scanned = dirs
-            files_found = files
+        # Call chunk_files() which handles everything internally
+        result = await indexer.chunk_files(fresh=force_reindex)
 
-        indexable_files, files_to_index = await indexer.get_files_to_index(
-            force_reindex=force_reindex,
-            progress_callback=update_discovery_progress_simple,
-            file_limit=limit,
+        indexed_count = result.get("files_processed", 0)
+        total_chunks_created = result.get("chunks_created", 0)
+        files_skipped = result.get("files_skipped", 0)
+        errors = result.get("errors", [])
+
+        # Update progress manager
+        progress_manager.update_chunking(
+            total_files=indexed_count + files_skipped,
+            processed_files_increment=indexed_count,
+            chunks_increment=total_chunks_created,
         )
-        console.print(f" found {len(indexable_files)} files")
+        progress_manager.mark_complete()
 
-        # Clean up stale metadata entries
-        if indexable_files:
-            valid_files = {str(f) for f in indexable_files}
-            removed = indexer.metadata.cleanup_stale_entries(valid_files)
-            if removed > 0:
-                console.print(f"[dim]Cleaned up {removed:,} stale entries[/dim]")
+        # Phase 1 complete
+        elapsed = time.time() - start_time
+        console.print(
+            f"[green]✓[/green] Chunking complete: {indexed_count} files, "
+            f"{total_chunks_created} chunks in {elapsed:.1f}s"
+        )
 
-        # Apply limit
-        if limit is not None and len(files_to_index) > limit:
-            console.print(f"[yellow]Limiting to first {limit} files[/yellow]")
-            files_to_index = files_to_index[:limit]
+        if files_skipped > 0:
+            console.print(f"[dim]   {files_skipped} files unchanged (skipped)[/dim]")
 
-        total_files = len(files_to_index)
-        progress_manager.update_chunking(total_files=total_files)
-
-        if total_files == 0:
-            console.print("[green]✓[/green] All files are up to date")
-            indexed_count = 0
-        else:
-            # Determine rebuild mode
-            if force_reindex:
-                console.print(f"[cyan]🔄 Force rebuild: {total_files} files[/cyan]")
-                indexer._atomic_rebuild_active = True
-            else:
-                existing_count = await indexer.get_indexed_count()
-                if existing_count > 0:
-                    console.print(
-                        f"[cyan]📂 Incremental update: {total_files} new/modified files[/cyan]"
-                    )
-
-            # Initialize backends
-            if indexer.chunks_backend._db is None:
-                await indexer.chunks_backend.initialize()
-            if indexer.vectors_backend._db is None:
-                await indexer.vectors_backend.initialize()
-            console.print("[green]✓[/green] Backend ready")
-
-            # Process files with simple progress
-            indexed_count = 0
-            failed_count = 0
-            total_chunks_created = 0
-            start_time = time.time()
-            last_progress_pct = 0
-
-            console.print()
-            console.print("[bold]Phase 1: Chunking & Embedding[/bold]")
-
-            async for (
-                _file_path,
-                chunks_added,
-                success,
-            ) in indexer.index_files_with_progress(files_to_index, force_reindex):
-                # Check for cancellation
-                if cancellation_flag and cancellation_flag.is_set():
-                    print_warning("\n⚠️  Indexing cancelled by user")
-                    raise KeyboardInterrupt()
-
-                if success:
-                    indexed_count += 1
-                    total_chunks_created += chunks_added
-                    progress_manager.update_chunking(
-                        processed_files_increment=1, chunks_increment=chunks_added
-                    )
-                    progress_manager.update_embedding(
-                        total_chunks=total_chunks_created,
-                        embedded_chunks_increment=chunks_added,
-                    )
-                else:
-                    failed_count += 1
-                    progress_manager.update_chunking(processed_files_increment=1)
-
-                # Print progress every 10% or at least every 50 files
-                current_pct = int((indexed_count / total_files) * 100) // 10 * 10
-                if current_pct > last_progress_pct or indexed_count % 50 == 0:
-                    elapsed = time.time() - start_time
-                    rate = indexed_count / elapsed if elapsed > 0 else 0
-                    console.print(
-                        f"  {indexed_count}/{total_files} files ({current_pct}%) - "
-                        f"{total_chunks_created} chunks - {rate:.1f} files/sec"
-                    )
-                    last_progress_pct = current_pct
-
-            # Phase 1 complete
-            elapsed = time.time() - start_time
-            console.print(
-                f"[green]✓[/green] Chunking complete: {indexed_count} files, "
-                f"{total_chunks_created} chunks in {elapsed:.1f}s"
+        if errors:
+            console.print(f"[yellow]⚠ {len(errors)} files had errors[/yellow]")
+            error_log_path = (
+                indexer.project_root / ".mcp-vector-search" / "indexing_errors.log"
             )
+            if error_log_path.exists():
+                console.print(f"[dim]  → See details in: {error_log_path}[/dim]")
 
-            # Rebuild directory index
-            try:
-                import os as os_module
+        # Summary
+        console.print()
+        total_elapsed = time.time() - start_time
+        console.print(
+            f"[green]✓[/green] [bold]Chunking complete![/bold] "
+            f"{indexed_count} files, {total_chunks_created} chunks in {total_elapsed:.1f}s"
+        )
 
-                chunk_stats = {}
-                for file_path in files_to_index:
-                    try:
-                        mtime = os_module.path.getmtime(file_path)
-                        chunk_stats[str(file_path)] = {"modified": mtime, "chunks": 1}
-                    except OSError:
-                        pass
-                indexer.directory_index.rebuild_from_files(
-                    files_to_index, indexer.project_root, chunk_stats=chunk_stats
-                )
-                indexer.directory_index.save()
-            except Exception as e:
-                logger.error(f"Failed to update directory index: {e}")
-
-            # NOTE: KG building removed from index command
-            # Use `mcp-vector-search kg build` for knowledge graph
-
-            progress_manager.mark_complete()
-
-            # Summary
-            console.print()
-            total_elapsed = time.time() - start_time
-            console.print(
-                f"[green]✓[/green] [bold]Indexing complete![/bold] "
-                f"{indexed_count} files, {total_chunks_created} chunks in {total_elapsed:.1f}s"
-            )
-            if failed_count > 0:
-                console.print(f"[yellow]⚠ {failed_count} files failed[/yellow]")
+        # Show tip to run embed
+        console.print()
+        print_tip("Run 'mcp-vector-search embed' to generate embeddings for search")
 
     elif show_progress:
         # ========== PROGRESS TUI MODE (default) ==========
-        from rich.progress import (
-            BarColumn,
-            Progress,
-            SpinnerColumn,
-            TextColumn,
-        )
+        import time
 
         from ..output import console
 
-        # Get existing indexed count BEFORE scanning (for progress display context)
-        # For force rebuild, existing_count should be 0 (we're rebuilding from scratch)
-        if force_reindex:
-            existing_count = 0
-        else:
-            existing_count = await indexer.get_indexed_count()
-
         console.print()  # Add blank line before progress
 
-        # Phase 1: File discovery
+        # Phase 1: Chunking with progress
         if progress_tracker:
-            progress_tracker.phase("Discovering files")
+            progress_tracker.phase("Chunking files")
 
-        # Track discovery progress
-        dirs_scanned = 0
-        files_found = 0
+        start_time = time.time()
 
-        def update_discovery_progress(dirs: int, files: int):
-            nonlocal dirs_scanned, files_found
-            dirs_scanned = dirs
-            files_found = files
+        # Show initial banner
+        mode_msg = "Force rebuild" if force_reindex else "Incremental update"
+        console.print(f"[cyan]📦 {mode_msg}: Chunking files...[/cyan]")
 
-        # Scan for files (without Live display to avoid cursor manipulation issues)
-        console.print("[cyan]📂[/cyan] [dim]Scanning directories...[/dim]", end="")
-        indexable_files, files_to_index = await indexer.get_files_to_index(
-            force_reindex=force_reindex,
-            progress_callback=update_discovery_progress,
-            file_limit=limit,  # Early exit from discovery when limit reached
+        # Call chunk_files() which handles everything internally
+        result = await indexer.chunk_files(fresh=force_reindex)
+
+        indexed_count = result.get("files_processed", 0)
+        total_chunks_created = result.get("chunks_created", 0)
+        files_skipped = result.get("files_skipped", 0)
+        errors = result.get("errors", [])
+
+        # Update progress manager
+        progress_manager.update_chunking(
+            total_files=indexed_count + files_skipped,
+            processed_files_increment=indexed_count,
+            chunks_increment=total_chunks_created,
         )
-        # Print final count on same line
+        progress_manager.mark_complete()
+
+        # Progress complete - show summary
+        elapsed = time.time() - start_time
+        console.print()
         console.print(
-            f"\r[cyan]📂[/cyan] [dim]Scanned {dirs_scanned:,} dirs, found {files_found:,} files[/dim]"
+            f"[green]✓[/green] Indexed [bold]{indexed_count}[/bold] files "
+            f"([bold]{total_chunks_created:,}[/bold] chunks) in [bold]{elapsed:.1f}s[/bold]"
         )
 
-        # Clean up stale metadata entries (files that no longer exist)
-        if indexable_files:
-            valid_files = {str(f) for f in indexable_files}
-            removed = indexer.metadata.cleanup_stale_entries(valid_files)
-            if removed > 0:
-                console.print(
-                    f"[dim]🧹 Cleaned up {removed:,} stale metadata entries[/dim]"
-                )
+        if files_skipped > 0:
+            console.print(f"[dim]   {files_skipped} files unchanged (skipped)[/dim]")
 
-        # Apply limit if specified
-        if limit is not None and len(files_to_index) > limit:
-            console.print(
-                f"[yellow]⚠️  Limiting to first {limit} files (out of {len(files_to_index)} total)[/yellow]"
+        if errors:
+            console.print(f"[yellow]⚠ {len(errors)} files had errors[/yellow]")
+            error_log_path = (
+                indexer.project_root / ".mcp-vector-search" / "indexing_errors.log"
             )
-            files_to_index = files_to_index[:limit]
+            if error_log_path.exists():
+                console.print(f"[dim]  → See details in: {error_log_path}[/dim]")
 
-        total_files = len(files_to_index)
-
-        # Progress tracker update for file discovery
+        # Progress tracker completion
         if progress_tracker:
-            progress_tracker.item(
-                f"Found {len(indexable_files)} total files", done=True
-            )
-            if total_files < len(indexable_files):
-                progress_tracker.item(
-                    f"{total_files} files need indexing (incremental update)", done=True
-                )
-            else:
-                progress_tracker.item(f"{total_files} files to index", done=True)
-
-        # Initialize progress state with total files
-        progress_manager.update_chunking(total_files=total_files)
-
-        # Show discovery results
-        if total_files == 0:
-            # All files are already indexed
-            console.print(
-                f"[green]✓[/green] [dim]All {len(indexable_files)} files are up to date[/dim]"
-            )
-            console.print("[dim]   No new or modified files to index[/dim]\n")
-            indexed_count = 0
-
-            # Complete progress tracker if enabled
-            if progress_tracker:
-                progress_tracker.complete(
-                    "All files up to date, no indexing needed", time_taken=0
-                )
-        elif force_reindex:
-            # Force rebuild (with or without limit)
-            console.print(
-                f"[green]✓[/green] [dim]Discovered {len(indexable_files)} total files[/dim]"
-            )
-            if limit is not None and total_files < len(indexable_files):
-                console.print(
-                    f"[cyan]🔄 Force rebuild: processing {total_files} files[/cyan] "
-                    f"[dim](limited from {len(indexable_files)} total)[/dim]\n"
-                )
-            else:
-                console.print(
-                    f"[cyan]🔄 Force rebuild: reindexing all {total_files} files[/cyan]\n"
-                )
-        elif total_files == len(indexable_files):
-            # Full indexing (first run, no prior index)
-            console.print(
-                f"[green]✓[/green] [dim]Discovered {len(indexable_files)} files to index[/dim]\n"
-            )
-        else:
-            # Incremental update
-            console.print(
-                f"[green]✓[/green] [dim]Discovered {len(indexable_files)} total files[/dim]"
-            )
-            console.print(
-                f"[cyan]📂 Updated {total_files} new/modified files[/cyan] "
-                f"[dim]({len(indexable_files) - total_files} unchanged)[/dim]\n"
+            progress_tracker.complete(
+                f"Chunking complete! Files: {indexed_count}, Chunks: {total_chunks_created:,}",
+                time_taken=elapsed,
             )
 
-        if total_files > 0:
-            # Pre-initialize backends before progress display
-            # Initialize the backends here so the progress display starts with tasks already added
-            if indexer.chunks_backend._db is None:
-                await indexer.chunks_backend.initialize()
-            if indexer.vectors_backend._db is None:
-                await indexer.vectors_backend.initialize()
-            console.print("[green]✓[/green] [dim]Backend ready[/dim]")
-
-            # Show temp DB indication if force_reindex
-            if force_reindex:
-                # CRITICAL: Set atomic rebuild flag to skip delete operations
-                # This provides massive performance improvement (2-3x faster)
-                indexer._atomic_rebuild_active = True
-                console.print(
-                    "[cyan]🔄 Building to temporary database (atomic rebuild)...[/cyan]\n"
-                )
-            else:
-                console.print()  # Just add blank line
-
-            # ============================================================
-            # CLEAN TUI - Simple Progress without Layout/Panel complexity
-            # ============================================================
-            import time
-
-            indexed_count = 0
-            failed_count = 0
-            total_chunks_created = 0
-            start_time = time.time()
-
-            # Suppress DEBUG logs during progress display to prevent interleaving
-            # We've changed per-file logs to TRACE level, but this adds extra protection
-            logger.disable("mcp_vector_search.core.chunk_processor")
-
-            # Simple progress bar - no Layout, no Panel, just Progress
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(bar_width=50),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TextColumn("[dim]{task.fields[status]}[/dim]"),
-                console=console,
-                transient=False,
-            ) as progress:
-                task = progress.add_task(
-                    "[cyan]📄 Indexing[/cyan]",
-                    total=total_files,
-                    status=f"0/{total_files} files",
-                )
-
-                async for (
-                    _file_path,
-                    chunks_added,
-                    success,
-                ) in indexer.index_files_with_progress(files_to_index, force_reindex):
-                    # Check for cancellation
-                    if cancellation_flag and cancellation_flag.is_set():
-                        console.print("\n[yellow]⚠️  Indexing cancelled[/yellow]")
-                        raise KeyboardInterrupt()
-
-                    if success:
-                        indexed_count += 1
-                        total_chunks_created += chunks_added
-                        progress_manager.update_chunking(
-                            processed_files_increment=1,
-                            chunks_increment=chunks_added,
-                        )
-                        progress_manager.update_embedding(
-                            total_chunks=total_chunks_created,
-                            embedded_chunks_increment=chunks_added,
-                        )
-                    else:
-                        failed_count += 1
-                        progress_manager.update_chunking(processed_files_increment=1)
-
-                    # Update progress with simple status
-                    elapsed = time.time() - start_time
-                    rate = indexed_count / elapsed if elapsed > 0 else 0
-                    progress.update(
-                        task,
-                        advance=1,
-                        status=f"{indexed_count}/{total_files} files • {total_chunks_created:,} chunks • {rate:.1f}/s",
-                    )
-
-            # Re-enable chunk_processor logs after progress display
-            logger.enable("mcp_vector_search.core.chunk_processor")
-
-            # Progress complete - show summary
-            elapsed = time.time() - start_time
-            console.print()
-            console.print(
-                f"[green]✓[/green] Indexed [bold]{indexed_count}[/bold] files "
-                f"([bold]{total_chunks_created:,}[/bold] chunks) in [bold]{elapsed:.1f}s[/bold]"
-            )
-
-            if failed_count > 0:
-                console.print(
-                    f"[yellow]⚠ {failed_count} files failed to index[/yellow]"
-                )
-                error_log_path = (
-                    indexer.project_root / ".mcp-vector-search" / "indexing_errors.log"
-                )
-                if error_log_path.exists():
-                    _prune_error_log(error_log_path, max_lines=1000)
-                    console.print(f"[dim]  → See details in: {error_log_path}[/dim]")
-
-            # Rebuild directory index
-            try:
-                chunk_stats = {}
-                for fp in files_to_index:
-                    try:
-                        mtime = os.path.getmtime(fp)
-                        chunk_stats[str(fp)] = {"modified": mtime, "chunks": 1}
-                    except OSError:
-                        pass
-                indexer.directory_index.rebuild_from_files(
-                    files_to_index, indexer.project_root, chunk_stats=chunk_stats
-                )
-                indexer.directory_index.save()
-            except Exception as e:
-                logger.error(f"Failed to update directory index: {e}")
-
-            # Mark complete
-            progress_manager.mark_complete()
-
-            # Progress tracker completion
-            if progress_tracker:
-                progress_tracker.complete(
-                    f"Indexing complete! Files: {indexed_count}, Chunks: {total_chunks_created:,}",
-                    time_taken=elapsed,
-                )
+        # Show tip to run embed
+        console.print()
+        print_tip("Run 'mcp-vector-search embed' to generate embeddings for search")
     else:
-        # Non-progress mode (fallback to original behavior)
-        indexed_count = await indexer.index_project(
-            force_reindex=force_reindex,
-            show_progress=show_progress,
-            skip_relationships=skip_relationships,
-            phase=phase,
-            metrics_json=metrics_json,
+        # Non-progress mode (fallback)
+        result = await indexer.chunk_files(fresh=force_reindex)
+        indexed_count = result.get("files_processed", 0)
+        total_chunks_created = result.get("chunks_created", 0)
+
+        print_success(
+            f"Chunked {indexed_count} files ({total_chunks_created} chunks created)"
         )
+        print_tip("Run 'mcp-vector-search embed' to generate embeddings for search")
 
     # Show statistics
     stats = await indexer.get_indexing_stats()
-
-    # Display success message with chunk count for clarity
-    total_chunks = stats.get("total_chunks", 0)
-    print_success(
-        f"Processed {indexed_count} files ({total_chunks} searchable chunks created)"
-    )
-
     print_index_stats(stats)
 
     # Check for KG stats and show if available
@@ -2433,6 +2157,7 @@ def chunk_cmd(
 
         elapsed = asyncio.get_event_loop().time() - start
         print_success(f"Phase 1 complete in {elapsed:.1f}s")
+        print_tip("Run 'mcp-vector-search embed' to generate embeddings")
 
     except Exception as e:
         logger.error(f"Chunking failed: {e}")

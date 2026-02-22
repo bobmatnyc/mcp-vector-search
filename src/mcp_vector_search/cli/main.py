@@ -121,6 +121,7 @@ from .commands.analyze import analyze_app  # noqa: E402
 from .commands.chat import chat_app  # noqa: E402
 from .commands.config import config_app  # noqa: E402
 from .commands.demo import demo_app  # noqa: E402
+from .commands.embed import embed_app  # noqa: E402
 from .commands.index import index_app  # noqa: E402
 from .commands.index_code import app as index_code_app  # noqa: E402
 from .commands.init import init_app  # noqa: E402
@@ -129,6 +130,7 @@ from .commands.mcp import mcp_app  # noqa: E402
 from .commands.migrate import migrate_app  # noqa: E402
 from .commands.profile import profile_app  # noqa: E402
 from .commands.progress import app as progress_app  # noqa: E402
+from .commands.reindex import reindex_app  # noqa: E402
 from .commands.reset import reset_app  # noqa: E402
 from .commands.search import search_app, search_main  # noqa: E402, F401
 from .commands.setup import setup_app  # noqa: E402
@@ -190,6 +192,12 @@ app.add_typer(
 
 # 8. INDEX - Index codebase
 app.add_typer(index_app, name="index", help="📇 Index codebase for semantic search")
+
+# 8.05. EMBED - Generate embeddings for chunks
+app.add_typer(embed_app, name="embed", help="🧠 Generate embeddings for indexed chunks")
+
+# 8.06. REINDEX - Full reindex pipeline
+app.add_typer(reindex_app, name="reindex", help="🔄 Full reindex (chunk + embed)")
 
 # 8.1. INDEX-CODE - Build code-specific embeddings
 app.add_typer(

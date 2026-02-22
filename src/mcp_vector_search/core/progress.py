@@ -207,14 +207,25 @@ class ProgressTracker:
 
         # Calculate ETA if start_time provided and some progress made
         eta_str = ""
-        if start_time and current > 0:
+        if start_time and current > 0 and current < total:
             elapsed = time.time() - start_time
-            rate = current / elapsed
-            if rate > 0:
-                remaining = (total - current) / rate
-                minutes = int(remaining // 60)
-                seconds = int(remaining % 60)
-                eta_str = f" [{minutes:02d}:{seconds:02d} remaining]"
+            # Only show ETA if we have at least 0.1 seconds of data (avoid division noise)
+            if elapsed >= 0.1:
+                rate = current / elapsed
+                if rate > 0:
+                    remaining = (total - current) / rate
+                    # Format based on duration
+                    if remaining >= 3600:  # >= 1 hour
+                        hours = int(remaining // 3600)
+                        minutes = int((remaining % 3600) // 60)
+                        seconds = int(remaining % 60)
+                        eta_str = (
+                            f" [{hours:02d}:{minutes:02d}:{seconds:02d} remaining]"
+                        )
+                    else:
+                        minutes = int(remaining // 60)
+                        seconds = int(remaining % 60)
+                        eta_str = f" [{minutes:02d}:{seconds:02d} remaining]"
 
         # Format output
         output = f"\r  {prefix}... {bar} {percentage}% {current:,}/{total:,}{eta_str}"

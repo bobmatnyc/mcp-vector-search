@@ -968,6 +968,31 @@ class ChunksBackend:
             logger.error(f"Failed to count chunks: {e}")
             raise DatabaseError(f"Failed to count chunks: {e}") from e
 
+    async def count_pending_chunks(self) -> int:
+        """Get count of chunks with embedding_status='pending'.
+
+        Returns:
+            Number of pending chunks
+
+        Raises:
+            DatabaseNotInitializedError: If backend not initialized
+        """
+        if self._table is None:
+            raise DatabaseNotInitializedError("Chunks backend not initialized")
+
+        try:
+            # Use LanceDB scanner with filter to count only pending chunks
+            scanner = self._table.to_lance().scanner(
+                filter="embedding_status = 'pending'"
+            )
+            result = scanner.to_table()
+            count = len(result)
+            logger.debug(f"Found {count} pending chunks")
+            return count
+        except Exception as e:
+            logger.error(f"Failed to count pending chunks: {e}")
+            raise DatabaseError(f"Failed to count pending chunks: {e}") from e
+
     async def reset_all_to_pending(self) -> int:
         """Reset all chunks to pending status for re-embedding.
 
@@ -998,11 +1023,13 @@ class ChunksBackend:
             df = result.to_pandas()
             chunk_count = len(df)
 
-            # Update status fields
+            # Update status fields (only columns that exist in the schema)
             df["embedding_status"] = "pending"
             df["updated_at"] = datetime.utcnow().isoformat()
-            df["batch_id"] = 0  # Reset batch assignment
-            df["error_message"] = ""  # Clear any error messages
+            if "embedding_batch_id" in df.columns:
+                df["embedding_batch_id"] = 0  # Reset batch assignment
+            if "error_message" in df.columns:
+                df["error_message"] = ""  # Clear any error messages
 
             # Delete all rows and re-add with updated status
             # This is more efficient than updating each row individually

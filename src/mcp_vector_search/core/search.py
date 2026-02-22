@@ -1095,12 +1095,15 @@ class SemanticSearchEngine:
             top_k=min(len(results), requested_limit * 3),  # Keep 3x for MMR
         )
 
-        # Build reranked results with updated scores
+        # Build reranked results with normalized scores
+        # Cross-encoder outputs raw logits — apply sigmoid to map to [0, 1] probability
+        import math
+
         reranked_results = []
         for rank, (original_idx, score) in enumerate(reranked_indices, start=1):
             result = results[original_idx]
-            # Update similarity score to cross-encoder score
-            result.similarity_score = score
+            # Sigmoid normalization: logit → probability of relevance [0.0, 1.0]
+            result.similarity_score = 1.0 / (1.0 + math.exp(-score))
             result.rank = rank
             reranked_results.append(result)
 

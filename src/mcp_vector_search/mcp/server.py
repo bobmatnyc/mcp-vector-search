@@ -267,6 +267,10 @@ class MCPVectorSearchServer:
                 return await self._project_handlers.handle_index_project(
                     args, self.cleanup, self.initialize
                 )
+            elif tool_name == "embed_chunks":
+                return await self._project_handlers.handle_embed_chunks(
+                    args, self.cleanup, self.initialize
+                )
 
             # Delegate to analysis handlers
             elif tool_name == "analyze_project":

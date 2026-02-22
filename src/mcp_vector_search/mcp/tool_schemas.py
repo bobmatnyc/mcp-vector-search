@@ -15,6 +15,7 @@ def get_tool_schemas() -> list[Tool]:
         _get_search_context_schema(),
         _get_project_status_schema(),
         _get_index_project_schema(),
+        _get_embed_chunks_schema(),
         _get_analyze_project_schema(),
         _get_analyze_file_schema(),
         _get_find_smells_schema(),
@@ -72,6 +73,10 @@ def _get_search_code_schema() -> Tool:
                 "class_name": {
                     "type": "string",
                     "description": "Filter by class name",
+                },
+                "project_name": {
+                    "type": "string",
+                    "description": "Filter by monorepo subproject name",
                 },
                 "files": {
                     "type": "string",
@@ -217,6 +222,32 @@ def _get_index_project_schema() -> Tool:
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "File extensions to index (e.g., ['.py', '.js'])",
+                },
+            },
+            "required": [],
+        },
+    )
+
+
+def _get_embed_chunks_schema() -> Tool:
+    """Get embed_chunks tool schema."""
+    return Tool(
+        name="embed_chunks",
+        description="Generate embeddings for indexed code chunks. Only embeds chunks that haven't been embedded yet (incremental). Use fresh=true to re-embed everything. Run index_project first to chunk files, then embed_chunks to generate embeddings.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "fresh": {
+                    "type": "boolean",
+                    "description": "Clear vectors and re-embed all chunks from scratch",
+                    "default": False,
+                },
+                "batch_size": {
+                    "type": "integer",
+                    "description": "Number of chunks per embedding batch (default: 512)",
+                    "default": 512,
+                    "minimum": 100,
+                    "maximum": 10000,
                 },
             },
             "required": [],
