@@ -388,15 +388,15 @@ def setup_llm_api_keys(project_root: Path, interactive: bool = True) -> bool:
             )
             print_info("")
             print_info("   [bold cyan]To enable the chat command:[/bold cyan]")
-            print_info("   [cyan]Option A - OpenAI (recommended):[/cyan]")
+            print_info("   [cyan]Option A - OpenRouter (recommended):[/cyan]")
+            print_info("   1. Get a key: [cyan]https://openrouter.ai/keys[/cyan]")
+            print_info("   2. [yellow]export OPENROUTER_API_KEY='your-key'[/yellow]")
+            print_info("")
+            print_info("   [cyan]Option B - OpenAI:[/cyan]")
             print_info(
                 "   1. Get a key: [cyan]https://platform.openai.com/api-keys[/cyan]"
             )
             print_info("   2. [yellow]export OPENAI_API_KEY='your-key'[/yellow]")
-            print_info("")
-            print_info("   [cyan]Option B - OpenRouter:[/cyan]")
-            print_info("   1. Get a key: [cyan]https://openrouter.ai/keys[/cyan]")
-            print_info("   2. [yellow]export OPENROUTER_API_KEY='your-key'[/yellow]")
             print_info("")
             print_info("   Or run: [yellow]mcp-vector-search setup[/yellow]")
             print_info("")
@@ -435,8 +435,8 @@ def setup_llm_api_keys(project_root: Path, interactive: bool = True) -> bool:
         print_info("")
 
     print_info("   [bold cyan]Options:[/bold cyan]")
-    print_info("   1. Configure OpenAI (recommended, fast & cheap)")
-    print_info("   2. Configure OpenRouter")
+    print_info("   1. Configure OpenRouter (recommended)")
+    print_info("   2. Configure OpenAI")
     print_info("   3. Set preferred provider")
     print_info("   4. Skip / Keep current")
     print_info("")
@@ -447,18 +447,6 @@ def setup_llm_api_keys(project_root: Path, interactive: bool = True) -> bool:
         choice = console.input("   [yellow]Select option (1-4): [/yellow]").strip()
 
         if choice == "1":
-            # Configure OpenAI
-            return _setup_single_provider(
-                provider="openai",
-                existing_key=openai_key,
-                is_from_env=openai_from_env,
-                config_dir=config_dir,
-                save_func=save_openai_api_key,
-                delete_func=delete_openai_api_key,
-                get_key_url="https://platform.openai.com/api-keys",
-            )
-
-        elif choice == "2":
             # Configure OpenRouter
             return _setup_single_provider(
                 provider="openrouter",
@@ -470,6 +458,18 @@ def setup_llm_api_keys(project_root: Path, interactive: bool = True) -> bool:
                 get_key_url="https://openrouter.ai/keys",
             )
 
+        elif choice == "2":
+            # Configure OpenAI
+            return _setup_single_provider(
+                provider="openai",
+                existing_key=openai_key,
+                is_from_env=openai_from_env,
+                config_dir=config_dir,
+                save_func=save_openai_api_key,
+                delete_func=delete_openai_api_key,
+                get_key_url="https://platform.openai.com/api-keys",
+            )
+
         elif choice == "3":
             # Set preferred provider
             if not has_any_key:
@@ -479,13 +479,13 @@ def setup_llm_api_keys(project_root: Path, interactive: bool = True) -> bool:
             print_info("")
             print_info("   [bold]Select preferred provider:[/bold]")
             providers = []
-            if openai_key:
-                providers.append("openai")
-                print_info("   1. OpenAI")
             if openrouter_key:
                 providers.append("openrouter")
+                print_info("   1. OpenRouter")
+            if openai_key:
+                providers.append("openai")
                 idx = len(providers)
-                print_info(f"   {idx}. OpenRouter")
+                print_info(f"   {idx}. OpenAI")
 
             pref_choice = console.input(
                 f"\n   [yellow]Select (1-{len(providers)}): [/yellow]"

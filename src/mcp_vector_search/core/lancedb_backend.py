@@ -1269,14 +1269,16 @@ class LanceVectorDatabase:
     async def health_check(self) -> bool:
         """Check database health and integrity.
 
+        Auto-initializes the database if not already initialized.
+
         Returns:
             True if database is healthy, False otherwise
         """
         try:
-            # Check if database is initialized
+            # Auto-initialize if not already initialized
             if not self._db:
-                logger.warning("Database not initialized")
-                return False
+                logger.debug("Database not initialized, initializing now")
+                await self.initialize()
 
             # If table doesn't exist yet, that's OK (not an error)
             if self._table is None:

@@ -38,20 +38,20 @@ The chat feature requires credentials for an LLM provider.
   [green]AWS_REGION[/green]            - AWS region [dim](optional, default: us-east-1)[/dim]
 
 [bold cyan]Option 2: Set one of these API keys:[/bold cyan]
-  [green]OPENAI_API_KEY[/green]       - For OpenAI (GPT-4, etc.)
   [green]OPENROUTER_API_KEY[/green]  - For OpenRouter (Claude, GPT, etc.)
+  [green]OPENAI_API_KEY[/green]       - For OpenAI (GPT-4, etc.)
 
 [bold cyan]Example:[/bold cyan]
   [yellow]export AWS_ACCESS_KEY_ID="AKIA..."[/yellow]
   [yellow]export AWS_SECRET_ACCESS_KEY="..."[/yellow]
   [dim]or[/dim]
-  [yellow]export OPENAI_API_KEY="sk-..."[/yellow]
   [yellow]export OPENROUTER_API_KEY="sk-or-..."[/yellow]
+  [yellow]export OPENAI_API_KEY="sk-..."[/yellow]
 
 [bold cyan]Get credentials/keys at:[/bold cyan]
   AWS: [link=https://console.aws.amazon.com/iam/]https://console.aws.amazon.com/iam/[/link]
-  OpenAI: [link=https://platform.openai.com/api-keys]https://platform.openai.com/api-keys[/link]
   OpenRouter: [link=https://openrouter.ai/keys]https://openrouter.ai/keys[/link]
+  OpenAI: [link=https://platform.openai.com/api-keys]https://platform.openai.com/api-keys[/link]
 
 [dim]Alternatively, run: [cyan]mcp-vector-search setup[/cyan] for interactive setup[/dim]"""
 
@@ -1136,7 +1136,7 @@ async def _tool_analyze_code(focus: str, project_root: Path, config: Any) -> str
                         continue
 
                     try:
-                        chunks = parser.parse_file(file_path)
+                        chunks = await parser.parse_file(file_path)
                         project_metrics.add_file(file_path, chunks)
                     except Exception:
                         pass
@@ -1158,7 +1158,7 @@ async def _tool_analyze_code(focus: str, project_root: Path, config: Any) -> str
 - Health grade: {summary.get("health_grade", "N/A")}"""
 
         elif focus == "complexity":
-            hotspots = export.model_dump().get("complexity_hotspots", [])[:5]
+            hotspots = export.model_dump(mode="json").get("complexity_hotspots", [])[:5]
             if not hotspots:
                 return "No complexity hotspots found."
             lines = ["Top complexity hotspots:"]
@@ -1169,7 +1169,7 @@ async def _tool_analyze_code(focus: str, project_root: Path, config: Any) -> str
             return "\n".join(lines)
 
         elif focus == "smells":
-            smells = export.model_dump().get("code_smells", [])[:10]
+            smells = export.model_dump(mode="json").get("code_smells", [])[:10]
             if not smells:
                 return "No code smells detected."
             lines = ["Code smells detected:"]
@@ -1180,7 +1180,8 @@ async def _tool_analyze_code(focus: str, project_root: Path, config: Any) -> str
             return "\n".join(lines)
 
         else:  # all
-            return json.dumps(export.model_dump(), indent=2)[:5000]
+            # Use model_dump_json() directly to handle datetime serialization
+            return export.model_dump_json(indent=2)[:5000]
 
     except Exception as e:
         logger.error(f"analyze_code failed: {e}")

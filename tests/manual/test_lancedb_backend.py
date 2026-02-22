@@ -101,8 +101,8 @@ async def test_lancedb_basic_operations():
         assert stats.index_size_mb >= 0, (
             f"Expected non-negative index size, got {stats.index_size_mb}"
         )
-        assert stats.last_updated is not None, f"Expected last_updated to be set"
-        assert stats.embedding_model is not None, f"Expected embedding_model to be set"
+        assert stats.last_updated is not None, "Expected last_updated to be set"
+        assert stats.embedding_model is not None, "Expected embedding_model to be set"
         print("✅ Stats correct (all required fields present)\n")
 
         # Test 3: Search
@@ -164,6 +164,22 @@ async def test_lancedb_basic_operations():
         print(f"  Database healthy: {healthy}")
         assert healthy, "Database health check failed"
         print("✅ Health check works\n")
+
+        # Test 7b: Health check auto-initialization
+        print("🏥 Test 7b: Health check with uninitialized database...")
+        # Create a new database instance without initializing
+        db2 = LanceVectorDatabase(
+            persist_directory=test_dir,
+            embedding_function=embedding_function,
+            collection_name="test_collection",
+        )
+        # Health check should auto-initialize
+        healthy = await db2.health_check()
+        print(f"  Database auto-initialized and healthy: {healthy}")
+        assert healthy, "Database health check failed after auto-initialization"
+        # Verify database is actually initialized
+        assert db2._db is not None, "Database should be initialized after health check"
+        print("✅ Health check auto-initialization works\n")
 
         # Test 8: Reset
         print("♻️  Test 8: Resetting database...")

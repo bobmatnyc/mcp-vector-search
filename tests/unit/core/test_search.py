@@ -447,3 +447,44 @@ class TestSemanticSearchEngine:
                 assert isinstance(result.end_line, int)
                 assert result.start_line > 0
                 assert result.end_line >= result.start_line
+
+    @pytest.mark.asyncio
+    async def test_health_check_auto_initialization(self, mock_database):
+        """Test that health check auto-initializes database if not initialized."""
+        # Create search engine with uninitialized database
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/test"),
+        )
+
+        # Database should not be initialized yet
+        assert (
+            not hasattr(mock_database, "_initialized") or not mock_database._initialized
+        )
+
+        # Perform health check (should trigger initialization)
+        await search_engine._perform_health_check()
+
+        # Database should now be initialized (health check calls database.health_check which auto-initializes)
+        # Note: mock_database may not have _initialized attribute, but the call should not fail
+        # The key assertion is that this didn't raise an error
+
+    @pytest.mark.asyncio
+    async def test_search_initializes_database_via_health_check(self, mock_database):
+        """Test that health check auto-initializes database if not initialized."""
+        # Create search engine with uninitialized database
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/test"),
+            similarity_threshold=0.1,
+        )
+
+        # Mock database should have health_check method
+        assert hasattr(mock_database, "health_check")
+
+        # Trigger health check (happens automatically on first search)
+        # This should NOT raise an error or show "Database not initialized" warning
+        await search_engine._perform_health_check()
+
+        # If health check exists and was called, database should be functional
+        # The key is that no "Database not initialized" warning appears

@@ -30,7 +30,7 @@ class LLMClient:
     Provider Selection Priority:
     1. Explicit provider parameter
     2. Preferred provider from config
-    3. Auto-detect: Bedrock (if AWS creds) → OpenAI → OpenRouter
+    3. Auto-detect: Bedrock (if AWS creds) → OpenRouter → OpenAI
     """
 
     # Default models for each provider (comparable performance/cost)
@@ -110,18 +110,18 @@ class LLMClient:
                     "Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables."
                 )
         else:
-            # Auto-detect provider (prefer Bedrock → OpenAI → OpenRouter)
+            # Auto-detect provider (prefer Bedrock → OpenRouter → OpenAI)
             if self._bedrock_available:
                 self.provider = "bedrock"
-            elif self.openai_key:
-                self.provider = "openai"
             elif self.openrouter_key:
                 self.provider = "openrouter"
+            elif self.openai_key:
+                self.provider = "openai"
             else:
                 raise ValueError(
                     "No API key or AWS credentials found. Please set AWS credentials "
                     "(AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) for Bedrock, "
-                    "OPENAI_API_KEY for OpenAI, or OPENROUTER_API_KEY for OpenRouter."
+                    "OPENROUTER_API_KEY for OpenRouter, or OPENAI_API_KEY for OpenAI."
                 )
 
         # Set API key and endpoint based on provider

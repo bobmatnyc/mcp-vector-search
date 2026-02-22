@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-02-22
+
+### Added
+
+#### Major Features
+- **BM25 Hybrid Search with RRF** - Combined vector similarity with BM25 keyword matching using Reciprocal Rank Fusion for more accurate results
+  - BM25 index builds during `index` step (reads from chunks, not vectors)
+  - Cross-encoder reranking with ms-marco-MiniLM for precision improvement
+  - Query expansion with automatic synonym expansion (137 code synonyms across 25 groups)
+  - MMR diversity filtering using Maximal Marginal Relevance to reduce near-duplicate results
+  - Sigmoid normalization for cross-encoder scores
+
+- **Split Index/Embed Commands** - Decoupled indexing into independent `index` (CPU chunking) and `embed` (GPU embedding) commands for better resource utilization
+  - `index` command handles file discovery, parsing, and BM25 index creation (CPU-only)
+  - `embed` command generates vector embeddings (GPU-optimized)
+  - Better resource utilization for distributed workflows
+
+#### Enhancements
+- **OpenRouter Default Provider** - OpenRouter is now the default/recommended LLM provider
+- **Progress Bar Improvements** - Dynamic ETA on progress bars showing accurate time remaining based on actual processing rate
+- **Database Auto-Initialization** - Database auto-initializes on health check (no more "not initialized" warnings)
+
+### Fixed
+- Fixed reindex backend re-initialization after atomic rebuild
+- `setup` command no longer auto-indexes (use `--force` to reindex)
+- Fixed duplicate PyTorch/initialization messages during reindex
+- Fixed unawaited async parser calls in chat
+- Fixed datetime JSON serialization in analyze_code
+- Fixed schema column name mismatch in reset_all_to_pending
+
 ### Added
 
 #### Major Features
