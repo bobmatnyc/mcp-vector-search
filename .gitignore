@@ -312,3 +312,7 @@ tmp/
 .claude.json
 pipx_shared.pth
 mcp-browser-extensions/
+
+# Generated outputs (cleanup 2026-02-22)
+kg-graph.json
+test_progressive_loading.html
