@@ -26,6 +26,7 @@ from ..core.watcher import FileWatcher
 from .analysis_handlers import AnalysisHandlers
 from .kg_handlers import KGHandlers
 from .project_handlers import ProjectHandlers
+from .review_handlers import ReviewHandlers
 from .search_handlers import SearchHandlers
 from .story_handlers import StoryHandlers
 from .tool_schemas import get_tool_schemas
@@ -92,6 +93,7 @@ class MCPVectorSearchServer:
         self._wiki_handlers: WikiHandlers | None = None
         self._kg_handlers: KGHandlers | None = None
         self._story_handlers: StoryHandlers | None = None
+        self._review_handlers: ReviewHandlers | None = None
 
     async def initialize(self) -> None:
         """Initialize the search engine and database."""
@@ -160,6 +162,9 @@ class MCPVectorSearchServer:
             self._wiki_handlers = WikiHandlers(self.project_root)
             self._kg_handlers = KGHandlers(self.project_root)
             self._story_handlers = StoryHandlers(self.project_root)
+            self._review_handlers = ReviewHandlers(
+                self.project_root, self.search_engine
+            )
 
             self._initialized = True
             logger.info(f"MCP server initialized for project: {self.project_root}")
@@ -307,6 +312,10 @@ class MCPVectorSearchServer:
             # Delegate to story handlers
             elif tool_name == "story_generate":
                 return await self._story_handlers.handle_story_generate(args)
+
+            # Delegate to review handlers
+            elif tool_name == "review_repository":
+                return await self._review_handlers.handle_review_repository(args)
 
             else:
                 return CallToolResult(

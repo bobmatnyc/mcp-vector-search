@@ -1430,8 +1430,8 @@ analyze_app.command(name="engineers", help="👥 Profile engineers by code quali
 @analyze_app.command(name="review")
 def review_code(
     review_type: str = typer.Argument(
-        ...,
-        help="Type of review: security, architecture, or performance",
+        None,
+        help="Type of review: security, architecture, or performance (optional if using --types)",
     ),
     project_root: Path | None = typer.Option(
         None,
@@ -1472,6 +1472,25 @@ def review_code(
         max=100,
         rich_help_panel="⚡ Performance Options",
     ),
+    changed_only: bool = typer.Option(
+        False,
+        "--changed-only",
+        "-c",
+        help="Only review files changed in git (uncommitted or vs baseline)",
+        rich_help_panel="🔍 Filters",
+    ),
+    baseline: str | None = typer.Option(
+        None,
+        "--baseline",
+        help="Git ref to compare against (default: HEAD, e.g., 'main')",
+        rich_help_panel="🔍 Filters",
+    ),
+    types: str | None = typer.Option(
+        None,
+        "--types",
+        help="Run multiple review types (comma-separated or 'all'): security,architecture,performance",
+        rich_help_panel="🔍 Filters",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -1504,6 +1523,16 @@ def review_code(
     [green]Review with more context:[/green]
         $ mcp-vector-search analyze review architecture --max-chunks 50
 
+    [green]Review only changed files:[/green]
+        $ mcp-vector-search analyze review security --changed-only
+
+    [green]Review changes vs baseline:[/green]
+        $ mcp-vector-search analyze review security --changed-only --baseline main
+
+    [green]Run multiple review types:[/green]
+        $ mcp-vector-search analyze review --types security,architecture
+        $ mcp-vector-search analyze review --types all
+
     [bold cyan]Output Formats:[/bold cyan]
 
     [green]Export to JSON:[/green]
@@ -1522,13 +1551,42 @@ def review_code(
         if project_root is None:
             project_root = Path.cwd()
 
-        # Validate review type
+        # Determine which review types to run
         from ...analysis.review import ReviewType
 
         valid_types = [rt.value for rt in ReviewType]
-        if review_type.lower() not in valid_types:
+        review_types_to_run = []
+
+        if types:
+            # Batch mode with --types
+            if types.lower() == "all":
+                review_types_to_run = valid_types
+            else:
+                # Parse comma-separated list
+                requested_types = [t.strip().lower() for t in types.split(",")]
+                for rt in requested_types:
+                    if rt not in valid_types:
+                        print_error(
+                            f"Invalid review type: {rt}. Must be one of: {', '.join(valid_types)}"
+                        )
+                        raise typer.Exit(1)
+                review_types_to_run = requested_types
+        elif review_type:
+            # Single review type from argument
+            if review_type.lower() not in valid_types:
+                print_error(
+                    f"Invalid review type: {review_type}. Must be one of: {', '.join(valid_types)}"
+                )
+                raise typer.Exit(1)
+            review_types_to_run = [review_type.lower()]
+        else:
+            # Neither review_type nor --types specified
             print_error(
-                f"Invalid review type: {review_type}. Must be one of: {', '.join(valid_types)}"
+                "Either provide a review type argument or use --types flag.\n"
+                "Examples:\n"
+                "  mcp-vector-search analyze review security\n"
+                "  mcp-vector-search analyze review --types security,architecture\n"
+                "  mcp-vector-search analyze review --types all"
             )
             raise typer.Exit(1)
 
@@ -1541,18 +1599,37 @@ def review_code(
             )
             raise typer.Exit(1)
 
-        # Run review
-        asyncio.run(
-            run_review_analysis(
-                project_root=project_root,
-                review_type=review_type.lower(),
-                output_format=format_lower,
-                output_file=output,
-                scope_path=path,
-                max_chunks=max_chunks,
-                verbose=verbose,
+        # Run review(s)
+        if len(review_types_to_run) == 1:
+            # Single review
+            asyncio.run(
+                run_review_analysis(
+                    project_root=project_root,
+                    review_type=review_types_to_run[0],
+                    output_format=format_lower,
+                    output_file=output,
+                    scope_path=path,
+                    max_chunks=max_chunks,
+                    changed_only=changed_only,
+                    baseline=baseline,
+                    verbose=verbose,
+                )
             )
-        )
+        else:
+            # Batch review mode
+            asyncio.run(
+                run_batch_review_analysis(
+                    project_root=project_root,
+                    review_types=review_types_to_run,
+                    output_format=format_lower,
+                    output_file=output,
+                    scope_path=path,
+                    max_chunks=max_chunks,
+                    changed_only=changed_only,
+                    baseline=baseline,
+                    verbose=verbose,
+                )
+            )
 
     except typer.Exit:
         # Re-raise typer.Exit to preserve exit codes
@@ -1570,6 +1647,8 @@ async def run_review_analysis(
     output_file: Path | None = None,
     scope_path: Path | None = None,
     max_chunks: int = 30,
+    changed_only: bool = False,
+    baseline: str | None = None,
     verbose: bool = False,
 ) -> None:
     """Run AI-powered code review workflow.
@@ -1581,6 +1660,8 @@ async def run_review_analysis(
         output_file: Output file path (None for stdout)
         scope_path: Optional path to scope review
         max_chunks: Maximum code chunks to analyze
+        changed_only: Only review files changed in git
+        baseline: Git ref to compare against (for changed_only)
         verbose: Show detailed progress
     """
     from rich.console import Console
@@ -1659,6 +1740,40 @@ async def run_review_analysis(
         # Prepare scope string
         scope_str = str(scope_path.relative_to(project_root)) if scope_path else None
 
+        # Get changed files if requested
+        file_filter = None
+        if changed_only or baseline:
+            try:
+                git_manager = GitManager(project_root)
+                if baseline:
+                    # Compare against baseline branch
+                    file_filter = [str(f) for f in git_manager.get_diff_files(baseline)]
+                    if verbose:
+                        console.print(
+                            f"[bold blue]Reviewing {len(file_filter)} files changed vs {baseline}[/bold blue]"
+                        )
+                else:
+                    # Get uncommitted changes
+                    file_filter = [
+                        str(f)
+                        for f in git_manager.get_changed_files(include_untracked=True)
+                    ]
+                    if verbose:
+                        console.print(
+                            f"[bold blue]Reviewing {len(file_filter)} uncommitted files[/bold blue]"
+                        )
+
+                if not file_filter:
+                    console.print(
+                        "[yellow]No changed files found. Nothing to review.[/yellow]"
+                    )
+                    return
+
+            except (GitNotAvailableError, GitNotRepoError, GitError) as e:
+                console.print(f"[red]Git error: {e}[/red]")
+                console.print("[yellow]Falling back to full codebase review[/yellow]")
+                file_filter = None
+
         # Run review
         if verbose:
             console.print(f"\n[bold blue]Running {review_type} review...[/bold blue]")
@@ -1668,6 +1783,7 @@ async def run_review_analysis(
                 review_type=review_type_enum,
                 scope=scope_str,
                 max_chunks=max_chunks,
+                file_filter=file_filter,
             )
 
         # Format output based on format
@@ -1745,37 +1861,47 @@ def _print_review_console(result, console) -> None:
 
 
 def _export_review_json(result, output_file: Path | None) -> None:
-    """Export review results to JSON format."""
+    """Export review results to JSON format.
+
+    Args:
+        result: Either a ReviewResult object or a dict (for batch mode)
+        output_file: Output file path (None for stdout)
+    """
     import json
 
-    output_data = {
-        "review_type": result.review_type.value,
-        "scope": result.scope,
-        "summary": result.summary,
-        "findings": [
-            {
-                "title": f.title,
-                "description": f.description,
-                "severity": f.severity.value,
-                "file_path": f.file_path,
-                "start_line": f.start_line,
-                "end_line": f.end_line,
-                "category": f.category,
-                "recommendation": f.recommendation,
-                "confidence": f.confidence,
-                "cwe_id": f.cwe_id,
-                "code_snippet": f.code_snippet,
-                "related_files": f.related_files,
-            }
-            for f in result.findings
-        ],
-        "metadata": {
-            "context_chunks_used": result.context_chunks_used,
-            "kg_relationships_used": result.kg_relationships_used,
-            "model_used": result.model_used,
-            "duration_seconds": result.duration_seconds,
-        },
-    }
+    # Handle batch mode (dict with 'reviews' key)
+    if isinstance(result, dict):
+        output_data = result
+    else:
+        # Single review result
+        output_data = {
+            "review_type": result.review_type.value,
+            "scope": result.scope,
+            "summary": result.summary,
+            "findings": [
+                {
+                    "title": f.title,
+                    "description": f.description,
+                    "severity": f.severity.value,
+                    "file_path": f.file_path,
+                    "start_line": f.start_line,
+                    "end_line": f.end_line,
+                    "category": f.category,
+                    "recommendation": f.recommendation,
+                    "confidence": f.confidence,
+                    "cwe_id": f.cwe_id,
+                    "code_snippet": f.code_snippet,
+                    "related_files": f.related_files,
+                }
+                for f in result.findings
+            ],
+            "metadata": {
+                "context_chunks_used": result.context_chunks_used,
+                "kg_relationships_used": result.kg_relationships_used,
+                "model_used": result.model_used,
+                "duration_seconds": result.duration_seconds,
+            },
+        }
 
     if output_file:
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -2001,6 +2127,236 @@ def _export_review_markdown(result, output_file: Path | None) -> None:
     from ..output import console
 
     console.print(f"[green]✓[/green] Markdown report written to: {output_file}")
+
+
+async def run_batch_review_analysis(
+    project_root: Path,
+    review_types: list[str],
+    output_format: str = "console",
+    output_file: Path | None = None,
+    scope_path: Path | None = None,
+    max_chunks: int = 30,
+    changed_only: bool = False,
+    baseline: str | None = None,
+    verbose: bool = False,
+) -> None:
+    """Run multiple AI-powered code reviews in batch mode.
+
+    Args:
+        project_root: Root directory of the project
+        review_types: List of review types to run (security, architecture, performance)
+        output_format: Output format (console, json, sarif, markdown)
+        output_file: Output file path (None for stdout)
+        scope_path: Optional path to scope review
+        max_chunks: Maximum code chunks to analyze
+        changed_only: Only review files changed in git
+        baseline: Git ref to compare against (for changed_only)
+        verbose: Show detailed progress
+    """
+    from rich.console import Console
+
+    from ...analysis.review import ReviewEngine, ReviewType
+    from ...core.embeddings import create_embedding_function
+    from ...core.factory import create_database
+    from ...core.llm_client import LLMClient
+    from ...core.search import SemanticSearchEngine
+
+    console = Console()
+
+    try:
+        # Check if project is initialized
+        project_manager = ProjectManager(project_root)
+        if not project_manager.is_initialized():
+            print_error(
+                f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
+            )
+            raise typer.Exit(1)
+
+        config = project_manager.load_config()
+
+        # Initialize search engine
+        if verbose:
+            console.print("[bold blue]Initializing search engine...[/bold blue]")
+
+        embedding_function, _ = create_embedding_function(config.embedding_model)
+        database = create_database(
+            persist_directory=config.index_path / "lance",
+            embedding_function=embedding_function,
+            collection_name="vectors",
+        )
+        await database.initialize()
+
+        search_engine = SemanticSearchEngine(
+            database=database,
+            project_root=project_root,
+            similarity_threshold=config.similarity_threshold,
+        )
+
+        # Initialize LLM client
+        if verbose:
+            console.print("[bold blue]Initializing LLM client...[/bold blue]")
+
+        llm_client = LLMClient()
+
+        # Try to initialize knowledge graph (optional)
+        knowledge_graph = None
+        try:
+            from ...core.knowledge_graph import KnowledgeGraph
+
+            kg_path = config.index_path / "kg.db"
+            if kg_path.exists():
+                knowledge_graph = KnowledgeGraph(kg_path)
+                if verbose:
+                    console.print("[bold blue]Knowledge graph loaded[/bold blue]")
+        except Exception as e:
+            logger.debug(f"Knowledge graph not available: {e}")
+            if verbose:
+                console.print(
+                    "[yellow]Knowledge graph not available (optional)[/yellow]"
+                )
+
+        # Create review engine
+        review_engine = ReviewEngine(
+            search_engine=search_engine,
+            knowledge_graph=knowledge_graph,
+            llm_client=llm_client,
+            project_root=project_root,
+        )
+
+        # Prepare scope string
+        scope_str = str(scope_path.relative_to(project_root)) if scope_path else None
+
+        # Get changed files if requested
+        file_filter = None
+        if changed_only or baseline:
+            try:
+                git_manager = GitManager(project_root)
+                if baseline:
+                    # Compare against baseline branch
+                    file_filter = [str(f) for f in git_manager.get_diff_files(baseline)]
+                    if verbose:
+                        console.print(
+                            f"[bold blue]Reviewing {len(file_filter)} files changed vs {baseline}[/bold blue]"
+                        )
+                else:
+                    # Get uncommitted changes
+                    file_filter = [
+                        str(f)
+                        for f in git_manager.get_changed_files(include_untracked=True)
+                    ]
+                    if verbose:
+                        console.print(
+                            f"[bold blue]Reviewing {len(file_filter)} uncommitted files[/bold blue]"
+                        )
+
+                if not file_filter:
+                    console.print(
+                        "[yellow]No changed files found. Nothing to review.[/yellow]"
+                    )
+                    return
+
+            except (GitNotAvailableError, GitNotRepoError, GitError) as e:
+                console.print(f"[red]Git error: {e}[/red]")
+                console.print("[yellow]Falling back to full codebase review[/yellow]")
+                file_filter = None
+
+        # Run reviews
+        all_results = []
+        console.print(
+            f"\n[bold blue]Running {len(review_types)} review type(s)...[/bold blue]\n"
+        )
+
+        async with database:
+            for i, review_type_str in enumerate(review_types, 1):
+                review_type_enum = ReviewType(review_type_str)
+
+                if verbose or len(review_types) > 1:
+                    console.print(
+                        f"[bold cyan]Review {i}/{len(review_types)}: {review_type_str}[/bold cyan]"
+                    )
+
+                result = await review_engine.run_review(
+                    review_type=review_type_enum,
+                    scope=scope_str,
+                    max_chunks=max_chunks,
+                    file_filter=file_filter,
+                )
+                all_results.append(result)
+
+                if len(review_types) > 1:
+                    console.print(
+                        f"  → Found {len(result.findings)} finding(s) in {result.duration_seconds:.1f}s\n"
+                    )
+
+        # Format output based on format
+        if output_format == "console":
+            # Print each review in sequence
+            for result in all_results:
+                _print_review_console(result, console)
+                if result != all_results[-1]:
+                    console.print("\n" + "━" * 80 + "\n")
+        elif output_format == "json":
+            # Export all reviews as JSON array
+            combined_data = [
+                {
+                    "review_type": r.review_type.value,
+                    "scope": r.scope,
+                    "summary": r.summary,
+                    "findings": [
+                        {
+                            "title": f.title,
+                            "description": f.description,
+                            "severity": f.severity.value,
+                            "file_path": f.file_path,
+                            "start_line": f.start_line,
+                            "end_line": f.end_line,
+                            "category": f.category,
+                            "recommendation": f.recommendation,
+                            "confidence": f.confidence,
+                            "cwe_id": f.cwe_id,
+                            "code_snippet": f.code_snippet,
+                            "related_files": f.related_files,
+                        }
+                        for f in r.findings
+                    ],
+                    "metadata": {
+                        "context_chunks_used": r.context_chunks_used,
+                        "kg_relationships_used": r.kg_relationships_used,
+                        "model_used": r.model_used,
+                        "duration_seconds": r.duration_seconds,
+                    },
+                }
+                for r in all_results
+            ]
+            _export_review_json({"reviews": combined_data}, output_file)
+        elif output_format == "sarif":
+            # Combine all findings into single SARIF report
+            combined_findings = []
+            for result in all_results:
+                combined_findings.extend(result.findings)
+            if combined_findings:
+                # Use first result as template
+                all_results[0].findings = combined_findings
+                _export_review_sarif(all_results[0], output_file, project_root)
+            else:
+                console.print("[yellow]No findings to export[/yellow]")
+        elif output_format == "markdown":
+            # Export each review to separate markdown file
+            for result in all_results:
+                if output_file:
+                    # Use output_file as directory
+                    md_file = output_file / f"review-{result.review_type.value}.md"
+                else:
+                    md_file = None
+                _export_review_markdown(result, md_file)
+
+    except ProjectNotFoundError as e:
+        print_error(str(e))
+        raise typer.Exit(1)
+    except Exception as e:
+        logger.error(f"Batch review analysis failed: {e}", exc_info=True)
+        print_error(f"Batch review analysis failed: {e}")
+        raise typer.Exit(2)
 
 
 if __name__ == "__main__":

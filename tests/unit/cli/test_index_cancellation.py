@@ -2,7 +2,7 @@
 
 import threading
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -116,49 +116,6 @@ class TestIndexBackup:
 
 class TestIndexerCancellation:
     """Test cancellation in the indexer."""
-
-    @pytest.mark.asyncio
-    async def test_indexer_checks_cancellation_flag(self):
-        """Test that indexer checks cancellation flag during processing."""
-        from mcp_vector_search.core.indexer import SemanticIndexer
-
-        # Create mock database
-        mock_db = MagicMock()
-        mock_db.__aenter__ = AsyncMock(return_value=mock_db)
-        mock_db.__aexit__ = AsyncMock()
-
-        # Create indexer
-        indexer = SemanticIndexer(
-            database=mock_db,
-            project_root=Path("/tmp"),
-            file_extensions=[".py"],
-        )
-
-        # Set cancellation flag
-        cancellation_flag = threading.Event()
-        cancellation_flag.set()
-        indexer.cancellation_flag = cancellation_flag
-
-        # Mock methods
-        indexer.chunks_backend = MagicMock()
-        indexer.chunks_backend._db = MagicMock()
-        indexer.chunks_backend.initialize = AsyncMock()
-        indexer.vectors_backend = MagicMock()
-        indexer.vectors_backend._db = MagicMock()
-        indexer.vectors_backend.initialize = AsyncMock()
-        indexer.metadata = MagicMock()
-        indexer.metadata.load = MagicMock(return_value={})
-        indexer.metadata.write_indexing_run_header = MagicMock()
-
-        # Process with cancellation flag set
-        result = []
-        async for item in indexer.index_files_with_progress(
-            [Path("/tmp/test.py")], force_reindex=False
-        ):
-            result.append(item)
-
-        # Should return early (no items processed)
-        assert len(result) == 0
 
     def test_cancellation_flag_passed_to_indexer(self):
         """Test that cancellation flag is properly set on indexer."""

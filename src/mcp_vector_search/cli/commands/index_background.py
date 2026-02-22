@@ -183,24 +183,30 @@ class BackgroundIndexer:
                 logger.info(f"Found {total_files} files to index")
                 self._update_progress(status="running")
 
-                # Index files with progress tracking
-                async for (
-                    file_path,
-                    chunks_added,
-                    success,
-                ) in indexer.index_files_with_progress(files_to_index, force_reindex):
-                    # Update progress
-                    try:
-                        relative_path = str(file_path.relative_to(self.project_root))
-                    except ValueError:
-                        relative_path = str(file_path)
+                # Index files using new two-phase pipeline
+                # Phase 1: Chunk files
+                self._update_progress(status="chunking")
+                logger.info("Phase 1: Chunking files...")
+                chunk_result = await indexer.chunk_files(fresh=force_reindex)
+                chunks_created = chunk_result.get("chunks_added", 0)
 
-                    self._update_progress(
-                        current_file=relative_path,
-                        processed_increment=1,
-                        chunks_increment=chunks_added if success else 0,
-                        error_increment=0 if success else 1,
-                    )
+                # Update progress with chunking results
+                self.progress_data["chunks_created"] = chunks_created
+                self.progress_data["processed_files"] = len(files_to_index)
+                self._write_progress()
+
+                # Phase 2: Embed chunks
+                self._update_progress(status="embedding")
+                logger.info("Phase 2: Embedding chunks...")
+                embed_result = await indexer.embed_chunks(fresh=force_reindex)
+                _ = embed_result.get("chunks_embedded", 0)  # noqa: F841
+
+                # Final progress update
+                self._update_progress(
+                    processed_increment=0,  # Already updated above
+                    chunks_increment=0,  # Already set above
+                    error_increment=0,
+                )
 
                 # Rebuild directory index
                 try:

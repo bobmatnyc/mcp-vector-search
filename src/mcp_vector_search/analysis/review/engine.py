@@ -78,6 +78,7 @@ class ReviewEngine:
         review_type: ReviewType,
         scope: str | None = None,
         max_chunks: int = 30,
+        file_filter: list[str] | None = None,
     ) -> ReviewResult:
         """Run a code review using vector search, KG, and LLM analysis.
 
@@ -85,6 +86,7 @@ class ReviewEngine:
             review_type: Type of review (security, architecture, performance)
             scope: Optional path filter (e.g., "src/auth" to review only auth module)
             max_chunks: Maximum code chunks to analyze (default: 30)
+            file_filter: Optional list of file paths to restrict review to (for --changed-only)
 
         Returns:
             ReviewResult with findings and metadata
@@ -95,7 +97,9 @@ class ReviewEngine:
         )
 
         # Step 1: Vector search for relevant code chunks
-        search_results = await self._gather_code_chunks(review_type, scope, max_chunks)
+        search_results = await self._gather_code_chunks(
+            review_type, scope, max_chunks, file_filter
+        )
 
         if not search_results:
             logger.warning(f"No code chunks found for {review_type.value} review")
@@ -142,7 +146,11 @@ class ReviewEngine:
         )
 
     async def _gather_code_chunks(
-        self, review_type: ReviewType, scope: str | None, max_chunks: int
+        self,
+        review_type: ReviewType,
+        scope: str | None,
+        max_chunks: int,
+        file_filter: list[str] | None = None,
     ) -> list[Any]:
         """Gather relevant code chunks using targeted search queries.
 
@@ -150,6 +158,7 @@ class ReviewEngine:
             review_type: Type of review to perform
             scope: Optional path filter
             max_chunks: Maximum chunks to return
+            file_filter: Optional list of file paths to filter results
 
         Returns:
             List of SearchResult objects
@@ -188,6 +197,21 @@ class ReviewEngine:
             except SearchError as e:
                 logger.warning(f"Search failed for query '{query}': {e}")
                 continue
+
+        # Apply file filter if provided (for --changed-only)
+        if file_filter:
+            logger.info(f"Filtering to {len(file_filter)} changed files")
+            filtered_results = {}
+            for chunk_id, result in all_results.items():
+                # Normalize paths for comparison
+                result_path = str(Path(result.file_path).resolve())
+                for filter_path in file_filter:
+                    filter_path_resolved = str(Path(filter_path).resolve())
+                    if result_path == filter_path_resolved:
+                        filtered_results[chunk_id] = result
+                        break
+            all_results = filtered_results
+            logger.info(f"After filtering: {len(all_results)} chunks remain")
 
         # Sort by score and limit to max_chunks
         sorted_results = sorted(

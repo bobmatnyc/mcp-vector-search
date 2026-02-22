@@ -23,6 +23,7 @@ def get_tool_schemas() -> list[Tool]:
         _get_circular_dependencies_schema(),
         _get_interpret_analysis_schema(),
         _get_save_report_schema(),
+        _get_review_repository_schema(),
         _get_wiki_generate_schema(),
         _get_kg_build_schema(),
         _get_kg_stats_schema(),
@@ -417,6 +418,96 @@ def _get_save_report_schema() -> Tool:
                 },
             },
             "required": ["content"],
+        },
+    )
+
+
+def _get_review_repository_schema() -> Tool:
+    """Get review_repository tool schema."""
+    return Tool(
+        name="review_repository",
+        description="""Run an AI-powered code review on the indexed codebase using vector search and LLM analysis.
+
+**What it does:**
+- Performs specialized code reviews (security, architecture, performance)
+- Uses targeted vector search queries to find relevant code
+- Analyzes code with LLM to identify issues and provide recommendations
+- Returns structured findings with severity levels, categories, and recommendations
+
+**Review types:**
+- **security**: Finds vulnerabilities (SQL injection, XSS, authentication issues, etc.)
+- **architecture**: Identifies design issues (tight coupling, missing abstractions, etc.)
+- **performance**: Detects performance problems (N+1 queries, inefficient algorithms, etc.)
+
+**Output format:**
+Returns structured findings with:
+- title: Brief description of the issue
+- description: Detailed explanation
+- severity: critical, high, medium, low, info
+- file_path: Location of the issue
+- start_line/end_line: Precise location in file
+- category: Issue category (e.g., "SQL Injection", "Tight Coupling")
+- recommendation: How to fix the issue
+- confidence: Confidence score (0.0-1.0)
+- cwe_id: Common Weakness Enumeration ID (for security issues)
+
+**Example usage:**
+{"review_type": "security"}  # Review entire codebase for security issues
+{"review_type": "architecture", "scope": "src/auth"}  # Review auth module
+{"review_type": "performance", "max_chunks": 50}  # Analyze more code
+{"review_type": "security", "changed_only": true}  # Only review changed files
+
+**Example response:**
+{
+  "status": "success",
+  "review_type": "security",
+  "scope": "entire project",
+  "findings": [
+    {
+      "title": "SQL Injection Vulnerability",
+      "description": "User input is concatenated directly into SQL query",
+      "severity": "critical",
+      "file_path": "src/db/users.py",
+      "start_line": 42,
+      "end_line": 45,
+      "category": "SQL Injection",
+      "recommendation": "Use parameterized queries or an ORM",
+      "confidence": 0.95,
+      "cwe_id": "CWE-89"
+    }
+  ],
+  "summary": "Found 1 security issue(s):\\n  - CRITICAL: 1",
+  "context_chunks_used": 25,
+  "kg_relationships_used": 12,
+  "model_used": "claude-3-5-sonnet-20241022",
+  "duration_seconds": 8.3
+}""",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "review_type": {
+                    "type": "string",
+                    "enum": ["security", "architecture", "performance"],
+                    "description": "Type of review to perform",
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Optional path scope (e.g., 'src/auth', 'core/')",
+                },
+                "max_chunks": {
+                    "type": "integer",
+                    "description": "Maximum code chunks to analyze (default: 30)",
+                    "default": 30,
+                    "minimum": 10,
+                    "maximum": 100,
+                },
+                "changed_only": {
+                    "type": "boolean",
+                    "description": "Only review files changed in git (uncommitted changes)",
+                    "default": False,
+                },
+            },
+            "required": ["review_type"],
         },
     )
 
