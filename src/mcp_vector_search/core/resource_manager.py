@@ -6,6 +6,13 @@ from dataclasses import dataclass
 import psutil
 from loguru import logger
 
+# Default memory reserve in MB — keeps this much free for OS/other processes
+DEFAULT_MEMORY_RESERVE_MB = 1000
+
+# Default fraction of available memory to use for embedding batches
+# 0.7 = 70% to leave headroom for OS and background tasks
+DEFAULT_MEMORY_FRACTION = 0.7
+
 
 @dataclass
 class ResourceLimits:
@@ -33,8 +40,8 @@ def calculate_optimal_workers(
     memory_per_worker_mb: int = 500,
     min_workers: int = 1,
     max_workers: int | None = None,
-    memory_reserve_mb: int = 1000,
-    memory_fraction: float = 0.7,
+    memory_reserve_mb: int = DEFAULT_MEMORY_RESERVE_MB,
+    memory_fraction: float = DEFAULT_MEMORY_FRACTION,
 ) -> ResourceLimits:
     """Calculate optimal number of workers based on available memory and CPU cores.
 
@@ -42,8 +49,8 @@ def calculate_optimal_workers(
         memory_per_worker_mb: Memory budget per worker (default: 500MB)
         min_workers: Minimum workers regardless of memory (default: 1)
         max_workers: Maximum workers regardless of memory (default: None = use CPU count)
-        memory_reserve_mb: Memory to reserve for OS/other processes (default: 1GB)
-        memory_fraction: Max fraction of available memory to use (default: 0.7)
+        memory_reserve_mb: Memory to reserve for OS/other processes (default: DEFAULT_MEMORY_RESERVE_MB)
+        memory_fraction: Max fraction of available memory to use (default: DEFAULT_MEMORY_FRACTION)
 
     Returns:
         ResourceLimits with calculated values

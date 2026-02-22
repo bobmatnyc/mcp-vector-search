@@ -194,8 +194,8 @@ def main():
         # Clean up temp file
         try:
             chunks_file.unlink()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to clean up temp file %s: %s", chunks_file, e)
 
 
 if __name__ == "__main__":

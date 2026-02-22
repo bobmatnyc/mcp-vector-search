@@ -1014,8 +1014,8 @@ async def _analyze_file(
                     1 for line in lines if line.strip().startswith("#")
                 )
                 file_metrics.blank_lines = sum(1 for line in lines if not line.strip())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to read file metrics for %s: %s", file_path, e)
 
         # Count functions and classes from chunks
         for chunk in chunks:

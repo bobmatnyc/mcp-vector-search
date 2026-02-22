@@ -26,6 +26,10 @@ from .result_ranker import ResultRanker
 from .search_retry_handler import SearchRetryHandler
 from .vectors_backend import VectorsBackend
 
+# Reciprocal Rank Fusion (RRF) smoothing constant
+# Default k=60 is standard in literature for balancing vector and keyword search ranks
+RRF_K = 60
+
 
 class SearchMode(str, Enum):
     """Search mode for semantic search engine."""
@@ -1495,7 +1499,6 @@ class SemanticSearchEngine:
             }
 
             # Compute RRF scores with weighted fusion
-            k = 60  # RRF smoothing constant
             rrf_scores: dict[str, float] = {}
 
             # Combine ranks from both methods
@@ -1508,12 +1511,12 @@ class SemanticSearchEngine:
                 # RRF score with weighted fusion
                 # Apply alpha weighting: higher alpha = more vector influence
                 vector_score = (
-                    hybrid_alpha / (k + vector_rank)
+                    hybrid_alpha / (RRF_K + vector_rank)
                     if vector_rank != float("inf")
                     else 0.0
                 )
                 bm25_score = (
-                    (1.0 - hybrid_alpha) / (k + bm25_rank)
+                    (1.0 - hybrid_alpha) / (RRF_K + bm25_rank)
                     if bm25_rank != float("inf")
                     else 0.0
                 )

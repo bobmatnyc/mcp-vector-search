@@ -1138,8 +1138,10 @@ async def _tool_analyze_code(focus: str, project_root: Path, config: Any) -> str
                     try:
                         chunks = await parser.parse_file(file_path)
                         project_metrics.add_file(file_path, chunks)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(
+                            "Failed to parse file %s for metrics: %s", file_path, e
+                        )
 
         # Generate metrics
         exporter = EnhancedJSONExporter(project_root=project_root)

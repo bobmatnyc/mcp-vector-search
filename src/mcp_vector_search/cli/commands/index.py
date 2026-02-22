@@ -111,15 +111,16 @@ def _get_available_ram_gb() -> float:
 
                 available_bytes = free_pages * page_size
                 return available_bytes / (1024**3)
-            except Exception:
+            except Exception as e:
                 # Fallback: try sysconf
+                logger.debug("vm_stat failed, trying sysconf: %s", e)
                 try:
                     page_size = os.sysconf("SC_PAGE_SIZE")
                     avail_pages = os.sysconf("SC_AVPHYS_PAGES")
                     available_bytes = page_size * avail_pages
                     return available_bytes / (1024**3)
-                except Exception:
-                    pass
+                except Exception as e2:
+                    logger.debug("sysconf failed on macOS: %s", e2)
 
         elif system == "Linux":
             # Read /proc/meminfo

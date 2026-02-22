@@ -250,8 +250,10 @@ def _build_kg_in_subprocess(
             # Clean up temporary chunks file
             try:
                 chunks_file.unlink()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(
+                    "Failed to clean up temp chunks file %s: %s", chunks_file, e
+                )
 
     # CRITICAL: Call synchronously (no asyncio.run!)
     # asyncio.run() creates background threads that segfault with Kuzu
@@ -552,8 +554,8 @@ def build_kg(
         # Clean up temp file
         try:
             Path(chunks_file).unlink()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to clean up temp chunks file %s: %s", chunks_file, e)
         raise typer.Exit(result.returncode)
 
     if verbose:
@@ -651,8 +653,8 @@ def kg_stats(
             try:
                 with open(metadata_path) as f:
                     metadata = json.load(f)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to load KG metadata from %s: %s", metadata_path, e)
 
         # Get current chunk count from database
         current_chunks = 0
@@ -668,8 +670,8 @@ def kg_stats(
                     source_chunks = metadata.get("source_chunk_count", 0)
                     gap = current_chunks - source_chunks
             await database.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to get chunk count from database: %s", e)
 
         # Display results
         table = Table(title="Knowledge Graph Statistics")
@@ -719,8 +721,8 @@ def kg_stats(
                     else:
                         time_ago = "just now"
                     table.add_row("Last Build", f"[dim]{time_ago}[/dim]")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to format build time: %s", e)
 
         table.add_row("", "")  # Separator
         table.add_row("Database Path", f"[dim]{stats['database_path']}[/dim]")

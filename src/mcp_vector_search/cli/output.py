@@ -372,13 +372,7 @@ def print_config(config_dict: dict[str, Any]) -> None:
     table.add_column("Value", style="white")
 
     for key, value in config_dict.items():
-        if isinstance(value, list | dict):
-            value_str = str(value)
-        elif isinstance(value, Path):
-            value_str = str(value)
-        else:
-            value_str = str(value)
-
+        value_str = str(value)
         table.add_row(key.replace("_", " ").title(), value_str)
 
     console.print(table)
