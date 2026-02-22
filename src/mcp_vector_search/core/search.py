@@ -3,6 +3,7 @@
 import os
 import re
 import time
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -10,16 +11,27 @@ import aiofiles
 from loguru import logger
 
 from .auto_indexer import AutoIndexer, SearchTriggeredIndexer
+from .bm25_backend import BM25Backend
 from .database import VectorDatabase
 from .exceptions import RustPanicError, SearchError
 from .knowledge_graph import KnowledgeGraph
+from .mmr import mmr_rerank
 from .models import SearchResult
 from .query_analyzer import QueryAnalyzer
+from .query_expander import QueryExpander
 from .query_processor import QueryProcessor
 from .result_enhancer import ResultEnhancer
 from .result_ranker import ResultRanker
 from .search_retry_handler import SearchRetryHandler
 from .vectors_backend import VectorsBackend
+
+
+class SearchMode(str, Enum):
+    """Search mode for semantic search engine."""
+
+    VECTOR = "vector"  # Pure vector similarity search
+    BM25 = "bm25"  # Pure BM25 keyword search
+    HYBRID = "hybrid"  # Hybrid: RRF fusion of vector + BM25
 
 
 class SemanticSearchEngine:
@@ -41,6 +53,7 @@ class SemanticSearchEngine:
         auto_indexer: AutoIndexer | None = None,
         enable_auto_reindex: bool = True,
         enable_kg: bool = True,
+        enable_query_expansion: bool = True,
     ) -> None:
         """Initialize semantic search engine.
 
@@ -51,6 +64,7 @@ class SemanticSearchEngine:
             auto_indexer: Optional auto-indexer for semi-automatic reindexing
             enable_auto_reindex: Whether to enable automatic reindexing
             enable_kg: Whether to enable knowledge graph enhancement
+            enable_query_expansion: Whether to enable query expansion with synonyms
         """
         self.database = database
         self.project_root = project_root
@@ -58,6 +72,7 @@ class SemanticSearchEngine:
         self.auto_indexer = auto_indexer
         self.enable_auto_reindex = enable_auto_reindex
         self.enable_kg = enable_kg
+        self.enable_query_expansion = enable_query_expansion
 
         # Initialize search-triggered indexer if auto-indexer is provided
         self.search_triggered_indexer = None
@@ -75,6 +90,14 @@ class SemanticSearchEngine:
         self._result_ranker = ResultRanker()
         self._query_analyzer = QueryAnalyzer(self._query_processor)
 
+        # Initialize query expander with custom synonyms if available
+        custom_synonyms_path = project_root / ".mcp-vector-search" / "synonyms.json"
+        self._query_expander = QueryExpander(
+            custom_synonyms_path=custom_synonyms_path
+            if custom_synonyms_path.exists()
+            else None
+        )
+
         # Two-phase architecture: lazy detection of VectorsBackend
         # We check at search time rather than init time because vectors.lance
         # may not exist yet when SemanticSearchEngine is created
@@ -90,6 +113,10 @@ class SemanticSearchEngine:
         self._kg: KnowledgeGraph | None = None
         self._kg_checked = False
 
+        # BM25 backend (lazy initialization)
+        self._bm25_backend: BM25Backend | None = None
+        self._bm25_backend_checked = False
+
     async def search(
         self,
         query: str,
@@ -97,6 +124,11 @@ class SemanticSearchEngine:
         filters: dict[str, Any] | None = None,
         similarity_threshold: float | None = None,
         include_context: bool = True,
+        search_mode: SearchMode = SearchMode.HYBRID,
+        hybrid_alpha: float = 0.7,
+        expand: bool = True,
+        use_mmr: bool = True,
+        diversity: float = 0.5,
     ) -> list[SearchResult]:
         """Perform semantic search for code.
 
@@ -106,6 +138,13 @@ class SemanticSearchEngine:
             filters: Optional filters (language, file_path, etc.)
             similarity_threshold: Minimum similarity score
             include_context: Whether to include context lines
+            search_mode: Search mode (vector, bm25, or hybrid)
+            hybrid_alpha: Weight for vector search in hybrid mode (0.0-1.0, default 0.7)
+                         1.0 = pure vector, 0.0 = pure BM25
+            expand: Whether to expand query with synonyms (default: True)
+            use_mmr: Whether to apply MMR diversity filtering (default: True)
+            diversity: Diversity parameter for MMR (0.0-1.0, default 0.5)
+                      0.0 = pure relevance, 1.0 = maximum diversity
 
         Returns:
             List of search results
@@ -139,20 +178,97 @@ class SemanticSearchEngine:
                 await self._check_knowledge_graph()
                 self._kg_checked = True
 
-            # Use VectorsBackend if available, otherwise fall back to ChromaDB
-            if self._vectors_backend:
-                results = await self._search_vectors_backend(
-                    processed_query, limit, filters, threshold
+            # Check for BM25 backend on first search
+            if not self._bm25_backend_checked:
+                self._check_bm25_backend()
+                self._bm25_backend_checked = True
+
+            # Query expansion: generate variants if enabled
+            if expand and self.enable_query_expansion:
+                query_variants = self._query_expander.expand(processed_query)
+                logger.debug(
+                    f"Query expansion: {len(query_variants)} variants for '{processed_query}'"
                 )
             else:
-                # Legacy ChromaDB search
-                results = await self._retry_handler.search_with_retry(
-                    database=self.database,
-                    query=processed_query,
-                    limit=limit,
-                    filters=filters,
-                    threshold=threshold,
+                query_variants = [processed_query]
+
+            # Search with all query variants and merge results
+            all_results: dict[str, SearchResult] = {}  # chunk_id -> result (best score)
+
+            for variant_query in query_variants:
+                # Route search based on mode
+                if search_mode == SearchMode.BM25:
+                    # Pure BM25 search
+                    variant_results = await self._search_bm25(
+                        variant_query, limit, filters, threshold
+                    )
+                elif search_mode == SearchMode.HYBRID:
+                    # Hybrid search with RRF fusion
+                    variant_results = await self._search_hybrid(
+                        variant_query, limit, filters, threshold, hybrid_alpha
+                    )
+                else:
+                    # Pure vector search (default)
+                    # Use VectorsBackend if available, otherwise fall back to ChromaDB
+                    if self._vectors_backend:
+                        variant_results = await self._search_vectors_backend(
+                            variant_query, limit, filters, threshold
+                        )
+                    else:
+                        # Legacy ChromaDB search
+                        variant_results = await self._retry_handler.search_with_retry(
+                            database=self.database,
+                            query=variant_query,
+                            limit=limit,
+                            filters=filters,
+                            threshold=threshold,
+                        )
+
+                # Merge results: keep highest score per chunk_id
+                for result in variant_results:
+                    # Get chunk_id (unique identifier for each code chunk)
+                    chunk_id = getattr(result, "chunk_id", None)
+                    if not chunk_id:
+                        # Fallback: construct chunk_id from file_path + line range
+                        chunk_id = (
+                            f"{result.file_path}:{result.start_line}-{result.end_line}"
+                        )
+
+                    # Keep result with highest similarity score
+                    if (
+                        chunk_id not in all_results
+                        or result.similarity_score
+                        > all_results[chunk_id].similarity_score
+                    ):
+                        all_results[chunk_id] = result
+
+            # Convert merged results to list and sort by score
+            results = sorted(
+                all_results.values(), key=lambda r: r.similarity_score, reverse=True
+            )
+
+            # Limit to requested number of results
+            results = results[:limit]
+
+            if expand and self.enable_query_expansion and len(query_variants) > 1:
+                logger.debug(
+                    f"Query expansion merged {len(all_results)} unique results from {len(query_variants)} variants"
                 )
+
+            # Apply MMR diversity filtering if enabled and we have enough results
+            # MMR improves diversity by penalizing results similar to already-selected ones
+            if use_mmr and results and len(results) > 1 and self._vectors_backend:
+                try:
+                    results = await self._apply_mmr_reranking(
+                        results=results,
+                        query=processed_query,
+                        diversity=diversity,
+                        requested_limit=limit,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"MMR reranking failed, continuing with original results: {e}"
+                    )
 
             # Enhance with knowledge graph context if available
             # Gracefully skip if KG is unavailable (may be building)
@@ -897,3 +1013,488 @@ class SemanticSearchEngine:
         except Exception as e:
             logger.debug(f"Code vectors backend detection failed: {e}")
             self._code_vectors_backend = None
+
+    async def _apply_mmr_reranking(
+        self,
+        results: list[SearchResult],
+        query: str,
+        diversity: float,
+        requested_limit: int,
+    ) -> list[SearchResult]:
+        """Apply MMR (Maximal Marginal Relevance) reranking for diverse results.
+
+        MMR reduces redundancy by penalizing results similar to already-selected ones.
+        This is particularly useful when the top results are very similar to each other.
+
+        Args:
+            results: Initial search results to rerank
+            query: Original search query
+            diversity: Diversity parameter (0.0=pure diversity, 1.0=pure relevance)
+            requested_limit: Requested number of final results
+
+        Returns:
+            Reranked results with improved diversity
+
+        Note:
+            - Over-retrieves by 3x to give MMR more candidates to diversify from
+            - Maps diversity (user-facing) to lambda_param (algorithm): lambda = 1 - diversity
+            - Requires embeddings from vectors_backend for similarity calculations
+        """
+        import numpy as np
+
+        # Over-retrieve by 3x to give MMR candidates to choose from
+        # This allows MMR to select diverse results from a larger pool
+        retrieval_limit = min(len(results), requested_limit * 3)
+        candidate_results = results[:retrieval_limit]
+
+        # Get query embedding (generate from query string)
+        if hasattr(self.database, "_embedding_function"):
+            embedding_func = self.database._embedding_function
+        elif hasattr(self.database, "embedding_function"):
+            embedding_func = self.database.embedding_function
+        else:
+            logger.warning("Cannot access embedding function, skipping MMR")
+            return results[:requested_limit]
+
+        query_vector = embedding_func([query])[0]
+        query_embedding = np.array(query_vector, dtype=np.float32)
+
+        # Get embeddings for all candidates
+        # Extract chunk_ids from results (may be stored as attribute or constructed)
+        chunk_ids = []
+        for result in candidate_results:
+            chunk_id = getattr(result, "chunk_id", None)
+            if not chunk_id:
+                # Fallback: construct chunk_id from file path and lines
+                chunk_id = f"{result.file_path}:{result.start_line}-{result.end_line}"
+            chunk_ids.append(chunk_id)
+
+        # Retrieve embeddings from vectors backend
+        chunk_vectors = await self._vectors_backend.get_chunk_vectors_batch(chunk_ids)
+
+        # Filter results to only those with embeddings available
+        valid_indices = []
+        valid_embeddings = []
+        valid_scores = []
+        for i, chunk_id in enumerate(chunk_ids):
+            if chunk_id in chunk_vectors:
+                valid_indices.append(i)
+                valid_embeddings.append(chunk_vectors[chunk_id])
+                valid_scores.append(candidate_results[i].similarity_score)
+
+        if len(valid_indices) < 2:
+            # Not enough embeddings for MMR, return original results
+            logger.debug(
+                f"MMR skipped: only {len(valid_indices)} results have embeddings"
+            )
+            return results[:requested_limit]
+
+        # Convert to numpy arrays
+        candidate_embeddings = np.array(valid_embeddings, dtype=np.float32)
+
+        # Convert diversity parameter to lambda_param
+        # diversity=0.0 -> lambda=1.0 (pure relevance, no diversity)
+        # diversity=1.0 -> lambda=0.0 (pure diversity, no relevance)
+        # diversity=0.5 -> lambda=0.5 (balanced)
+        lambda_param = 1.0 - diversity
+
+        # Run MMR reranking
+        selected_indices = mmr_rerank(
+            query_embedding=query_embedding,
+            candidate_embeddings=candidate_embeddings,
+            candidate_scores=valid_scores,
+            lambda_param=lambda_param,
+            top_k=requested_limit,
+        )
+
+        # Map selected indices back to original results
+        # selected_indices are indices into valid_indices
+        reranked_results = []
+        for mmr_idx in selected_indices:
+            original_idx = valid_indices[mmr_idx]
+            result = candidate_results[original_idx]
+            # Update rank to reflect new position
+            result.rank = len(reranked_results) + 1
+            reranked_results.append(result)
+
+        logger.info(
+            f"MMR reranking: selected {len(reranked_results)} diverse results from {len(candidate_results)} candidates "
+            f"(diversity={diversity:.2f}, lambda={lambda_param:.2f})"
+        )
+
+        return reranked_results
+
+    def _check_bm25_backend(self) -> None:
+        """Check if BM25 index exists and load it.
+
+        This enables hybrid search when BM25 index is available.
+        Falls back gracefully to vector-only if BM25 is missing.
+
+        If BM25 index doesn't exist but LanceDB does, attempts lazy build.
+        """
+        try:
+            # Detect BM25 index path from database persist_directory
+            if hasattr(self.database, "persist_directory"):
+                index_path = self.database.persist_directory
+                bm25_path = index_path / "bm25_index.pkl"
+
+                if bm25_path.exists():
+                    # Load BM25 index
+                    self._bm25_backend = BM25Backend()
+                    self._bm25_backend.load(bm25_path)
+                    logger.debug(
+                        f"BM25 index loaded from {bm25_path} "
+                        f"({self._bm25_backend.get_stats()['chunk_count']} chunks)"
+                    )
+                else:
+                    # BM25 index missing: try lazy build if LanceDB exists
+                    logger.debug(
+                        f"BM25 index not found at {bm25_path}, attempting lazy build..."
+                    )
+                    if self._try_lazy_build_bm25(bm25_path):
+                        logger.info(
+                            "BM25 index built successfully (lazy initialization)"
+                        )
+                    else:
+                        logger.debug("BM25 lazy build failed, hybrid search disabled")
+            else:
+                logger.debug("Database has no persist_directory, BM25 disabled")
+        except Exception as e:
+            logger.debug(f"BM25 backend detection failed: {e}")
+            self._bm25_backend = None
+
+    def _try_lazy_build_bm25(self, bm25_path: Path) -> bool:
+        """Attempt to build BM25 index from existing vectors.lance data.
+
+        Args:
+            bm25_path: Path to save BM25 index
+
+        Returns:
+            True if build succeeded, False otherwise
+        """
+        try:
+            # Directly open LanceDB vectors.lance table
+            # This avoids complex async initialization of VectorsBackend
+            if not hasattr(self.database, "persist_directory"):
+                logger.debug("Database has no persist_directory")
+                return False
+
+            index_path = self.database.persist_directory
+
+            # Handle both old (index_path) and new (index_path/lance) paths
+            if index_path.name == "lance":
+                lance_path = index_path
+            else:
+                lance_path = index_path / "lance"
+
+            vectors_table_path = lance_path / "vectors.lance"
+            if not vectors_table_path.exists():
+                logger.debug(f"vectors.lance not found at {vectors_table_path}")
+                return False
+
+            # Open LanceDB table directly
+            import lancedb
+
+            db = lancedb.connect(str(lance_path))
+            table = db.open_table("vectors")
+
+            # Query all records
+            df = table.to_pandas()
+
+            if df.empty:
+                logger.debug("Vectors table is empty, cannot build BM25 index")
+                return False
+
+            # Convert DataFrame rows to dicts for BM25Backend
+            # vectors.lance schema: chunk_id, vector, file_path, content, language,
+            #                       start_line, end_line, chunk_type, name, hierarchy_path
+            chunks_for_bm25 = []
+            for _, row in df.iterrows():
+                chunk_dict = {
+                    "chunk_id": row["chunk_id"],
+                    "content": row["content"],
+                    "name": row.get("name", ""),  # vectors.lance uses "name" field
+                    "file_path": row["file_path"],
+                    "chunk_type": row.get("chunk_type", "code"),
+                }
+                chunks_for_bm25.append(chunk_dict)
+
+            # Build and save BM25 index
+            self._bm25_backend = BM25Backend()
+            self._bm25_backend.build_index(chunks_for_bm25)
+            self._bm25_backend.save(bm25_path)
+
+            logger.info(
+                f"Built BM25 index with {len(chunks_for_bm25)} chunks (lazy initialization)"
+            )
+            return True
+
+        except Exception as e:
+            logger.debug(f"Lazy BM25 build failed: {e}")
+            self._bm25_backend = None
+            return False
+
+    async def _search_bm25(
+        self,
+        query: str,
+        limit: int,
+        filters: dict[str, Any] | None,
+        threshold: float,
+    ) -> list[SearchResult]:
+        """Pure BM25 keyword search.
+
+        Args:
+            query: Search query
+            limit: Maximum results
+            filters: Optional metadata filters
+            threshold: Minimum similarity threshold (unused for BM25, kept for API compatibility)
+
+        Returns:
+            List of SearchResult objects
+
+        Raises:
+            SearchError: If BM25 backend not available or search fails
+        """
+        if not self._bm25_backend or not self._bm25_backend.is_built():
+            raise SearchError(
+                "BM25 index not available. Run 'mcp-vector-search index' to build it."
+            )
+
+        try:
+            # Get BM25 results (returns list of (chunk_id, score) tuples)
+            bm25_results = self._bm25_backend.search(query, limit=limit * 2)
+
+            if not bm25_results:
+                return []
+
+            # Convert BM25 results to SearchResult objects
+            # Need to fetch chunk metadata from vectors backend
+            if not self._vectors_backend:
+                raise SearchError("Vector backend not available for metadata lookup")
+
+            # Initialize vectors backend if needed
+            if self._vectors_backend._db is None:
+                await self._vectors_backend.initialize()
+
+            # Fetch chunks by chunk_id
+            search_results = []
+            for chunk_id, bm25_score in bm25_results[:limit]:
+                # Query vectors table for chunk metadata
+                try:
+                    # Use chunk_id to fetch metadata
+                    df = self._vectors_backend._table.to_pandas().query(
+                        f"chunk_id == '{chunk_id}'"
+                    )
+                    if df.empty:
+                        continue
+
+                    row = df.iloc[0]
+
+                    # Create SearchResult with BM25 score as similarity
+                    # Normalize BM25 score to 0-1 range (heuristic: divide by 10, cap at 1.0)
+                    normalized_score = min(1.0, bm25_score / 10.0)
+
+                    search_result = SearchResult(
+                        file_path=Path(row["file_path"]),
+                        content=row["content"],
+                        start_line=row["start_line"],
+                        end_line=row["end_line"],
+                        language=row.get("language", "unknown"),
+                        similarity_score=normalized_score,
+                        rank=len(search_results) + 1,
+                        chunk_type=row.get("chunk_type", "unknown"),
+                        function_name=row.get("name"),
+                    )
+                    search_results.append(search_result)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to fetch metadata for chunk {chunk_id}: {e}"
+                    )
+                    continue
+
+            logger.debug(
+                f"BM25 search for '{query}' returned {len(search_results)} results"
+            )
+            return search_results
+
+        except Exception as e:
+            logger.error(f"BM25 search failed: {e}")
+            raise SearchError(f"BM25 search failed: {e}") from e
+
+    async def _search_hybrid(
+        self,
+        query: str,
+        limit: int,
+        filters: dict[str, Any] | None,
+        threshold: float,
+        hybrid_alpha: float,
+    ) -> list[SearchResult]:
+        """Hybrid search using Reciprocal Rank Fusion (RRF) of vector + BM25 results.
+
+        RRF formula: score(d) = sum(1 / (k + rank_i)) for each retrieval method i
+        where k=60 is a smoothing constant (default in literature).
+
+        Args:
+            query: Search query
+            limit: Maximum results
+            filters: Optional metadata filters
+            threshold: Minimum similarity threshold for vector search
+            hybrid_alpha: Weight for vector search (0.0-1.0)
+                         1.0 = pure vector, 0.0 = pure BM25, 0.7 = balanced with vector preference
+
+        Returns:
+            List of SearchResult objects sorted by RRF score
+        """
+        # Fallback to vector-only if BM25 not available
+        if not self._bm25_backend or not self._bm25_backend.is_built():
+            logger.warning(
+                "BM25 index not available, falling back to vector-only search. "
+                "Run 'mcp-vector-search index' to build BM25 index for hybrid search."
+            )
+            if self._vectors_backend:
+                return await self._search_vectors_backend(
+                    query, limit, filters, threshold
+                )
+            else:
+                return await self._retry_handler.search_with_retry(
+                    database=self.database,
+                    query=query,
+                    limit=limit,
+                    filters=filters,
+                    threshold=threshold,
+                )
+
+        try:
+            # Get vector results
+            if self._vectors_backend:
+                vector_results = await self._search_vectors_backend(
+                    query, limit * 2, filters, threshold
+                )
+            else:
+                vector_results = await self._retry_handler.search_with_retry(
+                    database=self.database,
+                    query=query,
+                    limit=limit * 2,
+                    filters=filters,
+                    threshold=threshold,
+                )
+
+            # Get BM25 results
+            bm25_results = self._bm25_backend.search(query, limit=limit * 2)
+
+            # Build maps: chunk_id -> rank (1-based)
+            vector_ranks = {
+                self._get_chunk_id(result): i + 1
+                for i, result in enumerate(vector_results)
+            }
+
+            bm25_ranks = {
+                chunk_id: i + 1 for i, (chunk_id, _) in enumerate(bm25_results)
+            }
+
+            # Compute RRF scores with weighted fusion
+            k = 60  # RRF smoothing constant
+            rrf_scores: dict[str, float] = {}
+
+            # Combine ranks from both methods
+            all_chunk_ids = set(vector_ranks.keys()) | set(bm25_ranks.keys())
+
+            for chunk_id in all_chunk_ids:
+                vector_rank = vector_ranks.get(chunk_id, float("inf"))
+                bm25_rank = bm25_ranks.get(chunk_id, float("inf"))
+
+                # RRF score with weighted fusion
+                # Apply alpha weighting: higher alpha = more vector influence
+                vector_score = (
+                    hybrid_alpha / (k + vector_rank)
+                    if vector_rank != float("inf")
+                    else 0.0
+                )
+                bm25_score = (
+                    (1.0 - hybrid_alpha) / (k + bm25_rank)
+                    if bm25_rank != float("inf")
+                    else 0.0
+                )
+
+                rrf_scores[chunk_id] = vector_score + bm25_score
+
+            # Normalize RRF scores to 0.0-1.0 range for consistent display
+            if rrf_scores:
+                max_rrf = max(rrf_scores.values())
+                if max_rrf > 0:
+                    rrf_scores = {
+                        cid: score / max_rrf for cid, score in rrf_scores.items()
+                    }
+
+            # Sort by RRF score descending
+            sorted_chunk_ids = sorted(
+                rrf_scores.keys(), key=lambda cid: rrf_scores[cid], reverse=True
+            )
+
+            # Build SearchResult list from sorted chunk IDs
+            # Use vector_results as source since they have full metadata
+            chunk_id_to_result = {self._get_chunk_id(r): r for r in vector_results}
+
+            hybrid_results = []
+            for i, chunk_id in enumerate(sorted_chunk_ids[:limit]):
+                if chunk_id in chunk_id_to_result:
+                    result = chunk_id_to_result[chunk_id]
+                    # Update similarity score to RRF score
+                    result.similarity_score = rrf_scores[chunk_id]
+                    result.rank = i + 1
+                    hybrid_results.append(result)
+                else:
+                    # Chunk found in BM25 but not in vector results
+                    # Fetch metadata from vectors backend
+                    try:
+                        if self._vectors_backend and self._vectors_backend._table:
+                            df = self._vectors_backend._table.to_pandas().query(
+                                f"chunk_id == '{chunk_id}'"
+                            )
+                            if not df.empty:
+                                row = df.iloc[0]
+                                search_result = SearchResult(
+                                    file_path=Path(row["file_path"]),
+                                    content=row["content"],
+                                    start_line=row["start_line"],
+                                    end_line=row["end_line"],
+                                    language=row.get("language", "unknown"),
+                                    similarity_score=rrf_scores[chunk_id],
+                                    rank=i + 1,
+                                    chunk_type=row.get("chunk_type", "unknown"),
+                                    function_name=row.get("name"),
+                                )
+                                hybrid_results.append(search_result)
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to fetch metadata for BM25-only chunk {chunk_id}: {e}"
+                        )
+
+            logger.info(
+                f"Hybrid search (α={hybrid_alpha:.2f}) for '{query}' combined "
+                f"{len(vector_results)} vector + {len(bm25_results)} BM25 results → "
+                f"{len(hybrid_results)} final results"
+            )
+
+            return hybrid_results
+
+        except Exception as e:
+            logger.error(f"Hybrid search failed: {e}")
+            raise SearchError(f"Hybrid search failed: {e}") from e
+
+    @staticmethod
+    def _get_chunk_id(result: SearchResult) -> str:
+        """Get chunk_id from SearchResult.
+
+        Args:
+            result: SearchResult object
+
+        Returns:
+            Chunk ID (file_path:start_line-end_line format)
+        """
+        # Check if result has chunk_id attribute (from vectors backend)
+        if hasattr(result, "chunk_id") and result.chunk_id:
+            return result.chunk_id
+
+        # Fallback: construct chunk_id from file path and line range
+        return f"{result.file_path}:{result.start_line}-{result.end_line}"
