@@ -31,6 +31,7 @@ from ...core.llm_client import LLMClient
 from ...core.search import SemanticSearchEngine
 from .cache import ReviewCache
 from .instructions import InstructionsLoader
+from .language_profiles import get_languages_in_pr
 from .models import Severity
 from .pr_models import (
     PRContext,
@@ -48,6 +49,10 @@ PR_REVIEW_PROMPT = """You are reviewing a pull request using the full codebase a
 **Description**: {pr_description}
 **Base Branch**: {base_branch}
 **Head Branch**: {head_branch}
+
+## Language-Specific Standards
+
+{language_context}
 
 ## Review Instructions
 
@@ -200,6 +205,9 @@ class PRReviewEngine:
         context_files_used = sum(len(fc["related_files"]) for fc in file_contexts)
         kg_relationships_used = sum(len(fc["kg_relationships"]) for fc in file_contexts)
 
+        # Build language-specific context
+        language_context = await self._build_language_context(pr_context.patches)
+
         # Format file contexts for prompt
         file_contexts_text = self._format_file_contexts(file_contexts)
 
@@ -209,6 +217,7 @@ class PRReviewEngine:
             pr_description=pr_context.description or "No description provided",
             base_branch=pr_context.base_branch,
             head_branch=pr_context.head_branch,
+            language_context=language_context,
             review_instructions=instructions_text,
             file_contexts=file_contexts_text,
         )
@@ -484,6 +493,60 @@ class PRReviewEngine:
                                 function_names.append(match)
 
         return list(set(function_names))  # Deduplicate
+
+    async def _build_language_context(self, patches: list[PRFilePatch]) -> str:
+        """Build language-specific context for the review prompt.
+
+        Extracts language profiles for all languages present in the PR
+        and formats their idioms, anti-patterns, and security concerns
+        for injection into the review prompt.
+
+        Args:
+            patches: List of file patches in the PR
+
+        Returns:
+            Formatted language context string (empty if no languages detected)
+
+        Example:
+            >>> context = await engine._build_language_context(patches)
+            >>> print(context)
+            ## Python Standards
+            **Idioms to enforce:**
+            - Use type hints for all function signatures (PEP 484)
+            ...
+        """
+        languages = get_languages_in_pr(patches)
+
+        if not languages:
+            return ""
+
+        context_parts = []
+        for profile in languages:
+            context_parts.append(f"## {profile.name} Standards")
+            context_parts.append("")
+
+            # Show top idioms
+            if profile.idioms:
+                context_parts.append("**Idioms to enforce:**")
+                for idiom in profile.idioms[:5]:  # Limit to top 5
+                    context_parts.append(f"- {idiom}")
+                context_parts.append("")
+
+            # Show top anti-patterns
+            if profile.anti_patterns:
+                context_parts.append("**Anti-patterns to flag:**")
+                for ap in profile.anti_patterns[:4]:  # Limit to top 4
+                    context_parts.append(f"- {ap}")
+                context_parts.append("")
+
+            # Show top security concerns
+            if profile.security_patterns:
+                context_parts.append("**Security concerns:**")
+                for sp in profile.security_patterns[:4]:  # Limit to top 4
+                    context_parts.append(f"- {sp}")
+                context_parts.append("")
+
+        return "\n".join(context_parts)
 
     def _format_file_contexts(self, file_contexts: list[dict[str, Any]]) -> str:
         """Format file contexts for LLM prompt.

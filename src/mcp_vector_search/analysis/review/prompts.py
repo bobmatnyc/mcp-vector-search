@@ -1,4 +1,17 @@
-"""Review prompt templates for AI-powered code review system."""
+"""Review prompt templates for AI-powered code review system.
+
+This module provides specialized review prompts for different review types
+(security, architecture, performance, quality, testing, documentation).
+
+Multi-Language Support:
+    The PR review system is language-aware and provides language-specific
+    standards, idioms, anti-patterns, and security concerns for:
+    - Python, TypeScript, JavaScript, Java, C#, Ruby, Go, Rust, PHP,
+      Swift, Kotlin, Scala
+
+    Language context is automatically injected into PR reviews based on
+    file extensions in the patches.
+"""
 
 from .models import ReviewType
 

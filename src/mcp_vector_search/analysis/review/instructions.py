@@ -41,6 +41,24 @@ except ImportError:
     logger.warning("PyYAML not installed, review instructions will use defaults only")
 
 
+# Language-specific config files to discover
+LANGUAGE_CONFIG_FILES = {
+    ".rubocop.yml": "Ruby style rules (RuboCop)",
+    "checkstyle.xml": "Java code style rules (Checkstyle)",
+    ".eslintrc.js": "JavaScript/TypeScript lint rules (ESLint)",
+    ".eslintrc.json": "JavaScript/TypeScript lint rules (ESLint)",
+    "tsconfig.json": "TypeScript compiler options",
+    ".golangci.yml": "Go linting rules (golangci-lint)",
+    "Cargo.toml": "Rust project config",
+    "phpstan.neon": "PHP static analysis rules (PHPStan)",
+    ".php-cs-fixer.php": "PHP code style (PHP CS Fixer)",
+    ".swiftlint.yml": "Swift linting rules (SwiftLint)",
+    "detekt.yml": "Kotlin code analysis (detekt)",
+    "scalafmt.conf": "Scala formatting rules",
+    ".scalafmt.conf": "Scala formatting rules",
+}
+
+
 # Default review instructions (fallback when no config file)
 DEFAULT_INSTRUCTIONS = {
     "language_standards": [
@@ -262,7 +280,20 @@ class InstructionsLoader:
                 f"Extracted {len(editorconfig_rules)} rules from .editorconfig"
             )
 
-        # 5. Deduplicate rules within each category
+        # 5. Extract from language-specific config files
+        language_config_rules = self._extract_from_language_configs()
+        if language_config_rules:
+            merged_instructions["language_standards"].extend(language_config_rules)
+            # Add unique config file names to sources_found
+            for config_file in LANGUAGE_CONFIG_FILES:
+                if (self.project_root / config_file).exists():
+                    if config_file not in sources_found:
+                        sources_found.append(config_file)
+            logger.debug(
+                f"Extracted {len(language_config_rules)} rules from language configs"
+            )
+
+        # 6. Deduplicate rules within each category
         for category in merged_instructions:
             if merged_instructions[category]:
                 # Remove exact duplicates while preserving order
@@ -274,7 +305,7 @@ class InstructionsLoader:
                         deduplicated.append(rule)
                 merged_instructions[category] = deduplicated
 
-        # 6. Fallback to defaults if nothing found
+        # 7. Fallback to defaults if nothing found
         if not sources_found:
             logger.debug("No custom standards found, using defaults")
             for category, rules in DEFAULT_INSTRUCTIONS.items():
@@ -581,6 +612,138 @@ class InstructionsLoader:
         if "charset" in config and is_all_files:
             charset = config["charset"]
             rules.append(f"Character encoding: {charset}")
+
+        return rules
+
+    def _extract_from_language_configs(self) -> list[str]:
+        """Extract standards from language-specific config files.
+
+        Looks for config files defined in LANGUAGE_CONFIG_FILES and extracts
+        a summary of key settings.
+
+        Returns:
+            List of extracted standards with language prefix
+
+        Example:
+            >>> loader = InstructionsLoader(Path("."))
+            >>> rules = loader._extract_from_language_configs()
+            >>> print(rules)
+            ['TypeScript: strict mode enabled', 'Ruby: Style/StringLiterals: double_quotes', ...]
+        """
+        rules: list[str] = []
+
+        for config_file, description in LANGUAGE_CONFIG_FILES.items():
+            config_path = self.project_root / config_file
+
+            if not config_path.exists():
+                continue
+
+            try:
+                # Add a summary based on file presence
+                # Extract language name from description
+                lang_match = re.match(r"^(\w+)", description)
+                lang_name = lang_match.group(1) if lang_match else "Config"
+
+                # For specific files, try to extract key settings
+                if config_file == "tsconfig.json":
+                    rules.extend(self._extract_tsconfig_rules(config_path, lang_name))
+                elif config_file in [".eslintrc.js", ".eslintrc.json"]:
+                    # Note presence (parsing JS config is complex)
+                    rules.append(f"{lang_name}: ESLint configured")
+                elif config_file == ".rubocop.yml":
+                    rules.extend(self._extract_rubocop_rules(config_path, lang_name))
+                elif config_file == "Cargo.toml":
+                    rules.append(f"{lang_name}: Cargo.toml present (check for clippy config)")
+                elif config_file == ".golangci.yml":
+                    rules.append(f"{lang_name}: golangci-lint configured")
+                else:
+                    # Generic config file present
+                    rules.append(f"{lang_name}: {description}")
+
+            except Exception as e:
+                logger.debug(f"Failed to parse {config_file}: {e}")
+
+        return rules
+
+    def _extract_tsconfig_rules(self, config_path: Path, lang_name: str) -> list[str]:
+        """Extract key rules from tsconfig.json.
+
+        Args:
+            config_path: Path to tsconfig.json
+            lang_name: Language name for prefix
+
+        Returns:
+            List of extracted rules
+        """
+        rules: list[str] = []
+
+        try:
+            import json
+
+            with open(config_path) as f:
+                config = json.load(f)
+
+            compiler_options = config.get("compilerOptions", {})
+
+            if compiler_options.get("strict"):
+                rules.append(f"{lang_name}: strict mode enabled")
+
+            if compiler_options.get("noImplicitAny"):
+                rules.append(f"{lang_name}: no implicit any types")
+
+            if compiler_options.get("strictNullChecks"):
+                rules.append(f"{lang_name}: strict null checks enabled")
+
+            if not rules:
+                rules.append(f"{lang_name}: TypeScript compiler configured")
+
+        except Exception as e:
+            logger.debug(f"Failed to parse tsconfig.json: {e}")
+            rules.append(f"{lang_name}: TypeScript compiler configured")
+
+        return rules
+
+    def _extract_rubocop_rules(self, config_path: Path, lang_name: str) -> list[str]:
+        """Extract key rules from .rubocop.yml.
+
+        Args:
+            config_path: Path to .rubocop.yml
+            lang_name: Language name for prefix
+
+        Returns:
+            List of extracted rules
+        """
+        rules: list[str] = []
+
+        try:
+            if not YAML_AVAILABLE:
+                rules.append(f"{lang_name}: RuboCop configured")
+                return rules
+
+            with open(config_path) as f:
+                config = yaml.safe_load(f)
+
+            if not config:
+                rules.append(f"{lang_name}: RuboCop configured")
+                return rules
+
+            # Extract a few common settings
+            if "Style/StringLiterals" in config:
+                enforced = config["Style/StringLiterals"].get("EnforcedStyle", "")
+                if enforced:
+                    rules.append(f"{lang_name}: String literals use {enforced}")
+
+            if "Layout/LineLength" in config:
+                max_length = config["Layout/LineLength"].get("Max", "")
+                if max_length:
+                    rules.append(f"{lang_name}: Maximum line length {max_length}")
+
+            if not rules:
+                rules.append(f"{lang_name}: RuboCop configured")
+
+        except Exception as e:
+            logger.debug(f"Failed to parse .rubocop.yml: {e}")
+            rules.append(f"{lang_name}: RuboCop configured")
 
         return rules
 
