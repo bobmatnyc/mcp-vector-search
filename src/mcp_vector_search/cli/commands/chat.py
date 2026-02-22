@@ -273,6 +273,7 @@ def show_intro() -> None:
   Search and explain code semantically
   Answer questions about architecture and patterns
   Analyze code quality and complexity
+  Review code for security, architecture, and performance issues
   Write analysis reports to markdown files
   Search the web for documentation
 
@@ -312,6 +313,7 @@ CONVERSATIONAL_SYSTEM_PROMPT = """You are a helpful code assistant. IMPORTANT GU
    - Use read_file for full file context
    - Use write_markdown to create reports
    - Use analyze_code for quality metrics
+   - Use review_code for AI-powered security, architecture, or performance reviews
    - Use web_search for external documentation
    - Use query_knowledge_graph (if available) to explore code relationships
 
@@ -878,6 +880,33 @@ def _get_tools() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "review_code",
+                "description": "Run an AI-powered code review. Supports security, architecture, and performance review types. Uses vector search and knowledge graph for context.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "review_type": {
+                            "type": "string",
+                            "enum": ["security", "architecture", "performance"],
+                            "description": "Type of review to perform",
+                        },
+                        "scope": {
+                            "type": "string",
+                            "description": "Optional path to scope the review (e.g., 'src/auth', 'core/')",
+                        },
+                        "max_chunks": {
+                            "type": "integer",
+                            "description": "Maximum code chunks to analyze (default: 20)",
+                            "default": 20,
+                        },
+                    },
+                    "required": ["review_type"],
+                },
+            },
+        },
     ]
 
 
@@ -889,6 +918,7 @@ async def _execute_tool(
     project_root: Path,
     config: Any,
     session: EnhancedChatSession | None = None,
+    llm_client: LLMClient | None = None,
 ) -> str:
     """Execute a tool and return result.
 
@@ -900,6 +930,7 @@ async def _execute_tool(
         project_root: Project root path
         config: Project config
         session: Chat session for tracking search history
+        llm_client: LLM client for tools that need it (e.g., review_code)
 
     Returns:
         Tool execution result as string
@@ -964,6 +995,19 @@ async def _execute_tool(
             arguments.get("relationship_type", "all"),
             arguments.get("max_hops", 2),
             search_engine,
+        )
+
+    elif tool_name == "review_code":
+        if not llm_client:
+            return "Error: LLM client not available for code review"
+
+        return await _tool_review_code(
+            arguments.get("review_type", "security"),
+            arguments.get("scope"),
+            arguments.get("max_chunks", 20),
+            search_engine,
+            llm_client,
+            project_root,
         )
 
     else:
@@ -1436,6 +1480,117 @@ async def _tool_query_knowledge_graph(
         return f"Error querying knowledge graph: {e}"
 
 
+async def _tool_review_code(
+    review_type: str,
+    scope: str | None,
+    max_chunks: int,
+    search_engine: Any,
+    llm_client: LLMClient,
+    project_root: Path,
+) -> str:
+    """Execute review_code tool - run AI-powered code review.
+
+    Args:
+        review_type: Type of review (security, architecture, performance)
+        scope: Optional path filter (e.g., 'src/auth', 'core/')
+        max_chunks: Maximum code chunks to analyze
+        search_engine: Search engine instance
+        llm_client: LLM client for analysis
+        project_root: Project root directory
+
+    Returns:
+        Formatted review results string
+    """
+    try:
+        from ...analysis.review import ReviewEngine, ReviewType
+
+        # Validate review type
+        try:
+            review_type_enum = ReviewType(review_type.lower())
+        except ValueError:
+            return f"Error: Invalid review type '{review_type}'. Must be 'security', 'architecture', or 'performance'."
+
+        # Get knowledge graph if available
+        knowledge_graph = None
+        if hasattr(search_engine, "_kg") and search_engine._kg is not None:
+            knowledge_graph = search_engine._kg
+            # Ensure KG is initialized
+            if not knowledge_graph._initialized:
+                await knowledge_graph.initialize()
+
+        # Create review engine
+        engine = ReviewEngine(
+            search_engine=search_engine,
+            knowledge_graph=knowledge_graph,
+            llm_client=llm_client,
+            project_root=project_root,
+        )
+
+        # Run review
+        result = await engine.run_review(
+            review_type=review_type_enum,
+            scope=scope,
+            max_chunks=max_chunks,
+        )
+
+        # Format results for chat context
+        if not result.findings:
+            return f"""## {review_type.title()} Review Results
+
+No issues found.
+
+**Summary**: {result.summary}
+**Scope**: {result.scope}
+**Analyzed**: {result.context_chunks_used} code chunks, {result.kg_relationships_used} KG relationships
+**Duration**: {result.duration_seconds:.1f}s"""
+
+        # Severity emoji mapping
+        severity_emoji = {
+            "critical": "🔴",
+            "high": "🟠",
+            "medium": "🟡",
+            "low": "🔵",
+            "info": "⚪",
+        }
+
+        # Build formatted output
+        parts = [f"## {review_type.title()} Review Results"]
+        parts.append(f"\nFound {len(result.findings)} finding(s):\n")
+
+        for _i, finding in enumerate(result.findings, 1):
+            emoji = severity_emoji.get(finding.severity.value, "•")
+            parts.append(
+                f"### {emoji} {finding.severity.value.upper()}: {finding.title}"
+            )
+            parts.append(
+                f"- **File**: `{finding.file_path}:{finding.start_line}-{finding.end_line}`"
+            )
+            parts.append(f"- **Category**: {finding.category}")
+            if finding.cwe_id:
+                parts.append(f"- **CWE**: {finding.cwe_id}")
+            parts.append(f"- **Confidence**: {finding.confidence * 100:.0f}%")
+            parts.append(f"- **Description**: {finding.description}")
+            parts.append(f"- **Recommendation**: {finding.recommendation}")
+
+            if finding.related_files:
+                related = ", ".join(f"`{f}`" for f in finding.related_files[:3])
+                parts.append(f"- **Related files**: {related}")
+
+            parts.append("")  # Blank line between findings
+
+        # Add summary
+        parts.append("---")
+        parts.append(
+            f"**Summary**: Analyzed {result.context_chunks_used} code chunks, {result.kg_relationships_used} KG relationships. Review took {result.duration_seconds:.1f}s."
+        )
+
+        return "\n".join(parts)
+
+    except Exception as e:
+        logger.error(f"review_code failed: {e}")
+        return f"Error running code review: {e}"
+
+
 async def _process_query(
     query: str,
     llm_client: LLMClient,
@@ -1511,6 +1666,7 @@ async def _process_query(
                         project_root,
                         config,
                         session,
+                        llm_client,
                     )
 
                     # Add tool result

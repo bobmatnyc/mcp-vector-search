@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import typer
@@ -1424,6 +1425,582 @@ from .analyze_engineers import analyze_engineers  # noqa: E402
 analyze_app.command(name="engineers", help="👥 Profile engineers by code quality")(
     analyze_engineers
 )
+
+
+@analyze_app.command(name="review")
+def review_code(
+    review_type: str = typer.Argument(
+        ...,
+        help="Type of review: security, architecture, or performance",
+    ),
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory (auto-detected if not specified)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        rich_help_panel="🔧 Global Options",
+    ),
+    format: str = typer.Option(
+        "console",
+        "--format",
+        "-f",
+        help="Output format: console, json, sarif, markdown",
+        rich_help_panel="📊 Display Options",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file path (stdout for console, auto-named for others)",
+        rich_help_panel="📊 Display Options",
+    ),
+    path: Path | None = typer.Option(
+        None,
+        "--path",
+        help="Scope review to specific path/directory",
+        rich_help_panel="🔍 Filters",
+    ),
+    max_chunks: int = typer.Option(
+        30,
+        "--max-chunks",
+        help="Maximum code chunks to analyze",
+        min=10,
+        max=100,
+        rich_help_panel="⚡ Performance Options",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show detailed progress",
+        rich_help_panel="📊 Display Options",
+    ),
+) -> None:
+    """🔍 AI-powered code review using vector search and LLM analysis.
+
+    Performs specialized code reviews with targeted search queries and LLM analysis
+    to identify security vulnerabilities, architectural issues, or performance problems.
+
+    [bold cyan]Basic Examples:[/bold cyan]
+
+    [green]Security review:[/green]
+        $ mcp-vector-search analyze review security
+
+    [green]Architecture review:[/green]
+        $ mcp-vector-search analyze review architecture
+
+    [green]Performance review:[/green]
+        $ mcp-vector-search analyze review performance
+
+    [bold cyan]Scoped Reviews:[/bold cyan]
+
+    [green]Review specific module:[/green]
+        $ mcp-vector-search analyze review security --path src/auth
+
+    [green]Review with more context:[/green]
+        $ mcp-vector-search analyze review architecture --max-chunks 50
+
+    [bold cyan]Output Formats:[/bold cyan]
+
+    [green]Export to JSON:[/green]
+        $ mcp-vector-search analyze review security --format json --output findings.json
+
+    [green]Export to SARIF (for GitHub):[/green]
+        $ mcp-vector-search analyze review security --format sarif --output findings.sarif
+
+    [green]Export to Markdown report:[/green]
+        $ mcp-vector-search analyze review architecture --format markdown --output review.md
+
+    [dim]💡 Tip: Use --verbose to see search queries and LLM analysis progress.[/dim]
+    """
+    try:
+        # Use provided project_root or current working directory
+        if project_root is None:
+            project_root = Path.cwd()
+
+        # Validate review type
+        from ...analysis.review import ReviewType
+
+        valid_types = [rt.value for rt in ReviewType]
+        if review_type.lower() not in valid_types:
+            print_error(
+                f"Invalid review type: {review_type}. Must be one of: {', '.join(valid_types)}"
+            )
+            raise typer.Exit(1)
+
+        # Validate format
+        valid_formats = ["console", "json", "sarif", "markdown"]
+        format_lower = format.lower()
+        if format_lower not in valid_formats:
+            print_error(
+                f"Invalid format: {format}. Must be one of: {', '.join(valid_formats)}"
+            )
+            raise typer.Exit(1)
+
+        # Run review
+        asyncio.run(
+            run_review_analysis(
+                project_root=project_root,
+                review_type=review_type.lower(),
+                output_format=format_lower,
+                output_file=output,
+                scope_path=path,
+                max_chunks=max_chunks,
+                verbose=verbose,
+            )
+        )
+
+    except typer.Exit:
+        # Re-raise typer.Exit to preserve exit codes
+        raise
+    except Exception as e:
+        logger.error(f"Review analysis failed: {e}")
+        print_error(f"Review analysis failed: {e}")
+        raise typer.Exit(2)
+
+
+async def run_review_analysis(
+    project_root: Path,
+    review_type: str,
+    output_format: str = "console",
+    output_file: Path | None = None,
+    scope_path: Path | None = None,
+    max_chunks: int = 30,
+    verbose: bool = False,
+) -> None:
+    """Run AI-powered code review workflow.
+
+    Args:
+        project_root: Root directory of the project
+        review_type: Type of review (security, architecture, performance)
+        output_format: Output format (console, json, sarif, markdown)
+        output_file: Output file path (None for stdout)
+        scope_path: Optional path to scope review
+        max_chunks: Maximum code chunks to analyze
+        verbose: Show detailed progress
+    """
+    from rich.console import Console
+
+    from ...analysis.review import ReviewEngine, ReviewType
+    from ...core.embeddings import create_embedding_function
+    from ...core.factory import create_database
+    from ...core.llm_client import LLMClient
+    from ...core.search import SemanticSearchEngine
+
+    console = Console()
+
+    try:
+        # Check if project is initialized
+        project_manager = ProjectManager(project_root)
+        if not project_manager.is_initialized():
+            print_error(
+                f"Project not initialized at {project_root}. Run 'mcp-vector-search init' first."
+            )
+            raise typer.Exit(1)
+
+        config = project_manager.load_config()
+
+        # Initialize search engine
+        if verbose:
+            console.print("[bold blue]Initializing search engine...[/bold blue]")
+
+        embedding_function, _ = create_embedding_function(config.embedding_model)
+        database = create_database(
+            persist_directory=config.index_path / "lance",
+            embedding_function=embedding_function,
+            collection_name="vectors",
+        )
+        await database.initialize()
+
+        search_engine = SemanticSearchEngine(
+            database=database,
+            project_root=project_root,
+            similarity_threshold=config.similarity_threshold,
+        )
+
+        # Initialize LLM client
+        if verbose:
+            console.print("[bold blue]Initializing LLM client...[/bold blue]")
+
+        llm_client = LLMClient()
+
+        # Try to initialize knowledge graph (optional)
+        knowledge_graph = None
+        try:
+            from ...core.knowledge_graph import KnowledgeGraph
+
+            kg_path = config.index_path / "kg.db"
+            if kg_path.exists():
+                knowledge_graph = KnowledgeGraph(kg_path)
+                if verbose:
+                    console.print("[bold blue]Knowledge graph loaded[/bold blue]")
+        except Exception as e:
+            logger.debug(f"Knowledge graph not available: {e}")
+            if verbose:
+                console.print(
+                    "[yellow]Knowledge graph not available (optional)[/yellow]"
+                )
+
+        # Create review engine
+        review_engine = ReviewEngine(
+            search_engine=search_engine,
+            knowledge_graph=knowledge_graph,
+            llm_client=llm_client,
+            project_root=project_root,
+        )
+
+        # Convert review type string to enum
+        review_type_enum = ReviewType(review_type)
+
+        # Prepare scope string
+        scope_str = str(scope_path.relative_to(project_root)) if scope_path else None
+
+        # Run review
+        if verbose:
+            console.print(f"\n[bold blue]Running {review_type} review...[/bold blue]")
+
+        async with database:
+            result = await review_engine.run_review(
+                review_type=review_type_enum,
+                scope=scope_str,
+                max_chunks=max_chunks,
+            )
+
+        # Format output based on format
+        if output_format == "console":
+            _print_review_console(result, console)
+        elif output_format == "json":
+            _export_review_json(result, output_file)
+        elif output_format == "sarif":
+            _export_review_sarif(result, output_file, project_root)
+        elif output_format == "markdown":
+            _export_review_markdown(result, output_file)
+
+    except ProjectNotFoundError as e:
+        print_error(str(e))
+        raise typer.Exit(1)
+    except Exception as e:
+        logger.error(f"Review analysis failed: {e}", exc_info=True)
+        print_error(f"Review analysis failed: {e}")
+        raise typer.Exit(2)
+
+
+def _print_review_console(result, console) -> None:
+    """Print review results to console in rich format."""
+
+    # Header
+    console.print(
+        f"\n[bold blue]🔍 {result.review_type.value.title()} Review[/bold blue] — {result.scope}"
+    )
+    console.print("━" * 80)
+
+    # Summary
+    severity_counts = {}
+    for finding in result.findings:
+        severity_counts[finding.severity] = severity_counts.get(finding.severity, 0) + 1
+
+    console.print(
+        f"\nFound [bold]{len(result.findings)}[/bold] findings "
+        f"([red]{severity_counts.get('critical', 0)} critical[/red], "
+        f"[yellow]{severity_counts.get('high', 0)} high[/yellow], "
+        f"[blue]{severity_counts.get('medium', 0)} medium[/blue])\n"
+    )
+
+    # Findings table
+    for finding in result.findings:
+        # Color-code by severity
+        severity_colors = {
+            "critical": "red",
+            "high": "yellow",
+            "medium": "blue",
+            "low": "green",
+            "info": "dim",
+        }
+        color = severity_colors.get(finding.severity.value, "white")
+
+        # Print finding
+        console.print(
+            f"[{color}]{'🔴' if finding.severity.value == 'critical' else '🟠' if finding.severity.value == 'high' else '🟡'} "
+            f"{finding.severity.value.upper()}: {finding.title}[/{color}]"
+        )
+        console.print(f"   {finding.file_path}:{finding.start_line}-{finding.end_line}")
+        if finding.cwe_id:
+            console.print(f"   {finding.cwe_id} | Confidence: {finding.confidence:.0%}")
+        else:
+            console.print(f"   Confidence: {finding.confidence:.0%}")
+        console.print(f"   → {finding.recommendation}\n")
+
+    # Metadata
+    console.print(
+        f"\n[dim]Summary: Analyzed {result.context_chunks_used} code chunks, "
+        f"{result.kg_relationships_used} KG relationships[/dim]"
+    )
+    console.print(
+        f"[dim]Review completed in {result.duration_seconds:.1f}s using {result.model_used}[/dim]\n"
+    )
+
+
+def _export_review_json(result, output_file: Path | None) -> None:
+    """Export review results to JSON format."""
+    import json
+
+    output_data = {
+        "review_type": result.review_type.value,
+        "scope": result.scope,
+        "summary": result.summary,
+        "findings": [
+            {
+                "title": f.title,
+                "description": f.description,
+                "severity": f.severity.value,
+                "file_path": f.file_path,
+                "start_line": f.start_line,
+                "end_line": f.end_line,
+                "category": f.category,
+                "recommendation": f.recommendation,
+                "confidence": f.confidence,
+                "cwe_id": f.cwe_id,
+                "code_snippet": f.code_snippet,
+                "related_files": f.related_files,
+            }
+            for f in result.findings
+        ],
+        "metadata": {
+            "context_chunks_used": result.context_chunks_used,
+            "kg_relationships_used": result.kg_relationships_used,
+            "model_used": result.model_used,
+            "duration_seconds": result.duration_seconds,
+        },
+    }
+
+    if output_file:
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2, ensure_ascii=False)
+        from ..output import console
+
+        console.print(f"[green]✓[/green] JSON report written to: {output_file}")
+    else:
+        # Print to stdout
+        print(json.dumps(output_data, indent=2, ensure_ascii=False))
+
+
+def _export_review_sarif(result, output_file: Path | None, base_path: Path) -> None:
+    """Export review results to SARIF 2.1.0 format."""
+    import json
+    from datetime import UTC, datetime
+
+    # Build SARIF document
+    sarif_doc = {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "MCP Vector Search - Code Review",
+                        "version": "1.0.0",
+                        "informationUri": "https://github.com/bobmatnyc/mcp-vector-search",
+                        "rules": _build_sarif_rules(result),
+                    }
+                },
+                "results": [
+                    _finding_to_sarif_result(f, base_path) for f in result.findings
+                ],
+                "invocations": [
+                    {
+                        "executionSuccessful": True,
+                        "endTimeUtc": datetime.now(UTC).isoformat(),
+                    }
+                ],
+            }
+        ],
+    }
+
+    # Write to file
+    if not output_file:
+        output_file = Path(f"review-{result.review_type.value}.sarif")
+
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(sarif_doc, f, indent=2, ensure_ascii=False)
+
+    from ..output import console
+
+    console.print(f"[green]✓[/green] SARIF report written to: {output_file}")
+
+
+def _build_sarif_rules(result) -> list[dict]:
+    """Build SARIF rules from review findings."""
+    unique_categories = {}
+    for finding in result.findings:
+        if finding.category not in unique_categories:
+            unique_categories[finding.category] = finding
+
+    rules = []
+    for category, finding in unique_categories.items():
+        rule = {
+            "id": category.lower().replace(" ", "-"),
+            "shortDescription": {"text": category},
+            "fullDescription": {"text": finding.description},
+            "help": {"text": finding.recommendation},
+            "defaultConfiguration": {
+                "level": _severity_to_sarif_level(finding.severity.value)
+            },
+        }
+
+        # Add CWE reference for security findings
+        if finding.cwe_id:
+            rule["properties"] = {"cwe": finding.cwe_id}
+
+        rules.append(rule)
+
+    return rules
+
+
+def _severity_to_sarif_level(severity: str) -> str:
+    """Map review severity to SARIF level."""
+    mapping = {
+        "critical": "error",
+        "high": "error",
+        "medium": "warning",
+        "low": "warning",
+        "info": "note",
+    }
+    return mapping.get(severity, "warning")
+
+
+def _finding_to_sarif_result(finding, base_path: Path) -> dict:
+    """Convert ReviewFinding to SARIF result."""
+    from pathlib import Path
+
+    # Make path relative
+    file_path = finding.file_path
+    try:
+        file_path_obj = Path(file_path)
+        if file_path_obj.is_absolute():
+            file_path = str(file_path_obj.relative_to(base_path))
+    except (ValueError, OSError):
+        pass
+
+    result = {
+        "ruleId": finding.category.lower().replace(" ", "-"),
+        "level": _severity_to_sarif_level(finding.severity.value),
+        "message": {"text": f"{finding.title}: {finding.description}"},
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": file_path},
+                    "region": {
+                        "startLine": finding.start_line,
+                        "endLine": finding.end_line,
+                    },
+                }
+            }
+        ],
+        "properties": {
+            "confidence": finding.confidence,
+            "recommendation": finding.recommendation,
+        },
+    }
+
+    if finding.cwe_id:
+        result["properties"]["cwe"] = finding.cwe_id
+
+    return result
+
+
+def _export_review_markdown(result, output_file: Path | None) -> None:
+    """Export review results to Markdown format."""
+    lines = [
+        f"# {result.review_type.value.title()} Review Report",
+        "",
+        f"**Scope:** {result.scope}",
+        f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "## Summary",
+        "",
+        result.summary,
+        "",
+        "## Findings",
+        "",
+    ]
+
+    # Group findings by severity
+    by_severity = {}
+    for finding in result.findings:
+        severity = finding.severity.value
+        if severity not in by_severity:
+            by_severity[severity] = []
+        by_severity[severity].append(finding)
+
+    # Output by severity (critical -> info)
+    severity_order = ["critical", "high", "medium", "low", "info"]
+    for severity in severity_order:
+        if severity not in by_severity:
+            continue
+
+        findings = by_severity[severity]
+        severity_icons = {
+            "critical": "🔴",
+            "high": "🟠",
+            "medium": "🟡",
+            "low": "🟢",
+            "info": "ℹ️",
+        }
+        icon = severity_icons.get(severity, "•")
+
+        lines.append(f"### {icon} {severity.upper()}")
+        lines.append("")
+
+        for finding in findings:
+            lines.append(f"#### {finding.title}")
+            lines.append("")
+            lines.append(
+                f"**Location:** `{finding.file_path}:{finding.start_line}-{finding.end_line}`"
+            )
+            lines.append(f"**Category:** {finding.category}")
+            lines.append(f"**Confidence:** {finding.confidence:.0%}")
+            if finding.cwe_id:
+                lines.append(f"**CWE:** {finding.cwe_id}")
+            lines.append("")
+            lines.append(f"**Description:** {finding.description}")
+            lines.append("")
+            lines.append(f"**Recommendation:** {finding.recommendation}")
+            lines.append("")
+            if finding.code_snippet:
+                lines.append("**Code Snippet:**")
+                lines.append("```")
+                lines.append(finding.code_snippet)
+                lines.append("```")
+                lines.append("")
+
+    # Metadata
+    lines.append("## Metadata")
+    lines.append("")
+    lines.append(f"- **Code Chunks Analyzed:** {result.context_chunks_used}")
+    lines.append(f"- **Knowledge Graph Relationships:** {result.kg_relationships_used}")
+    lines.append(f"- **Model Used:** {result.model_used}")
+    lines.append(f"- **Duration:** {result.duration_seconds:.1f}s")
+    lines.append("")
+
+    markdown_content = "\n".join(lines)
+
+    # Write to file
+    if not output_file:
+        output_file = Path(f"review-{result.review_type.value}.md")
+
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(markdown_content)
+
+    from ..output import console
+
+    console.print(f"[green]✓[/green] Markdown report written to: {output_file}")
 
 
 if __name__ == "__main__":
