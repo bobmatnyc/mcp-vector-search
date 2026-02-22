@@ -137,14 +137,15 @@ class SemanticIndexer:
                     )
                 except ValueError:
                     logger.warning(
-                        f"Invalid batch size value: {env_batch_size}, using default 256"
+                        f"Invalid batch size value: {env_batch_size}, using default 512"
                     )
-                    self.batch_size = 256
+                    self.batch_size = 512
             else:
-                # Increased default from 128 to 256 for better storage throughput
-                # Larger batches = fewer LanceDB writes = less overhead
-                # 256 files per batch is a good balance between memory and throughput
-                self.batch_size = 256
+                # Increased default from 256 to 512 for better throughput
+                # PERFORMANCE: Larger batches reduce per-batch overhead
+                # 32K files @ 256/batch = 125 batches, @ 512/batch = 62 batches (50% reduction)
+                # 512 files per batch is optimal for GPU utilization
+                self.batch_size = 512
         else:
             self.batch_size = batch_size
 
@@ -515,17 +516,19 @@ class SemanticIndexer:
         if not files_to_index:
             logger.info("All files are up to date")
             # Still build BM25 index if it doesn't exist
-            bm25_path = self.config.index_path / "bm25_index.pkl"
-            if not bm25_path.exists():
-                logger.info(f"BM25 index not found at {bm25_path}, building now...")
-                await self._build_bm25_index()
-            else:
-                logger.info(f"BM25 index already exists at {bm25_path}")
+            if self.config and self.config.index_path:
+                bm25_path = self.config.index_path / "bm25_index.pkl"
+                if not bm25_path.exists():
+                    logger.info(f"BM25 index not found at {bm25_path}, building now...")
+                    await self._build_bm25_index()
+                else:
+                    logger.info(f"BM25 index already exists at {bm25_path}")
             return 0, 0, 0
 
         # PIPELINE IMPLEMENTATION: Producer-consumer pattern
-        # Queue holds chunked file batches ready for embedding (maxsize=2 buffers one batch ahead)
-        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=2)
+        # PERFORMANCE: Increased queue buffer from 2 to 10 to allow more parsed batches ahead
+        # This prevents GPU starvation when parsing batches take varying amounts of time
+        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=10)
         files_indexed = 0
         chunks_created = 0
         chunks_embedded = 0
@@ -950,6 +953,9 @@ class SemanticIndexer:
                 except OSError:
                     pass
             self.metadata.save(metadata_dict)
+
+        # CLEANUP: Shutdown persistent ProcessPoolExecutor after indexing completes
+        self.chunk_processor.close()
 
         return files_indexed, chunks_created, chunks_embedded
 
@@ -2673,23 +2679,54 @@ class SemanticIndexer:
         metadata_dict = self.metadata.load()
 
         # PIPELINE PARALLELISM: Overlap parsing and embedding stages
-        # Queue holds parsed batches ready for embedding (maxsize=2 buffers one batch ahead)
+        # PERFORMANCE: Increased queue buffer from 2 to 10 to allow more parsed batches ahead
+        # This prevents GPU starvation when parsing batches take varying amounts of time
         print("📋 Preparing first batch for indexing...", flush=True)
-        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=2)
+        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=10)
         batch_count = 0
+        producer_done_count = 0  # Track how many producers finished
 
-        async def parse_producer():
-            """Producer coroutine: Parse files and put chunks into queue."""
-            nonlocal batch_count
-            for i in range(0, len(files_to_index), self.batch_size):
+        # PERFORMANCE: Multiple parallel producers to keep GPU fed
+        # Configurable via MCP_VECTOR_SEARCH_NUM_PRODUCERS env var (default: 4)
+        # Don't create more producers than batches available
+        num_batches = max(
+            1, (len(files_to_index) + self.batch_size - 1) // self.batch_size
+        )
+        num_producers = min(
+            int(os.environ.get("MCP_VECTOR_SEARCH_NUM_PRODUCERS", "4")), num_batches
+        )
+        # For small codebases, use single producer to avoid overhead
+        if len(files_to_index) < self.batch_size * 2:
+            num_producers = 1
+
+        async def parse_producer(file_range: list[Path], producer_id: int):
+            """Producer coroutine: Parse files and put chunks into queue.
+
+            Args:
+                file_range: Subset of files_to_index this producer handles
+                producer_id: Unique ID for this producer (for logging)
+            """
+            nonlocal batch_count, producer_done_count
+
+            logger.info(
+                f"Producer {producer_id}: Starting with {len(file_range)} files"
+            )
+
+            for i in range(0, len(file_range), self.batch_size):
                 # Check for cancellation at the start of each batch
                 if self.cancellation_flag and self.cancellation_flag.is_set():
-                    logger.info("Indexing cancelled by user (parser)")
-                    await chunk_queue.put(None)  # Signal consumer to stop
+                    logger.info(f"Producer {producer_id}: Indexing cancelled by user")
+                    producer_done_count += 1
+                    if producer_done_count >= num_producers:
+                        await chunk_queue.put(None)  # Signal consumer only once
                     return
 
-                batch = files_to_index[i : i + self.batch_size]
+                batch = file_range[i : i + self.batch_size]
                 batch_count += 1
+
+                logger.debug(
+                    f"Producer {producer_id}: Processing batch {batch_count} with {len(batch)} files"
+                )
 
                 # Accumulate chunks from all files in batch
                 all_chunks: list[CodeChunk] = []
@@ -2812,8 +2849,14 @@ class SemanticIndexer:
                     }
                 )
 
-            # Signal completion
-            await chunk_queue.put(None)
+            # Signal completion (only last producer sends sentinel)
+            producer_done_count += 1
+            logger.info(
+                f"Producer {producer_id}: Completed ({producer_done_count}/{num_producers} producers done)"
+            )
+            if producer_done_count >= num_producers:
+                logger.info("All producers finished, signaling consumer to stop")
+                await chunk_queue.put(None)
 
         async def embed_consumer():
             """Consumer coroutine: Take chunks from queue, embed, and store."""
@@ -3003,16 +3046,37 @@ class SemanticIndexer:
                     chunks_added, success = file_results.get(file_path, (0, False))
                     yield (file_path, chunks_added, success)
 
-        # Run producer and consumer concurrently with pipeline parallelism
-        producer_task = asyncio.create_task(parse_producer())
+        # PERFORMANCE: Create N parallel producers feeding single consumer
+        # Split files_to_index into ranges for each producer
+        logger.info(
+            f"Starting {num_producers} parallel producers with {num_batches} total batches"
+        )
+
+        file_ranges = []
+        chunk_size = len(files_to_index) // num_producers
+        for i in range(num_producers):
+            start = i * chunk_size
+            end = (i + 1) * chunk_size if i < num_producers - 1 else len(files_to_index)
+            file_ranges.append(files_to_index[start:end])
+            logger.debug(
+                f"Producer {i}: Assigned files {start} to {end - 1} ({end - start} files)"
+            )
+
+        # Create producer tasks
+        producer_tasks = [
+            asyncio.create_task(parse_producer(file_range, producer_id=i))
+            for i, file_range in enumerate(file_ranges)
+        ]
+
+        # Start consumer generator
         consumer_gen = embed_consumer()
 
         # Yield results from consumer as they become available
         async for result in consumer_gen:
             yield result
 
-        # Wait for producer to finish
-        await producer_task
+        # Wait for all producers to finish
+        await asyncio.gather(*producer_tasks)
 
         # TIMING: Print final summary with pipeline efficiency
         t_end_index = time.time()
@@ -3046,6 +3110,9 @@ class SemanticIndexer:
             f"  - Pipeline efficiency: {pipeline_efficiency:.1f}% time saved ({time_saved:.2f}s) through stage overlap\n",
             flush=True,
         )
+
+        # CLEANUP: Shutdown persistent ProcessPoolExecutor after indexing completes
+        self.chunk_processor.close()
 
     async def _build_bm25_index(self) -> None:
         """Build BM25 index from all chunks for keyword search.

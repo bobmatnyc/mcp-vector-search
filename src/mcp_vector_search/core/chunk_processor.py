@@ -212,6 +212,11 @@ class ChunkProcessor:
             self.max_workers = 1
             logger.debug("Multiprocessing disabled (single-threaded mode)")
 
+        # Persistent pool for multiprocessing (created lazily, reused across batches)
+        # PERFORMANCE: Creating ProcessPoolExecutor per batch is expensive (125 creates for 32K files)
+        # Reusing pool reduces overhead and keeps GPU fed continuously
+        self._persistent_pool: ProcessPoolExecutor | None = None
+
         # Initialize git blame cache if repo root provided
         self.git_blame_cache = GitBlameCache(repo_root) if repo_root else None
         if self.git_blame_cache:
@@ -307,13 +312,21 @@ class ChunkProcessor:
         # Limit workers to avoid overhead
         max_workers = min(self.max_workers, len(file_paths))
 
-        # Run parsing in ProcessPoolExecutor
-        loop = asyncio.get_running_loop()
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks and wait for results
-            results = await loop.run_in_executor(
-                None, lambda: list(executor.map(_parse_file_standalone, parse_args))
+        # PERFORMANCE: Reuse persistent pool instead of creating per batch
+        # Creating ProcessPoolExecutor is expensive (fork overhead, worker initialization)
+        # For 32K files @ 256/batch = 125 creates → now just 1 create + reuse
+        if self._persistent_pool is None:
+            self._persistent_pool = ProcessPoolExecutor(max_workers=max_workers)
+            logger.info(
+                f"Created persistent ProcessPoolExecutor with {max_workers} workers (reused across all batches)"
             )
+
+        # Run parsing in persistent pool
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(
+            None,
+            lambda: list(self._persistent_pool.map(_parse_file_standalone, parse_args)),
+        )
 
         logger.debug(
             f"Multiprocess parsing completed: {len(results)} files parsed with {max_workers} workers"
@@ -483,3 +496,23 @@ class ChunkProcessor:
             )
 
         return chunks
+
+    def close(self) -> None:
+        """Shutdown persistent ProcessPoolExecutor.
+
+        Call this when indexing is complete to clean up resources.
+        """
+        if self._persistent_pool is not None:
+            logger.debug("Shutting down persistent ProcessPoolExecutor")
+            self._persistent_pool.shutdown(wait=True)
+            self._persistent_pool = None
+
+    def __del__(self) -> None:
+        """Fallback cleanup for persistent pool."""
+        # Don't log in __del__ - may be called during interpreter shutdown
+        if self._persistent_pool is not None:
+            try:
+                self._persistent_pool.shutdown(wait=False)
+                self._persistent_pool = None
+            except Exception:
+                pass  # Ignore errors during cleanup
