@@ -162,6 +162,67 @@ def test_parse_findings_json_invalid_json(review_engine):
     assert len(findings) == 0
 
 
+def test_parse_findings_json_with_multiline_strings(review_engine):
+    """Test _parse_findings_json handles JSON with multiline strings in title/description."""
+    llm_response = """Here are the security findings:
+
+```json
+[
+  {
+    "title": "Authentication Issue with
+    Session Management",
+    "description": "The authentication system has a vulnerability where
+    sessions are not properly validated, allowing unauthorized access
+    to protected resources.",
+    "severity": "high",
+    "file_path": "src/auth/session.py",
+    "start_line": 42,
+    "end_line": 58,
+    "category": "security",
+    "recommendation": "Implement proper session validation
+    and add CSRF protection",
+    "confidence": 0.9
+  }
+]
+```"""
+
+    findings = review_engine._parse_findings_json(llm_response)
+
+    assert len(findings) == 1
+    assert "Authentication Issue with" in findings[0].title
+    assert "Session Management" in findings[0].title
+    assert "authentication system has a vulnerability" in findings[0].description
+    assert findings[0].severity == Severity.HIGH
+    assert findings[0].file_path == "src/auth/session.py"
+
+
+def test_parse_findings_json_with_embedded_code_blocks(review_engine):
+    """Test _parse_findings_json handles JSON containing code blocks in descriptions."""
+    llm_response = """```json
+[
+  {
+    "title": "SQL Injection Vulnerability",
+    "description": "The query is vulnerable:\\n```python\\nquery = 'SELECT * FROM users WHERE name = ' + user_input\\n```\\nThis allows SQL injection attacks.",
+    "severity": "critical",
+    "file_path": "src/db/queries.py",
+    "start_line": 15,
+    "end_line": 15,
+    "category": "security",
+    "recommendation": "Use parameterized queries",
+    "confidence": 0.95
+  }
+]
+```"""
+
+    findings = review_engine._parse_findings_json(llm_response)
+
+    assert len(findings) == 1
+    assert findings[0].title == "SQL Injection Vulnerability"
+    assert "SELECT * FROM users" in findings[0].description
+    assert "SQL injection attacks" in findings[0].description
+    assert findings[0].severity == Severity.CRITICAL
+
+
 def test_format_code_context_returns_non_empty(review_engine):
     """Test _format_code_context returns non-empty string with code chunks."""
     mock_result = MagicMock()
