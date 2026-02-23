@@ -1946,7 +1946,7 @@ class SemanticIndexer:
         # Bug fix: Reset stale "processing" chunks from interrupted runs
         # This prevents chunks from being stuck in processing state indefinitely
         try:
-            stale_count = await self.chunks_backend.reset_stale_processing_chunks(
+            stale_count = await self.chunks_backend.cleanup_stale_processing(
                 older_than_minutes=5
             )
             if stale_count > 0:
