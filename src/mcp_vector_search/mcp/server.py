@@ -112,9 +112,9 @@ class MCPVectorSearchServer:
                 model_name=config.embedding_model
             )
 
-            # Setup database
+            # Setup database (use lance subdirectory for LanceDB tables)
             self.database = create_database(
-                persist_directory=config.index_path,
+                persist_directory=config.index_path / "lance",
                 embedding_function=embedding_function,
             )
 

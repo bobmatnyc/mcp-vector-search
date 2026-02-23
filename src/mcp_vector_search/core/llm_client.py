@@ -31,13 +31,18 @@ class LLMClient:
     1. Explicit provider parameter
     2. Preferred provider from config
     3. Auto-detect: Bedrock (if AWS creds) → OpenRouter → OpenAI
+
+    Default Models:
+    - Bedrock: Claude Sonnet 4.6 (us.anthropic.claude-sonnet-4-6-20250514-v1:0)
+    - OpenRouter: Claude Opus 4.5
+    - OpenAI: GPT-4o-mini
     """
 
     # Default models for each provider (comparable performance/cost)
     DEFAULT_MODELS = {
         "openai": "gpt-4o-mini",  # Fast, cheap, comparable to claude-3-haiku
         "openrouter": "anthropic/claude-opus-4.5",  # Claude Opus 4.5 for chat REPL
-        "bedrock": "anthropic.claude-3-5-sonnet-20241022-v2:0",  # Claude 3.5 Sonnet v2
+        "bedrock": "us.anthropic.claude-sonnet-4-6-20250514-v1:0",  # Claude Sonnet 4.6 (cross-region inference)
     }
 
     # Advanced "thinking" models for complex queries (--think flag)
@@ -162,14 +167,34 @@ class LLMClient:
 
     @property
     def _bedrock_available(self) -> bool:
-        """Check if AWS Bedrock credentials are available."""
-        return bool(
+        """Check if AWS Bedrock credentials are available.
+
+        Checks for:
+        1. Explicit AWS credentials (AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)
+        2. AWS session token (AWS_SESSION_TOKEN) - used with temporary credentials
+        3. Custom Bedrock endpoint (ANTHROPIC_BEDROCK_BASE_URL) - Claude Code compatibility
+
+        Note: boto3 also supports ~/.aws/credentials and instance profiles,
+        but we can't easily check those without importing boto3.
+        """
+        # Check explicit credentials
+        has_explicit_creds = bool(
             os.environ.get("AWS_ACCESS_KEY_ID")
             and os.environ.get("AWS_SECRET_ACCESS_KEY")
         )
 
+        # Check for custom Bedrock endpoint (Claude Code sets this)
+        has_bedrock_endpoint = bool(os.environ.get("ANTHROPIC_BEDROCK_BASE_URL"))
+
+        return has_explicit_creds or has_bedrock_endpoint
+
     def _get_bedrock_client(self) -> Any:
         """Get or create boto3 bedrock-runtime client (lazy initialization).
+
+        Supports:
+        - Standard boto3 credential chain (env vars, ~/.aws/credentials, instance profiles)
+        - AWS_REGION / AWS_DEFAULT_REGION env vars (defaults to us-east-1)
+        - ANTHROPIC_BEDROCK_BASE_URL for custom endpoint (Claude Code compatibility)
 
         Returns:
             boto3 bedrock-runtime client
@@ -190,11 +215,26 @@ class LLMClient:
                 "AWS_DEFAULT_REGION", "us-east-1"
             )
 
-            self._bedrock_client = boto3.client(
-                service_name="bedrock-runtime",
-                region_name=region,
-            )
-            logger.debug(f"Initialized Bedrock client in region: {region}")
+            # Check for custom Bedrock endpoint (Claude Code sets this)
+            bedrock_endpoint = os.environ.get("ANTHROPIC_BEDROCK_BASE_URL")
+
+            if bedrock_endpoint:
+                # Custom endpoint specified (Claude Code or custom setup)
+                self._bedrock_client = boto3.client(
+                    service_name="bedrock-runtime",
+                    region_name=region,
+                    endpoint_url=bedrock_endpoint,
+                )
+                logger.debug(
+                    f"Initialized Bedrock client in region: {region} with custom endpoint: {bedrock_endpoint}"
+                )
+            else:
+                # Standard Bedrock endpoint
+                self._bedrock_client = boto3.client(
+                    service_name="bedrock-runtime",
+                    region_name=region,
+                )
+                logger.debug(f"Initialized Bedrock client in region: {region}")
 
         return self._bedrock_client
 

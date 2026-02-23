@@ -758,17 +758,57 @@ class LanceVectorDatabase:
         Returns:
             Index statistics including total chunks and indexed files
         """
+        # If table is not open, try to open it
         if self._table is None:
-            return IndexStats(
-                total_files=0,
-                total_chunks=0,
-                languages={},
-                file_types={},
-                index_size_mb=0.0,
-                last_updated="N/A",
-                embedding_model="unknown",
-                database_size_bytes=0,
-            )
+            if self._db is None:
+                # Database not initialized at all
+                return IndexStats(
+                    total_files=0,
+                    total_chunks=0,
+                    languages={},
+                    file_types={},
+                    index_size_mb=0.0,
+                    last_updated="N/A",
+                    embedding_model="unknown",
+                    database_size_bytes=0,
+                )
+
+            # Try to open the table if it exists
+            try:
+                tables_response = self._db.list_tables()
+                table_names = (
+                    tables_response.tables
+                    if hasattr(tables_response, "tables")
+                    else tables_response
+                )
+
+                if self.collection_name in table_names:
+                    self._table = self._db.open_table(self.collection_name)
+                    logger.debug(f"Opened table '{self.collection_name}' for stats")
+                else:
+                    # Table doesn't exist, return zeros
+                    return IndexStats(
+                        total_files=0,
+                        total_chunks=0,
+                        languages={},
+                        file_types={},
+                        index_size_mb=0.0,
+                        last_updated="N/A",
+                        embedding_model="unknown",
+                        database_size_bytes=0,
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to open table for stats: {e}")
+                return IndexStats(
+                    total_files=0,
+                    total_chunks=0,
+                    languages={},
+                    file_types={},
+                    index_size_mb=0.0,
+                    last_updated="N/A",
+                    embedding_model="unknown",
+                    database_size_bytes=0,
+                )
 
         try:
             total_chunks = self._table.count_rows()

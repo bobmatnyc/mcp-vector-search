@@ -65,12 +65,23 @@ class ProjectHandlers:
                     ),
                 }
 
-                # Add KG status if indexer is available
+                # Add KG status
+                # Check if indexer is available (for live status during background build)
                 if self.indexer:
                     status_info["kg_status"] = self.indexer.get_kg_status()
                     status_info["search_available"] = True
                 else:
-                    status_info["kg_status"] = "not_started"
+                    # Check if KG database file exists (for servers without file watching)
+                    kg_db_path = (
+                        config.project_root
+                        / ".mcp-vector-search"
+                        / "knowledge_graph"
+                        / "kg.db"
+                    )
+                    if kg_db_path.exists():
+                        status_info["kg_status"] = "complete"
+                    else:
+                        status_info["kg_status"] = "not_started"
                     status_info["search_available"] = stats.total_chunks > 0
             else:
                 status_info = {

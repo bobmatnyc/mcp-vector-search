@@ -62,7 +62,7 @@ function validateEmail(email) {
             yield project_root
 
     async def _initialize_project(self, project_root):
-        """Initialize a project with indexing."""
+        """Initialize a project with indexing and embedding."""
         # Initialize project
         project_manager = ProjectManager(project_root)
         project_manager.initialize(
@@ -70,11 +70,18 @@ function validateEmail(email) {
             embedding_model="sentence-transformers/all-MiniLM-L6-v2",
         )
 
-        # Index the project
+        # Index the project (Phase 1: chunking)
         from mcp_vector_search.cli.commands.index import run_indexing
 
         await run_indexing(
             project_root=project_root, force_reindex=True, show_progress=False
+        )
+
+        # Embed chunks (Phase 2: generate embeddings for search)
+        from mcp_vector_search.cli.commands.embed import _run_embed
+
+        await _run_embed(
+            project_root=project_root, fresh=False, batch_size=512, verbose=False
         )
 
         return project_root
