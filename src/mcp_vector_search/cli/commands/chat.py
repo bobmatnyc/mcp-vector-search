@@ -360,7 +360,7 @@ def chat_main(
         None,
         "--model",
         "-m",
-        help="Model to use (default: claude-opus-4 via OpenRouter)",
+        help="Model to use (default: claude-sonnet-4-6 via Bedrock, or auto-detected provider)",
         rich_help_panel="LLM Options",
     ),
     provider: str | None = typer.Option(
