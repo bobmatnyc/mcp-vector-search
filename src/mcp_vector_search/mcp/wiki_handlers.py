@@ -84,7 +84,9 @@ class WikiHandlers:
             await vector_database.initialize()
 
             # Initialize chunks backend (for two-phase indexing fallback)
-            chunks_backend = ChunksBackend(config.index_path)
+            # CRITICAL: ChunksBackend needs the lance/ subdirectory
+            lance_path = config.index_path / "lance"
+            chunks_backend = ChunksBackend(lance_path)
             await chunks_backend.initialize()
 
             # Initialize LLM client (if not skipping)

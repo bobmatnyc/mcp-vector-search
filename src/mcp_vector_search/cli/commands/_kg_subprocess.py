@@ -80,9 +80,45 @@ def main():
             chunks_data = json.load(f)
 
         # Deserialize chunks
+        # NOTE: chunks_data comes from chunks.lance which has different field names
+        # than CodeChunk. We need to map/filter fields appropriately.
         chunks = []
         for chunk_dict in chunks_data:
+            # Convert file_path to Path object
             chunk_dict["file_path"] = Path(chunk_dict["file_path"])
+
+            # Map chunks.lance fields to CodeChunk fields
+            # chunks.lance has "name" but CodeChunk expects function_name/class_name
+            if "name" in chunk_dict:
+                name = chunk_dict.pop("name")
+                # Set function_name or class_name based on chunk_type
+                if chunk_dict.get("chunk_type") == "class":
+                    chunk_dict["class_name"] = name
+                else:
+                    chunk_dict["function_name"] = name
+
+            # Map complexity -> complexity_score
+            if "complexity" in chunk_dict:
+                chunk_dict["complexity_score"] = chunk_dict.pop("complexity")
+
+            # Remove fields that CodeChunk doesn't have
+            extra_fields = [
+                "file_hash",  # Change detection only (not in CodeChunk)
+                "start_char",
+                "end_char",
+                "parent_name",  # chunks.lance uses parent_name, CodeChunk uses parent_chunk_id
+                "hierarchy_path",
+                "signature",
+                "token_count",
+                "embedding_status",
+                "embedding_batch_id",
+                "created_at",
+                "updated_at",
+                "error_message",
+            ]
+            for field in extra_fields:
+                chunk_dict.pop(field, None)
+
             chunks.append(CodeChunk(**chunk_dict))
 
         if args.verbose:

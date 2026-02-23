@@ -231,8 +231,24 @@ async def _build_knowledge_graph(
     # Bug fix: Query chunks_backend for actual chunks, not vector database
     # Vector database may be empty or incomplete if embedding not finished
     config = ProjectManager(project_root).load_config()
-    chunks_backend = ChunksBackend(config.index_path)
-    await chunks_backend.initialize()
+
+    # CRITICAL: ChunksBackend needs the lance/ subdirectory, not just .mcp-vector-search/
+    # chunks.lance is at {project_root}/.mcp-vector-search/lance/chunks.lance
+    lance_path = config.index_path / "lance"
+    if verbose:
+        console.print(f"[dim]Using chunks backend at: {lance_path}[/dim]")
+
+    chunks_backend = ChunksBackend(lance_path)
+
+    try:
+        await chunks_backend.initialize()
+    except Exception as e:
+        logger.error(f"Failed to initialize chunks backend: {e}")
+        raise Exception(f"Cannot initialize chunks backend for KG build: {e}")
+
+    # Verify backend is properly initialized
+    if chunks_backend._db is None:
+        raise Exception("Chunks backend database connection failed - cannot build KG")
 
     chunk_count = await chunks_backend.count_chunks()
     if chunk_count == 0:
@@ -246,6 +262,12 @@ async def _build_knowledge_graph(
     chunks = []
     batch_size = 5000
     offset = 0
+
+    # Verify chunks_backend is still initialized before accessing table
+    if chunks_backend._table is None:
+        raise Exception(
+            "Chunks backend not initialized - cannot load chunks for KG build"
+        )
 
     # Read chunks directly from LanceDB table
     while offset < chunk_count:
