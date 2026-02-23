@@ -3,6 +3,7 @@
 import asyncio
 import multiprocessing
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -14,6 +15,24 @@ from ..utils.monorepo import MonorepoDetector
 from .exceptions import ParsingError
 from .git_blame import GitBlameCache
 from .models import CodeChunk
+
+
+def _get_mp_context() -> multiprocessing.context.BaseContext:
+    """Get appropriate multiprocessing context based on platform.
+
+    On macOS, use 'spawn' to avoid SIGILL (illegal hardware instruction) crashes
+    that occur when fork interacts with PyTorch/BLAS/OpenMP thread state on Apple Silicon.
+
+    On Linux, use 'fork' for faster worker startup (no full reimport of modules).
+
+    Returns:
+        Multiprocessing context ('spawn' on macOS, 'fork' on Linux)
+    """
+    if sys.platform == "darwin":
+        # macOS: spawn prevents SIGILL from fork+PyTorch interaction
+        return multiprocessing.get_context("spawn")
+    # Linux/other: fork is faster (COW semantics, no full reimport)
+    return multiprocessing.get_context("fork")
 
 
 def _detect_optimal_workers() -> int:
@@ -316,9 +335,13 @@ class ChunkProcessor:
         # Creating ProcessPoolExecutor is expensive (fork overhead, worker initialization)
         # For 32K files @ 256/batch = 125 creates → now just 1 create + reuse
         if self._persistent_pool is None:
-            self._persistent_pool = ProcessPoolExecutor(max_workers=max_workers)
+            # Use spawn on macOS to avoid SIGILL from fork+PyTorch interaction
+            mp_context = _get_mp_context()
+            self._persistent_pool = ProcessPoolExecutor(
+                max_workers=max_workers, mp_context=mp_context
+            )
             logger.info(
-                f"Created persistent ProcessPoolExecutor with {max_workers} workers (reused across all batches)"
+                f"Created persistent ProcessPoolExecutor with {max_workers} workers using '{mp_context._name}' start method (reused across all batches)"
             )
 
         # Run parsing in persistent pool
