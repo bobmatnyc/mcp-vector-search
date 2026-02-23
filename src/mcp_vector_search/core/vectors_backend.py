@@ -117,6 +117,7 @@ class VectorsBackend:
         self._table = None
         # Vector dimension is auto-detected from first batch or set explicitly
         self.vector_dim = vector_dim
+        self._append_count = 0  # Track appends for periodic compaction
 
     def _is_corruption_error(self, error: Exception) -> bool:
         """Check if error indicates corrupted LanceDB data fragments.
@@ -494,30 +495,35 @@ class VectorsBackend:
 
                         if missing_columns:
                             # Schema evolution: existing table is missing new columns
-                            # Drop and recreate table to match new schema
-                            logger.warning(
-                                f"Schema evolution detected: existing table missing columns {missing_columns}. "
-                                f"Dropping and recreating table."
-                            )
-                            self._db.drop_table(self.table_name)
-                            self._table = self._db.create_table(
-                                self.table_name, pa_table, schema=schema
-                            )
+                            # Add missing columns with null values (preserves existing embeddings)
                             logger.info(
-                                f"Recreated vectors table with {len(normalized_vectors)} vectors "
-                                f"(dimension: {self.vector_dim}, schema updated)"
+                                f"Schema evolution detected: adding missing columns {missing_columns} to existing table"
+                            )
+
+                            # Build PyArrow fields for missing columns
+                            missing_fields = [
+                                schema.field(col_name) for col_name in missing_columns
+                            ]
+
+                            # Add columns with null/empty defaults
+                            existing_table.add_columns(missing_fields)
+
+                            # Reopen table to get updated schema
+                            self._table = self._db.open_table(self.table_name)
+                            logger.info(
+                                f"Added {len(missing_columns)} new columns to vectors table (preserving {existing_table.count_rows()} existing embeddings)"
                             )
                         else:
-                            # Schema compatible, safe to append
+                            # Schema compatible, open existing table
                             self._table = existing_table
 
-                            # Deduplicate: Delete existing vectors with same chunk_ids before appending
-                            self._delete_chunk_ids(chunk_ids_to_add)
+                        # Deduplicate: Delete existing vectors with same chunk_ids before appending
+                        self._delete_chunk_ids(chunk_ids_to_add)
 
-                            self._table.add(pa_table, mode="append")
-                            logger.debug(
-                                f"Opened existing table and added {len(normalized_vectors)} vectors (append mode)"
-                            )
+                        self._table.add(pa_table, mode="append")
+                        logger.debug(
+                            f"Opened existing table and added {len(normalized_vectors)} vectors (append mode)"
+                        )
                     else:
                         # Dimension mismatch - drop and recreate table
                         logger.warning(
@@ -572,36 +578,76 @@ class VectorsBackend:
 
                     if missing_columns:
                         # Schema evolution: existing table is missing new columns
-                        # Drop and recreate table to match new schema
-                        logger.warning(
-                            f"Schema evolution detected during append: existing table missing columns {missing_columns}. "
-                            f"Dropping and recreating table."
-                        )
-                        self._db.drop_table(self.table_name)
-                        self._table = self._db.create_table(
-                            self.table_name, pa_table, schema=schema
-                        )
+                        # Add missing columns with null values (preserves existing embeddings)
                         logger.info(
-                            f"Recreated vectors table with {len(normalized_vectors)} vectors "
-                            f"(dimension: {self.vector_dim}, schema updated)"
+                            f"Schema evolution detected during append: adding missing columns {missing_columns} to existing table"
                         )
-                    else:
-                        # Schema compatible, dimensions match, safe to append
-                        # Deduplicate: Delete existing vectors with same chunk_ids before appending
-                        self._delete_chunk_ids(chunk_ids_to_add)
 
-                        # OPTIMIZATION: Use mode='append' for faster bulk inserts
-                        # This defers index updates until later, improving write throughput
-                        self._table.add(pa_table, mode="append")
-                        logger.debug(
-                            f"Added {len(normalized_vectors)} vectors to table (append mode)"
+                        # Build PyArrow fields for missing columns
+                        missing_fields = [
+                            schema.field(col_name) for col_name in missing_columns
+                        ]
+
+                        # Add columns with null/empty defaults
+                        self._table.add_columns(missing_fields)
+
+                        # Reopen table to get updated schema
+                        self._table = self._db.open_table(self.table_name)
+                        logger.info(
+                            f"Added {len(missing_columns)} new columns to vectors table (preserving existing embeddings)"
                         )
+
+                    # Schema compatible (either was already compatible or we just added missing columns)
+                    # Deduplicate: Delete existing vectors with same chunk_ids before appending
+                    self._delete_chunk_ids(chunk_ids_to_add)
+
+                    # OPTIMIZATION: Use mode='append' for faster bulk inserts
+                    # This defers index updates until later, improving write throughput
+                    self._table.add(pa_table, mode="append")
+                    logger.debug(
+                        f"Added {len(normalized_vectors)} vectors to table (append mode)"
+                    )
+
+            # Track appends and compact periodically to prevent file descriptor exhaustion
+            self._append_count += 1
+            if self._append_count % 500 == 0:
+                self._compact_table()
 
             return len(normalized_vectors)
 
         except Exception as e:
             logger.error(f"Failed to add vectors: {e}")
             raise DatabaseError(f"Failed to add vectors: {e}") from e
+
+    def _compact_table(self) -> None:
+        """Compact LanceDB table to merge small fragments.
+
+        LanceDB creates one file per append operation. During large reindexing,
+        this accumulates thousands of small files, exhausting file descriptors.
+        Periodic compaction merges fragments to reduce file count.
+
+        This is called every 500 appends to keep file count manageable.
+        Failures are non-fatal (best-effort optimization).
+        """
+        if self._table is None:
+            return
+
+        try:
+            # LanceDB 0.5+ API: compact_files() merges data fragments
+            self._table.compact_files()
+            logger.debug(
+                f"Compacted vectors table after {self._append_count} appends (reduced fragment count)"
+            )
+        except AttributeError:
+            # Fallback for older LanceDB versions without compact_files()
+            try:
+                self._table.cleanup_old_versions()
+                logger.debug("Cleaned up old versions (compaction not available)")
+            except Exception as e:
+                logger.debug(f"Compaction/cleanup not available: {e}")
+        except Exception as e:
+            # Compaction is best-effort, don't fail on errors
+            logger.debug(f"Compaction failed (non-fatal): {e}")
 
     async def search(
         self,

@@ -570,6 +570,8 @@ def build_kg(
 ):
     """Build knowledge graph from indexed chunks.
 
+    [yellow]⚠ DEPRECATED:[/yellow] Use [cyan]'mvs index kg'[/cyan] instead.
+
     This command extracts entities and relationships from your indexed
     codebase and builds a queryable knowledge graph.
 
@@ -580,6 +582,9 @@ def build_kg(
         mcp-vector-search kg build --skip-documents  # Faster build for large repos
         mcp-vector-search kg build --incremental  # Only process new chunks
     """
+    console.print(
+        "[yellow]⚠ 'mvs kg build' is deprecated. Use 'mvs index kg' instead.[/yellow]"
+    )
     _build_kg_impl(project_root, force, limit, skip_documents, incremental, verbose)
 
 
@@ -613,6 +618,8 @@ def index_kg(
 ):
     """Build knowledge graph from indexed chunks (alias for 'kg build').
 
+    [yellow]⚠ DEPRECATED:[/yellow] Use [cyan]'mvs index kg'[/cyan] instead.
+
     This command extracts entities and relationships from your indexed
     codebase and builds a queryable knowledge graph.
 
@@ -623,6 +630,9 @@ def index_kg(
         mcp-vector-search kg index --skip-documents  # Faster build for large repos
         mcp-vector-search kg index --incremental  # Only process new chunks
     """
+    console.print(
+        "[yellow]⚠ 'mvs kg index' is deprecated. Use 'mvs index kg' instead.[/yellow]"
+    )
     _build_kg_impl(project_root, force, limit, skip_documents, incremental, verbose)
 
 

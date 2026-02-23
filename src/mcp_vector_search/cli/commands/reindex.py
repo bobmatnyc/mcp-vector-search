@@ -66,6 +66,8 @@ def reindex_main(
 ) -> None:
     """🔄 Full reindex: chunk files, embed chunks, and build knowledge graph.
 
+    [yellow]⚠ DEPRECATED:[/yellow] Use [cyan]'mvs index'[/cyan] instead (or [cyan]'mvs index --force'[/cyan] for full rebuild).
+
     Runs all three phases of indexing sequentially (chunk → embed → KG build).
     By default runs incrementally (processes only changes). Use --fresh/-f to
     start from scratch.
@@ -83,6 +85,11 @@ def reindex_main(
     """
     if ctx.invoked_subcommand is not None:
         return
+
+    # Show deprecation warning
+    console.print(
+        "[yellow]⚠ 'mvs reindex' is deprecated. Use 'mvs index' instead.[/yellow]"
+    )
 
     # --force is alias for --fresh
     if force:
@@ -215,11 +222,19 @@ async def _build_knowledge_graph(
     Raises:
         Exception: If KG build fails
     """
-    # Load chunks from database and save to temp file
-    if verbose:
-        console.print("[dim]Loading chunks from database...[/dim]")
+    from ...core.chunks_backend import ChunksBackend
 
-    chunk_count = database.get_chunk_count()
+    # Load chunks from chunks.lance (not vectors table) for accurate count
+    if verbose:
+        console.print("[dim]Loading chunks from chunks.lance...[/dim]")
+
+    # Bug fix: Query chunks_backend for actual chunks, not vector database
+    # Vector database may be empty or incomplete if embedding not finished
+    config = ProjectManager(project_root).load_config()
+    chunks_backend = ChunksBackend(config.index_path)
+    await chunks_backend.initialize()
+
+    chunk_count = await chunks_backend.count_chunks()
     if chunk_count == 0:
         console.print("[yellow]⚠ No chunks found, skipping KG build[/yellow]")
         return
@@ -227,10 +242,28 @@ async def _build_knowledge_graph(
     if verbose:
         console.print(f"[dim]Found {chunk_count} chunks to process[/dim]")
 
-    # Load all chunks in batches
+    # Load all chunks in batches from chunks.lance table
     chunks = []
-    for batch in database.iter_chunks_batched(batch_size=5000):
-        chunks.extend(batch)
+    batch_size = 5000
+    offset = 0
+
+    # Read chunks directly from LanceDB table
+    while offset < chunk_count:
+        try:
+            scanner = chunks_backend._table.to_lance().scanner(
+                limit=batch_size, offset=offset
+            )
+            result = scanner.to_table()
+            if len(result) == 0:
+                break
+
+            # Convert to list of dicts (similar format to database.iter_chunks_batched)
+            batch_dicts = result.to_pylist()
+            chunks.extend(batch_dicts)
+            offset += len(batch_dicts)
+        except Exception as e:
+            logger.error(f"Failed to load chunk batch at offset {offset}: {e}")
+            break
 
     if verbose:
         console.print(f"[dim]Loaded {len(chunks)} chunks[/dim]")
@@ -239,11 +272,15 @@ async def _build_knowledge_graph(
     temp_fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="kg_chunks_")
     try:
         with open(temp_path, "w") as f:
-            # Serialize chunks to JSON (use asdict for dataclasses)
-            chunks_data = [asdict(chunk) for chunk in chunks]
-            # Convert Path objects to strings for JSON serialization
-            for chunk_dict in chunks_data:
-                chunk_dict["file_path"] = str(chunk_dict["file_path"])
+            # chunks are already dicts from LanceDB, not dataclasses
+            # Just ensure Path objects are converted to strings
+            chunks_data = []
+            for chunk in chunks:
+                chunk_dict = chunk if isinstance(chunk, dict) else asdict(chunk)
+                # Convert Path objects to strings for JSON serialization
+                if "file_path" in chunk_dict:
+                    chunk_dict["file_path"] = str(chunk_dict["file_path"])
+                chunks_data.append(chunk_dict)
             json.dump(chunks_data, f)
         if verbose:
             console.print(f"[dim]Saved chunks to {temp_path}[/dim]")

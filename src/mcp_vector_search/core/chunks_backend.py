@@ -122,6 +122,7 @@ class ChunksBackend:
         self.db_path = Path(db_path) if isinstance(db_path, str) else db_path
         self._db = None
         self._table = None
+        self._append_count = 0  # Track appends for periodic compaction
 
     async def initialize(self) -> None:
         """Create table if not exists with proper schema.
@@ -288,6 +289,11 @@ class ChunksBackend:
                     f"Added {len(normalized_chunks)} chunks to table (append mode)"
                 )
 
+            # Track appends and compact periodically to prevent file descriptor exhaustion
+            self._append_count += 1
+            if self._append_count % 500 == 0:
+                self._compact_table()
+
             return len(normalized_chunks)
 
         except Exception as e:
@@ -409,6 +415,11 @@ class ChunksBackend:
                     f"Added {len(normalized_chunks)} chunks to table (append mode)"
                 )
 
+            # Track appends and compact periodically to prevent file descriptor exhaustion
+            self._append_count += 1
+            if self._append_count % 500 == 0:
+                self._compact_table()
+
             return len(normalized_chunks)
 
         except Exception as e:
@@ -469,11 +480,46 @@ class ChunksBackend:
             else:
                 self._table.add(chunks, mode="append")
 
+            # Track appends and compact periodically to prevent file descriptor exhaustion
+            self._append_count += 1
+            if self._append_count % 500 == 0:
+                self._compact_table()
+
             return len(chunks)
 
         except Exception as e:
             logger.error(f"Failed to add raw chunks: {e}")
             raise DatabaseError(f"Failed to add raw chunks: {e}") from e
+
+    def _compact_table(self) -> None:
+        """Compact LanceDB table to merge small fragments.
+
+        LanceDB creates one file per append operation. During large reindexing,
+        this accumulates thousands of small files, exhausting file descriptors.
+        Periodic compaction merges fragments to reduce file count.
+
+        This is called every 500 appends to keep file count manageable.
+        Failures are non-fatal (best-effort optimization).
+        """
+        if self._table is None:
+            return
+
+        try:
+            # LanceDB 0.5+ API: compact_files() merges data fragments
+            self._table.compact_files()
+            logger.debug(
+                f"Compacted chunks table after {self._append_count} appends (reduced fragment count)"
+            )
+        except AttributeError:
+            # Fallback for older LanceDB versions without compact_files()
+            try:
+                self._table.cleanup_old_versions()
+                logger.debug("Cleaned up old versions (compaction not available)")
+            except Exception as e:
+                logger.debug(f"Compaction/cleanup not available: {e}")
+        except Exception as e:
+            # Compaction is best-effort, don't fail on errors
+            logger.debug(f"Compaction failed (non-fatal): {e}")
 
     async def get_all_indexed_file_hashes(self) -> dict[str, str]:
         """Get all indexed file paths and their hashes in one scan.

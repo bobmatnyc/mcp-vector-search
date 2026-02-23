@@ -60,6 +60,8 @@ def embed_main(
 ) -> None:
     """🧠 Generate embeddings for indexed code chunks.
 
+    [yellow]⚠ DEPRECATED:[/yellow] Use [cyan]'mvs index embed'[/cyan] instead.
+
     Reads pending chunks from chunks.lance and generates vector embeddings.
     This operation is incremental by default — only processes unembedded chunks.
 
@@ -78,6 +80,11 @@ def embed_main(
     """
     if ctx.invoked_subcommand is not None:
         return
+
+    # Show deprecation warning
+    console.print(
+        "[yellow]⚠ 'mvs embed' is deprecated. Use 'mvs index embed' instead.[/yellow]"
+    )
 
     try:
         project_root = (ctx.obj.get("project_root") if ctx.obj else None) or Path.cwd()

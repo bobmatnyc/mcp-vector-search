@@ -1943,6 +1943,19 @@ class SemanticIndexer:
         # Run auto migrations
         await self._run_auto_migrations()
 
+        # Bug fix: Reset stale "processing" chunks from interrupted runs
+        # This prevents chunks from being stuck in processing state indefinitely
+        try:
+            stale_count = await self.chunks_backend.reset_stale_processing_chunks(
+                older_than_minutes=5
+            )
+            if stale_count > 0:
+                logger.info(
+                    f"Reset {stale_count} stale processing chunks from interrupted runs"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to reset stale processing chunks: {e}")
+
         # Apply auto-optimizations if enabled
         if self.auto_optimize:
             self.apply_auto_optimizations()

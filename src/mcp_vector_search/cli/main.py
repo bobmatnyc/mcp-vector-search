@@ -1,6 +1,7 @@
 """Main CLI application for MCP Vector Search."""
 
 import faulthandler
+import resource
 import signal
 import sys
 from pathlib import Path
@@ -14,6 +15,39 @@ from .. import __build__, __version__
 from .didyoumean import add_common_suggestions, create_enhanced_typer
 from .output import setup_logging
 from .suggestions import get_contextual_suggestions
+
+
+# ============================================================================
+# FILE DESCRIPTOR LIMIT - Raise early to handle large LanceDB indexes
+# ============================================================================
+def _raise_file_descriptor_limit() -> None:
+    """Raise open file limit to handle large LanceDB indexes.
+
+    LanceDB creates one file per data fragment. During large reindexing
+    operations (~40K+ files), the cumulative open file descriptors can
+    exceed macOS's default limit (256 soft, 10240 hard), causing
+    "Too many open files (os error 24)" errors at ~93% completion.
+
+    This raises the soft limit to 65535 (or the hard limit if lower).
+    Only runs on Unix systems (Linux/macOS).
+    """
+    if sys.platform == "win32":
+        # Windows uses a different mechanism (no RLIMIT_NOFILE)
+        return
+
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        # Try to set to 65535 (or hard limit if lower)
+        new_limit = min(65535, hard)
+        if soft < new_limit:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (new_limit, hard))
+    except (OSError, ValueError):
+        pass  # Can't raise beyond hard limit — silently continue
+
+
+# Raise file descriptor limit immediately at module load time
+# This ensures it's set before any database operations
+_raise_file_descriptor_limit()
 
 
 # ============================================================================
@@ -122,7 +156,7 @@ from .commands.chat import chat_app  # noqa: E402
 from .commands.config import config_app  # noqa: E402
 from .commands.demo import demo_app  # noqa: E402
 from .commands.embed import embed_app  # noqa: E402
-from .commands.index import index_app  # noqa: E402
+from .commands.index_cmd import index_cmd_app  # noqa: E402 - new unified index command
 from .commands.index_code import app as index_code_app  # noqa: E402
 from .commands.init import init_app  # noqa: E402
 from .commands.install import install_app  # noqa: E402
@@ -190,14 +224,16 @@ app.add_typer(
     chat_app, name="ask", help="🤖 Ask questions about code with LLM (alias for chat)"
 )
 
-# 8. INDEX - Index codebase
-app.add_typer(index_app, name="index", help="📇 Index codebase for semantic search")
+# 8. INDEX - Unified index command (new hierarchy)
+app.add_typer(
+    index_cmd_app, name="index", help="📇 Index codebase (chunk + embed + KG)"
+)
 
-# 8.05. EMBED - Generate embeddings for chunks
-app.add_typer(embed_app, name="embed", help="🧠 Generate embeddings for indexed chunks")
+# 8.05. EMBED - Generate embeddings for chunks (DEPRECATED - use 'index embed')
+app.add_typer(embed_app, name="embed", help="🧠 [DEPRECATED] Use 'index embed'")
 
-# 8.06. REINDEX - Full reindex pipeline
-app.add_typer(reindex_app, name="reindex", help="🔄 Full reindex (chunk + embed)")
+# 8.06. REINDEX - Full reindex pipeline (DEPRECATED - use 'index')
+app.add_typer(reindex_app, name="reindex", help="🔄 [DEPRECATED] Use 'index'")
 
 # 8.1. INDEX-CODE - Build code-specific embeddings
 app.add_typer(

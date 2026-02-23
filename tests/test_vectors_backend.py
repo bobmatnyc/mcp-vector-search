@@ -580,3 +580,233 @@ class TestContextManager:
         # After exit, references should be None
         assert backend._db is None
         assert backend._table is None
+
+
+@pytest.mark.asyncio
+async def test_schema_evolution_preserves_embeddings(tmp_path: Path):
+    """Test that schema evolution (adding missing columns) preserves existing embeddings.
+
+    This is a regression test for the schema evolution bug where missing columns
+    triggered drop+recreate, destroying ALL existing embeddings instead of just
+    adding the missing columns with null defaults.
+
+    Scenario:
+    1. Create table with OLD schema (missing function_name, class_name, project_name)
+    2. Add vectors with NEW schema (includes those columns)
+    3. Verify that OLD embeddings are preserved (not destroyed)
+    """
+    import lancedb
+    import pyarrow as pa
+
+    db_path = tmp_path / "test_db"
+
+    # Phase 1: Create table with OLD schema (simulate pre-existing table)
+    db = lancedb.connect(str(db_path))
+
+    old_schema = pa.schema(
+        [
+            pa.field("chunk_id", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), 384)),
+            pa.field("file_path", pa.string()),
+            pa.field("content", pa.string()),
+            pa.field("language", pa.string()),
+            pa.field("start_line", pa.int32()),
+            pa.field("end_line", pa.int32()),
+            pa.field("chunk_type", pa.string()),
+            pa.field("name", pa.string()),
+            pa.field("hierarchy_path", pa.string()),
+            pa.field("embedded_at", pa.string()),
+            pa.field("model_version", pa.string()),
+            # MISSING: function_name, class_name, project_name
+        ]
+    )
+
+    old_data = pa.Table.from_pylist(
+        [
+            {
+                "chunk_id": "old1",
+                "vector": [0.1] * 384,
+                "file_path": "old.py",
+                "content": "def old1(): pass",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 2,
+                "chunk_type": "function",
+                "name": "old1",
+                "hierarchy_path": "old1",
+                "embedded_at": "2024-01-01T00:00:00",
+                "model_version": "old-model",
+            },
+            {
+                "chunk_id": "old2",
+                "vector": [0.2] * 384,
+                "file_path": "old.py",
+                "content": "def old2(): pass",
+                "language": "python",
+                "start_line": 3,
+                "end_line": 4,
+                "chunk_type": "function",
+                "name": "old2",
+                "hierarchy_path": "old2",
+                "embedded_at": "2024-01-01T00:00:00",
+                "model_version": "old-model",
+            },
+        ],
+        schema=old_schema,
+    )
+
+    table = db.create_table("vectors", old_data, schema=old_schema)
+    initial_count = table.count_rows()
+    assert initial_count == 2, f"Expected 2 initial rows, got {initial_count}"
+
+    # Phase 2: Use VectorsBackend to add vectors with NEW schema
+    backend = VectorsBackend(db_path, vector_dim=384)
+    await backend.initialize()
+
+    new_chunks = [
+        {
+            "chunk_id": "new1",
+            "vector": [0.3] * 384,
+            "file_path": "new.py",
+            "content": "def new1(): pass",
+            "language": "python",
+            "start_line": 1,
+            "end_line": 2,
+            "chunk_type": "function",
+            "name": "new1",
+            "function_name": "new1",  # NEW FIELD
+            "class_name": "",  # NEW FIELD
+            "project_name": "myproject",  # NEW FIELD
+            "hierarchy_path": "new1",
+        }
+    ]
+
+    # This should trigger schema evolution (add missing columns)
+    # and PRESERVE the 2 existing embeddings
+    count = await backend.add_vectors(new_chunks, model_version="new-model")
+    assert count == 1, f"Expected 1 new vector added, got {count}"
+
+    # Phase 3: Verify ALL embeddings preserved (not destroyed)
+    stats = await backend.get_stats()
+    total = stats["total"]
+    assert total == 3, (
+        f"FAIL: Expected 3 total vectors (2 old + 1 new), got {total}. Schema evolution destroyed embeddings!"
+    )
+
+    # Verify old vectors are searchable
+    query_vector = [0.1] * 384
+    results = await backend.search(query_vector, limit=5)
+    assert len(results) >= 2, f"Expected at least 2 search results, got {len(results)}"
+
+    # Check that old vectors have the new fields (with empty defaults)
+    old1_result = next((r for r in results if r["chunk_id"] == "old1"), None)
+    assert old1_result is not None, "Old chunk 'old1' not found in search results"
+    assert "function_name" in old1_result, "Missing function_name field in old vector"
+    # LanceDB adds columns with None/empty defaults
+    assert old1_result["function_name"] in (
+        "",
+        None,
+    ), (
+        f"Expected empty/None function_name for old vector, got {old1_result['function_name']}"
+    )
+
+    # Verify new vector has the new fields populated
+    new1_result = next((r for r in results if r["chunk_id"] == "new1"), None)
+    assert new1_result is not None, "New chunk 'new1' not found in search results"
+    assert new1_result["function_name"] == "new1", (
+        f"Expected 'new1' function_name, got {new1_result['function_name']}"
+    )
+    assert new1_result["project_name"] == "myproject", (
+        f"Expected 'myproject' project_name, got {new1_result['project_name']}"
+    )
+
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_schema_evolution_during_table_creation(tmp_path: Path):
+    """Test schema evolution when table exists but backend opens it for first time.
+
+    This tests the other code path where schema evolution happens during
+    table creation (when self._table is None but table exists in LanceDB).
+    """
+    import lancedb
+    import pyarrow as pa
+
+    db_path = tmp_path / "test_db"
+
+    # Create table with OLD schema directly using LanceDB
+    db = lancedb.connect(str(db_path))
+
+    old_schema = pa.schema(
+        [
+            pa.field("chunk_id", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), 384)),
+            pa.field("file_path", pa.string()),
+            pa.field("content", pa.string()),
+            pa.field("language", pa.string()),
+            pa.field("start_line", pa.int32()),
+            pa.field("end_line", pa.int32()),
+            pa.field("chunk_type", pa.string()),
+            pa.field("name", pa.string()),
+            pa.field("hierarchy_path", pa.string()),
+            pa.field("embedded_at", pa.string()),
+            pa.field("model_version", pa.string()),
+        ]
+    )
+
+    old_data = pa.Table.from_pylist(
+        [
+            {
+                "chunk_id": "existing1",
+                "vector": [0.5] * 384,
+                "file_path": "existing.py",
+                "content": "def existing1(): pass",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 2,
+                "chunk_type": "function",
+                "name": "existing1",
+                "hierarchy_path": "existing1",
+                "embedded_at": "2024-01-01T00:00:00",
+                "model_version": "old-model",
+            }
+        ],
+        schema=old_schema,
+    )
+
+    db.create_table("vectors", old_data, schema=old_schema)
+
+    # Now initialize VectorsBackend and add vectors with NEW schema
+    # This triggers the code path where self._table is None but table exists
+    backend = VectorsBackend(db_path, vector_dim=384)
+    await backend.initialize()
+
+    new_chunks = [
+        {
+            "chunk_id": "new_chunk",
+            "vector": [0.6] * 384,
+            "file_path": "new.py",
+            "content": "def new_chunk(): pass",
+            "language": "python",
+            "start_line": 1,
+            "end_line": 2,
+            "chunk_type": "function",
+            "name": "new_chunk",
+            "function_name": "new_chunk",
+            "class_name": "",
+            "project_name": "",
+            "hierarchy_path": "new_chunk",
+        }
+    ]
+
+    count = await backend.add_vectors(new_chunks)
+    assert count == 1
+
+    # Verify existing embeddings preserved
+    stats = await backend.get_stats()
+    assert stats["total"] == 2, (
+        f"Expected 2 vectors (1 existing + 1 new), got {stats['total']}"
+    )
+
+    await backend.close()
