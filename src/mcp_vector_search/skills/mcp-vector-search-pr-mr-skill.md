@@ -13,6 +13,24 @@ Comprehensive PR/MR review skill for mcp-vector-search projects that provides:
 /mcp-vector-search-pr-review [--baseline=main] [--focus=security|performance|architecture]
 ```
 
+**Key Feature: Branch Modification Selection**
+- Only reviews files modified in your branch vs. baseline
+- Uses `git diff` to identify exact changes
+- Provides GitHub-style ```suggestion blocks for improvements
+- Focuses on changed lines, not entire codebase
+
+**Examples:**
+```bash
+# Review current branch vs main
+/mcp-vector-search-pr-review --baseline=main
+
+# Security-focused review of changes only
+/mcp-vector-search-pr-review --baseline=develop --focus=security
+
+# Performance review for feature branch
+/mcp-vector-search-pr-review --baseline=main --focus=performance
+```
+
 ## HOW-TO: Creating Effective PRs/MRs
 
 ### 1. Pre-Review Setup
@@ -49,37 +67,66 @@ mvs review_repository --review-type security --changed-only
 
 When `/mcp-vector-search-pr-review` is invoked:
 
-1. **Context Analysis** - Use vector search to find related code patterns
-2. **Dependency Impact** - Query knowledge graph for affected components
-3. **Test Coverage** - Verify test completeness for changes
-4. **Performance Review** - Check for potential bottlenecks
-5. **Security Scan** - Validate secure coding patterns
-6. **Actionable Feedback** - Provide specific suggestions with locations
+1. **Branch Analysis** - Identify all modified files in the branch/PR
+2. **Context Discovery** - Use vector search to find similar patterns for changed code
+3. **Impact Analysis** - Query knowledge graph for affected downstream components
+4. **Modification-Focused Review** - Review ONLY the changed lines and their immediate context
+5. **Actionable Suggestions** - Provide GitHub-style code suggestions for improvements
 
-## Review Template
+## Review Template: Branch Modification Focus
 
-### Context Discovery
-- Use `search_code` to find similar patterns in codebase
-- Use `kg_query` to understand dependency relationships
-- Use `analyze_file` for complexity and quality metrics
-
-### Feedback Format
-Provide specific, actionable suggestions using GitHub-style format:
-
-**Good Examples:**
-```suggestion
-# In src/analysis/review/engine.py, line 245
-def _gather_code_chunks(self, review_type, scope, max_chunks, file_filter=None):
-    # Add input validation
-    if max_chunks <= 0:
-        raise ValueError("max_chunks must be positive")
-    if file_filter and not isinstance(file_filter, list):
-        raise TypeError("file_filter must be a list")
+### Step 1: Changed Files Selection
+```bash
+# Get modified files only
+git diff --name-only origin/main...HEAD
+mvs review_pull_request --baseline main --changed-only
 ```
 
-**Avoid Generic Advice:**
-- ❌ "Consider improving error handling"
-- ✅ "Add try-catch in engine.py:156 for SearchError when calling search_engine.search()"
+### Step 2: Context Discovery (Per Changed File)
+```bash
+# For each modified file, find related patterns
+mvs search_code "similar functionality to YourChangedFile"
+mvs kg_query "functions called by YourModifiedFunction"
+```
+
+### Step 3: In-Place Code Suggestions
+
+**✅ CORRECT: GitHub-Style Suggestions**
+```suggestion
+def _parse_findings_json(self, llm_response: str) -> list[ReviewFinding]:
+    # Add input validation for empty/null responses
+    if not llm_response or not llm_response.strip():
+        logger.warning("Empty LLM response received")
+        return []
+
+    # Clean up common JSON issues before parsing
+    json_str = self._clean_json_string(llm_response)
+```
+
+```suggestion
+async def handle_review_repository(self, args: dict[str, Any]) -> CallToolResult:
+    try:
+        # Validate review_type parameter early
+        review_type_str = args.get("review_type", "security")
+        if review_type_str not in ["security", "architecture", "performance"]:
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=f"Invalid review_type: {review_type_str}"
+                )],
+                isError=True,
+            )
+```
+
+**❌ AVOID: Generic Line References**
+- "Add validation in line 42"
+- "Consider improving error handling"
+- "Optimize this function"
+
+**✅ PREFERRED: Specific Modifications**
+- Show exact code changes in ```suggestion blocks
+- Focus on the actual changed lines only
+- Provide concrete code improvements
 
 ### Performance Focus Areas
 - Vector database operations efficiency
@@ -151,53 +198,90 @@ custom_review_focus:
   - Error handling completeness
 ```
 
-## Output Format
+## Output Format: Branch-Focused Review
 
 ### Summary
-- Overview of changes analyzed
-- Context files consulted
-- Key recommendations count
-- Risk assessment (LOW/MEDIUM/HIGH)
+- **Files Modified**: List of changed files in branch
+- **Lines Changed**: Total additions/deletions
+- **Context Analysis**: Similar patterns found via vector search
+- **Impact Assessment**: Downstream effects via knowledge graph
+- **Suggestions**: Count of actionable improvements for modified code only
 
-### Detailed Feedback
+### Branch Modification Review Format
 ```json
 {
-  "overall_assessment": "APPROVE_WITH_SUGGESTIONS",
-  "risk_level": "LOW",
-  "suggestions": [
+  "branch_summary": {
+    "base_branch": "main",
+    "modified_files": ["src/mcp/review_handlers.py", "tests/test_handlers.py"],
+    "lines_added": 45,
+    "lines_removed": 12,
+    "overall_assessment": "APPROVE_WITH_SUGGESTIONS"
+  },
+  "file_suggestions": [
     {
       "file": "src/mcp/review_handlers.py",
-      "line": 45,
-      "type": "performance",
+      "modified_lines": "45-67",
+      "suggestion_type": "performance",
       "priority": "medium",
-      "description": "Consider caching search_engine initialization",
-      "suggestion": "Store search_engine as instance variable to avoid repeated initialization",
-      "code_block": "```python\nif not hasattr(self, '_cached_search_engine'):\n    self._cached_search_engine = create_search_engine()\nreturn self._cached_search_engine\n```"
+      "github_suggestion": "```suggestion\n# Cache search_engine to avoid repeated initialization\nif not hasattr(self, '_search_engine_cache'):\n    embedding_function, _ = create_embedding_function(config.embedding_model)\n    self._search_engine_cache = SemanticSearchEngine(\n        database=database,\n        project_root=self.project_root\n    )\nreturn self._search_engine_cache\n```",
+      "rationale": "Modified initialization code creates new search_engine on each call"
     }
   ],
-  "context_used": {
-    "similar_patterns": 3,
-    "dependency_analysis": "8 related functions found",
-    "test_coverage": "85% of changed lines covered"
+  "context_analysis": {
+    "similar_patterns_found": 3,
+    "related_functions": ["create_database", "initialize_handlers"],
+    "test_coverage_impact": "2 new test methods needed for modified functions"
   }
 }
 ```
 
-## Best Practices
+### Key Principles
+- **Only Review Changed Code** - Don't suggest improvements to unmodified files
+- **Use Git Context** - Compare against baseline branch (main/develop)
+- **GitHub Suggestions** - All code improvements as ```suggestion blocks
+- **Specific Over Generic** - "Add null check in line 45" not "improve validation"
+
+## Best Practices: Branch Modification Focus
 
 ### For Reviewers
-1. Always run context analysis first
-2. Focus on specific, actionable feedback
-3. Reference similar patterns in codebase
-4. Validate suggestions with vector search
-5. Consider architectural impact via KG
+1. **Start with git diff** - Always identify exact changed files/lines first
+2. **Use --changed-only flags** - `mvs review_repository --changed-only`
+3. **Context per modification** - Run vector search for each changed function/class
+4. **GitHub suggestions only** - All feedback as ```suggestion code blocks
+5. **Impact analysis** - Use KG to find downstream effects of changes
 
-### For Authors
-1. Index project before creating PR
-2. Run self-review with vector search context
-3. Check for similar implementations
-4. Validate test coverage
-5. Document performance implications
+### Critical Review Commands
+```bash
+# Get the exact scope of changes
+git diff --name-only origin/main...HEAD
+git diff --stat origin/main...HEAD
+
+# Review only the modified files
+mvs review_pull_request --baseline main --format github-json
+mvs review_repository --review-type security --changed-only
+
+# Find context for each changed component
+mvs search_code "similar to YourModifiedClass" --limit 5
+mvs kg_query "functions calling YourChangedMethod"
+```
+
+### For Authors (Pre-PR Checklist)
+1. **Self-review changed files** - `mvs review_pull_request --baseline main`
+2. **Check similar patterns** - `mvs search_code "YourNewPattern"`
+3. **Validate dependencies** - `mvs kg_query "impact of YourChanges"`
+4. **Test coverage** - Ensure tests cover all modified functionality
+5. **Performance check** - Use `mvs analyze_file` on heavily modified files
+
+### Anti-Patterns to Avoid
+❌ **Don't review entire files** - Only focus on changed lines
+❌ **Don't give generic advice** - "improve error handling"
+❌ **Don't reference line numbers** - Use ```suggestion blocks instead
+❌ **Don't suggest unrelated improvements** - Only review what changed
+
+✅ **Do focus on branch modifications**
+✅ **Do use GitHub-style suggestions**
+✅ **Do provide specific code improvements**
+✅ **Do consider impact of changes via KG**
 
 ## Installation
 
@@ -209,6 +293,6 @@ pip install mcp-vector-search[skills]
 ```
 
 ---
-**Version**: 1.0.0
-**Compatible**: mcp-vector-search 3.0.14+
+**Version**: 1.1.0
+**Compatible**: mcp-vector-search 3.0.15+
 **Author**: MCP Vector Search Team
