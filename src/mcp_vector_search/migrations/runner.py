@@ -35,6 +35,8 @@ class MigrationRunner:
         """Handle SIGINT gracefully during migration."""
         logger.warning("Migration interrupted by user (Ctrl+C)")
         self._interrupted = True
+        # Re-raise KeyboardInterrupt to stop execution
+        raise KeyboardInterrupt()
 
     def register_migrations(self, migrations: list[Migration]) -> None:
         """Register available migrations.

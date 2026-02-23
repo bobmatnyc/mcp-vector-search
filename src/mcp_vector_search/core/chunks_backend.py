@@ -475,6 +475,41 @@ class ChunksBackend:
             logger.error(f"Failed to add raw chunks: {e}")
             raise DatabaseError(f"Failed to add raw chunks: {e}") from e
 
+    async def get_all_indexed_file_hashes(self) -> dict[str, str]:
+        """Get all indexed file paths and their hashes in one scan.
+
+        OPTIMIZATION: Load all file_path→hash mappings once for O(1) per-file lookup.
+        This replaces 39K per-file get_file_hash() queries (each a full table scan)
+        with a single scan. Critical for large projects.
+
+        Returns:
+            Dict mapping file_path to file_hash for all indexed files
+        """
+        if self._table is None:
+            return {}
+
+        try:
+            # Single full scan, return just file_path and file_hash columns
+            scanner = self._table.to_lance().scanner(columns=["file_path", "file_hash"])
+            result = scanner.to_table()
+
+            if len(result) == 0:
+                return {}
+
+            # Convert to pandas for groupby (get first hash per file, handles duplicates)
+            df = result.to_pandas()
+            # Group by file_path and take first hash (all chunks from same file have same hash)
+            file_hashes = df.groupby("file_path")["file_hash"].first().to_dict()
+
+            logger.debug(
+                f"Loaded {len(file_hashes)} indexed file paths for change detection"
+            )
+            return file_hashes
+
+        except Exception as e:
+            logger.warning(f"Failed to get all indexed file hashes: {e}")
+            return {}
+
     async def get_file_hash(self, file_path: str) -> str | None:
         """Get stored hash for a file (for change detection).
 

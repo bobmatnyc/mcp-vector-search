@@ -490,12 +490,24 @@ class SemanticIndexer:
             logger.info(
                 f"Incremental change detection: checking {len(all_files)} files..."
             )
+
+            # OPTIMIZATION: Load all indexed file hashes ONCE for O(1) per-file lookup
+            indexed_file_hashes = (
+                await self.chunks_backend.get_all_indexed_file_hashes()
+            )
+            logger.info(
+                f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
+            )
+
             filtered_files = []
             for idx, f in enumerate(all_files, start=1):
                 try:
                     file_hash = compute_file_hash(f)
                     rel_path = str(f.relative_to(self.project_root))
-                    if await self.chunks_backend.file_changed(rel_path, file_hash):
+
+                    # OPTIMIZATION: O(1) dict lookup instead of per-file database query
+                    stored_hash = indexed_file_hashes.get(rel_path)
+                    if stored_hash is None or stored_hash != file_hash:
                         filtered_files.append(f)
                 except Exception as e:
                     logger.warning(f"Error checking file {f}: {e}, will re-index")
@@ -555,6 +567,17 @@ class SemanticIndexer:
                 files_to_delete = []
                 files_to_process = []
 
+                # OPTIMIZATION: Load all indexed file hashes ONCE for O(1) per-file lookup
+                indexed_file_hashes = {}
+                if not force_reindex:
+                    logger.info("Loading indexed file hashes for change detection...")
+                    indexed_file_hashes = (
+                        await self.chunks_backend.get_all_indexed_file_hashes()
+                    )
+                    logger.info(
+                        f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
+                    )
+
                 # Compute file hashes
                 if force_reindex:
                     logger.info("Force mode enabled, skipping file hash computation...")
@@ -577,11 +600,10 @@ class SemanticIndexer:
 
                         rel_path = str(file_path.relative_to(self.project_root))
 
+                        # OPTIMIZATION: O(1) dict lookup instead of per-file database query
                         if not force_reindex:
-                            file_changed = await self.chunks_backend.file_changed(
-                                rel_path, file_hash
-                            )
-                            if not file_changed:
+                            stored_hash = indexed_file_hashes.get(rel_path)
+                            if stored_hash is not None and stored_hash == file_hash:
                                 logger.debug(f"Skipping unchanged file: {rel_path}")
                                 continue
 
@@ -993,6 +1015,18 @@ class SemanticIndexer:
             files_to_delete = []
             files_to_process = []
 
+            # OPTIMIZATION: Load all indexed file hashes ONCE for O(1) per-file lookup
+            # This replaces 39K per-file database queries with a single scan
+            indexed_file_hashes = {}
+            if not force:
+                logger.info("Loading indexed file hashes for change detection...")
+                indexed_file_hashes = (
+                    await self.chunks_backend.get_all_indexed_file_hashes()
+                )
+                logger.info(
+                    f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
+                )
+
             # Log start of hash computation phase
             if force:
                 logger.info("Force mode enabled, skipping file hash computation...")
@@ -1017,11 +1051,10 @@ class SemanticIndexer:
                     rel_path = str(file_path.relative_to(self.project_root))
 
                     # Check if file changed (skip if unchanged and not forcing)
+                    # OPTIMIZATION: O(1) dict lookup instead of per-file database query
                     if not force:
-                        file_changed = await self.chunks_backend.file_changed(
-                            rel_path, file_hash
-                        )
-                        if not file_changed:
+                        stored_hash = indexed_file_hashes.get(rel_path)
+                        if stored_hash is not None and stored_hash == file_hash:
                             logger.debug(f"Skipping unchanged file: {rel_path}")
                             continue
 
@@ -1750,15 +1783,27 @@ class SemanticIndexer:
             logger.info(
                 f"Incremental mode: checking {len(all_files)} files for changes..."
             )
+
+            # OPTIMIZATION: Load all indexed file hashes ONCE for O(1) per-file lookup
+            indexed_file_hashes = (
+                await self.chunks_backend.get_all_indexed_file_hashes()
+            )
+            logger.info(
+                f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
+            )
+
             filtered_files = []
             for f in all_files:
                 try:
                     file_hash = compute_file_hash(f)
                     rel_path = str(f.relative_to(self.project_root))
-                    if await self.chunks_backend.file_changed(rel_path, file_hash):
-                        filtered_files.append(f)
-                    else:
+
+                    # OPTIMIZATION: O(1) dict lookup instead of per-file database query
+                    stored_hash = indexed_file_hashes.get(rel_path)
+                    if stored_hash is not None and stored_hash == file_hash:
                         files_skipped += 1
+                    else:
+                        filtered_files.append(f)
                 except Exception as e:
                     logger.warning(f"Error checking file {f}: {e}, will re-index")
                     filtered_files.append(f)
@@ -2085,14 +2130,24 @@ class SemanticIndexer:
                         logger.info(
                             f"Incremental change detection: checking {len(all_files)} files..."
                         )
+
+                        # OPTIMIZATION: Load all indexed file hashes ONCE for O(1) per-file lookup
+                        indexed_file_hashes = (
+                            await self.chunks_backend.get_all_indexed_file_hashes()
+                        )
+                        logger.info(
+                            f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
+                        )
+
                         filtered_files = []
                         for idx, f in enumerate(all_files, start=1):
                             try:
                                 file_hash = compute_file_hash(f)
                                 rel_path = str(f.relative_to(self.project_root))
-                                if await self.chunks_backend.file_changed(
-                                    rel_path, file_hash
-                                ):
+
+                                # OPTIMIZATION: O(1) dict lookup instead of per-file database query
+                                stored_hash = indexed_file_hashes.get(rel_path)
+                                if stored_hash is None or stored_hash != file_hash:
                                     filtered_files.append(f)
                             except Exception as e:
                                 logger.warning(

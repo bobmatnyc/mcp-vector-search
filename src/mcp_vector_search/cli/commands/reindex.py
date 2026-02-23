@@ -39,10 +39,10 @@ reindex_app = typer.Typer(
 def reindex_main(
     ctx: typer.Context,
     fresh: bool = typer.Option(
-        True,
+        False,
         "--fresh/--incremental",
         "-f",
-        help="Start from scratch (default) or incremental",
+        help="Incremental (default) or start from scratch",
     ),
     force: bool = typer.Option(
         False,
@@ -67,16 +67,16 @@ def reindex_main(
     """🔄 Full reindex: chunk files, embed chunks, and build knowledge graph.
 
     Runs all three phases of indexing sequentially (chunk → embed → KG build).
-    By default starts fresh (clears existing data). Use --incremental to only
-    process changes.
+    By default runs incrementally (processes only changes). Use --fresh/-f to
+    start from scratch.
 
     [bold cyan]Examples:[/bold cyan]
 
-    [green]Full reindex from scratch (default):[/green]
+    [green]Incremental reindex (default, only changes):[/green]
         $ mcp-vector-search reindex
 
-    [green]Incremental reindex (only changes):[/green]
-        $ mcp-vector-search reindex --incremental
+    [green]Full reindex from scratch:[/green]
+        $ mcp-vector-search reindex --fresh
 
     [green]Custom batch size:[/green]
         $ mcp-vector-search reindex --batch-size 256
@@ -95,6 +95,9 @@ def reindex_main(
                 project_root, fresh=fresh, batch_size=batch_size, verbose=verbose
             )
         )
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted.[/yellow]")
+        raise typer.Exit(130)
     except Exception as e:
         logger.error(f"Reindexing failed: {e}")
         print_error(f"Reindexing failed: {e}")
@@ -103,7 +106,7 @@ def reindex_main(
 
 async def _run_reindex(
     project_root: Path,
-    fresh: bool = True,
+    fresh: bool = False,
     batch_size: int = 512,
     verbose: bool = False,
 ) -> None:
@@ -182,6 +185,8 @@ async def _run_reindex(
             console.print("[cyan]🔗 Building knowledge graph...[/cyan]")
             await _build_knowledge_graph(project_root, database, fresh, verbose)
             console.print("[green]✓ Knowledge graph built successfully[/green]")
+        except KeyboardInterrupt:
+            raise
         except Exception as e:
             logger.warning(f"Knowledge graph build failed: {e}")
             print_warning(f"⚠ Knowledge graph build failed: {e}")
@@ -189,6 +194,8 @@ async def _run_reindex(
                 "You can rebuild it later with: mcp-vector-search kg build --force"
             )
 
+    except KeyboardInterrupt:
+        raise
     except Exception as e:
         logger.error(f"Reindex error: {e}")
         raise
