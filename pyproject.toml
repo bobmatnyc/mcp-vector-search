@@ -99,6 +99,9 @@ path = "src/mcp_vector_search/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_vector_search"]
 
+[tool.hatch.build.targets.wheel.shared-data]
+"src/mcp_vector_search/skills" = "mcp_vector_search/skills"
+
 [tool.hatch.build.targets.sdist]
 exclude = [
     "list/",

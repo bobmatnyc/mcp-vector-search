@@ -141,6 +141,7 @@ explore unfamiliar projects, and integrate with AI coding tools via MCP.
   reset      🔄 Reset and recovery operations
   mcp        🔌 MCP server operations
   config     ⚙️  Configure settings
+  skills     🎯 Install and manage PR/MR review skills
   help       ❓ Get help
   version    ℹ️  Show version
 
@@ -168,6 +169,7 @@ from .commands.reindex import reindex_app  # noqa: E402
 from .commands.reset import reset_app  # noqa: E402
 from .commands.search import search_app, search_main  # noqa: E402, F401
 from .commands.setup import setup_app  # noqa: E402
+from .commands.skills import app as skills_app  # noqa: E402
 from .commands.status import main as status_main  # noqa: E402
 from .commands.story import story_app  # noqa: E402
 from .commands.uninstall import uninstall_app  # noqa: E402
@@ -253,6 +255,9 @@ app.add_typer(mcp_app, name="mcp", help="🔌 MCP server operations")
 
 # 10. CONFIG - Configuration
 app.add_typer(config_app, name="config", help="⚙️  Manage project configuration")
+
+# 10.1. SKILLS - Skill management
+app.add_typer(skills_app, name="skills", help="🎯 Manage and install MCP Vector Search skills")
 
 # 10.5. RESET - Reset and recovery operations
 app.add_typer(reset_app, name="reset", help="🔄 Reset and recovery operations")

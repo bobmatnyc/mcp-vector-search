@@ -86,6 +86,8 @@ setup_app = create_enhanced_typer(
     no_args_is_help=False,
 )
 
+# The main function will be registered as a callback after it's defined
+
 
 # ==============================================================================
 # Helper Functions
@@ -1127,7 +1129,55 @@ async def _run_smart_setup(
     llm_configured = setup_llm_api_keys(project_root=project_root, interactive=True)
 
     # ===========================================================================
-    # Phase 7: Completion
+    # Phase 7: Skills Installation
+    # ===========================================================================
+    console.print("\n[bold blue]🎯 Installing Skills...[/bold blue]")
+
+    skills_installed = []
+    try:
+        from ...skills import get_available_skills, install_skill_to_claude
+
+        # Try to auto-detect Claude skills directory
+        possible_dirs = [
+            Path.home() / ".config" / "claude" / "skills",
+            Path.home() / ".claude" / "skills",
+            Path.home() / "AppData" / "Roaming" / "Claude" / "skills",  # Windows
+        ]
+
+        claude_dir = None
+        for dir_path in possible_dirs:
+            if dir_path.parent.exists():
+                claude_dir = dir_path
+                break
+
+        if claude_dir:
+            available_skills = get_available_skills()
+            for skill_name in available_skills:
+                try:
+                    success = install_skill_to_claude(skill_name, claude_dir)
+                    if success:
+                        skills_installed.append(skill_name)
+                        if verbose:
+                            print_success(f"   ✅ Installed skill: /{skill_name}")
+                except Exception as e:
+                    if verbose:
+                        print_warning(f"   ⚠️  Failed to install skill {skill_name}: {e}")
+
+            if skills_installed:
+                print_success(f"✅ Installed {len(skills_installed)} skill(s) to Claude")
+            else:
+                if verbose:
+                    print_info("   No skills to install or Claude skills directory not found")
+        else:
+            if verbose:
+                print_info("   Claude directory not found, skipping skill installation")
+
+    except Exception as e:
+        if verbose:
+            print_warning(f"   ⚠️  Skill installation failed: {e}")
+
+    # ===========================================================================
+    # Phase 8: Completion
     # ===========================================================================
     console.print("\n[bold green]🎉 Setup Complete![/bold green]")
 
@@ -1143,6 +1193,8 @@ async def _run_smart_setup(
 
     summary_items.append(f"{len(configured_platforms)} MCP platform(s) configured")
     summary_items.append("File watching enabled")
+    if skills_installed:
+        summary_items.append(f"{len(skills_installed)} skill(s) installed to Claude")
     if llm_configured:
         summary_items.append("LLM API configured for chat command")
 
@@ -1188,6 +1240,9 @@ async def _run_smart_setup(
             "\n[dim]💡 Tip: Run 'mvs setup --force' to rebuild the entire index[/dim]"
         )
 
+
+# Register the main function as the callback
+setup_app.callback()(main)
 
 if __name__ == "__main__":
     setup_app()
