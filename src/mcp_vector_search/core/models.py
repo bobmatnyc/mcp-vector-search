@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 @dataclass
@@ -236,8 +236,7 @@ class SearchResult(BaseModel):
         default=None, description="Commit hash of last modification"
     )
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
     def line_count(self) -> int:
@@ -440,8 +439,7 @@ class ProjectInfo(BaseModel):
     languages: list[str] = Field(default=[], description="Detected languages")
     file_count: int = Field(default=0, description="Number of indexable files")
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""

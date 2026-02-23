@@ -881,7 +881,7 @@ class LanceVectorDatabase:
             self._write_buffer = []
 
             # Drop table if exists
-            if self.collection_name in self._db.table_names():
+            if self.collection_name in self._db.list_tables():
                 self._db.drop_table(self.collection_name)
                 logger.info(f"Dropped LanceDB table '{self.collection_name}'")
 
