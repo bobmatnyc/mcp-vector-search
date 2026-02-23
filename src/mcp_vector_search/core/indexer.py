@@ -7,6 +7,7 @@ Phase 2: Embed chunks, store to vectors.lance (resumable, incremental)
 import asyncio
 import json
 import os
+import platform
 import shutil
 import threading
 import time
@@ -621,7 +622,15 @@ class SemanticIndexer:
                     )
 
                 # Batch delete old chunks
-                if not self._atomic_rebuild_active and files_to_delete:
+                # WORKAROUND: Skip delete on macOS to avoid SIGBUS crash
+                # LanceDB delete() triggers memory-mapped file compaction which conflicts
+                # with PyTorch's memory-mapped model files on Apple Silicon.
+                # Duplicate chunks will be handled by deduplication logic during query.
+                if (
+                    not self._atomic_rebuild_active
+                    and files_to_delete
+                    and platform.system() != "Darwin"
+                ):
                     deleted_count = await self.chunks_backend.delete_files_batch(
                         files_to_delete
                     )
@@ -629,6 +638,11 @@ class SemanticIndexer:
                         logger.info(
                             f"Batch deleted {deleted_count} old chunks for {len(files_to_delete)} files"
                         )
+                elif files_to_delete and platform.system() == "Darwin":
+                    logger.debug(
+                        f"Skipping batch delete on macOS for {len(files_to_delete)} files "
+                        "(defer cleanup to avoid SIGBUS)"
+                    )
 
                 # Process files in batches and put on queue
                 for batch_start in range(0, len(files_to_process), file_batch_size):
@@ -1073,7 +1087,15 @@ class SemanticIndexer:
                 )
 
             # Batch delete old chunks for all files (skip if atomic rebuild is active)
-            if not self._atomic_rebuild_active and files_to_delete:
+            # WORKAROUND: Skip delete on macOS to avoid SIGBUS crash
+            # LanceDB delete() triggers memory-mapped file compaction which conflicts
+            # with PyTorch's memory-mapped model files on Apple Silicon.
+            # Duplicate chunks will be handled by deduplication logic during query.
+            if (
+                not self._atomic_rebuild_active
+                and files_to_delete
+                and platform.system() != "Darwin"
+            ):
                 deleted_count = await self.chunks_backend.delete_files_batch(
                     files_to_delete
                 )
@@ -1081,6 +1103,11 @@ class SemanticIndexer:
                     logger.info(
                         f"Batch deleted {deleted_count} old chunks for {len(files_to_delete)} files"
                     )
+            elif files_to_delete and platform.system() == "Darwin":
+                logger.debug(
+                    f"Skipping batch delete on macOS for {len(files_to_delete)} files "
+                    "(defer cleanup to avoid SIGBUS)"
+                )
 
             # Now process files for parsing and chunking
             for _idx, (file_path, rel_path, file_hash) in enumerate(files_to_process):
@@ -2330,7 +2357,12 @@ class SemanticIndexer:
 
         # Skip delete on force reindex with fresh database OR when atomic rebuild is active
         # This optimization eliminates ~25k unnecessary database queries for large codebases
-        if not skip_delete and not self._atomic_rebuild_active:
+        # WORKAROUND: Skip delete on macOS to avoid SIGBUS crash
+        if (
+            not skip_delete
+            and not self._atomic_rebuild_active
+            and platform.system() != "Darwin"
+        ):
             await self.database.delete_by_file(file_path)
 
         # Parse file into chunks
@@ -2401,7 +2433,12 @@ class SemanticIndexer:
                 continue
 
             # Only schedule deletion if not building fresh database AND not in atomic rebuild
-            if not skip_delete and not self._atomic_rebuild_active:
+            # WORKAROUND: Skip delete on macOS to avoid SIGBUS crash (same reason as chunks_backend)
+            if (
+                not skip_delete
+                and not self._atomic_rebuild_active
+                and platform.system() != "Darwin"
+            ):
                 delete_task = asyncio.create_task(
                     self.database.delete_by_file(file_path)
                 )
@@ -2618,7 +2655,12 @@ class SemanticIndexer:
                 return False
 
             # Skip delete on force reindex with fresh database OR when atomic rebuild is active
-            if not skip_delete and not self._atomic_rebuild_active:
+            # WORKAROUND: Skip delete on macOS to avoid SIGBUS crash
+            if (
+                not skip_delete
+                and not self._atomic_rebuild_active
+                and platform.system() != "Darwin"
+            ):
                 await self.database.delete_by_file(file_path)
 
             # Parse file into chunks
@@ -2748,6 +2790,9 @@ class SemanticIndexer:
     async def remove_file(self, file_path: Path) -> int:
         """Remove all chunks for a file from the index.
 
+        WARNING: On macOS, this operation may cause SIGBUS crash if called during
+        indexing (when embedding model is loaded). Use with caution.
+
         Args:
             file_path: Path to the file to remove
 
@@ -2755,6 +2800,8 @@ class SemanticIndexer:
             Number of chunks removed
         """
         try:
+            # WARNING: No platform check here - user explicitly requested deletion
+            # On macOS, this may crash if embedding model is loaded (SIGBUS)
             count = await self.database.delete_by_file(file_path)
             logger.debug(f"Removed {count} chunks for {file_path}")
             return count
