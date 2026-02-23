@@ -636,24 +636,61 @@ class PRReviewEngine:
     def _parse_comments_json(self, llm_response: str) -> list[PRReviewComment]:
         """Parse JSON comments from LLM response.
 
+        Handles cases where JSON is wrapped in markdown code blocks or has extra text.
+        Improved to handle multiline JSON content properly.
+
         Args:
             llm_response: Raw LLM response
 
         Returns:
             List of PRReviewComment objects
         """
-        # Extract JSON from markdown code blocks
-        json_match = re.search(r"```json\s*\n(.*?)\n```", llm_response, re.DOTALL)
+        json_str = None
+
+        # Try to extract JSON from markdown code blocks with improved pattern
+        # First, try to find a json code block
+        json_match = re.search(r"```json\s*\n(.*)", llm_response, re.DOTALL)
         if json_match:
-            json_str = json_match.group(1)
-        else:
-            # Try without markdown
-            json_match = re.search(r"```\s*\n(.*?)\n```", llm_response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
+            # Find the content after ```json
+            content_after_json = json_match.group(1)
+
+            # Find the closing ``` that's on its own line (not within the JSON)
+            closing_match = re.search(r"\n```\s*$", content_after_json)
+            if closing_match:
+                json_str = content_after_json[: closing_match.start()].strip()
             else:
-                # Assume entire response is JSON
+                # Fallback: take everything after ```json
+                json_str = content_after_json.strip()
+
+        # If that didn't work, try a generic code block
+        if not json_str:
+            json_match = re.search(r"```\s*\n(.*)", llm_response, re.DOTALL)
+            if json_match:
+                content_after_block = json_match.group(1)
+
+                # Find the closing ```
+                closing_match = re.search(r"\n```\s*$", content_after_block)
+                if closing_match:
+                    json_str = content_after_block[: closing_match.start()].strip()
+                else:
+                    json_str = content_after_block.strip()
+
+        # If still no match, look for JSON-like structure
+        if not json_str:
+            json_match = re.search(r"(\[.*\]|\{.*\})", llm_response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1).strip()
+            else:
+                # Final fallback: assume entire response is JSON
                 json_str = llm_response.strip()
+
+        if not json_str:
+            logger.error("No JSON content found in LLM response")
+            logger.debug(f"LLM response: {llm_response[:500]}")
+            return []
+
+        # Clean up common JSON issues
+        json_str = self._clean_json_string(json_str)
 
         try:
             comments_data = json.loads(json_str)
@@ -683,8 +720,37 @@ class PRReviewEngine:
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON from LLM response: {e}")
-            logger.debug(f"LLM response: {llm_response[:500]}")
+            logger.debug(f"JSON string: {json_str[:500]}")
+            logger.debug(f"Full LLM response: {llm_response[:500]}")
             return []
+
+    def _clean_json_string(self, json_str: str) -> str:
+        """Clean common JSON formatting issues from LLM responses.
+
+        Args:
+            json_str: Raw JSON string from LLM
+
+        Returns:
+            Cleaned JSON string
+        """
+        # Remove any leading/trailing whitespace
+        json_str = json_str.strip()
+
+        # Remove any trailing comma before closing brackets (common LLM mistake)
+        json_str = re.sub(r",(\s*[}\]])", r"\1", json_str)
+
+        # Fix unescaped newlines within JSON string values
+        # This regex finds strings and replaces unescaped newlines with escaped ones
+        def escape_newlines_in_strings(match):
+            string_content = match.group(0)
+            # Replace unescaped newlines with escaped ones, but preserve already escaped ones
+            string_content = re.sub(r"(?<!\\)\n", r"\\n", string_content)
+            return string_content
+
+        # Apply to all JSON strings (content between quotes, handling escaped quotes)
+        json_str = re.sub(r'"(?:[^"\\]|\\.)*"', escape_newlines_in_strings, json_str)
+
+        return json_str
 
     def _generate_verdict(self, comments: list[PRReviewComment]) -> tuple[str, float]:
         """Generate verdict and overall score from comments.
