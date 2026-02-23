@@ -192,6 +192,15 @@ class TwoPhaseArchitectureMigration(Migration):
                     "signature": "",  # Not in old schema
                     "complexity": int(row.get("complexity_score", 0)),
                     "token_count": 0,  # Not in old schema
+                    # Code relationships (new fields for KG support)
+                    "calls": [],  # Not available in old schema
+                    "imports": [],  # Not available in old schema
+                    "inherits_from": [],  # Not available in old schema
+                    # Git blame metadata (new fields)
+                    "last_author": "",  # Not available in old schema
+                    "last_modified": "",  # Not available in old schema
+                    "commit_hash": "",  # Not available in old schema
+                    # Phase tracking
                     "embedding_status": "complete",  # Already has vector
                     "embedding_batch_id": 0,
                     "created_at": timestamp,
@@ -215,6 +224,12 @@ class TwoPhaseArchitectureMigration(Migration):
                         )
                         continue
 
+                    # Extract function/class names separately for new schema
+                    function_name = row.get("function_name", "")
+                    class_name = row.get("class_name", "")
+                    # Use whichever is present for the "name" field
+                    name = function_name or class_name or ""
+
                     vector_record = {
                         "chunk_id": chunk_id,
                         "vector": vector,
@@ -224,7 +239,10 @@ class TwoPhaseArchitectureMigration(Migration):
                         "start_line": int(row.get("start_line", 0)),
                         "end_line": int(row.get("end_line", 0)),
                         "chunk_type": row.get("chunk_type", "code"),
-                        "name": row.get("function_name") or row.get("class_name") or "",
+                        "name": name,
+                        "function_name": function_name,
+                        "class_name": class_name,
+                        "project_name": "",  # Not available in old schema
                         "hierarchy_path": row.get("hierarchy_path", ""),
                         "embedded_at": timestamp,
                         "model_version": "migrated",
@@ -233,23 +251,21 @@ class TwoPhaseArchitectureMigration(Migration):
 
             # Create chunks table
             if chunks_data:
-                # Import schema for validation
-                from ..core.chunks_backend import CHUNKS_SCHEMA
-
-                db.create_table(
-                    self.NEW_CHUNKS_TABLE, chunks_data, schema=CHUNKS_SCHEMA
-                )
+                # Let LanceDB infer schema from data (handles extra columns gracefully)
+                # Using explicit schema would fail on forward-compatible migrations
+                # when new columns are added to the schema definition
+                db.create_table(self.NEW_CHUNKS_TABLE, chunks_data)
                 logger.info(f"✓ Created chunks table with {len(chunks_data):,} rows")
                 metadata["chunks_migrated"] = len(chunks_data)
 
             # Create vectors table
             if vectors_data:
-                # Import schema for validation
-                from ..core.vectors_backend import VECTORS_SCHEMA
-
-                db.create_table(
-                    self.NEW_VECTORS_TABLE, vectors_data, schema=VECTORS_SCHEMA
-                )
+                # Let LanceDB infer schema from data
+                # This is critical because:
+                # 1. Vector dimension varies (384 for MiniLM, 768 for GraphCodeBERT, etc.)
+                # 2. Schema has evolved over time (function_name, class_name, project_name added)
+                # 3. Migration must be forward-compatible with schema changes
+                db.create_table(self.NEW_VECTORS_TABLE, vectors_data)
                 logger.info(f"✓ Created vectors table with {len(vectors_data):,} rows")
                 metadata["vectors_migrated"] = len(vectors_data)
 
