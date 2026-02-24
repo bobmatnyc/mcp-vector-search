@@ -631,8 +631,18 @@ class LanceVectorDatabase:
             # Generate query embedding
             query_embedding = self.embedding_function([query])[0]
 
-            # Build LanceDB query with cosine metric
-            search = self._table.search(query_embedding).metric("cosine").limit(limit)
+            # Build LanceDB query with cosine metric.
+            # nprobes and refine_factor enable two-stage ANN retrieval:
+            #   - nprobes=20: scan 20 IVF partitions (higher = better recall, slower)
+            #   - refine_factor=5: re-rank 5x candidates with exact distances
+            # LanceDB silently ignores these when no ANN index exists (brute-force).
+            search = (
+                self._table.search(query_embedding)
+                .metric("cosine")
+                .nprobes(20)
+                .refine_factor(5)
+                .limit(limit)
+            )
 
             # Apply metadata filters if provided
             if filters:
