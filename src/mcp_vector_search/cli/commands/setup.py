@@ -1157,24 +1157,27 @@ async def _run_smart_setup(
                     success = install_skill_to_claude(skill_name, claude_dir)
                     if success:
                         skills_installed.append(skill_name)
-                        if verbose:
-                            print_success(f"   ✅ Installed skill: /{skill_name}")
+                        print_success(f"   ✅ Installed skill: /{skill_name}")
                 except Exception as e:
+                    print_warning(f"   ⚠️  Failed to install skill {skill_name}: {e}")
                     if verbose:
-                        print_warning(f"   ⚠️  Failed to install skill {skill_name}: {e}")
+                        print_info(f"      Error details: {e}")
 
             if skills_installed:
-                print_success(f"✅ Installed {len(skills_installed)} skill(s) to Claude")
+                print_success(
+                    f"✅ Installed {len(skills_installed)} skill(s) to Claude"
+                )
             else:
-                if verbose:
-                    print_info("   No skills to install or Claude skills directory not found")
+                print_info("   No skills available to install")
         else:
-            if verbose:
-                print_info("   Claude directory not found, skipping skill installation")
+            print_info(
+                "   Claude skills directory not found, skipping skill installation"
+            )
 
     except Exception as e:
+        print_warning(f"   ⚠️  Skill installation failed: {e}")
         if verbose:
-            print_warning(f"   ⚠️  Skill installation failed: {e}")
+            print_info(f"      Error details: {e}")
 
     # ===========================================================================
     # Phase 8: Completion
