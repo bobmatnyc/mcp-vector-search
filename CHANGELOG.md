@@ -64,6 +64,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **KG Build Stats Display** — "Documents" count now shown in build output table
 - **LanceVectorDatabase Search Path** — Added missing `nprobes`/`refine_factor` ANN parameters (was running brute-force at 16.7ms instead of 3.4ms)
 
+## [3.0.19] - 2026-02-24
+
+### Added
+- **IVF-PQ Vector Index** — Automatic approximate nearest neighbor index for datasets >256 rows with two-stage retrieval (`nprobes=20`, `refine_factor=5`), delivering 4.9× query speedup
+- **Contextual Chunking** — Metadata-enriched embeddings prepend file path, language, class/function name, imports to chunk text (35-49% fewer retrieval failures per Anthropic research)
+- **CodeRankEmbed Model Option** — Optional `nomic-ai/CodeRankEmbed` (768d, 8K context) with asymmetric instruction prefix support; default model unchanged
+
+### Fixed
+- LanceVectorDatabase search path missing ANN parameters (`nprobes`/`refine_factor`), was running brute-force at 16.7ms instead of 3.4ms
+
+## [3.0.18] - 2026-02-24
+
+### Added
+- **GitHub Release + Homebrew** in all `make publish` targets (PyPI, GitHub Release, Homebrew tap update)
+- **JS/TS Knowledge Graph** — Extract imports, calls, and inheritance from JavaScript/TypeScript AST for KG builder
+- **Local Code Review MCP Tool** (`code_review`) — Pre-push validation analyzing staged changes for security, performance, quality, and style issues
+
+## [3.0.17] - 2026-02-23
+
+### Fixed
+- Always show skill installation progress in `setup` command
+
+## [3.0.16] - 2026-02-23
+
+### Added
+- Enhanced `mcp-vector-search-pr-mr-skill` v1.1.0 with research-backed improvements and branch modification focus
+
+## [3.0.15] - 2026-02-23
+
+### Added
+- `mcp-vector-search-pr-mr-skill` with automatic installation during setup
+
+### Fixed
+- PR engine JSON parsing fix propagation
+
+## [3.0.14] - 2026-02-23
+
+### Fixed
+- JSON parsing bug in `review_repository` tool
+
+## [3.0.13] - 2026-02-23
+
+### Added
+- **Claude Sonnet 4.6 via Bedrock** as default LLM for chat and code review commands
+
+### Fixed
+- Updated `chat --model` help text to reflect Sonnet 4.6 Bedrock default
+
+## [3.0.11] - 2026-02-23
+
+### Fixed
+- Corrected method name `reset_stale_processing_chunks` → `cleanup_stale_processing`
+
+## [3.0.10] - 2026-02-23
+
+### Fixed
+- ChunksBackend path resolution in KG build — was using wrong directory, causing "Chunks backend not initialized" error
+
+## [3.0.8] - 2026-02-23
+
+### Fixed
+- Migration forward-compatibility improvements
+- Removed stale Homebrew note from docs
+
+### Changed
+- Removed agent-generated diagnostic scripts
+
+## [3.0.7] - 2026-02-23
+
+### Fixed
+- Suppress debug output for file descriptor limit raise
+
+## [3.0.4] - 2026-02-23
+
+### Fixed
+- Skip LanceDB deletes on macOS to prevent SIGBUS crash
+
+## [3.0.3] - 2026-02-23
+
+### Fixed
+- Use `spawn` multiprocessing context on macOS to prevent SIGILL crash
+
+## [3.0.2] - 2026-02-23
+
+### Fixed
+- Reindex defaults to incremental mode with clean Ctrl+C termination
+
+## [3.0.0] - 2026-02-22
+
+### Changed
+- Major version bump — stable release of AI code review system, multi-language support, and review caching
+
+## [2.10.4] - 2026-02-22
+
+### Changed
+- Version alignment release
+
+## [2.10.3] - 2026-02-22
+
+### Changed
+- Thorough project cleanup — removed 131 agent artifacts and temp files
+- Comprehensive AI code review feature documentation
+
+## [2.10.2] - 2026-02-22
+
+### Added
+- **Multi-language PR review** — 12 languages with language-specific idioms, anti-patterns, and security patterns
+- **Review caching system** — 5× speedup on repeat reviews with SQLite cache
+- **6 review types** — security, architecture, performance, quality, testing, documentation
+- **CI/CD integration** — GitHub Actions and GitLab CI examples
+
+## [2.10.1] - 2026-02-22
+
+### Fixed
+- Ruff format auto-discovery code style fixes
+
 ## [2.10.0] - 2026-02-22
 
 ### Added

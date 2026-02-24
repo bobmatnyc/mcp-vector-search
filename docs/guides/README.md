@@ -2,72 +2,29 @@
 
 Step-by-step guides for common tasks and workflows with MCP Vector Search.
 
-## 📚 Available Guides
+## Contents
 
-### Core Usage
+- [OpenRouter API Key Storage Guide](./api-key-storage.md) — How to securely store and manage your OpenRouter API key
+- [Chat Command Setup Guide](./CHAT_COMMAND_SETUP.md) — Setting up the `chat` command for LLM-powered code search
+- [Chat Command - LLM-Powered Intelligent Code Search](./chat-command.md) — Using the chat command for conversational code exploration
+- [CI/CD Integration Guide](./ci-cd-integration.md) — Integrating MCP Vector Search into CI/CD pipelines
+- [CI/CD Quick Start Guide](./ci-cd-quickstart.md) — Minimal CI/CD setup to get started quickly
+- [CLI Features](./cli-usage.md) — Overview of all CLI features and usage patterns
+- [CodeXEmbed-400M Migration Guide](./codexembed-migration.md) — Migrating to the CodeXEmbed-400M embedding model
+- [Deployment Guide](./DEPLOYMENT.md) — Production deployment instructions and best practices
+- [ESC Key Cancellation Feature](./esc-cancellation-feature.md) — Using ESC to cancel long-running operations
+- [MCP Server File Watching](./file-watching.md) — Configuring automatic index updates via file watching
+- [Git-Aware Analysis](./git-aware-analysis.md) — Using git history and diff information for code analysis
+- [Indexing Guide](./indexing.md) — Best practices for indexing your codebase
+- [LLM Model Benchmarking Guide](./llm-benchmarking.md) — Benchmarking and comparing LLM models for code review
+- [MCP Auto-Installation Guide](./MCP_AUTO_INSTALLATION.md) — Automatic MCP server installation and configuration
+- [Claude Code MCP Integration](./mcp-integration.md) — Integrating with Claude Desktop, Cursor, and other MCP clients
+- [Searching Guide](./searching.md) — Effective code search strategies and operators
+- [Automatic Vendor Pattern Update Feature](./vendor-update-feature.md) — Keeping vendor patterns up to date automatically
 
-#### [CLI Usage Guide](cli-usage.md)
-Master the command-line interface with advanced features and tips.
+## Related Documentation
 
-**Topics**: Command groups, interactive mode, output formatting, command suggestions
-
-#### [Searching Code](searching.md)
-Learn effective code search strategies and techniques.
-
-**Topics**: Basic search, semantic search, similarity search, filtering results, search operators
-
-#### [Indexing Code](indexing.md)
-Best practices for indexing your codebase.
-
-**Topics**: Initial indexing, incremental updates, reindexing strategies, performance tips
-
-### Integration
-
-#### [MCP Integration](mcp-integration.md)
-Integrate MCP Vector Search with AI tools like Claude Desktop, Cursor, and more.
-
-**Topics**: Platform setup (Claude Desktop, Cursor, Windsurf, VS Code), configuration, usage examples
-
-#### [File Watching](file-watching.md)
-Keep your index automatically up-to-date with file watching.
-
-**Topics**: Enabling file watching, configuration, performance considerations, troubleshooting
-
-## 🎯 Choose Your Path
-
-### I want to...
-
-**Master the CLI**
-→ [CLI Usage Guide](cli-usage.md)
-
-**Search more effectively**
-→ [Searching Guide](searching.md)
-
-**Keep my index up-to-date**
-→ [Indexing Guide](indexing.md) | [File Watching Guide](file-watching.md)
-
-**Use with Claude Desktop/Cursor**
-→ [MCP Integration Guide](mcp-integration.md)
-
-## 💡 Tips for Using These Guides
-
-1. **Progressive Learning**: Start with basics, move to advanced topics
-2. **Hands-On**: Try examples in your own codebase
-3. **Reference**: Use as a quick reference when needed
-4. **Cross-Reference**: Links point to related topics
-
-## 🔗 Related Documentation
-
-- **[Getting Started](../getting-started/README.md)** - New to MCP Vector Search? Start here
-- **[Reference](../reference/README.md)** - Complete command and feature reference
-- **[Advanced Topics](../advanced/README.md)** - Performance tuning and extending
-
-## 🆘 Need Help?
-
-- **Troubleshooting**: [Common Issues Guide](../advanced/troubleshooting.md)
-- **Community**: [GitHub Discussions](https://github.com/bobmatnyc/mcp-vector-search/discussions)
-- **Support**: [GitHub Issues](https://github.com/bobmatnyc/mcp-vector-search/issues)
-
----
-
-**[← Back to Documentation Index](../index.md)**
+- [Parent Index](../README.md)
+- [Getting Started](../getting-started/README.md)
+- [Reference Documentation](../reference/README.md)
+- [Advanced Topics](../advanced/README.md)
