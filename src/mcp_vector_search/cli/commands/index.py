@@ -2364,5 +2364,105 @@ async def _show_two_phase_status(project_root: Path) -> None:
         print_warning(f"{error:,} chunks have errors. Check logs for details.")
 
 
+@index_app.command("rebuild")
+def rebuild_index_cmd(
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show verbose output",
+    ),
+) -> None:
+    """Rebuild the ANN vector index over existing embeddings.
+
+    Recreates the IVF_SQ (scalar quantized) approximate nearest neighbor
+    index without re-chunking or re-embedding. Use after switching index
+    types or to optimize search performance.
+
+    This is fast (seconds, not minutes) since it only restructures the
+    index, not the underlying data.
+
+    Examples:
+        mcp-vector-search index rebuild
+        mcp-vector-search index rebuild --verbose
+    """
+    import time
+
+    from ...core.vectors_backend import VectorsBackend
+
+    try:
+        resolved_root = project_root or Path.cwd()
+
+        project_manager = ProjectManager(resolved_root)
+
+        if not project_manager.is_initialized():
+            print_error(
+                f"Project not initialized at {resolved_root}. "
+                "Run 'mcp-vector-search init' first."
+            )
+            raise typer.Exit(1)
+
+        config = project_manager.load_config()
+
+        lance_path = config.index_path / "lance"
+
+        if not lance_path.exists():
+            print_error(
+                "No vector index data found. "
+                "Run 'mcp-vector-search index' first to build the index."
+            )
+            raise typer.Exit(1)
+
+        if verbose:
+            print_info(f"Project root: {resolved_root}")
+            print_info(f"Lance path: {lance_path}")
+
+        async def _do_rebuild() -> tuple[int, str]:
+            vb = VectorsBackend(lance_path)
+            await vb.initialize()
+            try:
+                if vb._table is None:
+                    return 0, "IVF_SQ"
+                row_count = vb._table.count_rows()
+                await vb.rebuild_index()
+                return row_count, "IVF_SQ"
+            finally:
+                await vb.close()
+
+        with console.status("[cyan]Rebuilding ANN vector index...[/cyan]"):
+            start = time.monotonic()
+            row_count, index_type = asyncio.run(_do_rebuild())
+            elapsed = time.monotonic() - start
+
+        if row_count == 0:
+            print_warning(
+                "No vectors found in the index. "
+                "Run 'mcp-vector-search index embed' to generate embeddings first."
+            )
+            raise typer.Exit(1)
+
+        print_success(
+            f"ANN index rebuilt successfully: "
+            f"{row_count:,} rows, {index_type}, {elapsed:.2f}s"
+        )
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        logger.error(f"Index rebuild failed: {e}")
+        print_error(f"Index rebuild failed: {e}")
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     index_app()

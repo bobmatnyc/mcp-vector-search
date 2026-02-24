@@ -358,6 +358,47 @@ def index_kg(
         raise typer.Exit(1)
 
 
+@index_cmd_app.command("rebuild")
+def index_rebuild(
+    project_root: Path | None = typer.Option(
+        None,
+        "--project-root",
+        "-p",
+        help="Project root directory",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show verbose output",
+    ),
+) -> None:
+    """Rebuild the ANN vector index over existing embeddings.
+
+    Recreates the IVF_SQ (scalar quantized) approximate nearest neighbor
+    index without re-chunking or re-embedding. Use after switching index
+    types or to optimize search performance.
+
+    This is fast (seconds, not minutes) since it only restructures the
+    index, not the underlying data.
+
+    [bold cyan]Examples:[/bold cyan]
+
+    [green]Rebuild index:[/green]
+        $ mcp-vector-search index rebuild
+
+    [green]Rebuild with verbose output:[/green]
+        $ mcp-vector-search index rebuild --verbose
+    """
+    from .index import rebuild_index_cmd
+
+    rebuild_index_cmd(project_root=project_root, verbose=verbose)
+
+
 # Re-export all subcommands from original index.py for backward compatibility
 # This ensures commands like `mvs index watch`, `mvs index health`, etc. still work
 def register_legacy_subcommands():
