@@ -5,8 +5,10 @@ import json
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Annotated
 
 import typer
+from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -833,6 +835,163 @@ def kg_stats(
         await kg.close()
 
     asyncio.run(_stats())
+
+
+@kg_app.command("ontology")
+def kg_ontology(
+    category: Annotated[
+        str | None,
+        typer.Option("--category", "-c", help="Filter by document category"),
+    ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Show section details"),
+    ] = False,
+    project_root: Path = typer.Option(
+        ".", help="Project root directory", exists=True, file_okay=False
+    ),
+):
+    """Browse the document ontology tree.
+
+    Shows documents grouped by category (readme, guide, api_doc, etc.)
+    with section counts, tags, and cross-references.
+
+    Examples:
+        mcp-vector-search kg ontology
+        mcp-vector-search kg ontology --category guide
+        mcp-vector-search kg ontology --verbose
+    """
+    project_root = project_root.resolve()
+
+    # Category emoji map
+    category_icons: dict[str, str] = {
+        "readme": "📋",
+        "guide": "📖",
+        "api_doc": "🔌",
+        "design": "🎨",
+        "spec": "📐",
+        "research": "🔬",
+        "changelog": "📝",
+        "other": "📄",
+    }
+
+    async def _ontology():
+        # Initialize knowledge graph
+        kg_path = project_root / ".mcp-vector-search" / "knowledge_graph"
+        kg = KnowledgeGraph(kg_path)
+        await kg.initialize()
+
+        try:
+            # Get ontology data
+            data = await kg.get_document_ontology(category=category)
+        finally:
+            await kg.close()
+
+        total_docs = data["total_documents"]
+        total_sections = data["total_sections"]
+        total_xrefs = data["total_cross_references"]
+        categories = data["categories"]
+
+        if total_docs == 0:
+            console.print()
+            if category:
+                console.print(
+                    f"[yellow]No documents found in category '{category}'.[/yellow]"
+                )
+            else:
+                console.print(
+                    "[yellow]No documents found. Build the knowledge graph with document support first.[/yellow]"
+                )
+                console.print(
+                    "  Run [cyan]'mvs kg build'[/cyan] or [cyan]'mvs index kg'[/cyan]"
+                )
+            return
+
+        # Header panel
+        header_parts = ["[bold cyan]Document Ontology[/bold cyan]"]
+        header_parts.append(
+            f"[dim]{total_docs} document{'s' if total_docs != 1 else ''}, "
+            f"{total_sections} section{'s' if total_sections != 1 else ''}, "
+            f"{total_xrefs} cross-reference{'s' if total_xrefs != 1 else ''}[/dim]"
+        )
+        console.print()
+        console.print(
+            Panel.fit(
+                "\n".join(header_parts),
+                border_style="cyan",
+            )
+        )
+        console.print()
+
+        # Build Rich tree per category
+        for cat_name in sorted(categories.keys()):
+            docs = categories[cat_name]
+            if not docs:
+                continue
+
+            icon = category_icons.get(cat_name, "📄")
+            cat_tree = Tree(
+                f"{icon} [bold green]{cat_name}[/bold green] "
+                f"[dim]({len(docs)} document{'s' if len(docs) != 1 else ''})[/dim]"
+            )
+
+            for doc in docs:
+                file_path = doc["file_path"]
+                title = doc.get("title") or ""
+                word_count = doc.get("word_count") or 0
+                section_count = doc.get("section_count") or 0
+                tags = doc.get("tags") or []
+                cross_refs = doc.get("cross_references") or []
+                sections = doc.get("sections") or []
+
+                # Truncate long paths for display
+                display_path = file_path
+                if len(display_path) > 50:
+                    display_path = "..." + display_path[-47:]
+
+                # Build doc label
+                doc_label_parts = [f"[cyan]{display_path}[/cyan]"]
+                if title and title != display_path:
+                    doc_label_parts.append(f'[dim]— "{title}"[/dim]')
+                doc_label_parts.append(
+                    f"[dim]({word_count:,} words, {section_count} sections)[/dim]"
+                )
+                doc_node = cat_tree.add(" ".join(doc_label_parts))
+
+                # Tags line
+                if tags:
+                    tag_str = ", ".join(sorted(tags[:8]))
+                    if len(tags) > 8:
+                        tag_str += f" +{len(tags) - 8} more"
+                    doc_node.add(f"[dim]Tags:[/dim] [magenta][{tag_str}][/magenta]")
+
+                # Cross-references line
+                if cross_refs:
+                    ref_paths = [
+                        r.get("title") or r.get("file_path", "") for r in cross_refs[:5]
+                    ]
+                    ref_str = ", ".join(ref_paths)
+                    if len(cross_refs) > 5:
+                        ref_str += f" +{len(cross_refs) - 5} more"
+                    doc_node.add(f"[dim]→[/dim] [yellow]{ref_str}[/yellow]")
+
+                # Sections (verbose mode only)
+                if verbose and sections:
+                    for sec in sections:
+                        indent = "  " * max(0, (sec.get("level", 1) - 1))
+                        sec_name = sec.get("name", "")
+                        sec_line = sec.get("line", "")
+                        level_marker = "#" * sec.get("level", 1)
+                        line_info = f"[dim]:L{sec_line}[/dim]" if sec_line else ""
+                        doc_node.add(
+                            f"[dim]{indent}{level_marker}[/dim] "
+                            f"[white]{sec_name}[/white]{line_info}"
+                        )
+
+            console.print(cat_tree)
+            console.print()
+
+    asyncio.run(_ontology())
 
 
 @kg_app.command("status")

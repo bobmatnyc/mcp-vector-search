@@ -192,6 +192,53 @@ class KGHandlers:
                 isError=True,
             )
 
+    async def handle_kg_ontology(self, args: dict[str, Any]) -> CallToolResult:
+        """Handle kg_ontology tool call.
+
+        Args:
+            args: Tool arguments containing:
+                - category (str | None): Optional document category filter
+
+        Returns:
+            CallToolResult with document ontology tree
+        """
+        try:
+            category = args.get("category")
+
+            # Initialize knowledge graph
+            kg_path = self.project_root / ".mcp-vector-search" / "knowledge_graph"
+            kg = KnowledgeGraph(kg_path)
+            await kg.initialize()
+
+            # Get ontology data
+            ontology = await kg.get_document_ontology(category=category)
+
+            # Close connection
+            await kg.close()
+
+            # Format response
+            result = {
+                "status": "success",
+                "ontology": ontology,
+            }
+
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(result, indent=2))],
+                isError=False,
+            )
+
+        except Exception as e:
+            logger.error(f"KG ontology failed: {e}")
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Failed to get document ontology: {str(e)}",
+                    )
+                ],
+                isError=True,
+            )
+
     async def handle_kg_query(self, args: dict[str, Any]) -> CallToolResult:
         """Handle kg_query tool call.
 

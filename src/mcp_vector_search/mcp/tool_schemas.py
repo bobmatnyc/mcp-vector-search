@@ -30,6 +30,7 @@ def get_tool_schemas() -> list[Tool]:
         _get_kg_build_schema(),
         _get_kg_stats_schema(),
         _get_kg_query_schema(),
+        _get_kg_ontology_schema(),
         _get_story_generate_schema(),
     ]
 
@@ -977,6 +978,83 @@ def _get_code_review_schema() -> Tool:
                 },
             },
             "required": [],
+        },
+    )
+
+
+def _get_kg_ontology_schema() -> Tool:
+    """Get kg_ontology tool schema."""
+    return Tool(
+        name="kg_ontology",
+        description="""Browse the document ontology tree showing documents grouped by category with sections, tags, and cross-references.
+
+**What it does:**
+- Returns all Document nodes from the knowledge graph organised by doc_category
+- Includes section headings (level, line number) for each document
+- Shows cross-references between documents (RELATED_TO edges)
+- Shows tags aggregated per document (via DocSection HAS_TAG)
+
+**Document categories:**
+- readme: Top-level README files
+- guide: How-to guides, tutorials, usage docs
+- api_doc: API reference documentation
+- design: Design documents, architecture docs
+- spec: Specifications and requirements
+- research: Research notes, investigation documents
+- changelog: CHANGELOG files, release notes
+- other: Everything else
+
+**Example usage:**
+{}  # Browse all documents
+{"category": "guide"}  # Only guide documents
+{"category": "readme"}  # Only README files
+
+**Example response:**
+{
+  "status": "success",
+  "ontology": {
+    "categories": {
+      "readme": [
+        {
+          "id": "doc:README.md",
+          "file_path": "README.md",
+          "title": "MCP Vector Search",
+          "word_count": 2450,
+          "section_count": 8,
+          "sections": [
+            {"name": "Installation", "level": 2, "line": 45},
+            {"name": "Usage", "level": 2, "line": 67}
+          ],
+          "cross_references": [
+            {"file_path": "docs/ci-cd-quickstart.md", "title": "CI/CD Quickstart"}
+          ],
+          "tags": ["semantic-search", "mcp", "vector-database"]
+        }
+      ]
+    },
+    "total_documents": 42,
+    "total_sections": 187,
+    "total_cross_references": 15
+  }
+}""",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Filter by document category (readme, guide, api_doc, design, spec, research, changelog, other)",
+                    "enum": [
+                        "readme",
+                        "guide",
+                        "api_doc",
+                        "design",
+                        "spec",
+                        "research",
+                        "changelog",
+                        "other",
+                    ],
+                },
+            },
         },
     )
 
