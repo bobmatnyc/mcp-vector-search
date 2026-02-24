@@ -90,7 +90,11 @@ import aiofiles
 from loguru import logger
 from sentence_transformers import SentenceTransformer
 
-from ..config.defaults import get_model_dimensions, is_code_specific_model
+from ..config.defaults import (
+    get_model_dimensions,
+    get_model_prefixes,
+    is_code_specific_model,
+)
 from .exceptions import EmbeddingError
 
 # Module-level flag to ensure PyTorch warnings are only shown once
@@ -467,6 +471,9 @@ class CodeBERTEmbeddingFunction:
             self.timeout = timeout
             self.device = device  # Store device for use in encode() calls
 
+            # Store asymmetric instruction prefixes (empty string = no prefix)
+            self.query_prefix, self.document_prefix = get_model_prefixes(model_name)
+
             # Log device usage and model details
             if device == "mps":
                 import subprocess
@@ -503,6 +510,14 @@ class CodeBERTEmbeddingFunction:
                 logger.info(
                     f"Loaded {model_type} embedding model: {model_name} "
                     f"on CPU with {actual_dims} dimensions (timeout: {timeout}s)"
+                )
+
+            # Log asymmetric prefix configuration when prefixes are in use
+            if self.query_prefix or self.document_prefix:
+                logger.info(
+                    f"Asymmetric prefixes enabled for {model_name}: "
+                    f"query_prefix={self.query_prefix!r}, "
+                    f"document_prefix={self.document_prefix!r}"
                 )
 
             # Validate dimensions match expected
@@ -607,7 +622,11 @@ class CodeBERTEmbeddingFunction:
             return embeddings.tolist()
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        """Embed multiple documents (ChromaDB compatibility).
+        """Embed multiple documents, applying document_prefix when configured.
+
+        For asymmetric models (e.g. nomic-ai/CodeRankEmbed) this prepends the
+        document instruction prefix to each text.  For symmetric models the
+        prefix is an empty string so behaviour is identical to before.
 
         Args:
             texts: List of text documents to embed
@@ -615,10 +634,17 @@ class CodeBERTEmbeddingFunction:
         Returns:
             List of embedding vectors, one per document
         """
+        if self.document_prefix:
+            texts = [self.document_prefix + t for t in texts]
         return self.__call__(input=texts)
 
     def embed_query(self, text: str) -> list[float]:
-        """Embed a single query text (ChromaDB compatibility).
+        """Embed a single query text, applying query_prefix when configured.
+
+        For asymmetric models (e.g. nomic-ai/CodeRankEmbed) this prepends the
+        query instruction prefix so the query vector is in the correct embedding
+        space relative to stored document vectors.  For symmetric models the
+        prefix is an empty string so behaviour is identical to before.
 
         Args:
             text: Single text string to embed
@@ -626,6 +652,8 @@ class CodeBERTEmbeddingFunction:
         Returns:
             Embedding vector for the query text
         """
+        if self.query_prefix:
+            text = self.query_prefix + text
         return self.__call__(input=[text])[0]
 
 

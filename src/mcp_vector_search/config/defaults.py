@@ -222,9 +222,18 @@ DEFAULT_EMBEDDING_MODELS = {
     "graphcodebert": "microsoft/graphcodebert-base",  # Code-specific (768 dims)
     "precise": "Salesforce/SFR-Embedding-Code-400M_R",  # Highest quality (1024 dims)
     "legacy": "sentence-transformers/all-MiniLM-L6-v2",  # Backward compatibility (384 dims)
+    # Code-specific models with asymmetric query/document prefixes
+    "coderanker": "nomic-ai/CodeRankEmbed",  # SOTA on CodeSearchNet (768 dims, Apache-2.0)
 }
 
 # Model specifications for dimension auto-detection and validation
+#
+# Asymmetric models (different query vs document representations) specify
+# query_prefix and document_prefix.  Empty string means no prefix is applied.
+# Symmetric models omit these keys (or set both to "").
+#
+# At index time:  document_prefix + chunk_content  → stored embedding
+# At search time: query_prefix    + query_text     → query embedding
 MODEL_SPECIFICATIONS = {
     # CodeT5+ models (code-specific)
     "Salesforce/codet5p-110m-embedding": {
@@ -232,6 +241,8 @@ MODEL_SPECIFICATIONS = {
         "context_length": 512,
         "type": "code",
         "description": "CodeT5+ 110M: Code-specific embeddings for semantic code search",
+        "query_prefix": "",
+        "document_prefix": "",
     },
     # CodeXEmbed models (code-specific, state-of-the-art)
     "Salesforce/SFR-Embedding-Code-400M_R": {
@@ -239,12 +250,16 @@ MODEL_SPECIFICATIONS = {
         "context_length": 2048,
         "type": "code",
         "description": "CodeXEmbed-400M: State-of-the-art code embeddings (12 languages)",
+        "query_prefix": "",
+        "document_prefix": "",
     },
     "Salesforce/SFR-Embedding-Code-2B_R": {
         "dimensions": 1024,  # Actual output dimensions from HuggingFace model
         "context_length": 2048,
         "type": "code",
         "description": "CodeXEmbed-2B: Highest quality code embeddings (large model)",
+        "query_prefix": "",
+        "document_prefix": "",
     },
     # Microsoft code models (work without trust_remote_code)
     "microsoft/graphcodebert-base": {
@@ -252,12 +267,16 @@ MODEL_SPECIFICATIONS = {
         "context_length": 512,
         "type": "code",
         "description": "GraphCodeBERT: Code embeddings with data flow understanding (6 languages)",
+        "query_prefix": "",
+        "document_prefix": "",
     },
     "microsoft/codebert-base": {
         "dimensions": 768,
         "context_length": 512,
         "type": "code",
         "description": "CodeBERT: Bimodal code/text embeddings (6 languages)",
+        "query_prefix": "",
+        "document_prefix": "",
     },
     # Legacy sentence-transformers models
     "sentence-transformers/all-MiniLM-L6-v2": {
@@ -265,18 +284,39 @@ MODEL_SPECIFICATIONS = {
         "context_length": 256,
         "type": "general",
         "description": "Legacy: Fast general-purpose embeddings (not code-optimized)",
+        "query_prefix": "",
+        "document_prefix": "",
     },
     "sentence-transformers/all-mpnet-base-v2": {
         "dimensions": 768,
         "context_length": 512,
         "type": "general",
         "description": "General-purpose embeddings with higher quality",
+        "query_prefix": "",
+        "document_prefix": "",
     },
     "sentence-transformers/all-MiniLM-L12-v2": {
         "dimensions": 384,
         "context_length": 256,
         "type": "general",
         "description": "Balanced speed and quality for general text",
+        "query_prefix": "",
+        "document_prefix": "",
+    },
+    # Code-specific models with asymmetric query/document prefixes
+    # These models are trained with instruction prefixes for better retrieval quality.
+    "nomic-ai/CodeRankEmbed": {
+        "dimensions": 768,
+        "context_length": 8192,
+        "type": "code",
+        "description": (
+            "CodeRankEmbed: SOTA code search model (137M params, Apache-2.0). "
+            "Trained on CodeSearchNet across 6 languages. "
+            "Asymmetric: uses query prefix for searches, no prefix for documents."
+        ),
+        # Asymmetric prefixes: query uses an instruction, documents use no prefix
+        "query_prefix": "Represent this query for searching relevant code: ",
+        "document_prefix": "",
     },
 }
 
@@ -576,5 +616,32 @@ def is_code_specific_model(model_name: str) -> bool:
         "CodeT5",
         "codebert",
         "unixcoder",
+        "CodeRankEmbed",
     ]
     return any(pattern in model_name for pattern in code_model_patterns)
+
+
+def get_model_prefixes(model_name: str) -> tuple[str, str]:
+    """Get query and document instruction prefixes for a model.
+
+    Modern asymmetric embedding models improve retrieval quality by prepending
+    different instruction strings to queries and documents at encode time.
+    Symmetric models (e.g. MiniLM) use empty prefixes and behaviour is unchanged.
+
+    Args:
+        model_name: Model identifier (e.g. "nomic-ai/CodeRankEmbed")
+
+    Returns:
+        Tuple of (query_prefix, document_prefix).  Both are empty strings for
+        symmetric models or any unknown model — this guarantees backward
+        compatibility: prepending "" is a no-op.
+
+    Example:
+        query_prefix, doc_prefix = get_model_prefixes("nomic-ai/CodeRankEmbed")
+        # query_prefix == "Represent this query for searching relevant code: "
+        # doc_prefix   == ""
+    """
+    spec = MODEL_SPECIFICATIONS.get(model_name, {})
+    query_prefix: str = spec.get("query_prefix", "")
+    document_prefix: str = spec.get("document_prefix", "")
+    return query_prefix, document_prefix

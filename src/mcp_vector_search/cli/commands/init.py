@@ -58,7 +58,15 @@ def main(
         DEFAULT_EMBEDDING_MODELS["code"],
         "--embedding-model",
         "-m",
-        help="Embedding model to use for semantic search",
+        help=(
+            "Embedding model to use for semantic search. "
+            "Default: sentence-transformers/all-MiniLM-L6-v2 (fast, 384d). "
+            "Code-specific options: "
+            "nomic-ai/CodeRankEmbed (SOTA on CodeSearchNet, 768d, Apache-2.0), "
+            "microsoft/graphcodebert-base (data-flow aware, 768d), "
+            "Salesforce/SFR-Embedding-Code-400M_R (highest quality, 1024d). "
+            "Any Hugging Face model compatible with sentence-transformers is also accepted."
+        ),
         rich_help_panel="🧠 Model Settings",
     ),
     similarity_threshold: float = typer.Option(
