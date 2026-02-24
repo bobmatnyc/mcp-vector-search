@@ -5,7 +5,7 @@ for semantic search. Enables:
 - Vector similarity search
 - Resumable embedding (picks up from chunks.lance)
 - Search without JOINs (denormalized data)
-- Efficient vector indexing with IVF_PQ
+- Efficient vector indexing with IVF_SQ
 """
 
 import shutil
@@ -74,7 +74,7 @@ class VectorsBackend:
     semantic search without requiring JOINs to the chunks table.
 
     Features:
-    - Vector similarity search with IVF_PQ index
+    - Vector similarity search with IVF_SQ index
     - Incremental embedding (detect which chunks need vectors)
     - Metadata filtering (language, file_path, chunk_type)
     - Resumable embedding workflow
@@ -657,7 +657,7 @@ class VectorsBackend:
     ) -> list[dict[str, Any]]:
         """Semantic vector search.
 
-        Performs similarity search using LanceDB's IVF_PQ index for fast
+        Performs similarity search using LanceDB's IVF_SQ index for fast
         approximate nearest neighbor (ANN) search.
 
         Args:
@@ -1045,7 +1045,7 @@ class VectorsBackend:
     async def rebuild_index(self) -> None:
         """Rebuild the vector index for ANN search.
 
-        Creates an IVF_PQ approximate nearest neighbor index after bulk inserts
+        Creates an IVF_SQ approximate nearest neighbor index after bulk inserts
         to enable fast similarity search at scale.  Skipped for small datasets
         (< 256 rows) where brute-force is faster.  Non-fatal: if index creation
         fails search continues with exact brute-force scan.
@@ -1084,22 +1084,15 @@ class VectorsBackend:
             # Rule of thumb from LanceDB docs: good recall vs. latency balance
             num_partitions = min(512, max(16, int(math.sqrt(row_count))))
 
-            # PQ sub-vectors must evenly divide the vector dimension.
-            # Start at dim/4 (a good default) and step down until it divides evenly.
-            num_sub_vectors = max(1, vector_dim // 4)
-            while vector_dim % num_sub_vectors != 0 and num_sub_vectors > 1:
-                num_sub_vectors -= 1
-
             logger.info(
-                f"Creating IVF_PQ vector index: {row_count:,} rows, {vector_dim}d, "
-                f"{num_partitions} partitions, {num_sub_vectors} sub-vectors"
+                f"Creating IVF_SQ vector index: {row_count:,} rows, {vector_dim}d, "
+                f"{num_partitions} partitions (int8 scalar quantization)"
             )
 
             self._table.create_index(
                 metric="cosine",
                 num_partitions=num_partitions,
-                num_sub_vectors=num_sub_vectors,
-                index_type="IVF_PQ",
+                index_type="IVF_SQ",
                 replace=True,
             )
 

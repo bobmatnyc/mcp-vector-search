@@ -3,10 +3,10 @@
 
 Tests both search paths:
 1. LanceVectorDatabase (legacy path used by CLI search) - no nprobes/refine_factor
-2. VectorsBackend (two-phase pipeline path) - with nprobes=20, refine_factor=5, IVF_PQ
+2. VectorsBackend (two-phase pipeline path) - with nprobes=20, refine_factor=5, IVF_SQ
 
 Also verifies:
-- IVF-PQ index existence and structure
+- IVF-SQ index existence and structure
 - Contextual chunking output
 - Chunk count and index status
 """
@@ -22,7 +22,7 @@ async def benchmark_vectors_backend(
     embedding_function,
     queries: list[str],
 ) -> dict:
-    """Benchmark VectorsBackend (two-phase pipeline with IVF_PQ + nprobes/refine_factor)."""
+    """Benchmark VectorsBackend (two-phase pipeline with IVF_SQ + nprobes/refine_factor)."""
     from mcp_vector_search.core.vectors_backend import VectorsBackend
 
     backend = VectorsBackend(db_path=db_path)
@@ -62,7 +62,7 @@ async def benchmark_vectors_backend(
     await backend.close()
 
     return {
-        "backend": "VectorsBackend (IVF_PQ + nprobes=20 + refine_factor=5)",
+        "backend": "VectorsBackend (IVF_SQ + nprobes=20 + refine_factor=5)",
         "table": "vectors.lance",
         "row_count": row_count,
         "warmup_time": warmup_time,
@@ -301,7 +301,7 @@ async def main():
     ]
 
     # Step 2: Benchmark VectorsBackend (optimized path)
-    print("Benchmark 1: VectorsBackend (IVF_PQ + nprobes=20 + refine_factor=5)")
+    print("Benchmark 1: VectorsBackend (IVF_SQ + nprobes=20 + refine_factor=5)")
     print("-" * 65)
     try:
         result1 = await benchmark_vectors_backend(
@@ -337,7 +337,7 @@ async def main():
         print("=" * 65)
         print("Comparison Summary")
         print("=" * 65)
-        print(f"  VectorsBackend (IVF_PQ):  {t1:.1f}ms median")
+        print(f"  VectorsBackend (IVF_SQ):  {t1:.1f}ms median")
         print(f"  LanceVectorDatabase:       {t2:.1f}ms median")
         if t1 < t2:
             speedup = t2 / t1

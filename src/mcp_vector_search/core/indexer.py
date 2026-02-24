@@ -2006,7 +2006,7 @@ class SemanticIndexer:
         )
 
         # Build ANN vector index after embedding completes.
-        # This activates IVF_PQ approximate nearest-neighbor search for large
+        # This activates IVF_SQ approximate nearest-neighbor search for large
         # datasets.  Skipped automatically for small datasets (< 256 rows).
         # Non-fatal: search falls back to brute-force if index creation fails.
         await self.vectors_backend.rebuild_index()
