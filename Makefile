@@ -66,8 +66,25 @@ publish: ## Bump patch version, build, publish to PyPI, tag, and push
 		echo "$(RED)✗ .env.local not found - set PYPI_TOKEN$(NC)"; \
 		exit 1; \
 	fi; \
+	gh release create "v$$NEW_VERSION" \
+		--title "v$$NEW_VERSION" \
+		--generate-notes \
+		dist/*; \
+	echo "$(GREEN)✓ GitHub Release created$(NC)"; \
+	if [ -f .env.local ]; then \
+		. .env.local; \
+	fi; \
+	if [ -n "$$HOMEBREW_TAP_TOKEN" ]; then \
+		echo "$(BLUE)Updating Homebrew formula (non-blocking)...$(NC)"; \
+		HOMEBREW_TAP_TOKEN="$$HOMEBREW_TAP_TOKEN" $(SCRIPTS_DIR)/wait_and_update_homebrew.sh $$NEW_VERSION || \
+			echo "$(YELLOW)⚠ Homebrew update failed (non-blocking)$(NC)"; \
+	else \
+		echo "$(YELLOW)⚠ HOMEBREW_TAP_TOKEN not set - skipping Homebrew update$(NC)"; \
+		echo "$(YELLOW)  Set in .env.local or export HOMEBREW_TAP_TOKEN$(NC)"; \
+	fi; \
 	echo "$(GREEN)═══════════════════════════════════════════════════$(NC)"; \
 	echo "$(GREEN)  ✓ Published mcp-vector-search $$NEW_VERSION$(NC)"; \
+	echo "$(GREEN)  ✓ PyPI + GitHub Release + Homebrew$(NC)"; \
 	echo "$(GREEN)═══════════════════════════════════════════════════$(NC)"
 
 publish-minor: ## Bump minor version, build, publish to PyPI, tag, and push
@@ -99,8 +116,25 @@ publish-minor: ## Bump minor version, build, publish to PyPI, tag, and push
 		echo "$(RED)✗ .env.local not found - set PYPI_TOKEN$(NC)"; \
 		exit 1; \
 	fi; \
+	gh release create "v$$NEW_VERSION" \
+		--title "v$$NEW_VERSION" \
+		--generate-notes \
+		dist/*; \
+	echo "$(GREEN)✓ GitHub Release created$(NC)"; \
+	if [ -f .env.local ]; then \
+		. .env.local; \
+	fi; \
+	if [ -n "$$HOMEBREW_TAP_TOKEN" ]; then \
+		echo "$(BLUE)Updating Homebrew formula (non-blocking)...$(NC)"; \
+		HOMEBREW_TAP_TOKEN="$$HOMEBREW_TAP_TOKEN" $(SCRIPTS_DIR)/wait_and_update_homebrew.sh $$NEW_VERSION || \
+			echo "$(YELLOW)⚠ Homebrew update failed (non-blocking)$(NC)"; \
+	else \
+		echo "$(YELLOW)⚠ HOMEBREW_TAP_TOKEN not set - skipping Homebrew update$(NC)"; \
+		echo "$(YELLOW)  Set in .env.local or export HOMEBREW_TAP_TOKEN$(NC)"; \
+	fi; \
 	echo "$(GREEN)═══════════════════════════════════════════════════$(NC)"; \
 	echo "$(GREEN)  ✓ Published mcp-vector-search $$NEW_VERSION$(NC)"; \
+	echo "$(GREEN)  ✓ PyPI + GitHub Release + Homebrew$(NC)"; \
 	echo "$(GREEN)═══════════════════════════════════════════════════$(NC)"
 
 publish-major: ## Bump major version, build, publish to PyPI, tag, and push
@@ -131,8 +165,25 @@ publish-major: ## Bump major version, build, publish to PyPI, tag, and push
 		echo "$(RED)✗ .env.local not found - set PYPI_TOKEN$(NC)"; \
 		exit 1; \
 	fi; \
+	gh release create "v$$NEW_VERSION" \
+		--title "v$$NEW_VERSION" \
+		--generate-notes \
+		dist/*; \
+	echo "$(GREEN)✓ GitHub Release created$(NC)"; \
+	if [ -f .env.local ]; then \
+		. .env.local; \
+	fi; \
+	if [ -n "$$HOMEBREW_TAP_TOKEN" ]; then \
+		echo "$(BLUE)Updating Homebrew formula (non-blocking)...$(NC)"; \
+		HOMEBREW_TAP_TOKEN="$$HOMEBREW_TAP_TOKEN" $(SCRIPTS_DIR)/wait_and_update_homebrew.sh $$NEW_VERSION || \
+			echo "$(YELLOW)⚠ Homebrew update failed (non-blocking)$(NC)"; \
+	else \
+		echo "$(YELLOW)⚠ HOMEBREW_TAP_TOKEN not set - skipping Homebrew update$(NC)"; \
+		echo "$(YELLOW)  Set in .env.local or export HOMEBREW_TAP_TOKEN$(NC)"; \
+	fi; \
 	echo "$(GREEN)═══════════════════════════════════════════════════$(NC)"; \
 	echo "$(GREEN)  ✓ Published mcp-vector-search $$NEW_VERSION$(NC)"; \
+	echo "$(GREEN)  ✓ PyPI + GitHub Release + Homebrew$(NC)"; \
 	echo "$(GREEN)═══════════════════════════════════════════════════$(NC)"
 
 publish-only: ## Publish current version to PyPI (no version bump)
