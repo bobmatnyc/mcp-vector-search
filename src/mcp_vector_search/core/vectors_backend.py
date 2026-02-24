@@ -709,8 +709,18 @@ class VectorsBackend:
             )
 
         try:
-            # Build LanceDB query with cosine metric
-            search = self._table.search(query_vector).metric("cosine").limit(limit)
+            # Build LanceDB query with cosine metric.
+            # nprobes and refine_factor enable two-stage ANN retrieval:
+            #   - nprobes=20: scan 20 IVF partitions (higher = better recall, slower)
+            #   - refine_factor=5: re-rank 5x candidates with exact distances
+            # LanceDB silently ignores these when no ANN index exists (brute-force).
+            search = (
+                self._table.search(query_vector)
+                .metric("cosine")
+                .nprobes(20)
+                .refine_factor(5)
+                .limit(limit)
+            )
 
             # Apply metadata filters if provided
             if filters:
@@ -1033,37 +1043,79 @@ class VectorsBackend:
             }
 
     async def rebuild_index(self) -> None:
-        """Rebuild the vector index (after large batch inserts).
+        """Rebuild the vector index for ANN search.
 
-        This should be called after bulk inserts to optimize search performance.
-        LanceDB creates an IVF_PQ index for fast approximate nearest neighbor search.
+        Creates an IVF_PQ approximate nearest neighbor index after bulk inserts
+        to enable fast similarity search at scale.  Skipped for small datasets
+        (< 256 rows) where brute-force is faster.  Non-fatal: if index creation
+        fails search continues with exact brute-force scan.
 
         Note: This is an expensive operation and should not be called after every add.
         """
         if self._table is None:
-            logger.debug("No table to rebuild index")
+            logger.warning("Cannot rebuild index: table not initialized")
             return
 
         try:
-            # Create IVF_PQ index for fast vector search
-            # This uses Inverted File Index with Product Quantization
-            self._table.create_index(
-                metric="cosine",  # Cosine distance for semantic similarity
-                num_partitions=256,  # Number of IVF partitions (good default)
-                num_sub_vectors=192,  # PQ sub-vectors (768 / 4 = 192, for GraphCodeBERT)
+            import math
+
+            row_count = self._table.count_rows()
+
+            # Skip index for very small datasets — brute-force is faster and
+            # IVF training requires at least sample_rate * num_partitions vectors.
+            # With 16 partitions and sample_rate=256 that's ~4 K minimum, but we
+            # use a conservative 256-row floor to match actual LanceDB behaviour.
+            if row_count < 256:
+                logger.info(
+                    f"Skipping vector index creation: {row_count} rows "
+                    f"(minimum 256 required)"
+                )
+                return
+
+            # Determine vector dimension from a sample row
+            sample = self._table.search().limit(1).to_list()
+            if not sample or "vector" not in sample[0]:
+                logger.warning("Cannot determine vector dimension for index")
+                return
+
+            vector_dim = len(sample[0]["vector"])
+
+            # Adaptive partition count: sqrt(N) clamped to [16, 512]
+            # Rule of thumb from LanceDB docs: good recall vs. latency balance
+            num_partitions = min(512, max(16, int(math.sqrt(row_count))))
+
+            # PQ sub-vectors must evenly divide the vector dimension.
+            # Start at dim/4 (a good default) and step down until it divides evenly.
+            num_sub_vectors = max(1, vector_dim // 4)
+            while vector_dim % num_sub_vectors != 0 and num_sub_vectors > 1:
+                num_sub_vectors -= 1
+
+            logger.info(
+                f"Creating IVF_PQ vector index: {row_count:,} rows, {vector_dim}d, "
+                f"{num_partitions} partitions, {num_sub_vectors} sub-vectors"
             )
-            logger.info("Vector index rebuilt successfully")
+
+            self._table.create_index(
+                metric="cosine",
+                num_partitions=num_partitions,
+                num_sub_vectors=num_sub_vectors,
+                index_type="IVF_PQ",
+                replace=True,
+            )
+
+            logger.info("Vector index created successfully")
 
         except Exception as e:
             # Check for corruption and auto-recover
             if self._handle_corrupt_table(e, self.table_name):
                 logger.warning(
-                    "Vectors table corrupted during index rebuild. Skipped. Run 'mcp-vector-search index' to rebuild."
+                    "Vectors table corrupted during index rebuild. Skipped. "
+                    "Run 'mcp-vector-search index' to rebuild."
                 )
                 return
 
-            # Non-fatal - search will still work with brute force
-            logger.warning(f"Failed to rebuild vector index: {e}")
+            # Non-fatal — search falls back to brute-force automatically
+            logger.warning(f"Vector index creation failed (non-fatal): {e}")
 
     async def get_unembedded_chunk_ids(self, all_chunk_ids: list[str]) -> list[str]:
         """Find which chunks don't have vectors yet.

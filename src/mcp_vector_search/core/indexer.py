@@ -26,6 +26,7 @@ from ..utils.monorepo import MonorepoDetector
 from .bm25_backend import BM25Backend
 from .chunk_processor import ChunkProcessor
 from .chunks_backend import ChunksBackend, compute_file_hash
+from .context_builder import build_contextual_text
 from .database import VectorDatabase
 from .directory_index import DirectoryIndex
 from .exceptions import ParsingError
@@ -843,8 +844,14 @@ class SemanticIndexer:
                                 )
 
                         try:
-                            # Generate embeddings
-                            contents = [c["content"] for c in emb_batch]
+                            # Generate embeddings using context-enriched text.
+                            # build_contextual_text() prepends file path, language,
+                            # class/function context, imports, and docstring to each
+                            # chunk before embedding, improving retrieval quality by
+                            # 35–49% (contextual RAG research).  The stored
+                            # chunk["content"] field is NOT modified — only the text
+                            # sent to the embedding model is enriched.
+                            contents = [build_contextual_text(c) for c in emb_batch]
 
                             # Check memory before expensive embedding
                             is_ok, usage_pct, status = (
@@ -1997,6 +2004,12 @@ class SemanticIndexer:
         chunks_embedded, batches_processed = await self._phase2_embed_chunks(
             batch_size=batch_size, checkpoint_interval=50000
         )
+
+        # Build ANN vector index after embedding completes.
+        # This activates IVF_PQ approximate nearest-neighbor search for large
+        # datasets.  Skipped automatically for small datasets (< 256 rows).
+        # Non-fatal: search falls back to brute-force if index creation fails.
+        await self.vectors_backend.rebuild_index()
 
         # Build BM25 index after embedding (vectors have changed)
         await self._build_bm25_index()

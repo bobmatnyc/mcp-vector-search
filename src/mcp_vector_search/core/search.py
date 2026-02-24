@@ -833,7 +833,11 @@ class SemanticSearchEngine:
                         # Check for dimension mismatch
                         stored_vector = df.iloc[0]["vector"]
                         stored_dim = len(stored_vector)
-                        query_dim = len(embedding_func([query])[0])
+                        # Use embed_query() so query prefix is applied for asymmetric models
+                        if hasattr(embedding_func, "embed_query"):
+                            query_dim = len(embedding_func.embed_query(query))
+                        else:
+                            query_dim = len(embedding_func([query])[0])
 
                         if stored_dim != query_dim:
                             raise SearchError(
@@ -845,8 +849,13 @@ class SemanticSearchEngine:
                     # Non-fatal: log and continue
                     logger.debug(f"Could not check model version: {e}")
 
-            # Generate embedding
-            query_vector = embedding_func([query])[0]
+            # Generate embedding — use embed_query() so query_prefix is applied
+            # for asymmetric models (e.g. nomic-ai/CodeRankEmbed).
+            # embed_query() falls back to __call__ with no prefix for symmetric models.
+            if hasattr(embedding_func, "embed_query"):
+                query_vector = embedding_func.embed_query(query)
+            else:
+                query_vector = embedding_func([query])[0]
 
             # Search vectors backend
             raw_results = await self._vectors_backend.search(
@@ -937,8 +946,12 @@ class SemanticSearchEngine:
                 self._code_embedding_func = CodeBERTEmbeddingFunction(code_model)
                 logger.debug(f"Loaded CodeT5+ model for code enrichment: {code_model}")
 
-            # Generate code embedding for query
-            code_query_vector = self._code_embedding_func([query])[0]
+            # Generate code embedding for query — use embed_query() so any
+            # query prefix configured for the code model is applied correctly.
+            if hasattr(self._code_embedding_func, "embed_query"):
+                code_query_vector = self._code_embedding_func.embed_query(query)
+            else:
+                code_query_vector = self._code_embedding_func([query])[0]
 
             # Search code_vectors with higher threshold (0.75 vs 0.5)
             # Code-specific models need higher confidence for relevance
@@ -1162,7 +1175,11 @@ class SemanticSearchEngine:
             logger.warning("Cannot access embedding function, skipping MMR")
             return results[:requested_limit]
 
-        query_vector = embedding_func([query])[0]
+        # Use embed_query() so query_prefix is applied for asymmetric models
+        if hasattr(embedding_func, "embed_query"):
+            query_vector = embedding_func.embed_query(query)
+        else:
+            query_vector = embedding_func([query])[0]
         query_embedding = np.array(query_vector, dtype=np.float32)
 
         # Get embeddings for all candidates
