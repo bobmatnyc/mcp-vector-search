@@ -117,6 +117,9 @@ class JavaScriptParser(BaseParser):
         chunks = []
         lines = self._split_into_lines(content)
 
+        # Collect top-level imports from the AST before walking nodes
+        file_imports = self._extract_imports_from_tree(tree.root_node)
+
         def visit_node(node, current_class=None):
             """Recursively visit AST nodes."""
             node_type = node.type
@@ -126,16 +129,20 @@ class JavaScriptParser(BaseParser):
 
             if node_type == "function_declaration":
                 chunks.extend(
-                    self._extract_function(node, lines, file_path, current_class)
+                    self._extract_function(
+                        node, lines, file_path, current_class, file_imports
+                    )
                 )
                 extracted = True
             elif node_type == "arrow_function":
                 chunks.extend(
-                    self._extract_arrow_function(node, lines, file_path, current_class)
+                    self._extract_arrow_function(
+                        node, lines, file_path, current_class, file_imports
+                    )
                 )
                 extracted = True
             elif node_type == "class_declaration":
-                class_chunks = self._extract_class(node, lines, file_path)
+                class_chunks = self._extract_class(node, lines, file_path, file_imports)
                 chunks.extend(class_chunks)
 
                 # Visit class methods
@@ -145,13 +152,15 @@ class JavaScriptParser(BaseParser):
                 extracted = True
             elif node_type == "method_definition":
                 chunks.extend(
-                    self._extract_method(node, lines, file_path, current_class)
+                    self._extract_method(
+                        node, lines, file_path, current_class, file_imports
+                    )
                 )
                 extracted = True
             elif node_type == "lexical_declaration":
                 # const/let declarations might be arrow functions
                 extracted_chunks = self._extract_variable_function(
-                    node, lines, file_path, current_class
+                    node, lines, file_path, current_class, file_imports
                 )
                 if extracted_chunks:
                     chunks.extend(extracted_chunks)
@@ -174,13 +183,19 @@ class JavaScriptParser(BaseParser):
                     start_line=1,
                     end_line=len(lines),
                     chunk_type="module",
+                    imports=file_imports,
                 )
             )
 
         return chunks
 
     def _extract_function(
-        self, node, lines: list[str], file_path: Path, class_name: str | None = None
+        self,
+        node,
+        lines: list[str],
+        file_path: Path,
+        class_name: str | None = None,
+        file_imports: list[dict] | None = None,
     ) -> list[CodeChunk]:
         """Extract function declaration from AST."""
         function_name = self._get_node_name(node)
@@ -199,6 +214,9 @@ class JavaScriptParser(BaseParser):
         # Extract parameters
         parameters = self._extract_js_parameters(node)
 
+        # Extract function calls made within this function body
+        calls = self._extract_calls_from_node(node)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -211,11 +229,18 @@ class JavaScriptParser(BaseParser):
             complexity_score=complexity,
             parameters=parameters,
             chunk_depth=2 if class_name else 1,
+            imports=file_imports or [],
+            calls=calls,
         )
         return [chunk]
 
     def _extract_arrow_function(
-        self, node, lines: list[str], file_path: Path, class_name: str | None = None
+        self,
+        node,
+        lines: list[str],
+        file_path: Path,
+        class_name: str | None = None,
+        file_imports: list[dict] | None = None,
     ) -> list[CodeChunk]:
         """Extract arrow function from AST."""
         # Arrow functions often don't have explicit names, try to get from parent
@@ -240,6 +265,9 @@ class JavaScriptParser(BaseParser):
         # Extract parameters
         parameters = self._extract_js_parameters(node)
 
+        # Extract function calls made within this arrow function body
+        calls = self._extract_calls_from_node(node)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -252,11 +280,18 @@ class JavaScriptParser(BaseParser):
             complexity_score=complexity,
             parameters=parameters,
             chunk_depth=2 if class_name else 1,
+            imports=file_imports or [],
+            calls=calls,
         )
         return [chunk]
 
     def _extract_variable_function(
-        self, node, lines: list[str], file_path: Path, class_name: str | None = None
+        self,
+        node,
+        lines: list[str],
+        file_path: Path,
+        class_name: str | None = None,
+        file_imports: list[dict] | None = None,
     ) -> list[CodeChunk]:
         """Extract function from variable declaration (const func = ...)."""
         chunks = []
@@ -282,6 +317,9 @@ class JavaScriptParser(BaseParser):
                             # Extract parameters
                             parameters = self._extract_js_parameters(subchild)
 
+                            # Extract function calls within this function body
+                            calls = self._extract_calls_from_node(subchild)
+
                             chunk = self._create_chunk(
                                 content=content,
                                 file_path=file_path,
@@ -294,13 +332,19 @@ class JavaScriptParser(BaseParser):
                                 complexity_score=complexity,
                                 parameters=parameters,
                                 chunk_depth=2 if class_name else 1,
+                                imports=file_imports or [],
+                                calls=calls,
                             )
                             chunks.append(chunk)
 
         return chunks
 
     def _extract_class(
-        self, node, lines: list[str], file_path: Path
+        self,
+        node,
+        lines: list[str],
+        file_path: Path,
+        file_imports: list[dict] | None = None,
     ) -> list[CodeChunk]:
         """Extract class declaration from AST."""
         class_name = self._get_node_name(node)
@@ -316,6 +360,9 @@ class JavaScriptParser(BaseParser):
         # Calculate complexity
         complexity = self._calculate_complexity(node, "javascript")
 
+        # Extract base classes and implemented interfaces
+        inherits_from = self._extract_class_heritage(node)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -326,11 +373,18 @@ class JavaScriptParser(BaseParser):
             docstring=docstring,
             complexity_score=complexity,
             chunk_depth=1,
+            imports=file_imports or [],
+            inherits_from=inherits_from,
         )
         return [chunk]
 
     def _extract_method(
-        self, node, lines: list[str], file_path: Path, class_name: str | None = None
+        self,
+        node,
+        lines: list[str],
+        file_path: Path,
+        class_name: str | None = None,
+        file_imports: list[dict] | None = None,
     ) -> list[CodeChunk]:
         """Extract method definition from class."""
         method_name = self._get_node_name(node)
@@ -352,6 +406,9 @@ class JavaScriptParser(BaseParser):
         # Check for decorators (TypeScript)
         decorators = self._extract_decorators_from_node(node)
 
+        # Extract function calls made within this method body
+        calls = self._extract_calls_from_node(node)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -365,13 +422,15 @@ class JavaScriptParser(BaseParser):
             parameters=parameters,
             decorators=decorators,
             chunk_depth=2,
+            imports=file_imports or [],
+            calls=calls,
         )
         return [chunk]
 
     def _get_node_name(self, node) -> str | None:
         """Extract name from a named node."""
         for child in node.children:
-            if child.type in ("identifier", "property_identifier"):
+            if child.type in ("identifier", "property_identifier", "type_identifier"):
                 return child.text.decode("utf-8")
         return None
 
@@ -437,6 +496,207 @@ class JavaScriptParser(BaseParser):
                 decorators.append(self._get_node_text(child))
 
         return decorators
+
+    def _extract_imports_from_tree(self, root_node) -> list[dict]:
+        """Extract all import statements from the top-level AST.
+
+        Collects both ES module import statements and CommonJS require calls
+        that appear at the module top level.
+
+        Args:
+            root_node: Root node of the parsed AST
+
+        Returns:
+            List of import metadata dicts with 'statement' and 'source' keys
+        """
+        imports: list[dict] = []
+
+        for child in root_node.children:
+            # ES module: import X from 'Y'  /  import { X } from 'Y'
+            if child.type == "import_statement":
+                statement = child.text.decode("utf-8").strip()
+                source = self._extract_import_source(child)
+                imports.append({"statement": statement, "source": source})
+
+            # CommonJS: const x = require('y')  /  var x = require('y')
+            elif child.type in ("lexical_declaration", "variable_declaration"):
+                for decl_child in child.children:
+                    if decl_child.type == "variable_declarator":
+                        for sub in decl_child.children:
+                            if sub.type == "call_expression":
+                                func_node = next(
+                                    (
+                                        c
+                                        for c in sub.children
+                                        if c.type == "identifier"
+                                        and c.text.decode("utf-8") == "require"
+                                    ),
+                                    None,
+                                )
+                                if func_node is not None:
+                                    statement = child.text.decode("utf-8").strip()
+                                    source = self._extract_require_source(sub)
+                                    imports.append(
+                                        {"statement": statement, "source": source}
+                                    )
+
+            # export * from 'Y'  /  export { X } from 'Y'
+            elif child.type == "export_statement":
+                # Only record re-exports that have a source module
+                source = self._extract_import_source(child)
+                if source:
+                    statement = child.text.decode("utf-8").strip()
+                    imports.append({"statement": statement, "source": source})
+
+        return imports
+
+    def _extract_import_source(self, node) -> str:
+        """Extract the source string from an import/export statement node.
+
+        Args:
+            node: import_statement or export_statement AST node
+
+        Returns:
+            Source module path string, or empty string if not found
+        """
+        for child in node.children:
+            if child.type == "string":
+                # Strip surrounding quotes
+                return child.text.decode("utf-8").strip("\"'`")
+        return ""
+
+    def _extract_require_source(self, call_node) -> str:
+        """Extract the source path from a require() call expression node.
+
+        Args:
+            call_node: call_expression AST node
+
+        Returns:
+            Required module path string, or empty string if not found
+        """
+        for child in call_node.children:
+            if child.type == "arguments":
+                for arg in child.children:
+                    if arg.type == "string":
+                        return arg.text.decode("utf-8").strip("\"'`")
+        return ""
+
+    def _extract_calls_from_node(self, node) -> list[str]:
+        """Walk an AST node and collect all function/method call names.
+
+        Traverses the full subtree collecting call_expression nodes.  For
+        each call the callee name is extracted:
+        - Simple call:  foo()         -> 'foo'
+        - Method call:  obj.bar()     -> 'obj.bar'
+        - Chained:      a.b.c()       -> 'a.b.c'
+
+        Args:
+            node: Root AST node to search within
+
+        Returns:
+            Deduplicated list of called function/method name strings
+        """
+        calls: list[str] = []
+        seen: set[str] = set()
+
+        def walk(n) -> None:
+            if n.type == "call_expression":
+                # First child of call_expression is the function being called
+                if n.children:
+                    callee = n.children[0]
+                    name = self._get_callee_name(callee)
+                    if name and name not in seen:
+                        seen.add(name)
+                        calls.append(name)
+                # Still walk into arguments for nested calls
+                for child in n.children:
+                    walk(child)
+            elif hasattr(n, "children"):
+                for child in n.children:
+                    walk(child)
+
+        walk(node)
+        return calls
+
+    def _get_callee_name(self, node) -> str:
+        """Extract a human-readable callee name from a call_expression callee node.
+
+        Handles:
+        - identifier:          foo
+        - member_expression:   obj.method  (recursively flattened)
+
+        Args:
+            node: Callee AST node
+
+        Returns:
+            Dotted name string, or empty string if it cannot be resolved
+        """
+        if node.type == "identifier":
+            return node.text.decode("utf-8")
+
+        if node.type == "member_expression":
+            # member_expression children: [object, ".", property]
+            parts: list[str] = []
+            for child in node.children:
+                if child.type in ("identifier", "property_identifier"):
+                    parts.append(child.text.decode("utf-8"))
+                elif child.type == "member_expression":
+                    parts.append(self._get_callee_name(child))
+            return ".".join(p for p in parts if p)
+
+        return ""
+
+    def _extract_class_heritage(self, node) -> list[str]:
+        """Extract base classes and implemented interfaces from a class node.
+
+        Handles grammar differences between JavaScript and TypeScript:
+        - JavaScript:   class_heritage -> (extends keyword) + identifier
+        - TypeScript:   class_heritage -> extends_clause -> identifier
+                        class_heritage -> implements_clause -> type_identifier
+
+        Args:
+            node: class_declaration AST node
+
+        Returns:
+            List of inherited/implemented class and interface name strings
+        """
+        inherits_from: list[str] = []
+
+        for child in node.children:
+            if child.type == "class_heritage":
+                for heritage_child in child.children:
+                    # TypeScript: explicit extends_clause wrapper
+                    if heritage_child.type == "extends_clause":
+                        for ext_child in heritage_child.children:
+                            if ext_child.type in ("identifier", "type_identifier"):
+                                inherits_from.append(ext_child.text.decode("utf-8"))
+                            elif ext_child.type == "member_expression":
+                                name = self._get_callee_name(ext_child)
+                                if name:
+                                    inherits_from.append(name)
+
+                    # TypeScript: implements_clause
+                    elif heritage_child.type == "implements_clause":
+                        for impl_child in heritage_child.children:
+                            if impl_child.type in ("identifier", "type_identifier"):
+                                inherits_from.append(impl_child.text.decode("utf-8"))
+                            elif impl_child.type == "generic_type":
+                                # e.g. IFoo<Bar> - use only the outer name
+                                for gc in impl_child.children:
+                                    if gc.type in ("identifier", "type_identifier"):
+                                        inherits_from.append(gc.text.decode("utf-8"))
+                                        break
+
+                    # JavaScript: class_heritage has no intermediate wrapper;
+                    # identifiers appear directly as siblings of the 'extends' keyword
+                    elif heritage_child.type in ("identifier", "type_identifier"):
+                        inherits_from.append(heritage_child.text.decode("utf-8"))
+                    elif heritage_child.type == "member_expression":
+                        name = self._get_callee_name(heritage_child)
+                        if name:
+                            inherits_from.append(name)
+
+        return inherits_from
 
     def _extract_jsdoc_from_node(self, node, lines: list[str]) -> str | None:
         """Extract JSDoc comment from before a node."""
