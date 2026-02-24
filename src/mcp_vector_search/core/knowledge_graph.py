@@ -47,6 +47,20 @@ class DocSection:
 
 
 @dataclass
+class Document:
+    """A file-level document node in the knowledge graph."""
+
+    id: str  # Unique identifier (document:<file_path_hash>)
+    file_path: str  # Relative file path
+    title: str  # First H1 heading, or filename
+    doc_category: str  # readme, guide, api_doc, config, changelog, design, spec, other
+    word_count: int  # Total word count
+    section_count: int  # Number of heading sections
+    last_modified: str | None = None  # ISO timestamp
+    commit_sha: str | None = None
+
+
+@dataclass
 class Tag:
     """A tag node for topic clustering in the knowledge graph."""
 
@@ -296,6 +310,42 @@ class KnowledgeGraph:
             # Table likely exists
             logger.debug(f"Tag table creation: {e}")
 
+        # Create Document node table
+        try:
+            self.conn.execute(
+                """
+                CREATE NODE TABLE IF NOT EXISTS Document (
+                    id STRING PRIMARY KEY,
+                    file_path STRING,
+                    title STRING,
+                    doc_category STRING,
+                    word_count INT64,
+                    section_count INT64,
+                    last_modified STRING,
+                    commit_sha STRING,
+                    created_at TIMESTAMP DEFAULT current_timestamp()
+                )
+            """
+            )
+            logger.debug("Created Document node table")
+        except Exception as e:
+            logger.debug(f"Document table creation: {e}")
+
+        # Create Topic node table for hierarchical taxonomy
+        try:
+            self.conn.execute(
+                """
+                CREATE NODE TABLE IF NOT EXISTS Topic (
+                    id STRING PRIMARY KEY,
+                    name STRING,
+                    parent_id STRING
+                )
+            """
+            )
+            logger.debug("Created Topic node table")
+        except Exception as e:
+            logger.debug(f"Topic table creation: {e}")
+
         # Create relationship tables for code-to-code relationships
         code_relationship_types = ["CALLS", "IMPORTS", "INHERITS", "CONTAINS"]
         for rel_type in code_relationship_types:
@@ -409,6 +459,64 @@ class KnowledgeGraph:
             logger.debug("Created LINKS_TO relationship table")
         except Exception as e:
             logger.debug(f"LINKS_TO table creation: {e}")
+
+        # Create CONTAINS_SECTION relationship table (Document → DocSection)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS CONTAINS_SECTION (
+                    FROM Document TO DocSection,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created CONTAINS_SECTION relationship table")
+        except Exception as e:
+            logger.debug(f"CONTAINS_SECTION table creation: {e}")
+
+        # Create RELATED_TO relationship table (Document → Document cross-references)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS RELATED_TO (
+                    FROM Document TO Document,
+                    link_text STRING,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created RELATED_TO relationship table")
+        except Exception as e:
+            logger.debug(f"RELATED_TO table creation: {e}")
+
+        # Create DESCRIBES relationship table (Document → CodeEntity)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS DESCRIBES (
+                    FROM Document TO CodeEntity,
+                    weight DOUBLE DEFAULT 1.0,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created DESCRIBES relationship table")
+        except Exception as e:
+            logger.debug(f"DESCRIBES table creation: {e}")
+
+        # Create HAS_TOPIC relationship table (Document → Topic)
+        try:
+            self.conn.execute(
+                """
+                CREATE REL TABLE IF NOT EXISTS HAS_TOPIC (
+                    FROM Document TO Topic,
+                    MANY_MANY
+                )
+            """
+            )
+            logger.debug("Created HAS_TOPIC relationship table")
+        except Exception as e:
+            logger.debug(f"HAS_TOPIC table creation: {e}")
 
         # Create Person node table
         try:
@@ -1611,6 +1719,164 @@ class KnowledgeGraph:
 
         return total
 
+    def add_documents_batch_sync(
+        self, documents: list["Document"], batch_size: int = 500
+    ) -> int:
+        """Batch insert document nodes using UNWIND (synchronous).
+
+        Args:
+            documents: List of Document objects
+            batch_size: Number of documents per batch (default 500)
+
+        Returns:
+            Number of documents inserted
+        """
+        if not self._initialized:
+            raise RuntimeError(
+                "KnowledgeGraph not initialized. Call initialize_sync() first."
+            )
+
+        total = 0
+        for i in range(0, len(documents), batch_size):
+            batch = documents[i : i + batch_size]
+            params = [
+                {
+                    "id": d.id,
+                    "file_path": d.file_path,
+                    "title": d.title,
+                    "doc_category": d.doc_category,
+                    "word_count": d.word_count,
+                    "section_count": d.section_count,
+                    "last_modified": d.last_modified or "",
+                    "commit_sha": d.commit_sha or "",
+                }
+                for d in batch
+            ]
+
+            try:
+                self._execute_query(
+                    """
+                    UNWIND $batch AS d
+                    MERGE (n:Document {id: d.id})
+                    ON CREATE SET n.file_path = d.file_path,
+                                  n.title = d.title,
+                                  n.doc_category = d.doc_category,
+                                  n.word_count = d.word_count,
+                                  n.section_count = d.section_count,
+                                  n.last_modified = d.last_modified,
+                                  n.commit_sha = d.commit_sha
+                    ON MATCH SET n.file_path = d.file_path,
+                                 n.title = d.title,
+                                 n.doc_category = d.doc_category,
+                                 n.word_count = d.word_count,
+                                 n.section_count = d.section_count,
+                                 n.last_modified = d.last_modified,
+                                 n.commit_sha = d.commit_sha
+                """,
+                    {"batch": params},
+                )
+                total += len(batch)
+            except Exception as e:
+                logger.error(f"Failed to insert documents batch: {e}")
+                raise
+
+        return total
+
+    async def add_documents_batch(
+        self, documents: list["Document"], batch_size: int = 500
+    ) -> int:
+        """Batch insert document nodes using UNWIND (async).
+
+        Args:
+            documents: List of Document objects
+            batch_size: Number of documents per batch (default 500)
+
+        Returns:
+            Number of documents inserted
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        total = 0
+        for i in range(0, len(documents), batch_size):
+            batch = documents[i : i + batch_size]
+            params = [
+                {
+                    "id": d.id,
+                    "file_path": d.file_path,
+                    "title": d.title,
+                    "doc_category": d.doc_category,
+                    "word_count": d.word_count,
+                    "section_count": d.section_count,
+                    "last_modified": d.last_modified or "",
+                    "commit_sha": d.commit_sha or "",
+                }
+                for d in batch
+            ]
+
+            try:
+                self.conn.execute(
+                    """
+                    UNWIND $batch AS d
+                    MERGE (n:Document {id: d.id})
+                    ON CREATE SET n.file_path = d.file_path,
+                                  n.title = d.title,
+                                  n.doc_category = d.doc_category,
+                                  n.word_count = d.word_count,
+                                  n.section_count = d.section_count,
+                                  n.last_modified = d.last_modified,
+                                  n.commit_sha = d.commit_sha
+                    ON MATCH SET n.file_path = d.file_path,
+                                 n.title = d.title,
+                                 n.doc_category = d.doc_category,
+                                 n.word_count = d.word_count,
+                                 n.section_count = d.section_count,
+                                 n.last_modified = d.last_modified,
+                                 n.commit_sha = d.commit_sha
+                """,
+                    {"batch": params},
+                )
+                total += len(batch)
+            except Exception as e:
+                logger.error(f"Failed to insert documents batch: {e}")
+                # Fallback to individual inserts
+                for doc in batch:
+                    try:
+                        self._execute_query(
+                            """
+                            MERGE (n:Document {id: $id})
+                            ON CREATE SET n.file_path = $file_path,
+                                          n.title = $title,
+                                          n.doc_category = $doc_category,
+                                          n.word_count = $word_count,
+                                          n.section_count = $section_count,
+                                          n.last_modified = $last_modified,
+                                          n.commit_sha = $commit_sha
+                            ON MATCH SET n.file_path = $file_path,
+                                         n.title = $title,
+                                         n.doc_category = $doc_category,
+                                         n.word_count = $word_count,
+                                         n.section_count = $section_count,
+                                         n.last_modified = $last_modified,
+                                         n.commit_sha = $commit_sha
+                            """,
+                            {
+                                "id": doc.id,
+                                "file_path": doc.file_path,
+                                "title": doc.title,
+                                "doc_category": doc.doc_category,
+                                "word_count": doc.word_count,
+                                "section_count": doc.section_count,
+                                "last_modified": doc.last_modified or "",
+                                "commit_sha": doc.commit_sha or "",
+                            },
+                        )
+                        total += 1
+                    except Exception:
+                        pass
+
+        return total
+
     def add_tags_batch_sync(self, tag_names: list[str], batch_size: int = 500) -> int:
         """Batch insert tags using UNWIND (synchronous).
 
@@ -1714,6 +1980,18 @@ class KnowledgeGraph:
         elif rel_type == "LINKS_TO":
             source_label = "DocSection"
             target_label = "DocSection"
+        elif rel_type == "CONTAINS_SECTION":
+            source_label = "Document"
+            target_label = "DocSection"
+        elif rel_type == "RELATED_TO":
+            source_label = "Document"
+            target_label = "Document"
+        elif rel_type == "DESCRIBES":
+            source_label = "Document"
+            target_label = "CodeEntity"
+        elif rel_type == "HAS_TOPIC":
+            source_label = "Document"
+            target_label = "Topic"
         else:
             logger.warning(f"Unknown relationship type: {rel_type}")
             return 0
@@ -2176,6 +2454,22 @@ class KnowledgeGraph:
             # Doc-to-doc (explicit links)
             source_label = "DocSection"
             target_label = "DocSection"
+        elif rel_type == "CONTAINS_SECTION":
+            # Document-to-DocSection containment
+            source_label = "Document"
+            target_label = "DocSection"
+        elif rel_type == "RELATED_TO":
+            # Document-to-Document cross-references
+            source_label = "Document"
+            target_label = "Document"
+        elif rel_type == "DESCRIBES":
+            # Document-to-CodeEntity
+            source_label = "Document"
+            target_label = "CodeEntity"
+        elif rel_type == "HAS_TOPIC":
+            # Document-to-Topic
+            source_label = "Document"
+            target_label = "Topic"
         else:
             logger.warning(f"Unknown relationship type: {rel_type}")
             return 0
@@ -3738,8 +4032,16 @@ class KnowledgeGraph:
             tag_result = self._execute_query("MATCH (t:Tag) RETURN count(t) AS count")
             tag_count = tag_result.get_next()[0] if tag_result.has_next() else 0
 
+            # Count document nodes
+            document_result = self._execute_query(
+                "MATCH (d:Document) RETURN count(d) AS count"
+            )
+            document_count = (
+                document_result.get_next()[0] if document_result.has_next() else 0
+            )
+
             # Total entities
-            total_entities = entity_count + doc_count + tag_count
+            total_entities = entity_count + doc_count + tag_count + document_count
 
             # Get relationship counts
             relationships = {}
@@ -3754,17 +4056,24 @@ class KnowledgeGraph:
                 "HAS_TAG",
                 "DEMONSTRATES",
                 "LINKS_TO",
+                "CONTAINS_SECTION",
+                "RELATED_TO",
+                "DESCRIBES",
             ]:
-                rel_result = self._execute_query(
-                    f"MATCH ()-[r:{rel_type}]->() RETURN count(r) AS count"
-                )
-                count = rel_result.get_next()[0] if rel_result.has_next() else 0
-                relationships[rel_type.lower()] = count
+                try:
+                    rel_result = self._execute_query(
+                        f"MATCH ()-[r:{rel_type}]->() RETURN count(r) AS count"
+                    )
+                    count = rel_result.get_next()[0] if rel_result.has_next() else 0
+                    relationships[rel_type.lower()] = count
+                except Exception:
+                    relationships[rel_type.lower()] = 0
 
             return {
                 "total_entities": total_entities,
                 "code_entities": entity_count,
                 "doc_sections": doc_count,
+                "documents": document_count,
                 "tags": tag_count,
                 "relationships": relationships,
                 "database_path": str(self.db_path / "code_kg"),
@@ -3776,6 +4085,7 @@ class KnowledgeGraph:
                 "total_entities": 0,
                 "code_entities": 0,
                 "doc_sections": 0,
+                "documents": 0,
                 "tags": 0,
                 "relationships": {},
                 "database_path": str(self.db_path / "code_kg"),
@@ -3808,6 +4118,14 @@ class KnowledgeGraph:
             # Count tags
             tag_result = self.conn.execute("MATCH (t:Tag) RETURN count(t) AS count")
             tag_count = tag_result.get_next()[0] if tag_result.has_next() else 0
+
+            # Count document nodes
+            document_result = self.conn.execute(
+                "MATCH (d:Document) RETURN count(d) AS count"
+            )
+            document_count = (
+                document_result.get_next()[0] if document_result.has_next() else 0
+            )
 
             # Count persons
             person_result = self.conn.execute(
@@ -3867,6 +4185,9 @@ class KnowledgeGraph:
                 "BRANCHED_FROM",
                 "COMMITTED_TO",
                 "BELONGS_TO",
+                "CONTAINS_SECTION",
+                "RELATED_TO",
+                "DESCRIBES",
             ]:
                 try:
                     rel_result = self.conn.execute(
@@ -3882,6 +4203,7 @@ class KnowledgeGraph:
                 "total_entities": entity_count
                 + doc_count
                 + tag_count
+                + document_count
                 + person_count
                 + project_count
                 + repo_count
@@ -3889,6 +4211,7 @@ class KnowledgeGraph:
                 + commit_count,
                 "code_entities": entity_count,
                 "doc_sections": doc_count,
+                "documents": document_count,
                 "tags": tag_count,
                 "persons": person_count,
                 "projects": project_count,
@@ -3904,6 +4227,7 @@ class KnowledgeGraph:
                 "total_entities": 0,
                 "code_entities": 0,
                 "doc_sections": 0,
+                "documents": 0,
                 "tags": 0,
                 "persons": 0,
                 "projects": 0,
@@ -3913,6 +4237,156 @@ class KnowledgeGraph:
                 "relationships": {},
                 "error": str(e),
             }
+
+    async def get_document_ontology(
+        self, category: str | None = None
+    ) -> dict[str, Any]:
+        """Get the document ontology tree grouped by category.
+
+        Returns documents organized by doc_category, with their sections,
+        cross-references (RELATED_TO), and tags (via DocSection HAS_TAG).
+
+        Args:
+            category: Optional category filter (readme, guide, api_doc, etc.)
+
+        Returns:
+            Dict with categories, documents, sections, cross-references
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        result: dict[str, Any] = {
+            "categories": {},
+            "total_documents": 0,
+            "total_sections": 0,
+            "total_cross_references": 0,
+        }
+
+        # Get all documents grouped by category
+        try:
+            query = """
+                MATCH (d:Document)
+                RETURN d.id, d.file_path, d.title, d.doc_category,
+                       d.word_count, d.section_count
+                ORDER BY d.doc_category, d.title
+            """
+            docs_result = self._execute_query(query, {})
+            rows = []
+            while docs_result.has_next():
+                rows.append(docs_result.get_next())
+
+            for row in rows:
+                doc_id, file_path, title, cat, word_count, section_count = row
+                if category and cat != category:
+                    continue
+                if cat not in result["categories"]:
+                    result["categories"][cat] = []
+
+                doc_info: dict[str, Any] = {
+                    "id": doc_id,
+                    "file_path": file_path,
+                    "title": title,
+                    "word_count": word_count,
+                    "section_count": section_count,
+                    "sections": [],
+                    "cross_references": [],
+                    "tags": [],
+                }
+
+                result["categories"][cat].append(doc_info)
+                result["total_documents"] += 1
+                result["total_sections"] += section_count or 0
+
+        except Exception as e:
+            logger.warning(f"Failed to query documents: {e}")
+            return result
+
+        # Get sections for each document
+        try:
+            sections_result = self._execute_query(
+                """
+                MATCH (d:Document)-[:CONTAINS_SECTION]->(s:DocSection)
+                RETURN d.id, s.name, s.level, s.line_start
+                ORDER BY d.id, s.line_start
+                """,
+                {},
+            )
+
+            sections_by_doc: dict[str, list[dict[str, Any]]] = {}
+            while sections_result.has_next():
+                row = sections_result.get_next()
+                doc_id = row[0]
+                if doc_id not in sections_by_doc:
+                    sections_by_doc[doc_id] = []
+                sections_by_doc[doc_id].append(
+                    {
+                        "name": row[1],
+                        "level": row[2],
+                        "line": row[3],
+                    }
+                )
+
+            for category_docs in result["categories"].values():
+                for doc in category_docs:
+                    doc["sections"] = sections_by_doc.get(doc["id"], [])
+
+        except Exception as e:
+            logger.debug(f"Failed to query sections: {e}")
+
+        # Get cross-references (RELATED_TO between Documents)
+        try:
+            refs_result = self._execute_query(
+                """
+                MATCH (d1:Document)-[r:RELATED_TO]->(d2:Document)
+                RETURN d1.id, d2.file_path, d2.title
+                """,
+                {},
+            )
+
+            refs_by_doc: dict[str, list[dict[str, str]]] = {}
+            while refs_result.has_next():
+                row = refs_result.get_next()
+                doc_id = row[0]
+                if doc_id not in refs_by_doc:
+                    refs_by_doc[doc_id] = []
+                refs_by_doc[doc_id].append(
+                    {
+                        "file_path": row[1],
+                        "title": row[2],
+                    }
+                )
+                result["total_cross_references"] += 1
+
+            for category_docs in result["categories"].values():
+                for doc in category_docs:
+                    doc["cross_references"] = refs_by_doc.get(doc["id"], [])
+
+        except Exception as e:
+            logger.debug(f"Failed to query cross-references: {e}")
+
+        # Get tags per document (via DocSection HAS_TAG)
+        try:
+            tags_result = self._execute_query(
+                """
+                MATCH (d:Document)-[:CONTAINS_SECTION]->(s:DocSection)-[:HAS_TAG]->(t:Tag)
+                RETURN d.id, COLLECT(DISTINCT t.name)
+                """,
+                {},
+            )
+
+            tags_by_doc: dict[str, list[str]] = {}
+            while tags_result.has_next():
+                row = tags_result.get_next()
+                tags_by_doc[row[0]] = row[1]
+
+            for category_docs in result["categories"].values():
+                for doc in category_docs:
+                    doc["tags"] = tags_by_doc.get(doc["id"], [])
+
+        except Exception as e:
+            logger.debug(f"Failed to query tags: {e}")
+
+        return result
 
     async def get_cross_entity_samples(
         self, limit_per_type: int = 3

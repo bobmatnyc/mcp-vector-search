@@ -22,6 +22,7 @@ from .knowledge_graph import (
     CodeRelationship,
     Commit,
     DocSection,
+    Document,
     KnowledgeGraph,
     Person,
     ProgrammingFramework,
@@ -338,6 +339,7 @@ class KGBuilder:
         stats = {
             "entities": 0,
             "doc_sections": 0,
+            "doc_nodes": 0,
             "tags": 0,
             "calls": 0,
             "imports": 0,
@@ -349,6 +351,8 @@ class KGBuilder:
             "has_tag": 0,
             "demonstrates": 0,
             "links_to": 0,
+            "contains_section": 0,
+            "related_to": 0,
             "persons": 0,
             "projects": 0,
             "authored": 0,
@@ -377,6 +381,8 @@ class KGBuilder:
             "HAS_TAG": [],
             "DEMONSTRATES": [],
             "LINKS_TO": [],
+            "CONTAINS_SECTION": [],
+            "RELATED_TO": [],
         }
 
         # Extract from code chunks
@@ -417,6 +423,16 @@ class KGBuilder:
                     start_time=text_start_time,
                 )
 
+        # Build Document (file-level) nodes from collected doc sections
+        documents, doc_relationships = self._build_document_nodes(
+            doc_sections, text_chunks
+        )
+        for rel in doc_relationships:
+            rel_type = rel.relationship_type.upper()
+            if rel_type not in relationships:
+                relationships[rel_type] = []
+            relationships[rel_type].append(rel)
+
         total_rels = sum(len(r) for r in relationships.values())
 
         if progress_tracker:
@@ -427,11 +443,13 @@ class KGBuilder:
             progress_tracker.item(
                 f"Found {len(doc_sections):,} doc sections", done=True
             )
+            progress_tracker.item(f"Found {len(documents):,} documents", done=True)
             progress_tracker.item(f"Found {len(tags):,} tags", done=True)
         else:
             console.print(f"[green]✓ Scanned {len(chunks)} chunks[/green]")
             console.print(f"  - {len(code_entities)} code entities")
             console.print(f"  - {len(doc_sections)} doc sections")
+            console.print(f"  - {len(documents)} documents")
             console.print(f"  - {len(tags)} tags")
             console.print(f"  - {total_rels} relationships")
 
@@ -465,6 +483,13 @@ class KGBuilder:
             else:
                 console.print(f"  ✓ {stats['doc_sections']} doc sections")
 
+        if documents:
+            stats["doc_nodes"] = self.kg.add_documents_batch_sync(documents)
+            if progress_tracker:
+                progress_tracker.item(f"{stats['doc_nodes']:,} documents", done=True)
+            else:
+                console.print(f"  ✓ {stats['doc_nodes']} documents")
+
         if tags:
             stats["tags"] = self.kg.add_tags_batch_sync(list(tags))
             if progress_tracker:
@@ -472,7 +497,9 @@ class KGBuilder:
             else:
                 console.print(f"  ✓ {stats['tags']} tags")
 
-        total_entities = len(code_entities) + len(doc_sections) + len(tags)
+        total_entities = (
+            len(code_entities) + len(doc_sections) + len(documents) + len(tags)
+        )
 
         # PHASE 3: Validate and insert relationships
         if progress_tracker:
@@ -545,6 +572,27 @@ class KGBuilder:
                 progress_tracker.warning(f"Failed to query Tag IDs: {e}")
             else:
                 console.print(f"[yellow]Warning: Failed to query Tag IDs: {e}[/yellow]")
+
+        # Query Document IDs
+        try:
+            result = self.kg._execute_query("MATCH (d:Document) RETURN d.id as id", {})
+            document_node_ids = {row[0] for row in result}
+            valid_entity_ids.update(document_node_ids)
+            if progress_tracker:
+                progress_tracker.debug(
+                    f"Found {len(document_node_ids)} Document IDs in Kuzu"
+                )
+            else:
+                console.print(
+                    f"[dim]Found {len(document_node_ids)} Document IDs in Kuzu[/dim]"
+                )
+        except Exception as e:
+            if progress_tracker:
+                progress_tracker.warning(f"Failed to query Document IDs: {e}")
+            else:
+                console.print(
+                    f"[yellow]Warning: Failed to query Document IDs: {e}[/yellow]"
+                )
 
         if progress_tracker:
             progress_tracker.debug(
@@ -739,6 +787,7 @@ class KGBuilder:
         stats = {
             "entities": 0,
             "doc_sections": 0,
+            "doc_nodes": 0,
             "tags": 0,
             "calls": 0,
             "imports": 0,
@@ -750,6 +799,8 @@ class KGBuilder:
             "has_tag": 0,
             "demonstrates": 0,
             "links_to": 0,
+            "contains_section": 0,
+            "related_to": 0,
             "persons": 0,
             "projects": 0,
             "authored": 0,
@@ -776,6 +827,8 @@ class KGBuilder:
                 "HAS_TAG": [],
                 "DEMONSTRATES": [],
                 "LINKS_TO": [],
+                "CONTAINS_SECTION": [],
+                "RELATED_TO": [],
             }
 
             # Extract from code chunks
@@ -796,6 +849,16 @@ class KGBuilder:
                 for rel_type, rel_list in rels.items():
                     relationships[rel_type].extend(rel_list)
 
+            # Build Document (file-level) nodes from collected doc sections
+            documents, doc_relationships = self._build_document_nodes(
+                doc_sections, text_chunks
+            )
+            for rel in doc_relationships:
+                rel_type = rel.relationship_type.upper()
+                if rel_type not in relationships:
+                    relationships[rel_type] = []
+                relationships[rel_type].append(rel)
+
             console.print(f"[green]✓ Scanned {len(chunks)} chunks[/green]")
 
             # Phase 2: Insert entities
@@ -811,11 +874,17 @@ class KGBuilder:
                 )
                 console.print(f"  ✓ {stats['doc_sections']} doc sections")
 
+            if documents:
+                stats["doc_nodes"] = await self.kg.add_documents_batch(documents)
+                console.print(f"  ✓ {stats['doc_nodes']} documents")
+
             if tags:
                 stats["tags"] = await self.kg.add_tags_batch(list(tags))
                 console.print(f"  ✓ {stats['tags']} tags")
 
-            total_entities = len(code_entities) + len(doc_sections) + len(tags)
+            total_entities = (
+                len(code_entities) + len(doc_sections) + len(documents) + len(tags)
+            )
             console.print(f"[green]✓ Inserted {total_entities} entities[/green]")
 
             # Phase 3: Insert relationships
@@ -853,6 +922,8 @@ class KGBuilder:
                 "HAS_TAG": [],
                 "DEMONSTRATES": [],
                 "LINKS_TO": [],
+                "CONTAINS_SECTION": [],
+                "RELATED_TO": [],
             }
 
             # Extract from code chunks
@@ -873,9 +944,20 @@ class KGBuilder:
                 for rel_type, rel_list in rels.items():
                     relationships[rel_type].extend(rel_list)
 
+            # Build Document (file-level) nodes from collected doc sections
+            documents, doc_relationships = self._build_document_nodes(
+                doc_sections, text_chunks
+            )
+            for rel in doc_relationships:
+                rel_type = rel.relationship_type.upper()
+                if rel_type not in relationships:
+                    relationships[rel_type] = []
+                relationships[rel_type].append(rel)
+
             logger.info(
                 f"Extracted {len(code_entities)} entities, {len(doc_sections)} doc sections, "
-                f"{len(tags)} tags, {sum(len(r) for r in relationships.values())} relationships"
+                f"{len(documents)} documents, {len(tags)} tags, "
+                f"{sum(len(r) for r in relationships.values())} relationships"
             )
 
             # Phase 2: Batch insert entities
@@ -889,6 +971,10 @@ class KGBuilder:
                     doc_sections
                 )
                 logger.info(f"✓ Inserted {stats['doc_sections']} doc sections")
+
+            if documents:
+                stats["doc_nodes"] = await self.kg.add_documents_batch(documents)
+                logger.info(f"✓ Inserted {stats['doc_nodes']} documents")
 
             if tags:
                 stats["tags"] = await self.kg.add_tags_batch(list(tags))
@@ -912,8 +998,8 @@ class KGBuilder:
 
             logger.info(
                 f"✓ Knowledge graph built: {stats['entities']} code entities, "
-                f"{stats['doc_sections']} doc sections, "
-                f"{sum(stats.values()) - stats['entities'] - stats['doc_sections']} relationships"
+                f"{stats['doc_sections']} doc sections, {stats['doc_nodes']} documents, "
+                f"{sum(stats.values()) - stats['entities'] - stats['doc_sections'] - stats['doc_nodes']} relationships"
             )
 
         return stats
@@ -1358,6 +1444,176 @@ class KGBuilder:
             prev_section_id = section_id
 
         return doc_sections, tags, relationships
+
+    def _classify_document(self, file_path: str) -> str:
+        """Classify a document file into a category.
+
+        Args:
+            file_path: Relative file path to classify
+
+        Returns:
+            Category string: readme, guide, api_doc, config, changelog,
+            design, spec, roadmap, contributing, license, research, or other
+        """
+        path = Path(file_path)
+        name_lower = path.name.lower()
+        path_str = str(path).lower()
+
+        # Exact filename matches (highest priority)
+        if name_lower.startswith("readme"):
+            return "readme"
+        elif name_lower.startswith("changelog") or name_lower.startswith("changes"):
+            return "changelog"
+        elif name_lower.startswith("contributing"):
+            return "contributing"
+        elif name_lower.startswith("license"):
+            return "license"
+        elif name_lower in ("architecture.md", "design.md", "adr.md"):
+            return "design"
+        elif name_lower in ("api.md", "api-reference.md", "reference.md"):
+            return "api_doc"
+        elif name_lower.startswith("spec") or name_lower.startswith("rfc"):
+            return "spec"
+        elif name_lower.startswith("todo") or name_lower.startswith("roadmap"):
+            return "roadmap"
+
+        # Path-based classification
+        if "/api/" in path_str or "/reference/" in path_str:
+            return "api_doc"
+        elif "/guide/" in path_str or "/tutorial/" in path_str or "/howto/" in path_str:
+            return "guide"
+        elif (
+            "/design/" in path_str
+            or "/adr/" in path_str
+            or "/architecture/" in path_str
+        ):
+            return "design"
+        elif "/spec/" in path_str or "/rfc/" in path_str:
+            return "spec"
+        elif "/research/" in path_str:
+            return "research"
+
+        return "other"
+
+    def _build_document_nodes(
+        self,
+        doc_sections: list[DocSection],
+        text_chunks: list[CodeChunk],
+    ) -> tuple[list[Document], list[CodeRelationship]]:
+        """Build Document (file-level) nodes from collected doc sections.
+
+        Groups DocSections by file_path, creates one Document per unique file,
+        classifies by category, and extracts cross-document markdown links.
+
+        Args:
+            doc_sections: All DocSection nodes collected from text chunks
+            text_chunks: All text chunks for word count and link extraction
+
+        Returns:
+            Tuple of (documents, relationships) where relationships contains
+            CONTAINS_SECTION and RELATED_TO edges
+        """
+        from collections import defaultdict
+
+        # Group sections and chunks by file path
+        sections_by_file: dict[str, list[DocSection]] = defaultdict(list)
+        chunks_by_file: dict[str, list[CodeChunk]] = defaultdict(list)
+
+        for section in doc_sections:
+            sections_by_file[section.file_path].append(section)
+        for chunk in text_chunks:
+            chunks_by_file[str(chunk.file_path)].append(chunk)
+
+        documents: list[Document] = []
+        all_relationships: list[CodeRelationship] = []
+
+        # Track document IDs for cross-reference resolution
+        file_to_doc_id: dict[str, str] = {}
+
+        for file_path, sections in sections_by_file.items():
+            doc_id = f"document:{hashlib.sha256(file_path.encode()).hexdigest()[:16]}"
+            file_to_doc_id[file_path] = doc_id
+
+            # Title: first H1 heading, or filename stem
+            title = Path(file_path).stem
+            sorted_sections = sorted(sections, key=lambda s: s.line_start)
+            for s in sorted_sections:
+                if s.level == 1:
+                    title = s.name
+                    break
+
+            # Word count from all chunks for this file
+            word_count = sum(
+                len(chunk.content.split())
+                for chunk in chunks_by_file.get(file_path, [])
+            )
+
+            # Category classification
+            doc_category = self._classify_document(file_path)
+
+            doc = Document(
+                id=doc_id,
+                file_path=file_path,
+                title=title,
+                doc_category=doc_category,
+                word_count=word_count,
+                section_count=len(sections),
+            )
+            documents.append(doc)
+
+            # CONTAINS_SECTION relationships (Document → DocSection)
+            for section in sections:
+                all_relationships.append(
+                    CodeRelationship(
+                        source_id=doc_id,
+                        target_id=section.id,
+                        relationship_type="CONTAINS_SECTION",
+                    )
+                )
+
+        # Extract cross-document links from chunk content
+        # Pattern matches [link text](path/to/file.md) or [link text](path.md#anchor)
+        md_link_pattern = re.compile(r"\[([^\]]*)\]\(([^)]+\.md(?:#[^)]*)?)\)")
+
+        for file_path, chunks in chunks_by_file.items():
+            source_doc_id = file_to_doc_id.get(file_path)
+            if not source_doc_id:
+                continue
+
+            for chunk in chunks:
+                for match in md_link_pattern.finditer(chunk.content):
+                    link_target = match.group(2).split("#")[0]  # Remove anchors
+
+                    # Resolve relative path against source file's directory
+                    try:
+                        source_dir = Path(file_path).parent
+                        resolved = (source_dir / link_target).resolve()
+
+                        # Convert back to project-relative path
+                        try:
+                            rel_path = str(
+                                resolved.relative_to(self.project_root.resolve())
+                            )
+                        except ValueError:
+                            # Try relative to cwd
+                            try:
+                                rel_path = str(resolved.relative_to(Path.cwd()))
+                            except ValueError:
+                                rel_path = str(resolved)
+
+                        target_doc_id = file_to_doc_id.get(rel_path)
+                        if target_doc_id and target_doc_id != source_doc_id:
+                            all_relationships.append(
+                                CodeRelationship(
+                                    source_id=source_doc_id,
+                                    target_id=target_doc_id,
+                                    relationship_type="RELATED_TO",
+                                )
+                            )
+                    except Exception:
+                        continue  # Skip unresolvable links
+
+        return documents, all_relationships
 
     async def _process_text_chunk(self, chunk: CodeChunk, stats: dict[str, int]):
         """Extract documentation sections and references from text chunk.
