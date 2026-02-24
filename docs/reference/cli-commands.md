@@ -39,6 +39,7 @@ Complete reference for all mcp-vector-search command-line interface commands.
 |---------|---------|-------------|
 | `watch` | File watching and monitoring | Real-time index updates |
 | `mcp` | MCP server integration | Advanced MCP configuration |
+| `kg` | Knowledge graph operations | Build/query graph, browse document ontology |
 | `doctor` | Diagnose system issues | Troubleshoot problems |
 | `version` | Show version info | Check installed version |
 
@@ -388,43 +389,63 @@ mcp-vector-search search favorites
 
 ### `index`
 
-Index codebase for semantic search.
+Index codebase for semantic search. `index` is a subcommand group — run it alone to execute all indexing phases (chunk, embed, KG), or use a subcommand for fine-grained control.
+
+> Note: For most users, `setup` handles indexing automatically. The `index` command is for manual control and incremental updates.
 
 ```bash
-# Index entire project
+# Full index (chunk + embed + KG)
 mcp-vector-search index
 
-# Index specific directory
-mcp-vector-search index /path/to/directory
-
-# Force full reindex
+# Force rebuild from scratch
 mcp-vector-search index --force
 
-# Incremental indexing (default)
-mcp-vector-search index --incremental
+# Reindex entire project (with confirmation prompt)
+mcp-vector-search index reindex
+
+# Reindex with --all flag (same as above, no confirmation)
+mcp-vector-search index reindex --all
+
+# Reindex without confirmation
+mcp-vector-search index reindex --force
+
+# Reindex a specific file
+mcp-vector-search index reindex path/to/file.py
 
 # Verbose output
 mcp-vector-search index --verbose
-
-# Specific project root
-mcp-vector-search index --project-root /path/to/project
 ```
 
 **Options:**
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--force` | Force complete reindex | `false` |
-| `--incremental` | Only index changed files | `true` |
-| `--verbose` | Show detailed progress | `false` |
-| `--project-root PATH` | Project root directory | Current directory |
-| `path` | Directory to index | Project root |
+| `--force` / `-f` | Rebuild index from scratch | `false` |
+| `--verbose` / `-v` | Show detailed progress | `false` |
+| `--project-root PATH` / `-p` | Project root directory | Current directory |
+
+**Subcommands:**
+
+| Subcommand | Description |
+|------------|-------------|
+| `chunk` | Phase 1: Parse and chunk files |
+| `embed` | Phase 2: Generate embeddings |
+| `kg` | Phase 3: Build knowledge graph |
+| `reindex` | Reindex files (takes optional `[FILE_PATH]`, `--all`/`-a`, `--force`/`-f`) |
+| `clean` | Clean index data |
+| `health` | Check index health |
+| `status` | Show indexing status |
+| `cancel` | Cancel background indexing |
+| `watch` | Watch for file changes |
+| `relationships` | Compute semantic relationships |
+| `phases` | Show phase status |
+| `auto` | Manage auto-indexing |
 
 **When to use:**
 
-- **`index`**: Regular updates after code changes
-- **`index --force`**: After config changes, version upgrades, corruption
-- **`index --incremental`**: Fast updates (default behavior)
+- **`index`**: Run all indexing phases after code changes
+- **`index --force`**: After config changes, version upgrades, or index corruption
+- **`index reindex`**: Selectively reindex changed or specified files
 
 ### `status`
 
@@ -630,6 +651,49 @@ mcp-vector-search mcp reset
 - `server`: Start MCP server
 - `reset`: Reset MCP configuration
 
+### `kg`
+
+Knowledge graph operations: build, query, inspect status, and browse the document ontology.
+
+```bash
+# Build the knowledge graph
+mcp-vector-search kg build
+
+# Check knowledge graph status
+mcp-vector-search kg status
+
+# Query the knowledge graph
+mcp-vector-search kg query "find all Python functions"
+mcp-vector-search kg query "show classes in module auth"
+
+# Browse document ontology (Rich tree grouped by category)
+mcp-vector-search kg ontology
+
+# Filter ontology by category
+mcp-vector-search kg ontology --category guide
+
+# Include file paths in ontology output
+mcp-vector-search kg ontology --verbose
+```
+
+**`kg ontology` Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--category TEXT` | Filter results to a single doc category | All categories |
+| `--verbose` / `-v` | Include file paths in the output tree | `false` |
+
+**Document categories** (23 total): `api_doc`, `bugfix`, `changelog`, `configuration`, `contributing`, `deployment`, `design`, `example`, `faq`, `feature`, `guide`, `internal`, `migration`, `performance`, `project`, `readme`, `release_notes`, `report`, `research`, `script`, `setup`, `spec`, `test_doc`, `troubleshooting`, `tutorial`, `upgrade_guide`.
+
+**Subcommands:**
+
+- `build`: Extract entities and build graph from indexed files
+- `status`: Show node/edge counts and last build time
+- `query`: Run a natural language query against the graph
+- `ontology`: Display document classification tree
+
+---
+
 ### `doctor`
 
 Diagnose system dependencies and configuration.
@@ -724,6 +788,7 @@ mcp-vector-search uninstall claude-code # Remove MCP integration
 mcp-vector-search search "query"        # Search code
 mcp-vector-search index                 # Update index
 mcp-vector-search status                # Check status
+mcp-vector-search kg ontology           # Browse document categories
 ```
 
 ### Configuration

@@ -27,7 +27,7 @@ A modern, fast, and intelligent code search tool that understands your codebase 
 ### 🛠️ **Developer Experience**
 - **CLI-First Design**: Simple commands for immediate productivity
 - **Rich Output**: Syntax highlighting, similarity scores, context
-- **Fast Performance**: Sub-second search responses, efficient indexing with pipeline parallelism (37% faster)
+- **Fast Performance**: Sub-second search responses, efficient indexing with pipeline parallelism (37% faster); IVF-PQ vector index delivers **4.9x faster queries** (3.4ms vs 16.7ms)
 - **Modern Architecture**: Async-first, type-safe, modular design
 - **Semi-Automatic Reindexing**: Multiple strategies without daemon processes
 - **17 MCP Tools**: Comprehensive MCP integration for AI assistants (search, analysis, documentation, KG, story generation)
@@ -652,9 +652,16 @@ mcp-vector-search kg status
 mcp-vector-search kg query "find all Python functions"
 mcp-vector-search kg query "show classes in module auth"
 
+# Browse document ontology (file-level document classification)
+mcp-vector-search kg ontology
+mcp-vector-search kg ontology --category guide       # filter by category
+mcp-vector-search kg ontology --verbose              # include file paths
+
 # Knowledge graph entities:
 # - CodeFile, Function, Class, Person
 # - ProgrammingLanguage, ProgrammingFramework
+# - Document (file-level, with doc_category classification)
+# - Topic (hierarchical taxonomy)
 ```
 
 #### `chat` - LLM-Powered Code Q&A
@@ -691,6 +698,25 @@ mcp-vector-search analyze complexity --fail-on-smell
 ```
 
 ## 🚀 Performance Features
+
+### Search Optimizations
+
+MCP Vector Search includes several query-time optimizations that are automatically enabled as your index grows.
+
+**IVF-PQ Index** is built automatically after indexing more than 256 rows. It uses Inverted File with Product Quantization to partition vectors into clusters, so queries scan only a relevant subset rather than the full index. The index parameters adapt to your data: `num_partitions = clamp(sqrt(N), 16, 512)` and `num_sub_vectors = dim // 4`.
+
+**Two-stage retrieval** improves precision on top of the IVF-PQ scan: the engine probes 20 IVF partitions (`nprobes=20`) and fetches 5x the requested candidates, then reranks them with exact cosine similarity (`refine_factor=5`). Applied to both the LanceDB and legacy vector backends.
+
+**Contextual chunking** prepends a compact metadata header to each chunk before embedding, so the vector captures file, language, class, and function context rather than code text alone. Format: `File: core/search.py | Lang: python | Class: Engine | Fn: search | Uses: lancedb`. Based on Anthropic research showing 35-49% fewer retrieval failures.
+
+| Optimization | Impact |
+|---|---|
+| IVF-PQ index + two-stage retrieval | 4.9x faster queries (3.4ms vs 16.7ms median) |
+| Contextual chunking | 35-49% fewer retrieval failures |
+| Pipeline parallelism | 37% faster indexing |
+| Apple Silicon MPS | 2-4x faster embedding generation |
+
+See [docs/performance/search-optimizations.md](docs/performance/search-optimizations.md) for technical details and benchmark methodology.
 
 ### LanceDB Backend (Default in v2.1+)
 **LanceDB is now the default vector database** for better performance and stability:
@@ -947,7 +973,7 @@ For detailed development workflow and `dev-mcp` usage, see the [Development](#-d
 ## 📊 Performance
 
 - **Indexing Speed**: ~1000 files/minute (typical Python project)
-- **Search Latency**: <100ms for most queries
+- **Search Latency**: 3.4ms median with IVF-PQ index (4.9x faster than without)
 - **Memory Usage**: ~50MB baseline + ~1MB per 1000 code chunks
 - **Storage**: ~1KB per code chunk (compressed embeddings)
 
@@ -989,6 +1015,10 @@ Please [open an issue](https://github.com/bobmatnyc/mcp-vector-search/issues) or
 - [x] CodeT5+ code-specific embeddings
 - [x] Pipeline parallelism (37% faster indexing)
 - [x] Production-ready performance (write buffering, GPU acceleration, async pipeline)
+- [x] IVF-PQ vector index with two-stage retrieval (4.9x faster queries)
+- [x] Contextual chunking (metadata-enriched embeddings, 35-49% fewer retrieval failures)
+- [x] CodeRankEmbed model support (`nomic-ai/CodeRankEmbed`, 768d, 8K context)
+- [x] Document ontology with 23 categories (`kg ontology` command)
 
 ### v2.6+: Enhancements 🔮
 - [ ] Hybrid search (vector + keyword + BM25)

@@ -50,6 +50,38 @@ mcp-vector-search watch status # Check watching status
 
 ## ⚡ Performance Features
 
+### IVF-PQ Index and Two-Stage Retrieval
+**4.9x faster queries with adaptive index parameters**
+
+After indexing more than 256 rows, the engine automatically builds an IVF-PQ (Inverted File + Product Quantization) index. Index parameters adapt to the data:
+
+- `num_partitions = clamp(sqrt(N), 16, 512)` — scales with dataset size
+- `num_sub_vectors = dim // 4` — adapts to the embedding dimension
+
+Query execution uses two stages for accuracy without sacrificing speed:
+
+1. **IVF scan** (`nprobes=20`): scans 20 nearest partitions instead of the full index
+2. **Exact reranking** (`refine_factor=5`): fetches 5x the requested candidates, reranks with exact cosine similarity
+
+Applied to both the LanceDB backend and the legacy VectorsBackend.
+
+**Benchmark results**: 3.4ms vs 16.7ms median query time (4.9x speedup).
+
+See [docs/performance/search-optimizations.md](../performance/search-optimizations.md) for full details.
+
+### Contextual Chunking
+**Metadata-enriched embeddings for improved retrieval accuracy**
+
+Before embedding, each chunk receives a compact metadata header that captures its structural context:
+
+```
+File: core/search.py | Lang: python | Class: Engine | Fn: search | Uses: lancedb
+```
+
+The header is prepended to the text sent to the embedding model. The stored chunk content remains unchanged, so search result display is unaffected. Based on Anthropic research showing **35-49% fewer retrieval failures** versus embedding raw code text alone.
+
+Applied at both embedding paths: `indexer.py` (two-phase pipeline) and `lancedb_backend.py` (direct path). The implementation is in `src/mcp_vector_search/core/context_builder.py`.
+
 ### 🔗 Connection Pooling
 **13.6% performance improvement with zero configuration**
 
@@ -188,6 +220,50 @@ mcp-vector-search auto-index status
 ---
 
 ## 🏗️ Architecture Features
+
+### CodeRankEmbed Embedding Model
+**Optional code-specific embedding model for improved code search**
+
+`nomic-ai/CodeRankEmbed` is available as an optional embedding model alongside the default `all-MiniLM-L6-v2`:
+
+- **Dimensions**: 768d (vs 384d for the default model)
+- **Context window**: 8K tokens
+- **Optimized for**: Code retrieval tasks
+
+The model uses asymmetric instruction prefixes: queries receive `query_prefix` and documents receive `document_prefix` at embedding time. This is transparent — existing models with empty prefixes behave identically to before.
+
+Enable with:
+
+```bash
+mvs init --embedding-model nomic-ai/CodeRankEmbed
+```
+
+**Note**: CodeRankEmbed requires re-indexing your codebase after switching models, since the embedding dimension changes from 384d to 768d.
+
+### Document Ontology
+**File-level document classification for the knowledge graph**
+
+The knowledge graph includes `Document` nodes for indexed files, each classified into one of 23 categories (API, guide, configuration, architecture, bugfix, etc.) using a 4-pass rule-based classifier:
+
+1. File extension (e.g., `.md`, `.yaml`)
+2. Filename pattern (e.g., `README`, `CHANGELOG`)
+3. Directory path (e.g., `docs/guides/`, `tests/`)
+4. Content keywords
+
+Cross-references between documents are captured as `RELATED_TO` relationships (extracted from Markdown links).
+
+```bash
+# Browse the document ontology
+mvs kg ontology
+
+# Filter by category
+mvs kg ontology --category guide
+
+# Show file paths
+mvs kg ontology --verbose
+```
+
+Output is a Rich tree grouped by category.
 
 ### 🔌 Extensible Design
 **Plugin architecture for future growth**
