@@ -1,6 +1,6 @@
 """Core functionality for MCP Vector Search."""
 
-from mcp_vector_search.core.git import (
+from .git import (
     GitError,
     GitManager,
     GitNotAvailableError,

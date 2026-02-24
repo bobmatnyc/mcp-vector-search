@@ -517,3 +517,167 @@ class GitManager:
             stats[current_file] = (additions, deletions)
 
         return stats
+
+    def get_staged_diff(self) -> str:
+        """Get the diff of staged changes.
+
+        Returns:
+            Unified diff text of staged changes
+
+        Raises:
+            GitError: If git operation fails
+        """
+        try:
+            result = subprocess.run(  # nosec B607 - git is intentionally called via PATH
+                ["git", "diff", "--staged"],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0:
+                # No error for empty diff (no staged changes)
+                if result.returncode == 128 and "no changes" in result.stderr.lower():
+                    return ""
+                raise GitError(f"git diff --staged failed: {result.stderr}")
+
+            return result.stdout
+
+        except subprocess.TimeoutExpired:
+            raise GitError("git diff --staged timed out")
+        except FileNotFoundError:
+            raise GitNotAvailableError("git binary not found")
+
+    def get_staged_files(self) -> list[Path]:
+        """Get list of staged files.
+
+        Returns:
+            List of staged file paths relative to project root
+
+        Raises:
+            GitError: If git operation fails
+        """
+        try:
+            result = subprocess.run(  # nosec B607 - git is intentionally called via PATH
+                ["git", "diff", "--staged", "--name-only"],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0:
+                # No error for empty list (no staged changes)
+                if "no changes" in result.stderr.lower():
+                    return []
+                raise GitError(f"git diff --staged --name-only failed: {result.stderr}")
+
+            file_paths = []
+            for line in result.stdout.strip().split("\n"):
+                if line.strip():  # Skip empty lines
+                    file_path = self.project_root / line.strip()
+                    if file_path.exists():  # Only include existing files
+                        file_paths.append(file_path)
+
+            logger.debug(f"Found {len(file_paths)} staged files")
+            return file_paths
+
+        except subprocess.TimeoutExpired:
+            raise GitError("git diff --staged --name-only timed out")
+        except FileNotFoundError:
+            raise GitNotAvailableError("git binary not found")
+
+    def get_staged_diff_stats(self) -> dict[str, int]:
+        """Get statistics of staged changes.
+
+        Returns:
+            Dictionary with files_changed, insertions, deletions
+
+        Raises:
+            GitError: If git operation fails
+        """
+        try:
+            result = subprocess.run(  # nosec B607 - git is intentionally called via PATH
+                ["git", "diff", "--staged", "--numstat"],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0:
+                # No error for empty stats (no staged changes)
+                if "no changes" in result.stderr.lower():
+                    return {"files_changed": 0, "insertions": 0, "deletions": 0}
+                raise GitError(f"git diff --staged --numstat failed: {result.stderr}")
+
+            total_insertions = 0
+            total_deletions = 0
+            files_changed = 0
+
+            for line in result.stdout.strip().split("\n"):
+                if line.strip():  # Skip empty lines
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 2:
+                        try:
+                            insertions = int(parts[0]) if parts[0] != "-" else 0
+                            deletions = int(parts[1]) if parts[1] != "-" else 0
+                            total_insertions += insertions
+                            total_deletions += deletions
+                            files_changed += 1
+                        except ValueError:
+                            # Skip lines that don't have numeric stats (binary files)
+                            files_changed += 1
+
+            return {
+                "files_changed": files_changed,
+                "insertions": total_insertions,
+                "deletions": total_deletions,
+            }
+
+        except subprocess.TimeoutExpired:
+            raise GitError("git diff --staged --numstat timed out")
+        except FileNotFoundError:
+            raise GitNotAvailableError("git binary not found")
+
+    def get_file_diff(self, file_path: str, staged: bool = False) -> str:
+        """Get diff for a specific file.
+
+        Args:
+            file_path: Path to the file (relative to project root)
+            staged: If True, get staged changes; if False, get working directory changes
+
+        Returns:
+            Unified diff text for the file
+
+        Raises:
+            GitError: If git operation fails
+        """
+        try:
+            cmd = ["git", "diff"]
+            if staged:
+                cmd.append("--staged")
+            cmd.append("--")
+            cmd.append(file_path)
+
+            result = subprocess.run(  # nosec B607 - git is intentionally called via PATH
+                cmd,
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0:
+                # No error for empty diff (no changes)
+                if "no changes" in result.stderr.lower():
+                    return ""
+                raise GitError(f"git diff failed for {file_path}: {result.stderr}")
+
+            return result.stdout
+
+        except subprocess.TimeoutExpired:
+            raise GitError(f"git diff timed out for {file_path}")
+        except FileNotFoundError:
+            raise GitNotAvailableError("git binary not found")

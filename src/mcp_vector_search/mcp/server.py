@@ -320,6 +320,9 @@ class MCPVectorSearchServer:
             elif tool_name == "review_pull_request":
                 return await self._review_handlers.handle_review_pull_request(args)
 
+            elif tool_name == "code_review":
+                return await self._review_handlers.handle_code_review(args)
+
             else:
                 return CallToolResult(
                     content=[

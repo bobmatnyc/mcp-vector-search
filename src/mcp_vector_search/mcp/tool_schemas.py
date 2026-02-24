@@ -25,6 +25,7 @@ def get_tool_schemas() -> list[Tool]:
         _get_save_report_schema(),
         _get_review_repository_schema(),
         _get_review_pull_request_schema(),
+        _get_code_review_schema(),
         _get_wiki_generate_schema(),
         _get_kg_build_schema(),
         _get_kg_stats_schema(),
@@ -856,6 +857,123 @@ def _get_review_pull_request_schema() -> Tool:
                 "custom_instructions": {
                     "type": "string",
                     "description": "Override default review instructions with custom text (multi-line string)",
+                },
+            },
+            "required": [],
+        },
+    )
+
+
+def _get_code_review_schema() -> Tool:
+    """Get code_review tool schema."""
+    return Tool(
+        name="code_review",
+        description="""Local code review for substantial changes before pushing.
+
+**What it does:**
+- Reviews staged changes (git diff --staged) using full codebase context
+- Only analyzes substantial commits (research-backed thresholds)
+- Uses vector search to find similar patterns and related code
+- Uses knowledge graph to identify impact and dependencies
+- Provides actionable feedback before pushing changes
+- Prevents issues from reaching PR stage
+
+**Substantial commit criteria (research-backed):**
+- More than 20 lines changed across all files
+- More than 2 files modified
+- New functions or classes added
+- Security-sensitive areas modified (auth, database, validation)
+- Architecture changes (imports, inheritance, interfaces)
+
+**Review focus:**
+- Security vulnerabilities (SQL injection, XSS, auth issues)
+- Code quality (error handling, input validation, edge cases)
+- Performance issues (N+1 queries, inefficient algorithms)
+- Architecture violations (coupling, separation of concerns)
+- Style consistency with existing codebase patterns
+- Test coverage for modified functionality
+
+**Example usage:**
+{}  # Review all staged changes
+{"include_trivial": true}  # Include trivial changes
+{"focus": "security"}  # Focus on security issues
+{"max_files": 10}  # Limit number of files to review
+
+**Example response:**
+{
+  "status": "success",
+  "is_substantial": true,
+  "summary": "Found 1 security issue and 2 style improvements",
+  "verdict": "blocking_issues",
+  "changes_summary": {
+    "files_changed": 3,
+    "lines_added": 45,
+    "lines_deleted": 12,
+    "functions_added": 2,
+    "functions_modified": 1
+  },
+  "findings": [
+    {
+      "file_path": "src/auth.py",
+      "line_number": 42,
+      "title": "SQL injection vulnerability",
+      "description": "User input concatenated directly into SQL query",
+      "severity": "critical",
+      "category": "security",
+      "recommendation": "Use parameterized queries or an ORM",
+      "code_suggestion": "cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))",
+      "is_blocking": true
+    }
+  ],
+  "blocking_issues": 1,
+  "warnings": 1,
+  "suggestions": 2,
+  "push_recommendation": "Fix critical issues before pushing"
+}
+
+**Non-substantial commits:**
+{
+  "status": "success",
+  "is_substantial": false,
+  "summary": "Changes are trivial - safe to push",
+  "changes_summary": {
+    "files_changed": 1,
+    "lines_added": 5,
+    "lines_deleted": 2
+  },
+  "push_recommendation": "Safe to push"
+}""",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "include_trivial": {
+                    "type": "boolean",
+                    "description": "Include review of trivial changes (default: false - only substantial commits)",
+                    "default": False,
+                },
+                "focus": {
+                    "type": "string",
+                    "enum": ["security", "performance", "quality", "style"],
+                    "description": "Focus area for review (optional - reviews all areas by default)",
+                },
+                "max_files": {
+                    "type": "integer",
+                    "description": "Maximum number of changed files to review (default: 20)",
+                    "default": 20,
+                    "minimum": 1,
+                    "maximum": 50,
+                },
+                "max_chunks": {
+                    "type": "integer",
+                    "description": "Maximum code chunks to analyze for context (default: 30)",
+                    "default": 30,
+                    "minimum": 10,
+                    "maximum": 100,
+                },
+                "skip_files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "File patterns to skip (e.g., ['*.md', 'test_*', 'docs/*'])",
                 },
             },
             "required": [],
