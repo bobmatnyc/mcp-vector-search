@@ -204,6 +204,7 @@ def _build_kg_in_subprocess(
 
             table.add_row("Code Entities", str(build_stats["entities"]))
             table.add_row("Doc Sections", str(build_stats.get("doc_sections", 0)))
+            table.add_row("Documents", str(build_stats.get("doc_nodes", 0)))
             table.add_row("Tags", str(build_stats.get("tags", 0)))
             table.add_row("Persons", str(build_stats.get("persons", 0)))
             table.add_row("Projects", str(build_stats.get("projects", 0)))
@@ -865,13 +866,39 @@ def kg_ontology(
 
     # Category emoji map
     category_icons: dict[str, str] = {
+        # Core documentation
         "readme": "📋",
         "guide": "📖",
+        "tutorial": "🎓",
         "api_doc": "🔌",
         "design": "🎨",
         "spec": "📐",
         "research": "🔬",
         "changelog": "📝",
+        # Development lifecycle
+        "bugfix": "🐛",
+        "performance": "⚡",
+        "setup": "⚙️",
+        "configuration": "🔧",
+        "migration": "🔄",
+        "upgrade_guide": "⬆️",
+        "release_notes": "🚀",
+        "deployment": "🚢",
+        # Support and reference
+        "troubleshooting": "🔍",
+        "faq": "❓",
+        "security": "🔐",
+        "example": "💡",
+        # Project management
+        "contributing": "🤝",
+        "license": "⚖️",
+        "roadmap": "🗺️",
+        "internal": "🏠",
+        "report": "📊",
+        "feature": "✨",
+        "project": "📁",
+        "test_doc": "🧪",
+        # Fallback
         "other": "📄",
     }
 

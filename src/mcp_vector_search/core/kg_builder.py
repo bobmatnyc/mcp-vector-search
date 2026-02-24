@@ -1448,50 +1448,312 @@ class KGBuilder:
     def _classify_document(self, file_path: str) -> str:
         """Classify a document file into a category.
 
+        Uses a three-pass strategy: exact filename matches (highest priority),
+        then path-based patterns, then filename keyword patterns.
+
         Args:
             file_path: Relative file path to classify
 
         Returns:
             Category string: readme, guide, api_doc, config, changelog,
-            design, spec, roadmap, contributing, license, research, or other
+            design, spec, roadmap, contributing, license, research, bugfix,
+            performance, setup, tutorial, example, deployment, release_notes,
+            upgrade_guide, troubleshooting, migration, faq, security,
+            test_doc, internal, report, or other
         """
         path = Path(file_path)
         name_lower = path.name.lower()
+        name_stem = path.stem.lower()
         path_str = str(path).lower()
 
-        # Exact filename matches (highest priority)
+        # --- Pass 1: File extension / well-known config filenames (highest priority) ---
+
+        # Non-markdown config and script files
+        if path.suffix in (".toml", ".yaml", ".yml", ".json", ".ini", ".cfg", ".env"):
+            return "configuration"
+        if path.suffix in (".sh", ".bash", ".zsh", ".fish"):
+            return "script"
+
+        # Well-known configuration filenames (no extension or with extension)
+        if name_lower in ("claude.md", ".claude.md", "claude.yml", "copier.yml"):
+            return "configuration"
+
+        # --- Pass 2: Exact filename stem matches (high priority) ---
+
         if name_lower.startswith("readme"):
             return "readme"
-        elif name_lower.startswith("changelog") or name_lower.startswith("changes"):
+        if name_lower.startswith("changelog") or name_lower.startswith("changes"):
             return "changelog"
-        elif name_lower.startswith("contributing"):
+        if name_lower.startswith("contributing"):
             return "contributing"
-        elif name_lower.startswith("license"):
+        if name_lower.startswith("license"):
             return "license"
-        elif name_lower in ("architecture.md", "design.md", "adr.md"):
+        if name_lower in ("architecture.md", "design.md", "adr.md"):
             return "design"
-        elif name_lower in ("api.md", "api-reference.md", "reference.md"):
+        if name_lower in ("api.md", "api-reference.md", "reference.md"):
             return "api_doc"
-        elif name_lower.startswith("spec") or name_lower.startswith("rfc"):
+        if name_lower.startswith("spec") or name_lower.startswith("rfc"):
             return "spec"
-        elif name_lower.startswith("todo") or name_lower.startswith("roadmap"):
+        if name_lower.startswith("todo") or name_lower.startswith("roadmap"):
             return "roadmap"
+        if name_lower in ("index.md", "index.rst", "index.html"):
+            return "guide"
 
-        # Path-based classification
+        # --- Pass 3: Path/directory-based classification ---
+
+        # API and reference documentation
         if "/api/" in path_str or "/reference/" in path_str:
             return "api_doc"
-        elif "/guide/" in path_str or "/tutorial/" in path_str or "/howto/" in path_str:
+
+        # Tool documentation
+        if "/tools/" in path_str:
+            return "api_doc"
+
+        # Guides and tutorials (including getting-started)
+        if (
+            "/guides/" in path_str
+            or "/guide/" in path_str
+            or "/tutorial/" in path_str
+            or "/tutorials/" in path_str
+            or "/howto/" in path_str
+            or "/getting-started/" in path_str
+            or "/getting_started/" in path_str
+        ):
             return "guide"
-        elif (
+
+        # Architecture and design documents
+        if (
             "/design/" in path_str
             or "/adr/" in path_str
             or "/architecture/" in path_str
         ):
             return "design"
-        elif "/spec/" in path_str or "/rfc/" in path_str:
+
+        # Specifications and RFCs / PRDs
+        if "/spec/" in path_str or "/rfc/" in path_str or "/prd/" in path_str:
             return "spec"
-        elif "/research/" in path_str:
+
+        # Research documents
+        if "/research/" in path_str:
             return "research"
+
+        # Performance documents
+        if "/performance/" in path_str or "/benchmarks/" in path_str:
+            return "performance"
+
+        # Deployment documents
+        if "/deployment/" in path_str or "/deploy/" in path_str:
+            return "deployment"
+
+        # QA and test documentation
+        if "/qa/" in path_str or "/tests/" in path_str or "/test/" in path_str:
+            return "test_doc"
+
+        # Internal / project-internal documents
+        if "/internal/" in path_str or "/private/" in path_str:
+            return "internal"
+
+        # Examples
+        if "/examples/" in path_str or "/example/" in path_str or "/demos/" in path_str:
+            return "example"
+
+        # Reports
+        if "/reports/" in path_str or "/report/" in path_str:
+            return "report"
+
+        # Features
+        if "/features/" in path_str or "/feature/" in path_str:
+            return "feature"
+
+        # Projects
+        if "/projects/" in path_str or "/project/" in path_str:
+            return "project"
+
+        # Skills documentation
+        if "/skills/" in path_str:
+            return "guide"
+
+        # --- Pass 4: Filename keyword pattern matching ---
+
+        # Bug fixes (check before generic "fix" patterns)
+        if (
+            name_stem.startswith("bugfix")
+            or name_stem.startswith("bug-fix")
+            or name_stem.startswith("bug_fix")
+            or "bugfix" in name_stem
+            or name_stem.startswith("fix-")
+            or name_stem.startswith("fix_")
+            or name_stem.endswith("-fix")
+            or name_stem.endswith("_fix")
+            or "-fix-" in name_stem
+            or "_fix_" in name_stem
+        ):
+            return "bugfix"
+
+        # Troubleshooting and crash recovery guides
+        if (
+            "troubleshoot" in name_stem
+            or "crash-" in name_stem
+            or "diagnostics" in name_stem
+            or "recovery" in name_stem
+            or "panic" in name_stem
+            or "defense" in name_stem
+        ):
+            return "troubleshooting"
+
+        # FAQ documents
+        if (
+            name_stem == "faq"
+            or name_stem.startswith("faq-")
+            or name_stem.startswith("faq_")
+        ):
+            return "faq"
+
+        # Migration guides
+        if "migration" in name_stem or "migrate" in name_stem:
+            return "migration"
+
+        # Release notes and releasing guides
+        if "release" in name_stem or name_stem.startswith("releasing"):
+            return "release_notes"
+
+        # Upgrade guides
+        if "upgrade" in name_stem:
+            return "upgrade_guide"
+
+        # Setup and installation
+        if (
+            "setup" in name_stem
+            or "install" in name_stem
+            or "installation" in name_stem
+        ):
+            return "setup"
+
+        # Configuration
+        if "config" in name_stem or "configuration" in name_stem:
+            return "configuration"
+
+        # Performance and benchmarks (includes optimization docs)
+        if (
+            "performance" in name_stem
+            or "benchmark" in name_stem
+            or "optimization" in name_stem
+            or "optimiz" in name_stem
+        ):
+            return "performance"
+
+        # Security
+        if "security" in name_stem or "vulnerabilit" in name_stem:
+            return "security"
+
+        # Tutorial / example
+        if "tutorial" in name_stem:
+            return "tutorial"
+        if "example" in name_stem or "demo" in name_stem or "sample" in name_stem:
+            return "example"
+
+        # Quick reference / quickstart / checklists → guide
+        if (
+            "quickstart" in name_stem
+            or "quick-start" in name_stem
+            or "quickref" in name_stem
+            or "quick-ref" in name_stem
+            or "quickguide" in name_stem
+            or "checklist" in name_stem
+            or "standard" in name_stem
+            or "guide" in name_stem
+        ):
+            return "guide"
+
+        # Deployment and CI/CD
+        if (
+            "deploy" in name_stem
+            or "deployment" in name_stem
+            or "versioning" in name_stem
+            or "ci-cd" in name_stem
+            or "cicd" in name_stem
+        ):
+            return "deployment"
+
+        # Design and architecture documents (by filename)
+        if (
+            "architecture" in name_stem
+            or "design" in name_stem
+            or "summary" in name_stem
+            or "implementation" in name_stem
+            or "refactor" in name_stem
+            or "integration" in name_stem
+            or "visualization" in name_stem
+            or "iterator" in name_stem
+            or "streaming" in name_stem
+            or "generation" in name_stem
+        ):
+            return "design"
+
+        # Sprint and project tracking → internal
+        if "sprint" in name_stem or "kanban" in name_stem or "backlog" in name_stem:
+            return "internal"
+
+        # Code story / narrative docs
+        if (
+            "codestory" in name_stem
+            or "code-story" in name_stem
+            or "codestory" in path_str
+        ):
+            return "internal"
+
+        # Feature-related by name (catch "feature-*" prefix)
+        if name_stem.startswith("feature-") or name_stem.startswith("feature_"):
+            return "feature"
+
+        # Workflow and process docs
+        if "workflow" in name_stem or "process" in name_stem:
+            return "guide"
+
+        # Changelogs and release history
+        if "history" in name_stem or "release-notes" in name_stem:
+            return "changelog"
+
+        # Additional design patterns: backend/system docs, state management, managers
+        if (
+            "backend" in name_stem
+            or "manager" in name_stem
+            or "management" in name_stem
+            or "state" in name_stem
+            or "phase" in name_stem
+            or "protection" in name_stem
+            or "async" in name_stem
+            or "schema" in name_stem
+            or "pattern" in name_stem
+            or "cap" in name_stem
+            or "limit" in name_stem
+            or "structure" in name_stem
+            or "verification" in name_stem
+            or "nonblocking" in name_stem
+            or "non-blocking" in name_stem
+        ):
+            return "design"
+
+        # Additional guide patterns: quality, organization, testing guide, patterns docs
+        if (
+            "quality" in name_stem
+            or "organization" in name_stem
+            or "testing" in name_stem
+            or "patterns" in name_stem
+        ):
+            return "guide"
+
+        # Template/project-template docs → guide
+        if (
+            "/project-template/" in path_str
+            or "/templates/" in path_str
+            or "template" in name_stem
+        ):
+            return "guide"
+
+        # Report or analysis docs
+        if "report" in name_stem or "analysis" in name_stem:
+            return "report"
 
         return "other"
 

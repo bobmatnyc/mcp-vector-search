@@ -110,6 +110,8 @@ class KGHandlers:
                     "status": "success",
                     "statistics": {
                         "entities": build_stats["entities"],
+                        "doc_sections": build_stats.get("doc_sections", 0),
+                        "documents": build_stats.get("doc_nodes", 0),
                         "relationships": {
                             "calls": build_stats["calls"],
                             "imports": build_stats["imports"],
