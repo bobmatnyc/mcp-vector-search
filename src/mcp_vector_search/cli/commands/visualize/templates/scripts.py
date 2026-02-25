@@ -58,6 +58,10 @@ let cachedChunkNodes = null;  // Pre-filtered chunk nodes
 let nodeIdMap = null;  // Map for O(1) node lookups by ID
 let hierarchyCacheVersion = 0;  // Increment to invalidate caches
 
+// Treemap/sunburst pre-load state
+let codeChunksLoaded = false;  // True after /api/graph-code-chunks fetched
+let codeChunksLoading = false; // True while fetch in progress (prevent duplicate fetches)
+
 // Initialize performance caches - called once after data load
 function initializeCaches() {
     console.time('initializeCaches');
@@ -4451,7 +4455,78 @@ function showComingSoon(reportName) {
 // VISUALIZATION MODE CONTROLS
 // ============================================================================
 
-function setVisualizationMode(mode) {
+async function fetchCodeChunks() {
+    // Pre-fetch all code chunk nodes for treemap/sunburst rendering.
+    // Returns immediately if already loaded or a fetch is in progress.
+    if (codeChunksLoaded || codeChunksLoading) return;
+    codeChunksLoading = true;
+
+    try {
+        showLoadingIndicator('Loading code chunks for visualization...');
+        const response = await fetch('/api/graph-code-chunks');
+        if (!response.ok) {
+            throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+        }
+        const data = await response.json();
+        if (data.error) {
+            console.error('Code chunks API error:', data.error);
+            return;
+        }
+
+        const newNodes = data.nodes || [];
+        const newLinks = data.links || [];
+
+        // Merge into allNodes / allLinks (avoid duplicates)
+        const existingNodeIds = new Set(allNodes.map(n => n.id));
+        newNodes.forEach(node => {
+            if (!existingNodeIds.has(node.id)) {
+                allNodes.push(node);
+                existingNodeIds.add(node.id);
+            } else {
+                // Update existing node with quality metrics if they are missing
+                const existing = allNodes.find(n => n.id === node.id);
+                if (existing && existing.quality_score === undefined && node.quality_score !== undefined) {
+                    Object.assign(existing, {
+                        quality_score: node.quality_score,
+                        smell_count: node.smell_count,
+                        smells: node.smells,
+                        complexity_grade: node.complexity_grade,
+                        complexity: node.complexity,
+                        lines_of_code: node.lines_of_code
+                    });
+                }
+            }
+        });
+
+        const existingLinks = new Set(allLinks.map(l => l.source + '-' + l.target + '-' + l.type));
+        newLinks.forEach(link => {
+            const key = link.source + '-' + link.target + '-' + link.type;
+            if (!existingLinks.has(key)) {
+                allLinks.push(link);
+                existingLinks.add(key);
+            }
+        });
+
+        // Rebuild tree structure with newly available chunk nodes
+        buildTreeStructure();
+
+        // Invalidate cached hierarchies so they are rebuilt with the new nodes
+        cachedFileHierarchy = null;
+        cachedASTHierarchy = null;
+        cachedChunkNodes = null;
+        initializeCaches();
+
+        codeChunksLoaded = true;
+        console.log('Code chunks loaded:', newNodes.length, 'nodes,', newLinks.length, 'links');
+    } catch (err) {
+        console.error('Failed to fetch code chunks:', err);
+    } finally {
+        codeChunksLoading = false;
+        hideLoadingIndicator();
+    }
+}
+
+async function setVisualizationMode(mode) {
     if (mode === currentVizMode) return;
 
     currentVizMode = mode;
@@ -4472,6 +4547,12 @@ function setVisualizationMode(mode) {
     const groupingGroup = document.getElementById('grouping-mode-group');
     if (groupingGroup) {
         groupingGroup.style.display = (mode === 'treemap' || mode === 'sunburst') ? 'block' : 'none';
+    }
+
+    // Treemap and sunburst need all code chunk nodes loaded upfront.
+    // Fetch them now (no-op if already loaded) before rendering.
+    if (mode === 'treemap' || mode === 'sunburst') {
+        await fetchCodeChunks();
     }
 
     renderVisualization();
@@ -4504,6 +4585,11 @@ function buildFileHierarchy(maxDepth = 3, includeAllForNodeId = null) {
     // We need to ensure it's in D3-compatible format with value for sizing
     // maxDepth: limit depth for progressive loading (default 3)
 
+    // Code types that carry meaningful complexity/quality metrics.
+    // Text/documentation chunks are excluded from treemap/sunburst because they
+    // have complexity=0 and render as solid gray, hiding real signal.
+    const codeChunkTypes = new Set(['function', 'class', 'method', 'code']);
+
     function processNode(node, currentDepth = 0) {
         // Extract only needed properties (avoid full object cloning)
         const result = {
@@ -4525,7 +4611,15 @@ function buildFileHierarchy(maxDepth = 3, includeAllForNodeId = null) {
             complexity_grade: node.complexity_grade
         };
 
-        const children = node.children || node._children || [];
+        const allChildren = node.children || node._children || [];
+
+        // Filter out text/documentation children for treemap/sunburst — they have
+        // complexity=0 and would render as gray, masking real quality signal.
+        // Keep structural nodes (directory, file) and real code chunks.
+        const children = allChildren.filter(child => {
+            const t = child.type;
+            return t === 'directory' || t === 'file' || codeChunkTypes.has(t);
+        });
 
         // Progressive loading: stop at maxDepth UNLESS this is the node being expanded
         const shouldIncludeChildren = currentDepth < maxDepth || node.id === includeAllForNodeId;
@@ -4573,8 +4667,13 @@ function buildASTHierarchy() {
         'c': 'C', 'cpp': 'C++', 'cs': 'C#', 'swift': 'Swift'
     };
 
-    // Use pre-cached chunk nodes (already filtered in initializeCaches)
-    const chunkNodesToProcess = cachedChunkNodes || allNodes.filter(node => chunkTypes.includes(node.type));
+    // Use pre-cached chunk nodes (already filtered in initializeCaches),
+    // but further restrict to code-only types for treemap/sunburst.
+    // Text/documentation chunks have complexity=0 and render as gray — exclude them
+    // so only functions, classes, methods, and code blocks with real metrics appear.
+    const codeOnlyTypes = new Set(['function', 'class', 'method', 'code']);
+    const allCachedChunks = cachedChunkNodes || allNodes.filter(node => chunkTypes.includes(node.type));
+    const chunkNodesToProcess = allCachedChunks.filter(node => codeOnlyTypes.has(node.type));
 
     chunkNodesToProcess.forEach(node => {
         // Determine language from file extension

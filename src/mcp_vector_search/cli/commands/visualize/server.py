@@ -378,6 +378,93 @@ def create_app(viz_dir: Path) -> FastAPI:
                 media_type="application/json",
             )
 
+    @app.get("/api/graph-code-chunks")
+    async def get_graph_code_chunks() -> Response:
+        """Get all code-type nodes for treemap/sunburst pre-loading.
+
+        Returns ONLY function/class/method/code chunk nodes (not text/docs),
+        plus the file and directory nodes needed to build the path hierarchy.
+        Treemap and sunburst fetch this endpoint once on first switch to ensure
+        all nodes with quality metrics are available before rendering.
+
+        Returns:
+            JSON response with code-only nodes and containment links
+        """
+        graph_file = viz_dir / "chunk-graph.json"
+
+        if not graph_file.exists():
+            return Response(
+                content='{"error": "Graph data not found", "nodes": [], "links": []}',
+                status_code=404,
+                media_type="application/json",
+            )
+
+        try:
+            with open(graph_file, "rb") as f:
+                data = orjson.loads(f.read())
+
+            all_nodes = data.get("nodes", [])
+            all_links = data.get("links", [])
+
+            # Code chunk types that carry meaningful quality metrics
+            code_types = {"function", "class", "method", "code"}
+
+            # Collect code chunk nodes (the ones with quality metrics)
+            code_nodes = [n for n in all_nodes if n.get("type") in code_types]
+            code_node_ids = {n["id"] for n in code_nodes}
+
+            # Also include file and directory ancestor nodes so hierarchy builders work
+            structural_types = {"file", "directory", "subproject", "monorepo"}
+            structural_nodes = [
+                n for n in all_nodes if n.get("type") in structural_types
+            ]
+            structural_node_ids = {n["id"] for n in structural_nodes}
+
+            # Collect containment links that connect to code nodes or structural nodes
+            combined_ids = code_node_ids | structural_node_ids
+            containment_types = {
+                "file_containment",
+                "dir_containment",
+                "chunk_hierarchy",
+                "monorepo_containment",
+                "subproject_containment",
+            }
+            relevant_links = [
+                lnk
+                for lnk in all_links
+                if lnk.get("type") in containment_types
+                and (lnk["source"] in combined_ids or lnk["target"] in combined_ids)
+            ]
+
+            result_nodes = structural_nodes + code_nodes
+
+            console.print(
+                f"[green]✓[/green] Code chunks: {len(code_nodes)} code nodes, "
+                f"{len(structural_nodes)} structural nodes, {len(relevant_links)} links"
+            )
+
+            return Response(
+                content=orjson.dumps(
+                    {
+                        "nodes": result_nodes,
+                        "links": relevant_links,
+                        "metadata": {
+                            "code_chunk_count": len(code_nodes),
+                            "structural_node_count": len(structural_nodes),
+                        },
+                    }
+                ),
+                media_type="application/json",
+                headers={"Cache-Control": "max-age=300"},
+            )
+        except Exception as e:
+            console.print(f"[red]Error loading code chunks: {e}[/red]")
+            return Response(
+                content='{"error": "Failed to load code chunks", "nodes": [], "links": []}',
+                status_code=500,
+                media_type="application/json",
+            )
+
     @app.get("/api/kg-graph")
     async def get_kg_graph_data() -> Response:
         """Get knowledge graph data for D3 force-directed visualization.
