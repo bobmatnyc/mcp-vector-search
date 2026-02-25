@@ -1823,10 +1823,17 @@ class SemanticIndexer:
                 await self.chunks_backend.get_all_indexed_file_hashes()
             )
             logger.info(
-                f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
+                f"Loaded {len(indexed_file_hashes)} indexed file hashes for change detection"
             )
 
+            if not indexed_file_hashes and all_files:
+                logger.warning(
+                    f"No indexed file hashes found — all {len(all_files)} files will be "
+                    "processed (first index or hash table unavailable)"
+                )
+
             filtered_files = []
+            files_checked = 0
             for f in all_files:
                 try:
                     file_hash = compute_file_hash(f)
@@ -1842,8 +1849,18 @@ class SemanticIndexer:
                     logger.warning(f"Error checking file {f}: {e}, will re-index")
                     filtered_files.append(f)
                     errors.append(str(e))
+
+                files_checked += 1
+                if files_checked % 1000 == 0:
+                    logger.info(
+                        f"Change detection progress: {files_checked}/{len(all_files)} files checked..."
+                    )
+
             files_to_index = filtered_files
-            logger.info(f"Found {len(files_to_index)} changed files to index")
+            logger.info(
+                f"Change detection: {len(files_to_index)} changed, "
+                f"{files_skipped} unchanged out of {len(all_files)} total files"
+            )
 
         # Process files through Phase 1
         if files_to_index:

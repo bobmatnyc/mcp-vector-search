@@ -139,7 +139,7 @@ async def _run_reindex(
     if fresh:
         print_warning("Full reindex: clearing all data and rebuilding from scratch")
     else:
-        print_info("Incremental reindex: processing only changes")
+        print_info("Running incremental index...")
 
     # Setup embedding
     cache_dir = (

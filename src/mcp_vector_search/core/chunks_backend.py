@@ -532,6 +532,10 @@ class ChunksBackend:
             Dict mapping file_path to file_hash for all indexed files
         """
         if self._table is None:
+            logger.warning(
+                "Chunks table not initialized — change detection unavailable, "
+                "all files will be processed"
+            )
             return {}
 
         try:
@@ -553,7 +557,10 @@ class ChunksBackend:
             return file_hashes
 
         except Exception as e:
-            logger.warning(f"Failed to get all indexed file hashes: {e}")
+            logger.warning(
+                f"Failed to load indexed file hashes ({e}) — "
+                "all files will be treated as changed"
+            )
             return {}
 
     async def get_file_hash(self, file_path: str) -> str | None:
