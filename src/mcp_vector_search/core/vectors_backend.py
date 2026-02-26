@@ -1211,8 +1211,9 @@ class VectorsBackend:
 
         Creates an IVF_SQ approximate nearest neighbor index after bulk inserts
         to enable fast similarity search at scale.  Skipped for small datasets
-        (< 256 rows) where brute-force is faster.  Non-fatal: if index creation
-        fails search continues with exact brute-force scan.
+        (< 4,096 rows) where brute-force is faster and IVF KMeans produces
+        mostly-empty clusters.  Non-fatal: if index creation fails search
+        continues with exact brute-force scan.
 
         Note: This is an expensive operation and should not be called after every add.
         """
@@ -1225,14 +1226,15 @@ class VectorsBackend:
 
             row_count = self._table.count_rows()
 
-            # Skip index for very small datasets — brute-force is faster and
-            # IVF training requires at least sample_rate * num_partitions vectors.
-            # With 16 partitions and sample_rate=256 that's ~4 K minimum, but we
-            # use a conservative 256-row floor to match actual LanceDB behaviour.
-            if row_count < 256:
+            # Skip index for small datasets — brute-force is faster and the
+            # IVF KMeans training produces mostly-empty clusters when N < 4096.
+            # Lance itself warns "dataset is too small to have a meaningful
+            # index (N < 4096)".  For these datasets brute-force is fast and
+            # avoids the noisy WARN logs about empty clusters.
+            if row_count < 4096:
                 logger.info(
-                    f"Skipping vector index creation: {row_count} rows "
-                    f"(minimum 256 required)"
+                    f"Skipping vector index creation: {row_count:,} rows "
+                    f"(< 4,096 minimum for meaningful IVF index)"
                 )
                 return
 
