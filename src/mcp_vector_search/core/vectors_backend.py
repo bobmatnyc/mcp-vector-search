@@ -25,6 +25,11 @@ from .exceptions import (
     SearchError,
 )
 
+# Maximum number of file paths per SQL IN clause.
+# DataFusion's recursive descent parser stack-overflows on thousands of OR clauses,
+# causing SEGV (signal 139) on Linux. Bounded IN batches keep the parse tree shallow.
+DELETE_BATCH_LIMIT = 500
+
 
 # PyArrow schema for vectors table (dynamic dimension)
 def _create_vectors_schema(vector_dim: int) -> pa.Schema:
@@ -643,6 +648,20 @@ class VectorsBackend:
         if self._table is None:
             return
 
+        # Linux guard: skip compaction for large tables to prevent arrow offset overflow
+        # documented in lance issue #3330. compact_files() on tables > 100k rows can
+        # trigger an int32 overflow in the offset buffer on Linux.
+        try:
+            row_count = self._table.count_rows()
+            if row_count > 100_000:
+                logger.debug(
+                    "Skipping compaction: table has %d rows (lance#3330 safety)",
+                    row_count,
+                )
+                return
+        except Exception:
+            pass
+
         try:
             # LanceDB 0.5+ API: compact_files() merges data fragments
             self._table.compact_files()
@@ -857,6 +876,68 @@ class VectorsBackend:
         except Exception as e:
             logger.error(f"Failed to delete vectors for {file_path}: {e}")
             raise DatabaseError(f"Failed to delete vectors: {e}") from e
+
+    async def delete_files_batch(self, file_paths: list[str]) -> int:
+        """Delete vectors for multiple files in batched IN expressions.
+
+        Uses IN clauses capped at DELETE_BATCH_LIMIT per batch to prevent
+        DataFusion's recursive descent parser from stack-overflowing on large
+        OR chains, which causes SEGV (signal 139) on Linux.
+
+        Args:
+            file_paths: List of relative file paths whose vectors should be deleted
+
+        Returns:
+            Total number of file-path batches processed (not exact vector count,
+            since LanceDB delete() returns None)
+        """
+        if self._table is None or not file_paths:
+            return 0
+
+        deleted_count = 0
+        total_batches = (len(file_paths) + DELETE_BATCH_LIMIT - 1) // DELETE_BATCH_LIMIT
+
+        for batch_num, i in enumerate(
+            range(0, len(file_paths), DELETE_BATCH_LIMIT), start=1
+        ):
+            batch = file_paths[i : i + DELETE_BATCH_LIMIT]
+
+            # Escape single quotes and build SQL IN clause.
+            # IN instead of chained OR keeps DataFusion's parse tree shallow,
+            # preventing stack overflow (SEGV signal 139) on Linux with large batches.
+            escaped = [fp.replace("'", "''") for fp in batch]
+            values_sql = ", ".join(f"'{fp}'" for fp in escaped)
+            filter_expr = f"file_path IN ({values_sql})"
+
+            try:
+                self._table.delete(filter_expr)
+                deleted_count += len(batch)
+                logger.debug(
+                    "Deleted vectors batch %d/%d (%d files, running total: %d)",
+                    batch_num,
+                    total_batches,
+                    len(batch),
+                    deleted_count,
+                )
+            except Exception as e:
+                # Handle LanceDB "Not found" errors gracefully; continue other batches
+                error_msg = str(e).lower()
+                if "not found" in error_msg:
+                    logger.debug(
+                        "No vectors to delete for batch %d/%d (not in index)",
+                        batch_num,
+                        total_batches,
+                    )
+                else:
+                    logger.error(
+                        "Failed to delete vectors batch %d/%d: %s",
+                        batch_num,
+                        total_batches,
+                        e,
+                    )
+
+        logger.debug("Batch delete complete: %d files processed", deleted_count)
+        return deleted_count
 
     async def get_chunk_vector(self, chunk_id: str) -> list[float] | None:
         """Get vector for a specific chunk.

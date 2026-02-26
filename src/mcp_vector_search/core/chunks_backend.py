@@ -24,6 +24,12 @@ from .exceptions import (
     DatabaseNotInitializedError,
 )
 
+# Maximum number of file paths per SQL IN clause.
+# DataFusion (used by LanceDB) has a recursive descent parser that stack-overflows
+# when processing thousands of OR clauses. Using IN with bounded batch size keeps
+# the parse tree shallow and prevents SEGV (signal 139) on Linux.
+DELETE_BATCH_LIMIT = 500
+
 
 def compute_file_hash(file_path: Path) -> str:
     """Compute SHA-256 hash of file content.
@@ -515,6 +521,20 @@ class ChunksBackend:
         if self._table is None:
             return
 
+        # Linux guard: skip compaction for large tables to prevent arrow offset overflow
+        # documented in lance issue #3330. compact_files() on tables > 100k rows can
+        # trigger an int32 overflow in the offset buffer on Linux.
+        try:
+            row_count = self._table.count_rows()
+            if row_count > 100_000:
+                logger.debug(
+                    "Skipping compaction: table has %d rows (lance#3330 safety)",
+                    row_count,
+                )
+                return
+        except Exception:
+            pass
+
         try:
             # LanceDB 0.5+ API: compact_files() merges data fragments
             self._table.compact_files()
@@ -896,25 +916,50 @@ class ChunksBackend:
         if self._table is None or not file_paths:
             return 0
 
-        try:
-            # Build filter for all files at once: file_path = 'a' OR file_path = 'b' OR ...
-            filter_clauses = [f"file_path = '{fp}'" for fp in file_paths]
-            filter_expr = " OR ".join(filter_clauses)
+        deleted_count = 0
+        total_batches = (len(file_paths) + DELETE_BATCH_LIMIT - 1) // DELETE_BATCH_LIMIT
 
-            # Single delete operation for all files (delete is idempotent)
-            self._table.delete(filter_expr)
+        for batch_num, i in enumerate(
+            range(0, len(file_paths), DELETE_BATCH_LIMIT), start=1
+        ):
+            batch = file_paths[i : i + DELETE_BATCH_LIMIT]
 
-            logger.debug(f"Deleted chunks for {len(file_paths)} files in batch")
-            return len(file_paths)  # Return count of files processed
+            # Escape single quotes and build SQL IN clause.
+            # Using IN instead of chained OR keeps DataFusion's parse tree shallow,
+            # preventing stack overflow (SEGV signal 139) on Linux with large batches.
+            escaped = [fp.replace("'", "''") for fp in batch]
+            values_sql = ", ".join(f"'{fp}'" for fp in escaped)
+            filter_expr = f"file_path IN ({values_sql})"
 
-        except Exception as e:
-            # Handle LanceDB "Not found" errors gracefully
-            error_msg = str(e).lower()
-            if "not found" in error_msg:
-                logger.debug("No chunks to delete for batch (not in index)")
-                return 0
-            logger.error(f"Failed to delete chunks batch: {e}")
-            raise DatabaseError(f"Failed to delete chunks batch: {e}") from e
+            try:
+                self._table.delete(filter_expr)
+                deleted_count += len(batch)
+                logger.debug(
+                    "Deleted chunks batch %d/%d (%d files, running total: %d)",
+                    batch_num,
+                    total_batches,
+                    len(batch),
+                    deleted_count,
+                )
+            except Exception as e:
+                # Handle LanceDB "Not found" errors gracefully; continue other batches
+                error_msg = str(e).lower()
+                if "not found" in error_msg:
+                    logger.debug(
+                        "No chunks to delete for batch %d/%d (not in index)",
+                        batch_num,
+                        total_batches,
+                    )
+                else:
+                    logger.error(
+                        "Failed to delete chunks batch %d/%d: %s",
+                        batch_num,
+                        total_batches,
+                        e,
+                    )
+
+        logger.debug("Batch delete complete: %d files processed", deleted_count)
+        return deleted_count
 
     async def get_stats(self) -> dict[str, Any]:
         """Get chunk statistics by status.

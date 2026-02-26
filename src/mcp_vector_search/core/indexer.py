@@ -5,6 +5,7 @@ Phase 2: Embed chunks, store to vectors.lance (resumable, incremental)
 """
 
 import asyncio
+import gc
 import json
 import os
 import platform
@@ -1189,6 +1190,17 @@ class SemanticIndexer:
                         chunks_created += count
                         files_processed += 1
                         logger.debug(f"Chunked {count} chunks from {rel_path}")
+
+                        # Periodic GC to prevent Arrow buffer accumulation on Linux.
+                        # LanceDB issue #2512: each append allocates Arrow buffers that
+                        # CPython's reference counter does not release quickly enough,
+                        # leading to RSS growth proportional to file count.
+                        if files_processed % 1000 == 0:
+                            gc.collect()
+                            logger.debug(
+                                "GC collect after %d files (Arrow buffer cleanup)",
+                                files_processed,
+                            )
 
                         # Show progress bar if tracker is available (update every file)
                         if self.progress_tracker:

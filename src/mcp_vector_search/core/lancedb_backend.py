@@ -406,6 +406,20 @@ class LanceVectorDatabase:
             logger.debug("No table to optimize")
             return
 
+        # Linux guard: skip compaction for large tables to prevent arrow offset overflow
+        # documented in lance issue #3330. optimize() on tables > 100k rows can trigger
+        # an int32 overflow in the offset buffer on Linux.
+        try:
+            row_count = self._table.count_rows()
+            if row_count > 100_000:
+                logger.debug(
+                    "Skipping compaction: table has %d rows (lance#3330 safety)",
+                    row_count,
+                )
+                return
+        except Exception:
+            pass
+
         try:
             from datetime import timedelta
 
