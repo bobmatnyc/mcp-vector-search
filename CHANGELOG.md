@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.27] - 2026-02-26
+
+### Performance
+
+- **Skip Blame Default Fixed** — Resolved accidental enablement of blame during init/setup that added 50-100ms per file overhead
+  - Root cause: blame feature was incorrectly enabled by default instead of respecting the skip_blame flag
+  - Removed unintended blame initialization during project setup
+  - Projects will now skip blame analysis unless explicitly enabled, improving initial indexing performance
+
 ## [3.0.26] - 2026-02-26
 
 ### Fixed
