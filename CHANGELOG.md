@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.24] - 2026-02-26
+
+### Fixed
+
+- **LanceDB SIGBUS Crash on macOS (Critical)** — Extended comprehensive platform guards to all remaining LanceDB compaction operations that could trigger SIGBUS crashes due to memory-mapped file conflicts between PyTorch MPS and LanceDB Rust native code
+  - Added platform guards to `_compact_table()` in `chunks_backend.py` and `vectors_backend.py`
+  - Added platform guard to `optimize()` in `lancedb_backend.py`
+  - Added platform guard to `remove_file()` in `indexer.py`
+  - Added SIGBUS signal handler in `cli/main.py` for better crash diagnostics
+  - Root cause: tokio worker thread crashes in `_lancedb.abi3.so` during fragment compaction while PyTorch holds model weights via Metal Performance Shaders memory mapping
+
+## [3.0.23] - 2026-02-25
+
+### Fixed
+
+- **Incremental Index Change Detection** — Silent failures in `get_all_indexed_file_hashes()` that caused all files to appear changed, triggering a full reindex disguised as incremental with no warning
+  - Added warnings when hash table is unavailable or fails to load
+  - Added progress reporting every 1000 files during change detection
+  - Reports actual counts ("N changed, M unchanged out of T total")
+
+## [3.0.22] - 2026-02-25
+
+### Added
+
+- **Treemap/Sunburst Drill-Down with Code Complexity** — Visualization views now load code chunks with actual complexity/quality/smell data
+  - New `/api/graph-code-chunks` endpoint returning function/class/method nodes with quality metrics
+  - Treemap and sunburst auto-fetch code chunks before rendering
+  - Filtered out text/doc chunks (86% of data) from hierarchy builders for these views
+  - Treemap cells and sunburst arcs now show complexity grade coloring (A=green through F=red)
+
+## [3.0.21] - 2026-02-25
+
+### Added
+
+- **`mvs index rebuild` Command** — Rebuild ANN vector index over existing embeddings without re-chunking or re-embedding; completes in under 1 second for 36K rows
+- **IVF_SQ Vector Index** — Switched from IVF_PQ to scalar quantization for 384-dimensional embeddings
+  - 100% recall@10 vs 97.5% with IVF_PQ
+  - 4x index memory reduction (27 MB vs 108 MB for 74K chunks)
+  - Faster index build (no codebook training required)
+
 ## [3.0.20] - 2026-02-24
 
 ### Added
