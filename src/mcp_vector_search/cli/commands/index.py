@@ -691,7 +691,7 @@ async def run_indexing(
     skip_vendor_update: bool = False,
     cancellation_flag: threading.Event | None = None,
     simple_progress: bool = False,
-    skip_blame: bool = False,
+    skip_blame: bool = True,
     re_embed: bool = False,
     embedding_model_override: str | None = None,
 ) -> None:
