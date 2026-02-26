@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.26] - 2026-02-26
+
+### Fixed
+
+- **Stale LanceDB Table Entries on Fresh Projects** — Resolved "Table 'chunks' was not found" error when running on a project that has never been indexed
+  - Root cause: stale entry detection attempted to query a table that does not yet exist
+  - Added existence check before querying LanceDB tables during init
+  - Added graceful abort on backend init failure to prevent cascading errors
+
+### Added
+
+- **E2E Tests for CLI Entry Points** — 25 new end-to-end tests covering `init`, `setup`, and `index` CLI commands
+  - Tests cover happy path, error handling, and edge cases for each entry point
+  - Validates CLI output, exit codes, and side effects
+
 ## [3.0.25] - 2026-02-26
 
 ### Fixed
