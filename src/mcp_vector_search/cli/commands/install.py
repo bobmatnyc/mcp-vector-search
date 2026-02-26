@@ -120,7 +120,8 @@ def cleanup_stale_mcp_servers(platform_info: PlatformInfo) -> list[str]:
         # Get all configured servers for this platform
         all_servers = installer.list_servers()
 
-        for server_name in all_servers:
+        for server in all_servers:
+            server_name = server.name
             should_remove = False
             reason = ""
 
@@ -130,10 +131,8 @@ def cleanup_stale_mcp_servers(platform_info: PlatformInfo) -> list[str]:
                 reason = "deprecated server"
             else:
                 # Check if the command binary exists
-                server_config = installer.get_server(server_name)
-                if server_config and "command" in server_config:
-                    command = server_config["command"]
-
+                command = server.command
+                if command:
                     # Use shutil.which to check if command exists in PATH
                     if not stdlib_shutil.which(command):
                         should_remove = True
@@ -890,7 +889,7 @@ def mcp_status(ctx: typer.Context) -> None:
                 if server:
                     status = "✅ Configured"
                     # Extract project root from env
-                    env = server.get("env", {})
+                    env = getattr(server, "env", {}) or {}
                     configured_root = env.get("MCP_PROJECT_ROOT") or env.get(
                         "PROJECT_ROOT", "N/A"
                     )
