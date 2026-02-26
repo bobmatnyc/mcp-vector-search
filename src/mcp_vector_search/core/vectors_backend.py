@@ -272,8 +272,23 @@ class VectorsBackend:
                         f"Opened existing vectors table '{self.table_name}' at {self.db_path}"
                     )
                 except Exception as e:
+                    # Check for stale table entry (listed but not actually openable)
+                    if (
+                        "not found" in str(e).lower()
+                        and "fragment" not in str(e).lower()
+                    ):
+                        logger.warning(
+                            f"Stale table entry '{self.table_name}' detected "
+                            f"(listed but not openable: {e}). "
+                            f"Cleaning up for fresh creation."
+                        )
+                        try:
+                            self._db.drop_table(self.table_name)
+                        except Exception:
+                            pass
+                        self._table = None
                     # Check for corruption and auto-recover
-                    if self._handle_corrupt_table(e, self.table_name):
+                    elif self._handle_corrupt_table(e, self.table_name):
                         self._table = None
                         logger.info(
                             f"Vectors table '{self.table_name}' corrupted and deleted. Will be recreated on next index."
@@ -483,66 +498,88 @@ class VectorsBackend:
 
                 if self.table_name in table_names:
                     # Table exists, check if dimensions match before appending
-                    existing_table = self._db.open_table(self.table_name)
-                    existing_schema = existing_table.schema
-                    vector_field = existing_schema.field("vector")
-
-                    # Extract existing dimension from fixed-size list type
-                    existing_dim = None
-                    if hasattr(vector_field.type, "list_size"):
-                        existing_dim = vector_field.type.list_size
-
-                    if existing_dim == self.vector_dim:
-                        # Dimensions match, now check schema compatibility
-                        # Check if all required columns exist in the existing table
-                        existing_field_names = set(existing_schema.names)
-                        new_field_names = set(schema.names)
-                        missing_columns = new_field_names - existing_field_names
-
-                        if missing_columns:
-                            # Schema evolution: existing table is missing new columns
-                            # Add missing columns with null values (preserves existing embeddings)
-                            logger.info(
-                                f"Schema evolution detected: adding missing columns {missing_columns} to existing table"
+                    try:
+                        existing_table = self._db.open_table(self.table_name)
+                    except Exception as open_err:
+                        if "not found" in str(open_err).lower():
+                            logger.warning(
+                                f"Stale table entry '{self.table_name}' detected in add_vectors "
+                                f"(listed but not openable: {open_err}). "
+                                f"Dropping stale entry and creating fresh table."
                             )
-
-                            # Build PyArrow fields for missing columns
-                            missing_fields = [
-                                schema.field(col_name) for col_name in missing_columns
-                            ]
-
-                            # Add columns with null/empty defaults
-                            existing_table.add_columns(missing_fields)
-
-                            # Reopen table to get updated schema
-                            self._table = self._db.open_table(self.table_name)
-                            logger.info(
-                                f"Added {len(missing_columns)} new columns to vectors table (preserving {existing_table.count_rows()} existing embeddings)"
+                            try:
+                                self._db.drop_table(self.table_name)
+                            except Exception:
+                                pass
+                            self._table = self._db.create_table(
+                                self.table_name, pa_table, schema=schema
+                            )
+                            logger.debug(
+                                f"Created fresh vectors table with {len(normalized_vectors)} vectors (dimension: {self.vector_dim})"
                             )
                         else:
-                            # Schema compatible, open existing table
-                            self._table = existing_table
-
-                        # Deduplicate: Delete existing vectors with same chunk_ids before appending
-                        self._delete_chunk_ids(chunk_ids_to_add)
-
-                        self._table.add(pa_table, mode="append")
-                        logger.debug(
-                            f"Opened existing table and added {len(normalized_vectors)} vectors (append mode)"
-                        )
+                            raise
                     else:
-                        # Dimension mismatch - drop and recreate table
-                        logger.warning(
-                            f"Vector dimension mismatch: existing table has {existing_dim}D, "
-                            f"new data has {self.vector_dim}D. Dropping and recreating table."
-                        )
-                        self._db.drop_table(self.table_name)
-                        self._table = self._db.create_table(
-                            self.table_name, pa_table, schema=schema
-                        )
-                        logger.info(
-                            f"Recreated vectors table with {len(normalized_vectors)} vectors (dimension: {self.vector_dim})"
-                        )
+                        existing_schema = existing_table.schema
+                        vector_field = existing_schema.field("vector")
+
+                        # Extract existing dimension from fixed-size list type
+                        existing_dim = None
+                        if hasattr(vector_field.type, "list_size"):
+                            existing_dim = vector_field.type.list_size
+
+                        if existing_dim == self.vector_dim:
+                            # Dimensions match, now check schema compatibility
+                            # Check if all required columns exist in the existing table
+                            existing_field_names = set(existing_schema.names)
+                            new_field_names = set(schema.names)
+                            missing_columns = new_field_names - existing_field_names
+
+                            if missing_columns:
+                                # Schema evolution: existing table is missing new columns
+                                # Add missing columns with null values (preserves existing embeddings)
+                                logger.info(
+                                    f"Schema evolution detected: adding missing columns {missing_columns} to existing table"
+                                )
+
+                                # Build PyArrow fields for missing columns
+                                missing_fields = [
+                                    schema.field(col_name)
+                                    for col_name in missing_columns
+                                ]
+
+                                # Add columns with null/empty defaults
+                                existing_table.add_columns(missing_fields)
+
+                                # Reopen table to get updated schema
+                                self._table = self._db.open_table(self.table_name)
+                                logger.info(
+                                    f"Added {len(missing_columns)} new columns to vectors table (preserving {existing_table.count_rows()} existing embeddings)"
+                                )
+                            else:
+                                # Schema compatible, open existing table
+                                self._table = existing_table
+
+                            # Deduplicate: Delete existing vectors with same chunk_ids before appending
+                            self._delete_chunk_ids(chunk_ids_to_add)
+
+                            self._table.add(pa_table, mode="append")
+                            logger.debug(
+                                f"Opened existing table and added {len(normalized_vectors)} vectors (append mode)"
+                            )
+                        else:
+                            # Dimension mismatch - drop and recreate table
+                            logger.warning(
+                                f"Vector dimension mismatch: existing table has {existing_dim}D, "
+                                f"new data has {self.vector_dim}D. Dropping and recreating table."
+                            )
+                            self._db.drop_table(self.table_name)
+                            self._table = self._db.create_table(
+                                self.table_name, pa_table, schema=schema
+                            )
+                            logger.info(
+                                f"Recreated vectors table with {len(normalized_vectors)} vectors (dimension: {self.vector_dim})"
+                            )
                 else:
                     # Create table with first batch using explicit schema
                     self._table = self._db.create_table(

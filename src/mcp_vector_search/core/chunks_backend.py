@@ -154,23 +154,38 @@ class ChunksBackend:
             )
 
             if self.TABLE_NAME in table_names:
-                self._table = self._db.open_table(self.TABLE_NAME)
+                try:
+                    self._table = self._db.open_table(self.TABLE_NAME)
 
-                # Validate schema compatibility (handles atomic rebuild stale dirs + schema upgrades)
-                existing_fields = set(self._table.schema.names)
-                required_fields = {field.name for field in CHUNKS_SCHEMA}
+                    # Validate schema compatibility (handles atomic rebuild stale dirs + schema upgrades)
+                    existing_fields = set(self._table.schema.names)
+                    required_fields = {field.name for field in CHUNKS_SCHEMA}
 
-                if not required_fields.issubset(existing_fields):
-                    missing = required_fields - existing_fields
-                    logger.warning(
-                        f"Schema mismatch: missing fields {missing}. "
-                        f"Recreating table with current schema."
-                    )
-                    self._db.drop_table(self.TABLE_NAME)
-                    self._table = None
-                    logger.debug("Table dropped, will be recreated on first write")
-                else:
-                    logger.debug(f"Opened existing chunks table at {self.db_path}")
+                    if not required_fields.issubset(existing_fields):
+                        missing = required_fields - existing_fields
+                        logger.warning(
+                            f"Schema mismatch: missing fields {missing}. "
+                            f"Recreating table with current schema."
+                        )
+                        self._db.drop_table(self.TABLE_NAME)
+                        self._table = None
+                        logger.debug("Table dropped, will be recreated on first write")
+                    else:
+                        logger.debug(f"Opened existing chunks table at {self.db_path}")
+                except Exception as e:
+                    if "not found" in str(e).lower():
+                        logger.warning(
+                            f"Stale table entry '{self.TABLE_NAME}' detected "
+                            f"(listed but not openable: {e}). "
+                            f"Cleaning up for fresh creation."
+                        )
+                        try:
+                            self._db.drop_table(self.TABLE_NAME)
+                        except Exception:
+                            pass
+                        self._table = None
+                    else:
+                        raise
             else:
                 # Table will be created on first add_chunks with schema
                 self._table = None
@@ -274,11 +289,32 @@ class ChunksBackend:
 
                 if self.TABLE_NAME in table_names:
                     # Table exists, open it
-                    self._table = self._db.open_table(self.TABLE_NAME)
-                    self._table.add(normalized_chunks, mode="append")
-                    logger.debug(
-                        f"Opened existing table and added {len(normalized_chunks)} chunks (append mode)"
-                    )
+                    try:
+                        self._table = self._db.open_table(self.TABLE_NAME)
+                    except Exception as open_err:
+                        if "not found" in str(open_err).lower():
+                            logger.warning(
+                                f"Stale table entry '{self.TABLE_NAME}' detected in add_chunks "
+                                f"(listed but not openable: {open_err}). "
+                                f"Dropping stale entry and creating fresh table."
+                            )
+                            try:
+                                self._db.drop_table(self.TABLE_NAME)
+                            except Exception:
+                                pass
+                            self._table = self._db.create_table(
+                                self.TABLE_NAME, normalized_chunks, schema=CHUNKS_SCHEMA
+                            )
+                            logger.debug(
+                                f"Created fresh chunks table with {len(normalized_chunks)} chunks"
+                            )
+                        else:
+                            raise
+                    else:
+                        self._table.add(normalized_chunks, mode="append")
+                        logger.debug(
+                            f"Opened existing table and added {len(normalized_chunks)} chunks (append mode)"
+                        )
                 else:
                     # Create table with first batch
                     self._table = self._db.create_table(
@@ -400,11 +436,32 @@ class ChunksBackend:
 
                 if self.TABLE_NAME in table_names:
                     # Table exists, open it
-                    self._table = self._db.open_table(self.TABLE_NAME)
-                    self._table.add(normalized_chunks, mode="append")
-                    logger.debug(
-                        f"Opened existing table and added {len(normalized_chunks)} chunks (append mode)"
-                    )
+                    try:
+                        self._table = self._db.open_table(self.TABLE_NAME)
+                    except Exception as open_err:
+                        if "not found" in str(open_err).lower():
+                            logger.warning(
+                                f"Stale table entry '{self.TABLE_NAME}' detected in add_chunks_batch "
+                                f"(listed but not openable: {open_err}). "
+                                f"Dropping stale entry and creating fresh table."
+                            )
+                            try:
+                                self._db.drop_table(self.TABLE_NAME)
+                            except Exception:
+                                pass
+                            self._table = self._db.create_table(
+                                self.TABLE_NAME, normalized_chunks, schema=CHUNKS_SCHEMA
+                            )
+                            logger.debug(
+                                f"Created fresh chunks table with {len(normalized_chunks)} chunks"
+                            )
+                        else:
+                            raise
+                    else:
+                        self._table.add(normalized_chunks, mode="append")
+                        logger.debug(
+                            f"Opened existing table and added {len(normalized_chunks)} chunks (append mode)"
+                        )
                 else:
                     # Create table with first batch
                     self._table = self._db.create_table(
@@ -478,8 +535,26 @@ class ChunksBackend:
                 )
 
                 if self.TABLE_NAME in table_names:
-                    self._table = self._db.open_table(self.TABLE_NAME)
-                    self._table.add(chunks, mode="append")
+                    try:
+                        self._table = self._db.open_table(self.TABLE_NAME)
+                    except Exception as open_err:
+                        if "not found" in str(open_err).lower():
+                            logger.warning(
+                                f"Stale table entry '{self.TABLE_NAME}' detected in add_chunks_raw "
+                                f"(listed but not openable: {open_err}). "
+                                f"Dropping stale entry and creating fresh table."
+                            )
+                            try:
+                                self._db.drop_table(self.TABLE_NAME)
+                            except Exception:
+                                pass
+                            self._table = self._db.create_table(
+                                self.TABLE_NAME, chunks, schema=CHUNKS_SCHEMA
+                            )
+                        else:
+                            raise
+                    else:
+                        self._table.add(chunks, mode="append")
                 else:
                     self._table = self._db.create_table(
                         self.TABLE_NAME, chunks, schema=CHUNKS_SCHEMA

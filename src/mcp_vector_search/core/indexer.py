@@ -30,7 +30,7 @@ from .chunks_backend import ChunksBackend, compute_file_hash
 from .context_builder import build_contextual_text
 from .database import VectorDatabase
 from .directory_index import DirectoryIndex
-from .exceptions import ParsingError
+from .exceptions import DatabaseError, DatabaseInitializationError, ParsingError
 from .file_discovery import FileDiscovery
 from .index_metadata import IndexMetadata
 from .memory_monitor import MemoryMonitor
@@ -1118,6 +1118,7 @@ class SemanticIndexer:
                 )
 
             # Now process files for parsing and chunking
+            backend_fatal_error: Exception | None = None
             for _idx, (file_path, rel_path, file_hash) in enumerate(files_to_process):
                 # Check memory before processing each file (CRITICAL: not every 100!)
                 is_ok, usage_pct, status = self.memory_monitor.check_memory_limit()
@@ -1211,9 +1212,29 @@ class SemanticIndexer:
                                 start_time=phase_start_time,
                             )
 
+                except DatabaseError as e:
+                    # Check if this is a backend-level failure (e.g., stale/corrupt table)
+                    # that will affect every subsequent file — abort early instead of
+                    # spamming identical errors for each remaining file.
+                    err_lower = str(e).lower()
+                    if "not found" in err_lower or "not initialized" in err_lower:
+                        logger.error(
+                            f"Backend error while storing chunks for {file_path}: {e}\n"
+                            f"  Aborting Phase 1 to avoid repeated failures.\n"
+                            f"  Try: mvs index --force  (to rebuild from scratch)"
+                        )
+                        backend_fatal_error = e
+                        break
+                    logger.error(f"Failed to chunk file {file_path}: {e}")
+                    continue
                 except Exception as e:
                     logger.error(f"Failed to chunk file {file_path}: {e}")
                     continue
+
+            if backend_fatal_error is not None:
+                logger.error(
+                    f"Phase 1 aborted due to backend error: {backend_fatal_error}"
+                )
 
             # Update metrics
             parsing_metrics.item_count = files_processed
@@ -1781,8 +1802,21 @@ class SemanticIndexer:
         # Handle atomic rebuild for fresh mode FIRST (replaces backend objects)
         if fresh:
             # Pre-initialize backends so _atomic_rebuild_databases can create new ones
-            await self.chunks_backend.initialize()
-            await self.vectors_backend.initialize()
+            try:
+                await self.chunks_backend.initialize()
+                await self.vectors_backend.initialize()
+            except DatabaseInitializationError as e:
+                logger.error(
+                    f"Cannot start chunking: {e}\n"
+                    f"  Try: mvs index --force  (to rebuild from scratch)\n"
+                    f"  Or:  mvs reset index --force  (to clear all data)"
+                )
+                return {
+                    "files_processed": 0,
+                    "chunks_created": 0,
+                    "files_skipped": 0,
+                    "errors": [str(e)],
+                }
             atomic_rebuild_active = await self._atomic_rebuild_databases(True)
             self._atomic_rebuild_active = atomic_rebuild_active
         else:
@@ -1790,9 +1824,35 @@ class SemanticIndexer:
 
         # Initialize backends (new backends after atomic rebuild, or original ones)
         if self.chunks_backend._db is None:
-            await self.chunks_backend.initialize()
+            try:
+                await self.chunks_backend.initialize()
+            except DatabaseInitializationError as e:
+                logger.error(
+                    f"Cannot start chunking: {e}\n"
+                    f"  Try: mvs index --force  (to rebuild from scratch)\n"
+                    f"  Or:  mvs reset index --force  (to clear all data)"
+                )
+                return {
+                    "files_processed": 0,
+                    "chunks_created": 0,
+                    "files_skipped": 0,
+                    "errors": [str(e)],
+                }
         if self.vectors_backend._db is None:
-            await self.vectors_backend.initialize()
+            try:
+                await self.vectors_backend.initialize()
+            except DatabaseInitializationError as e:
+                logger.error(
+                    f"Cannot start chunking: {e}\n"
+                    f"  Try: mvs index --force  (to rebuild from scratch)\n"
+                    f"  Or:  mvs reset index --force  (to clear all data)"
+                )
+                return {
+                    "files_processed": 0,
+                    "chunks_created": 0,
+                    "files_skipped": 0,
+                    "errors": [str(e)],
+                }
 
         # Run auto migrations
         await self._run_auto_migrations()
@@ -1972,9 +2032,37 @@ class SemanticIndexer:
 
         # Initialize backends (skip if already initialized)
         if self.chunks_backend._db is None:
-            await self.chunks_backend.initialize()
+            try:
+                await self.chunks_backend.initialize()
+            except DatabaseInitializationError as e:
+                logger.error(
+                    f"Cannot start embedding: {e}\n"
+                    f"  Try: mvs index --force  (to rebuild from scratch)\n"
+                    f"  Or:  mvs reset index --force  (to clear all data)"
+                )
+                return {
+                    "chunks_embedded": 0,
+                    "chunks_skipped": 0,
+                    "batches_processed": 0,
+                    "errors": [str(e)],
+                    "duration_seconds": 0.0,
+                }
         if self.vectors_backend._db is None:
-            await self.vectors_backend.initialize()
+            try:
+                await self.vectors_backend.initialize()
+            except DatabaseInitializationError as e:
+                logger.error(
+                    f"Cannot start embedding: {e}\n"
+                    f"  Try: mvs index --force  (to rebuild from scratch)\n"
+                    f"  Or:  mvs reset index --force  (to clear all data)"
+                )
+                return {
+                    "chunks_embedded": 0,
+                    "chunks_skipped": 0,
+                    "batches_processed": 0,
+                    "errors": [str(e)],
+                    "duration_seconds": 0.0,
+                }
 
         # Run auto migrations
         await self._run_auto_migrations()
@@ -2145,8 +2233,24 @@ class SemanticIndexer:
         metrics_tracker.reset()
 
         # Initialize backends
-        await self.chunks_backend.initialize()
-        await self.vectors_backend.initialize()
+        try:
+            await self.chunks_backend.initialize()
+        except DatabaseInitializationError as e:
+            logger.error(
+                f"Cannot start indexing: {e}\n"
+                f"  Try: mvs index --force  (to rebuild from scratch)\n"
+                f"  Or:  mvs reset index --force  (to clear all data)"
+            )
+            return 0
+        try:
+            await self.vectors_backend.initialize()
+        except DatabaseInitializationError as e:
+            logger.error(
+                f"Cannot start indexing: {e}\n"
+                f"  Try: mvs index --force  (to rebuild from scratch)\n"
+                f"  Or:  mvs reset index --force  (to clear all data)"
+            )
+            return 0
 
         # Check and run pending migrations automatically
         await self._run_auto_migrations()
