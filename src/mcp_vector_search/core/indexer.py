@@ -502,6 +502,30 @@ class SemanticIndexer:
                 f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
             )
 
+            # Detect file moves/renames — update metadata instead of re-chunking
+            detected_moves, _moved_old_paths = self._detect_file_moves(
+                all_files, indexed_file_hashes
+            )
+            if detected_moves:
+                logger.info(
+                    f"Detected {len(detected_moves)} file move(s), updating metadata..."
+                )
+                for old_path, new_path, _file_hash in detected_moves:
+                    chunks_updated = await self.chunks_backend.update_file_path(
+                        old_path, new_path
+                    )
+                    vectors_updated = await self.vectors_backend.update_file_path(
+                        old_path, new_path
+                    )
+                    logger.info(
+                        f"  Moved: {old_path} -> {new_path} "
+                        f"({chunks_updated} chunks, {vectors_updated} vectors)"
+                    )
+                # Reload so change detection sees updated paths
+                indexed_file_hashes = (
+                    await self.chunks_backend.get_all_indexed_file_hashes()
+                )
+
             filtered_files = []
             for idx, f in enumerate(all_files, start=1):
                 try:
@@ -580,6 +604,33 @@ class SemanticIndexer:
                     logger.info(
                         f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
                     )
+
+                # Detect file moves/renames — update metadata instead of re-chunking
+                if not force_reindex:
+                    detected_moves, _moved_old_paths = self._detect_file_moves(
+                        files_to_index, indexed_file_hashes
+                    )
+                    if detected_moves:
+                        logger.info(
+                            f"Detected {len(detected_moves)} file move(s), updating metadata..."
+                        )
+                        for old_path, new_path, _file_hash in detected_moves:
+                            chunks_updated = await self.chunks_backend.update_file_path(
+                                old_path, new_path
+                            )
+                            vectors_updated = (
+                                await self.vectors_backend.update_file_path(
+                                    old_path, new_path
+                                )
+                            )
+                            logger.info(
+                                f"  Moved: {old_path} -> {new_path} "
+                                f"({chunks_updated} chunks, {vectors_updated} vectors)"
+                            )
+                        # Reload so change detection sees updated paths
+                        indexed_file_hashes = (
+                            await self.chunks_backend.get_all_indexed_file_hashes()
+                        )
 
                 # Compute file hashes
                 if force_reindex:
@@ -1003,6 +1054,84 @@ class SemanticIndexer:
 
         return files_indexed, chunks_created, chunks_embedded
 
+    def _detect_file_moves(
+        self,
+        current_files: list[Path],
+        indexed_file_hashes: dict[str, str],
+    ) -> tuple[list[tuple[str, str, str]], set[str]]:
+        """Detect file moves/renames by matching content hashes.
+
+        Compares the set of currently indexed paths against on-disk paths.
+        When an indexed path is gone but a new path has the same SHA-256
+        content hash, we treat that as a move rather than a delete+add.
+
+        Only unambiguous 1-to-1 moves are handled.  If multiple indexed
+        paths share the same hash, they are matched by sorted name order —
+        this covers batch directory-rename scenarios while staying safe.
+
+        Args:
+            current_files: All currently-discoverable files on disk
+            indexed_file_hashes: Mapping of rel_path → file_hash from the DB
+
+        Returns:
+            Tuple of:
+            - List of (old_path, new_path, file_hash) for each detected move
+            - Set of old_path strings that were moved (exclude from normal
+              delete/re-process flow after caller reloads hashes)
+        """
+        # Reverse index: hash → set of paths currently in the DB
+        hash_to_indexed: dict[str, set[str]] = {}
+        for path, hash_val in indexed_file_hashes.items():
+            hash_to_indexed.setdefault(hash_val, set()).add(path)
+
+        # Build set of relative paths that exist on disk right now, and a
+        # reverse map from hash → set of on-disk relative paths
+        current_rel_paths: set[str] = set()
+        current_hash_to_paths: dict[str, set[str]] = {}
+        for file_path in current_files:
+            try:
+                rel_path = str(file_path.relative_to(self.project_root))
+                current_rel_paths.add(rel_path)
+                file_hash = compute_file_hash(file_path)
+                current_hash_to_paths.setdefault(file_hash, set()).add(rel_path)
+            except Exception:  # nosec B112  # noqa: B112
+                continue
+
+        # Find moves: indexed paths that are no longer on disk (orphaned) paired
+        # with new on-disk paths that share the same hash and are not yet indexed
+        moves: list[tuple[str, str, str]] = []
+        moved_old_paths: set[str] = set()
+
+        for hash_val, indexed_paths in hash_to_indexed.items():
+            # Paths in DB that are no longer on disk at their original location
+            orphaned = indexed_paths - current_rel_paths
+            if not orphaned:
+                continue
+
+            # On-disk paths with the same hash that are not yet in the DB
+            new_paths = current_hash_to_paths.get(hash_val, set()) - set(
+                indexed_file_hashes.keys()
+            )
+            if not new_paths:
+                continue
+
+            if len(orphaned) == 1 and len(new_paths) == 1:
+                # Unambiguous 1-to-1 move
+                old_path = next(iter(orphaned))
+                new_path = next(iter(new_paths))
+                moves.append((old_path, new_path, hash_val))
+                moved_old_paths.add(old_path)
+            elif len(orphaned) == len(new_paths):
+                # Same number of orphaned and new paths with matching hash
+                # (e.g., directory rename).  Match by sorted name for stability.
+                for old_p, new_p in zip(
+                    sorted(orphaned), sorted(new_paths), strict=True
+                ):
+                    moves.append((old_p, new_p, hash_val))
+                    moved_old_paths.add(old_p)
+
+        return moves, moved_old_paths
+
     async def _phase1_chunk_files(
         self, files: list[Path], force: bool = False
     ) -> tuple[int, int]:
@@ -1048,6 +1177,31 @@ class SemanticIndexer:
                 logger.info(
                     f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
                 )
+
+            # Detect file moves/renames — update metadata instead of re-chunking
+            if not force:
+                detected_moves, _moved_old_paths = self._detect_file_moves(
+                    files, indexed_file_hashes
+                )
+                if detected_moves:
+                    logger.info(
+                        f"Detected {len(detected_moves)} file move(s), updating metadata..."
+                    )
+                    for old_path, new_path, _file_hash in detected_moves:
+                        chunks_updated = await self.chunks_backend.update_file_path(
+                            old_path, new_path
+                        )
+                        vectors_updated = await self.vectors_backend.update_file_path(
+                            old_path, new_path
+                        )
+                        logger.info(
+                            f"  Moved: {old_path} -> {new_path} "
+                            f"({chunks_updated} chunks, {vectors_updated} vectors)"
+                        )
+                    # Reload so change detection sees updated paths
+                    indexed_file_hashes = (
+                        await self.chunks_backend.get_all_indexed_file_hashes()
+                    )
 
             # Log start of hash computation phase
             if force:
@@ -1904,6 +2058,30 @@ class SemanticIndexer:
                     "processed (first index or hash table unavailable)"
                 )
 
+            # Detect file moves/renames — update metadata instead of re-chunking
+            detected_moves, _moved_old_paths = self._detect_file_moves(
+                all_files, indexed_file_hashes
+            )
+            if detected_moves:
+                logger.info(
+                    f"Detected {len(detected_moves)} file move(s), updating metadata..."
+                )
+                for old_path, new_path, _file_hash in detected_moves:
+                    chunks_updated = await self.chunks_backend.update_file_path(
+                        old_path, new_path
+                    )
+                    vectors_updated = await self.vectors_backend.update_file_path(
+                        old_path, new_path
+                    )
+                    logger.info(
+                        f"  Moved: {old_path} -> {new_path} "
+                        f"({chunks_updated} chunks, {vectors_updated} vectors)"
+                    )
+                # Reload so change detection sees updated paths
+                indexed_file_hashes = (
+                    await self.chunks_backend.get_all_indexed_file_hashes()
+                )
+
             filtered_files = []
             files_checked = 0
             for f in all_files:
@@ -2324,6 +2502,34 @@ class SemanticIndexer:
                         logger.info(
                             f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
                         )
+
+                        # Detect file moves/renames — update metadata instead of re-chunking
+                        detected_moves, _moved_old_paths = self._detect_file_moves(
+                            all_files, indexed_file_hashes
+                        )
+                        if detected_moves:
+                            logger.info(
+                                f"Detected {len(detected_moves)} file move(s), updating metadata..."
+                            )
+                            for old_path, new_path, _file_hash in detected_moves:
+                                chunks_updated = (
+                                    await self.chunks_backend.update_file_path(
+                                        old_path, new_path
+                                    )
+                                )
+                                vectors_updated = (
+                                    await self.vectors_backend.update_file_path(
+                                        old_path, new_path
+                                    )
+                                )
+                                logger.info(
+                                    f"  Moved: {old_path} -> {new_path} "
+                                    f"({chunks_updated} chunks, {vectors_updated} vectors)"
+                                )
+                            # Reload so change detection sees updated paths
+                            indexed_file_hashes = (
+                                await self.chunks_backend.get_all_indexed_file_hashes()
+                            )
 
                         filtered_files = []
                         for idx, f in enumerate(all_files, start=1):

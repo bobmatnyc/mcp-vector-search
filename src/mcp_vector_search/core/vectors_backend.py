@@ -976,6 +976,41 @@ class VectorsBackend:
         logger.debug("Batch delete complete: %d files processed", deleted_count)
         return deleted_count
 
+    async def update_file_path(self, old_path: str, new_path: str) -> int:
+        """Update file_path for all vectors of a moved/renamed file.
+
+        Uses LanceDB table.update() for in-place metadata update — no re-embedding needed.
+        Safe on macOS (update doesn't trigger mmap compaction like delete does).
+
+        Args:
+            old_path: Current (old) relative file path stored in the table
+            new_path: New relative file path to set
+
+        Returns:
+            Number of rows updated (0 if table not initialized or update fails)
+        """
+        if self._table is None:
+            return 0
+        try:
+            escaped_old = old_path.replace("'", "''")
+            result = self._table.update(
+                where=f"file_path = '{escaped_old}'",
+                values={"file_path": new_path},
+            )
+            rows = getattr(result, "rows_updated", 0) if result else 0
+            logger.debug(
+                "Updated vector file_path: %s → %s (%d vectors)",
+                old_path,
+                new_path,
+                rows,
+            )
+            return rows
+        except Exception as e:
+            logger.error(
+                "Failed to update vector file_path %s → %s: %s", old_path, new_path, e
+            )
+            return 0
+
     async def get_chunk_vector(self, chunk_id: str) -> list[float] | None:
         """Get vector for a specific chunk.
 
