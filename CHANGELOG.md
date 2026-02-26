@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.28] - 2026-02-26
+
+### Fixed
+
+- **MCP Installer List Servers Traceback** — Resolved three bugs in post-install cleanup and reporting during MCP setup
+  - Fixed traceback that occurred during list_servers operation when running `mcp-vector-search setup`
+  - Improved post-install cleanup handling to prevent cascading failures
+  - Enhanced error reporting during installer initialization
+
 ## [3.0.27] - 2026-02-26
 
 ### Performance
