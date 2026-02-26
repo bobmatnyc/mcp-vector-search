@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.25] - 2026-02-26
+
+### Fixed
+
+- **LanceDB SEGV Crash on Large Datasets (Critical, Linux)** — Eliminated signal 139 (SEGV) crashes when indexing repositories with 31k+ files
+  - Root cause: `delete_files_batch()` constructed a single SQL `OR` expression with up to 31,985 clauses, overflowing the stack inside DataFusion's recursive-descent parser running in a Rust tokio worker thread
+  - Fix 1 (critical): Rewrote delete expressions as batched `IN` clauses of 500 files each — replaces O(n)-deep OR chains with flat membership tests; each batch wrapped in `try/except` for resilience; SQL-safe escaping for single quotes in paths
+  - Fix 2: Added `gc.collect()` every 1,000 files during Phase 1 chunking to prevent PyArrow buffer accumulation (LanceDB issue #2512)
+  - Fix 3: Added row-count guard for `compact_files()` on Linux — skips compaction when table exceeds 100k rows to prevent arrow offset overflow in background thread (lance issue #3330)
+  - Fix 4: Applied same batched `IN`-clause delete pattern to `vectors_backend.py` for bulk vector cleanup consistency
+  - Workaround for systemd environments: set `RUST_MIN_STACK=8388608` (8 MB) in the service unit file if deep OR expressions cannot be avoided
+
 ## [3.0.24] - 2026-02-26
 
 ### Fixed
