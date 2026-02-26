@@ -11,6 +11,7 @@ LanceDB provides:
 import hashlib
 import json
 import os
+import platform
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
@@ -390,7 +391,17 @@ class LanceVectorDatabase:
         - Improve query performance
 
         Note: This is an expensive operation and should not be called after every add_chunks.
+
+        WORKAROUND: Skipped on macOS to avoid SIGBUS crash caused by memory conflict
+        between PyTorch MPS memory-mapped model files and LanceDB compaction operations.
         """
+        if platform.system() == "Darwin":
+            logger.debug(
+                "Skipping LanceDB optimize on macOS to avoid SIGBUS crash "
+                "(PyTorch MPS + LanceDB compaction memory conflict)"
+            )
+            return
+
         if self._table is None:
             logger.debug("No table to optimize")
             return

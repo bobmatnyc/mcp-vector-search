@@ -2833,18 +2833,25 @@ class SemanticIndexer:
     async def remove_file(self, file_path: Path) -> int:
         """Remove all chunks for a file from the index.
 
-        WARNING: On macOS, this operation may cause SIGBUS crash if called during
-        indexing (when embedding model is loaded). Use with caution.
+        WORKAROUND: Skipped on macOS to avoid SIGBUS crash caused by memory conflict
+        between PyTorch MPS memory-mapped model files and LanceDB delete operations.
+        On macOS, stale chunks will remain until the next full reindex.
 
         Args:
             file_path: Path to the file to remove
 
         Returns:
-            Number of chunks removed
+            Number of chunks removed (0 on macOS as operation is skipped)
         """
+        if platform.system() == "Darwin":
+            logger.debug(
+                f"Skipping remove_file on macOS for {file_path} to avoid SIGBUS crash "
+                "(PyTorch MPS + LanceDB delete memory conflict; "
+                "stale chunks will be cleaned up on next full reindex)"
+            )
+            return 0
+
         try:
-            # WARNING: No platform check here - user explicitly requested deletion
-            # On macOS, this may crash if embedding model is loaded (SIGBUS)
             count = await self.database.delete_by_file(file_path)
             logger.debug(f"Removed {count} chunks for {file_path}")
             return count

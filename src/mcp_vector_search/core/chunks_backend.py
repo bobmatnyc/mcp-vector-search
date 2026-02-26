@@ -9,6 +9,7 @@ before embedding. Enables:
 """
 
 import hashlib
+import platform
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -500,7 +501,17 @@ class ChunksBackend:
 
         This is called every 500 appends to keep file count manageable.
         Failures are non-fatal (best-effort optimization).
+
+        WORKAROUND: Skipped on macOS to avoid SIGBUS crash caused by memory conflict
+        between PyTorch MPS memory-mapped model files and LanceDB compaction operations.
         """
+        if platform.system() == "Darwin":
+            logger.debug(
+                "Skipping chunks table compaction on macOS to avoid SIGBUS crash "
+                "(PyTorch MPS + LanceDB compaction memory conflict)"
+            )
+            return
+
         if self._table is None:
             return
 

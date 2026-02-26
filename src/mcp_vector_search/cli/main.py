@@ -85,8 +85,46 @@ def _handle_segfault(signum: int, frame) -> None:
     sys.exit(139)  # Standard segfault exit code (128 + 11)
 
 
+def _handle_sigbus(signum: int, frame) -> None:
+    """Handle bus errors (SIGBUS) with helpful error message.
+
+    SIGBUS on macOS typically occurs due to a memory conflict between
+    PyTorch MPS memory-mapped model files and LanceDB compaction operations.
+    This can happen during or after indexing on Apple Silicon Macs.
+
+    Args:
+        signum: Signal number (SIGBUS = 10 on macOS)
+        frame: Current stack frame (unused)
+    """
+    error_message = """
+╭─────────────────────────────────────────────────────────────────╮
+│ ⚠️  Bus Error (SIGBUS) Detected                                  │
+├─────────────────────────────────────────────────────────────────┤
+│ On macOS, this is typically caused by a memory conflict between  │
+│ PyTorch MPS and LanceDB compaction during indexing.             │
+│                                                                 │
+│ To fix this, please run:                                        │
+│   1. mcp-vector-search reset index --force                      │
+│   2. mcp-vector-search index                                    │
+│                                                                 │
+│ This will rebuild your search index from scratch.               │
+│                                                                 │
+│ If the problem persists:                                        │
+│   - Try updating dependencies: pip install -U mcp-vector-search │
+│   - Check GitHub issues: github.com/bobmatnyc/mcp-vector-search │
+╰─────────────────────────────────────────────────────────────────╯
+"""
+    print(error_message, file=sys.stderr)
+    sys.exit(138)  # Bus error exit code (128 + 10)
+
+
 # Register signal handler for segmentation faults
 signal.signal(signal.SIGSEGV, _handle_segfault)
+
+# Register signal handler for bus errors (SIGBUS)
+# SIGBUS is available on Unix systems (Linux and macOS); not available on Windows
+if hasattr(signal, "SIGBUS"):
+    signal.signal(signal.SIGBUS, _handle_sigbus)
 
 # Enable faulthandler for better crash diagnostics
 # This prints Python traceback on segfaults before signal handler runs
@@ -257,7 +295,9 @@ app.add_typer(mcp_app, name="mcp", help="🔌 MCP server operations")
 app.add_typer(config_app, name="config", help="⚙️  Manage project configuration")
 
 # 10.1. SKILLS - Skill management
-app.add_typer(skills_app, name="skills", help="🎯 Manage and install MCP Vector Search skills")
+app.add_typer(
+    skills_app, name="skills", help="🎯 Manage and install MCP Vector Search skills"
+)
 
 # 10.5. RESET - Reset and recovery operations
 app.add_typer(reset_app, name="reset", help="🔄 Reset and recovery operations")
