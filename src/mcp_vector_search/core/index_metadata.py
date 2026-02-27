@@ -79,20 +79,45 @@ class IndexMetadata:
             logger.warning(f"Failed to load index metadata: {e}")
             return {}
 
-    def save(self, metadata: dict[str, float]) -> None:
+    def save(
+        self,
+        metadata: dict[str, float],
+        embedding_model: str | None = None,
+        embedding_dimensions: int | None = None,
+    ) -> None:
         """Save file modification times to metadata file.
 
         Args:
             metadata: Dictionary mapping file paths to modification times
+            embedding_model: Name of the embedding model used (e.g.,
+                "sentence-transformers/all-MiniLM-L6-v2").  When provided,
+                the field is written to the metadata file so callers can
+                detect model changes without opening the vector database.
+            embedding_dimensions: Vector dimension of the embedding model
+                (e.g. 384 for MiniLM, 768 for GraphCodeBERT).
         """
         try:
             # Ensure directory exists
             self._metadata_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # New metadata format with version tracking
-            data = {
+            # Preserve existing embedding_model / dimensions when not supplied
+            existing = self._read_raw()
+            resolved_model = embedding_model or existing.get("embedding_model")
+            resolved_dims = (
+                embedding_dimensions
+                if embedding_dimensions is not None
+                else existing.get("embedding_dimensions")
+            )
+
+            # New metadata format with version and embedding tracking
+            now = datetime.now(UTC).isoformat()
+            data: dict[str, object] = {
                 "index_version": __version__,
-                "indexed_at": datetime.now(UTC).isoformat(),
+                "embedding_model": resolved_model,
+                "embedding_dimensions": resolved_dims,
+                # created_at is set once on first write and never overwritten
+                "created_at": existing.get("created_at", now),
+                "updated_at": now,
                 "file_mtimes": metadata,
             }
 
@@ -100,6 +125,41 @@ class IndexMetadata:
                 json.dump(data, f, indent=2)
         except Exception as e:
             logger.warning(f"Failed to save index metadata: {e}")
+
+    def _read_raw(self) -> dict:
+        """Read the raw metadata JSON dict (empty dict on any error)."""
+        if not self._metadata_file.exists():
+            return {}
+        try:
+            with open(self._metadata_file) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def get_index_metadata(self) -> dict[str, object]:
+        """Return the full index metadata dict.
+
+        Returns a standardised dict with the following keys (all optional
+        fields default to ``None`` if not yet recorded):
+
+        * ``embedding_model`` – model name, e.g.
+          ``"sentence-transformers/all-MiniLM-L6-v2"``
+        * ``embedding_dimensions`` – integer vector dimension
+        * ``index_version`` – tool version that built the index
+        * ``created_at`` – ISO-8601 UTC timestamp of first index build
+        * ``updated_at`` – ISO-8601 UTC timestamp of last index update
+
+        Returns:
+            dict with index metadata fields
+        """
+        raw = self._read_raw()
+        return {
+            "embedding_model": raw.get("embedding_model"),
+            "embedding_dimensions": raw.get("embedding_dimensions"),
+            "index_version": raw.get("index_version"),
+            "created_at": raw.get("created_at"),
+            "updated_at": raw.get("updated_at"),
+        }
 
     def needs_reindexing(self, file_path: Path, metadata: dict[str, float]) -> bool:
         """Check if a file needs reindexing based on modification time.
