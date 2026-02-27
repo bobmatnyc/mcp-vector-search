@@ -241,6 +241,46 @@ class KGHandlers:
                 isError=True,
             )
 
+    async def handle_kg_ia(self, args: dict[str, Any]) -> CallToolResult:
+        """Handle kg_ia tool call — return IA tree.
+
+        Returns:
+            CallToolResult with Information Architecture tree
+        """
+        try:
+            # Initialize knowledge graph
+            kg_path = self.project_root / ".mcp-vector-search" / "knowledge_graph"
+            kg = KnowledgeGraph(kg_path)
+            await kg.initialize()
+
+            # Get IA tree data
+            result = await kg.get_ia_tree()
+
+            # Close connection
+            await kg.close()
+
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, default=str),
+                    )
+                ],
+                isError=False,
+            )
+
+        except Exception as e:
+            logger.error(f"KG IA tree failed: {e}")
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Failed to get Information Architecture tree: {str(e)}",
+                    )
+                ],
+                isError=True,
+            )
+
     async def handle_kg_query(self, args: dict[str, Any]) -> CallToolResult:
         """Handle kg_query tool call.
 

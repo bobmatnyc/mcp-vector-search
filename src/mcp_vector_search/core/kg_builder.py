@@ -35,6 +35,36 @@ from .resource_manager import get_batch_size_for_memory, get_configured_workers
 
 console = Console()
 
+# Information Architecture (IA) hierarchy: group name → list of doc_category values
+IA_GROUPS: dict[str, list[str]] = {
+    "Orientation": ["readme", "contributing", "license", "changelog"],
+    "Guides & Tutorials": [
+        "guide",
+        "tutorial",
+        "example",
+        "setup",
+        "faq",
+        "troubleshooting",
+    ],
+    "Architecture & Design": ["design", "spec", "research", "internal", "report"],
+    "API Reference": ["api_doc"],
+    "Operations": ["deployment", "config", "performance", "security"],
+    "Lifecycle": ["roadmap", "release_notes", "upgrade_guide", "migration", "bugfix"],
+    "Testing": ["test_doc", "other"],
+}
+
+# Reverse lookup: doc_category → IA group name
+CATEGORY_TO_IA_GROUP: dict[str, str] = {}
+for _group, _categories in IA_GROUPS.items():
+    for _cat in _categories:
+        CATEGORY_TO_IA_GROUP[_cat] = _group
+
+
+def _ia_topic_id(group_name: str) -> str:
+    """Convert an IA group name to a stable Topic node ID."""
+    return f"ia:{group_name.lower().replace(' & ', '-').replace(' ', '-')}"
+
+
 # Generic entity names to exclude from KG (too common to be useful)
 GENERIC_ENTITY_NAMES = {
     # Python builtins/common
@@ -496,6 +526,12 @@ class KGBuilder:
                 progress_tracker.item(f"{stats['tags']:,} tags", done=True)
             else:
                 console.print(f"  ✓ {stats['tags']} tags")
+
+        # IA Topics: populate Topic nodes and HAS_TOPIC edges from Document.doc_category
+        if documents:
+            ia_stats = self._build_ia_topics_sync(documents, progress_tracker)
+            stats["ia_topics"] = ia_stats["topics"]
+            stats["ia_edges"] = ia_stats["edges"]
 
         total_entities = (
             len(code_entities) + len(doc_sections) + len(documents) + len(tags)
@@ -2475,6 +2511,67 @@ class KGBuilder:
             logger.debug(f"Failed to extract git authors: {e}")
 
         return persons
+
+    def _build_ia_topics_sync(
+        self,
+        documents: list["Document"],
+        progress_tracker: Optional["ProgressTracker"] = None,
+    ) -> dict[str, int]:
+        """Create Topic nodes and HAS_TOPIC edges for the IA hierarchy (synchronous).
+
+        Args:
+            documents: List of Document objects already inserted into Kuzu.
+            progress_tracker: Optional progress reporter.
+
+        Returns:
+            Dict with "topics" and "edges" counts.
+        """
+        # Collect unique IA group names needed for this document set
+        unique_groups: set[str] = set()
+        for doc in documents:
+            group = CATEGORY_TO_IA_GROUP.get(doc.doc_category, "Uncategorized")
+            unique_groups.add(group)
+
+        # MERGE Topic nodes
+        topics_created = 0
+        for group_name in unique_groups:
+            topic_id = _ia_topic_id(group_name)
+            try:
+                self.kg._execute_query(
+                    "MERGE (t:Topic {id: $id}) ON CREATE SET t.name = $name "
+                    "ON MATCH SET t.name = $name",
+                    {"id": topic_id, "name": group_name},
+                )
+                topics_created += 1
+            except Exception as e:
+                logger.debug(f"Topic MERGE error for '{group_name}': {e}")
+
+        # Create HAS_TOPIC edges (Document → Topic)
+        edges_created = 0
+        for doc in documents:
+            group = CATEGORY_TO_IA_GROUP.get(doc.doc_category, "Uncategorized")
+            topic_id = _ia_topic_id(group)
+            try:
+                self.kg._execute_query(
+                    "MATCH (d:Document {id: $doc_id}), (t:Topic {id: $topic_id}) "
+                    "MERGE (d)-[:HAS_TOPIC]->(t)",
+                    {"doc_id": doc.id, "topic_id": topic_id},
+                )
+                edges_created += 1
+            except Exception as e:
+                logger.debug(f"HAS_TOPIC edge error for {doc.id}: {e}")
+
+        if progress_tracker:
+            progress_tracker.item(
+                f"{topics_created} IA topics, {edges_created} HAS_TOPIC edges",
+                done=True,
+            )
+        else:
+            console.print(
+                f"  ✓ {topics_created} IA topics, {edges_created} HAS_TOPIC edges"
+            )
+
+        return {"topics": topics_created, "edges": edges_created}
 
     def _extract_git_authors_sync(
         self, stats: dict, progress_tracker: Optional["ProgressTracker"] = None

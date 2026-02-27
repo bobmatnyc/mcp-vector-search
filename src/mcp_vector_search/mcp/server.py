@@ -310,6 +310,8 @@ class MCPVectorSearchServer:
                 return await self._kg_handlers.handle_kg_query(args)
             elif tool_name == "kg_ontology":
                 return await self._kg_handlers.handle_kg_ontology(args)
+            elif tool_name == "kg_ia":
+                return await self._kg_handlers.handle_kg_ia(args)
 
             # Delegate to story handlers
             elif tool_name == "story_generate":

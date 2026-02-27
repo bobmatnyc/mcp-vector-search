@@ -3535,6 +3535,21 @@ class KnowledgeGraph:
                     }
                 )
 
+            # Add Topic nodes (IA groups)
+            topic_result = self.conn.execute(
+                "MATCH (t:Topic) RETURN t.id AS id, t.name AS name"
+            )
+            while topic_result.has_next():
+                row = topic_result.get_next()
+                entities.append(
+                    {
+                        "id": row[0],
+                        "name": row[1],
+                        "type": "topic",
+                        "file_path": "",
+                    }
+                )
+
             # Detect subprojects from file paths (monorepo patterns)
             subprojects: dict[str, str] = {}  # path_prefix -> subproject_name
             monorepo_patterns = ["packages", "apps", "libs", "modules", "services"]
@@ -4040,8 +4055,16 @@ class KnowledgeGraph:
                 document_result.get_next()[0] if document_result.has_next() else 0
             )
 
+            # Count topics
+            topic_result = self._execute_query(
+                "MATCH (t:Topic) RETURN count(t) AS count"
+            )
+            topic_count = topic_result.get_next()[0] if topic_result.has_next() else 0
+
             # Total entities
-            total_entities = entity_count + doc_count + tag_count + document_count
+            total_entities = (
+                entity_count + doc_count + tag_count + document_count + topic_count
+            )
 
             # Get relationship counts
             relationships = {}
@@ -4054,6 +4077,7 @@ class KnowledgeGraph:
                 "DOCUMENTS",
                 "FOLLOWS",
                 "HAS_TAG",
+                "HAS_TOPIC",
                 "DEMONSTRATES",
                 "LINKS_TO",
                 "CONTAINS_SECTION",
@@ -4075,6 +4099,7 @@ class KnowledgeGraph:
                 "doc_sections": doc_count,
                 "documents": document_count,
                 "tags": tag_count,
+                "topics": topic_count,
                 "relationships": relationships,
                 "database_path": str(self.db_path / "code_kg"),
             }
@@ -4087,6 +4112,7 @@ class KnowledgeGraph:
                 "doc_sections": 0,
                 "documents": 0,
                 "tags": 0,
+                "topics": 0,
                 "relationships": {},
                 "database_path": str(self.db_path / "code_kg"),
             }
@@ -4165,6 +4191,10 @@ class KnowledgeGraph:
                 commit_result.get_next()[0] if commit_result.has_next() else 0
             )
 
+            # Count topics
+            topic_result = self.conn.execute("MATCH (t:Topic) RETURN count(t) AS count")
+            topic_count = topic_result.get_next()[0] if topic_result.has_next() else 0
+
             # Count relationships by type
             rel_counts = {}
             for rel_type in [
@@ -4176,6 +4206,7 @@ class KnowledgeGraph:
                 "DOCUMENTS",
                 "FOLLOWS",
                 "HAS_TAG",
+                "HAS_TOPIC",
                 "DEMONSTRATES",
                 "LINKS_TO",
                 "AUTHORED",
@@ -4208,11 +4239,13 @@ class KnowledgeGraph:
                 + project_count
                 + repo_count
                 + branch_count
-                + commit_count,
+                + commit_count
+                + topic_count,
                 "code_entities": entity_count,
                 "doc_sections": doc_count,
                 "documents": document_count,
                 "tags": tag_count,
+                "topics": topic_count,
                 "persons": person_count,
                 "projects": project_count,
                 "repositories": repo_count,
@@ -4229,6 +4262,7 @@ class KnowledgeGraph:
                 "doc_sections": 0,
                 "documents": 0,
                 "tags": 0,
+                "topics": 0,
                 "persons": 0,
                 "projects": 0,
                 "repositories": 0,
@@ -4387,6 +4421,54 @@ class KnowledgeGraph:
             logger.debug(f"Failed to query tags: {e}")
 
         return result
+
+    async def get_ia_tree(self) -> dict[str, Any]:
+        """Return the Information Architecture tree: Topics with their Documents.
+
+        Returns:
+            Dict with ia_tree (group name → {topic_id, documents}),
+            total_topics, and total_documents counts.
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        # Get all topics
+        topics_result = self._execute_query(
+            "MATCH (t:Topic) RETURN t.id, t.name ORDER BY t.name", {}
+        )
+        topics: list[dict[str, str]] = []
+        while topics_result.has_next():
+            row = topics_result.get_next()
+            topics.append({"id": row[0], "name": row[1]})
+
+        # Get documents per topic
+        tree: dict[str, Any] = {}
+        for topic in topics:
+            docs_result = self._execute_query(
+                "MATCH (d:Document)-[:HAS_TOPIC]->(t:Topic {id: $id}) "
+                "RETURN d.id, d.file_path, d.title, d.doc_category, d.word_count "
+                "ORDER BY d.file_path",
+                {"id": topic["id"]},
+            )
+            docs: list[dict[str, Any]] = []
+            while docs_result.has_next():
+                row = docs_result.get_next()
+                docs.append(
+                    {
+                        "id": row[0],
+                        "file_path": row[1],
+                        "title": row[2],
+                        "doc_category": row[3],
+                        "word_count": row[4],
+                    }
+                )
+            tree[topic["name"]] = {"topic_id": topic["id"], "documents": docs}
+
+        return {
+            "ia_tree": tree,
+            "total_topics": len(topics),
+            "total_documents": sum(len(v["documents"]) for v in tree.values()),
+        }
 
     async def get_cross_entity_samples(
         self, limit_per_type: int = 3

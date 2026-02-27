@@ -31,6 +31,7 @@ def get_tool_schemas() -> list[Tool]:
         _get_kg_stats_schema(),
         _get_kg_query_schema(),
         _get_kg_ontology_schema(),
+        _get_kg_ia_schema(),
         _get_story_generate_schema(),
     ]
 
@@ -1055,6 +1056,24 @@ def _get_kg_ontology_schema() -> Tool:
                     ],
                 },
             },
+        },
+    )
+
+
+def _get_kg_ia_schema() -> Tool:
+    """Get kg_ia tool schema."""
+    return Tool(
+        name="kg_ia",
+        description=(
+            "Browse the document Information Architecture (IA) tree. "
+            "Shows documents organized into thematic groups (Orientation, "
+            "Guides & Tutorials, Architecture & Design, API Reference, "
+            "Operations, Lifecycle, Testing). Each group lists its documents "
+            "with file path, title, doc_category, and word count."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {},
         },
     )
 

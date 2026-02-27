@@ -1021,6 +1021,112 @@ def kg_ontology(
     asyncio.run(_ontology())
 
 
+@kg_app.command("ia")
+def ia_tree(
+    project_root: Path = typer.Option(
+        ".", help="Project root directory", exists=True, file_okay=False
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show doc_category per document"
+    ),
+) -> None:
+    """Show the Information Architecture tree of the knowledge graph.
+
+    Documents are grouped into thematic IA categories:
+    Orientation, Guides & Tutorials, Architecture & Design,
+    API Reference, Operations, Lifecycle, Testing.
+
+    Examples:
+        mcp-vector-search kg ia
+        mcp-vector-search kg ia --verbose
+    """
+    project_root = project_root.resolve()
+
+    # IA group emoji map
+    group_icons: dict[str, str] = {
+        "Orientation": "🧭",
+        "Guides & Tutorials": "📖",
+        "Architecture & Design": "🏗️",
+        "API Reference": "🔌",
+        "Operations": "⚙️",
+        "Lifecycle": "🔄",
+        "Testing": "🧪",
+        "Uncategorized": "📄",
+    }
+
+    async def _ia():
+        kg_path = project_root / ".mcp-vector-search" / "knowledge_graph"
+        kg = KnowledgeGraph(kg_path)
+        await kg.initialize()
+
+        try:
+            data = await kg.get_ia_tree()
+        finally:
+            await kg.close()
+
+        ia_tree_data = data["ia_tree"]
+        total_topics = data["total_topics"]
+        total_docs = data["total_documents"]
+
+        if total_docs == 0:
+            console.print()
+            console.print(
+                "[yellow]No IA topics found. Build the knowledge graph first.[/yellow]"
+            )
+            console.print(
+                "  Run [cyan]'mvs kg build'[/cyan] or [cyan]'mvs index kg'[/cyan]"
+            )
+            return
+
+        console.print()
+        console.print(
+            Panel.fit(
+                f"[bold cyan]Information Architecture[/bold cyan]  "
+                f"[dim]{total_topics} group{'s' if total_topics != 1 else ''}, "
+                f"{total_docs} document{'s' if total_docs != 1 else ''}[/dim]",
+                border_style="cyan",
+            )
+        )
+        console.print()
+
+        root = Tree("[bold white]Information Architecture[/bold white]")
+
+        for group_name in sorted(ia_tree_data.keys()):
+            group_data = ia_tree_data[group_name]
+            docs = group_data["documents"]
+            icon = group_icons.get(group_name, "📄")
+
+            group_node = root.add(
+                f"{icon} [bold green]{group_name}[/bold green] "
+                f"[dim]({len(docs)} document{'s' if len(docs) != 1 else ''})[/dim]"
+            )
+
+            for doc in docs:
+                file_path = doc["file_path"] or ""
+                title = doc.get("title") or ""
+                word_count = doc.get("word_count") or 0
+                doc_category = doc.get("doc_category") or ""
+
+                display_path = file_path
+                if len(display_path) > 55:
+                    display_path = "..." + display_path[-52:]
+
+                label_parts = [f"[cyan]{display_path}[/cyan]"]
+                if title and title != file_path:
+                    label_parts.append(f'[dim]— "{title}"[/dim]')
+                if word_count:
+                    label_parts.append(f"[dim]({word_count:,} words)[/dim]")
+                if verbose and doc_category:
+                    label_parts.append(f"[dim][{doc_category}][/dim]")
+
+                group_node.add(" ".join(label_parts))
+
+        console.print(root)
+        console.print()
+
+    asyncio.run(_ia())
+
+
 @kg_app.command("status")
 def kg_status(
     project_root: Path = typer.Option(
