@@ -1585,6 +1585,18 @@ class SemanticIndexer:
         total_pending_chunks = await self.chunks_backend.count_pending_chunks()
         logger.info(f"Found {total_pending_chunks:,} pending chunks to embed")
 
+        if total_pending_chunks == 0:
+            logger.info("No pending chunks — skipping embedding phase")
+            return 0, 0
+
+        # Show chunk count to user so they know embedding is starting
+        if self.progress_tracker and sys.stderr.isatty():
+            sys.stderr.write(
+                f"  Embedding {total_pending_chunks:,} chunks"
+                f" (batch size: {batch_size})...\n"
+            )
+            sys.stderr.flush()
+
         with metrics_tracker.phase("embedding") as embedding_metrics:
             while True:
                 # CRITICAL: Check memory BEFORE loading batch to prevent spikes
@@ -2415,6 +2427,9 @@ class SemanticIndexer:
                 }
 
         # Run Phase 2 embedding
+        if self.progress_tracker and sys.stderr.isatty():
+            sys.stderr.write("  Starting embedding phase...\n")
+            sys.stderr.flush()
         chunks_embedded, batches_processed = await self._phase2_embed_chunks(
             batch_size=batch_size, checkpoint_interval=50000
         )
@@ -2423,10 +2438,14 @@ class SemanticIndexer:
         # This activates IVF_SQ approximate nearest-neighbor search for large
         # datasets.  Skipped automatically for small datasets (< 4,096 rows).
         # Non-fatal: search falls back to brute-force if index creation fails.
+        if self.progress_tracker and sys.stderr.isatty():
+            sys.stderr.write("  Building vector search index...\n")
+            sys.stderr.flush()
         await self.vectors_backend.rebuild_index()
 
-        # Build BM25 index after embedding (vectors have changed)
-        await self._build_bm25_index()
+        # NOTE: BM25 index is NOT rebuilt here — it depends only on text
+        # content (not embeddings) and was already built by chunk_files().
+        # Rebuilding it again would be redundant for the chunk_and_embed path.
 
         duration = time.time() - start_time
         logger.info(
