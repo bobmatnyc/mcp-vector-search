@@ -13,6 +13,7 @@ import shutil
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,7 @@ from .index_metadata import IndexMetadata
 from .memory_monitor import MemoryMonitor
 from .metrics import get_metrics_tracker
 from .metrics_collector import IndexerMetricsCollector
-from .models import CodeChunk, IndexStats
+from .models import CodeChunk, IndexResult, IndexStats, ProjectStatus
 from .relationships import RelationshipStore
 from .resource_manager import calculate_optimal_workers
 from .vectors_backend import VectorsBackend
@@ -74,6 +75,31 @@ def cleanup_stale_locks(project_dir: Path) -> None:
         logger.info(
             f"Cleaned up {removed_count} stale lock files (indexing can now proceed)"
         )
+
+
+@dataclass
+class HealthStatus:
+    """Result of a SemanticIndexer.health_check() call.
+
+    Attributes:
+        db_connected: True when the LanceDB directory is reachable.
+        tables_exist: Names of LanceDB tables that currently exist on disk.
+        model_loaded: True when the embedding function is attached to the
+            database and exposes a ``model_name`` attribute.
+        index_valid: True when both ``chunks`` and ``vectors`` tables exist
+            and the DB is connected (a *structural* validity check only –
+            no search is executed).
+        status: Overall status string: ``"healthy"``, ``"degraded"``, or
+            ``"unhealthy"``.
+        details: Free-form string values keyed by diagnostic label.
+    """
+
+    db_connected: bool = False
+    tables_exist: list[str] = field(default_factory=list)
+    model_loaded: bool = False
+    index_valid: bool = False
+    status: str = "unknown"
+    details: dict[str, str] = field(default_factory=dict)
 
 
 class SemanticIndexer:
@@ -2416,7 +2442,7 @@ class SemanticIndexer:
         phase: str = "all",
         metrics_json: bool = False,
         pipeline: bool = True,
-    ) -> int:
+    ) -> "IndexResult":
         """Index all files in the project using two-phase architecture.
 
         Args:
@@ -2433,7 +2459,10 @@ class SemanticIndexer:
                 - When False: Sequential execution (fallback for debugging)
 
         Returns:
-            Number of files indexed (for backward compatibility)
+            IndexResult subclassing int for backward compatibility.  The integer
+            value is the number of files processed; additional attributes
+            (.chunks_indexed, .duration_seconds, .errors, .status) carry the
+            richer metadata introduced by issue #115.
 
         Note:
             Two-phase architecture enables:
@@ -2456,6 +2485,9 @@ class SemanticIndexer:
             f"Starting indexing of project: {self.project_root} (phase: {phase})"
         )
 
+        _index_start = time.time()
+        _index_errors: list[str] = []
+
         # Perform atomic rebuild if force is enabled
         atomic_rebuild_active = await self._atomic_rebuild_databases(force_reindex)
 
@@ -2472,7 +2504,12 @@ class SemanticIndexer:
                 f"  Try: mvs index --force  (to rebuild from scratch)\n"
                 f"  Or:  mvs reset index --force  (to clear all data)"
             )
-            return 0
+            return IndexResult(
+                files_processed=0,
+                errors=[str(e)],
+                status="error",
+                duration_seconds=time.time() - _index_start,
+            )
         try:
             await self.vectors_backend.initialize()
         except DatabaseInitializationError as e:
@@ -2481,7 +2518,12 @@ class SemanticIndexer:
                 f"  Try: mvs index --force  (to rebuild from scratch)\n"
                 f"  Or:  mvs reset index --force  (to clear all data)"
             )
-            return 0
+            return IndexResult(
+                files_processed=0,
+                errors=[str(e)],
+                status="error",
+                duration_seconds=time.time() - _index_start,
+            )
 
         # Check and run pending migrations automatically
         await self._run_auto_migrations()
@@ -2538,7 +2580,10 @@ class SemanticIndexer:
                 if not all_files:
                     logger.warning("No indexable files found")
                     if phase == "chunk":
-                        return 0
+                        return IndexResult(
+                            files_processed=0,
+                            duration_seconds=time.time() - _index_start,
+                        )
                 else:
                     # Filter files that need indexing
                     files_to_index = all_files
@@ -2636,7 +2681,10 @@ class SemanticIndexer:
                     else:
                         logger.info("All files are up to date")
                         if phase == "chunk":
-                            return 0
+                            return IndexResult(
+                                files_processed=0,
+                                duration_seconds=time.time() - _index_start,
+                            )
 
             # Phase 2: Embed chunks (if requested)
             if phase in ("all", "embed"):
@@ -2749,7 +2797,28 @@ class SemanticIndexer:
         # Phase 3: Build BM25 index for hybrid search
         await self._build_bm25_index()
 
-        return indexed_count
+        # Persist embedding model info into index_metadata.json
+        try:
+            _model_name = self.get_embedding_model_name()
+            await self._save_embedding_metadata(_model_name)
+        except Exception as _meta_err:
+            logger.warning(f"Failed to persist embedding metadata: {_meta_err}")
+
+        _index_duration = time.time() - _index_start
+        _result_status = (
+            "error"
+            if indexed_count == 0 and _index_errors
+            else "partial"
+            if _index_errors
+            else "success"
+        )
+        return IndexResult(
+            files_processed=indexed_count,
+            chunks_indexed=chunks_created,
+            duration_seconds=_index_duration,
+            errors=_index_errors,
+            status=_result_status,
+        )
 
     async def _parse_and_prepare_file(
         self, file_path: Path, force_reindex: bool = False, skip_delete: bool = False
@@ -3376,6 +3445,78 @@ class SemanticIndexer:
                 "error": str(e),
             }
 
+    async def get_project_status(self) -> ProjectStatus:
+        """Return a stable ProjectStatus aggregating stats from all backends.
+
+        Queries both chunks_backend (Phase 1 - parsed chunks) and
+        vectors_backend (Phase 2 - embedded vectors) so callers get a
+        complete picture without having to know the two-phase internals.
+
+        Returns:
+            ProjectStatus dataclass with total_files, total_chunks,
+            total_vectors, index_size_bytes, last_indexed, status, and a
+            per-backend breakdown in ``backends``.
+
+        The ``status`` field follows this convention:
+        - "ready"   — vectors exist, search is available.
+        - "empty"   — no chunks and no vectors (never indexed).
+        - "indexing" — chunks exist but embedding is pending/in-progress.
+        - "error"   — backends could not be queried.
+        """
+        import os
+
+        try:
+            if self.chunks_backend._db is None:
+                await self.chunks_backend.initialize()
+            if self.vectors_backend._db is None:
+                await self.vectors_backend.initialize()
+
+            chunks_stats = await self.chunks_backend.get_stats()
+            vectors_stats = await self.vectors_backend.get_stats()
+
+            total_chunks = chunks_stats.get("total", 0)
+            total_vectors = vectors_stats.get("total", 0)
+            total_files = chunks_stats.get("files", 0)
+
+            # Compute on-disk size of the index directory
+            index_size_bytes = 0
+            if self.index_path.exists():
+                for root, _dirs, files in os.walk(self.index_path):
+                    for fname in files:
+                        try:
+                            index_size_bytes += os.path.getsize(
+                                os.path.join(root, fname)
+                            )
+                        except OSError:
+                            pass
+
+            # Determine high-level status
+            if total_vectors > 0:
+                derived_status = "ready"
+            elif total_chunks > 0:
+                pending = chunks_stats.get("pending", 0)
+                processing = chunks_stats.get("processing", 0)
+                derived_status = "indexing" if (pending + processing) > 0 else "ready"
+            else:
+                derived_status = "empty"
+
+            return ProjectStatus(
+                total_files=total_files,
+                total_chunks=total_chunks,
+                total_vectors=total_vectors,
+                index_size_bytes=index_size_bytes,
+                last_indexed=None,  # Not persisted yet — reserved for future use
+                status=derived_status,
+                backends={
+                    "chunks": chunks_stats,
+                    "vectors": vectors_stats,
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to get project status: {e}")
+            return ProjectStatus(status="error")
+
     async def get_indexing_stats(self, db_stats: IndexStats | None = None) -> dict:
         """Get statistics about the indexing process.
 
@@ -3544,3 +3685,133 @@ class SemanticIndexer:
             # Non-fatal: BM25 failure shouldn't break indexing
             logger.warning(f"BM25 index building failed (non-fatal): {e}")
             logger.warning("Hybrid search will fall back to vector-only mode")
+
+    # ------------------------------------------------------------------
+    # Public API: metadata and health
+    # ------------------------------------------------------------------
+
+    def get_index_metadata(self) -> dict[str, object]:
+        """Return the persisted index metadata for this project.
+
+        The dict includes embedding model name, vector dimensions, tool
+        version, and ISO-8601 timestamps for index creation / last update.
+        All values default to ``None`` when the index has not been built yet.
+
+        Returns:
+            dict with keys: ``embedding_model``, ``embedding_dimensions``,
+            ``index_version``, ``created_at``, ``updated_at``.
+        """
+        return self.metadata.get_index_metadata()
+
+    async def health_check(self) -> HealthStatus:
+        """Perform a lightweight structural health check (< 100 ms).
+
+        Checks performed (no search queries are executed):
+
+        1. LanceDB directory is reachable.
+        2. Determine which LanceDB tables exist on disk.
+        3. Embedding function / model is attached to the database instance.
+        4. Both ``chunks`` and ``vectors`` tables exist (index is non-empty).
+
+        The overall ``status`` field is set as follows:
+
+        * ``"healthy"``  – DB connected, model loaded, both tables present.
+        * ``"degraded"`` – DB connected but missing tables or model not
+          loaded yet (partial index, e.g. only Phase 1 complete).
+        * ``"unhealthy"``– DB not reachable or a hard error occurred.
+
+        Returns:
+            HealthStatus dataclass instance.
+        """
+        health = HealthStatus()
+
+        try:
+            # 1. Check DB connection ----------------------------------------
+            lance_path = self._mcp_dir / "lance"
+            if lance_path.exists():
+                import lancedb
+
+                try:
+                    db = await asyncio.to_thread(lancedb.connect, str(lance_path))
+                    health.db_connected = True
+                    health.details["db_path"] = str(lance_path)
+
+                    # 2. List existing tables ----------------------------------
+                    tables_response = await asyncio.to_thread(db.list_tables)
+                    if hasattr(tables_response, "tables"):
+                        health.tables_exist = list(tables_response.tables)
+                    else:
+                        health.tables_exist = list(tables_response)
+
+                except Exception as db_err:
+                    health.details["db_error"] = str(db_err)
+            else:
+                health.details["db_path"] = str(lance_path)
+                health.details["db_missing"] = "lance directory does not exist"
+
+            # 3. Check if embedding model is available -----------------------
+            model_name: str | None = None
+            try:
+                model_name = self.get_embedding_model_name()
+                if model_name and model_name != "unknown":
+                    health.model_loaded = True
+                    health.details["embedding_model"] = model_name
+            except Exception as model_err:
+                health.details["model_error"] = str(model_err)
+
+            # 4. Structural validity -----------------------------------------
+            has_chunks = "chunks" in health.tables_exist
+            has_vectors = "vectors" in health.tables_exist
+            health.index_valid = health.db_connected and has_chunks and has_vectors
+
+            if has_chunks:
+                health.details["chunks_table"] = "present"
+            else:
+                health.details["chunks_table"] = "missing"
+
+            if has_vectors:
+                health.details["vectors_table"] = "present"
+            else:
+                health.details["vectors_table"] = "missing"
+
+            # 5. Determine overall status ------------------------------------
+            if health.db_connected and health.model_loaded and health.index_valid:
+                health.status = "healthy"
+            elif health.db_connected and (has_chunks or health.model_loaded):
+                health.status = "degraded"
+            else:
+                health.status = "unhealthy"
+
+        except Exception as e:
+            health.status = "unhealthy"
+            health.details["error"] = str(e)
+            logger.warning(f"health_check() encountered an error: {e}")
+
+        return health
+
+    async def _save_embedding_metadata(self, model_name: str) -> None:
+        """Persist embedding model name and dimensions into index_metadata.json.
+
+        Called internally at the end of a successful indexing run so that
+        the metadata file reflects the model that produced the current index.
+
+        Args:
+            model_name: Fully-qualified model name used for embedding.
+        """
+        try:
+            from ..config.defaults import get_model_dimensions
+
+            try:
+                dims = get_model_dimensions(model_name)
+            except Exception:
+                dims = None  # Unknown model – omit dimension
+
+            file_mtimes = self.metadata.load()
+            self.metadata.save(
+                file_mtimes,
+                embedding_model=model_name,
+                embedding_dimensions=dims,
+            )
+            logger.debug(f"Saved embedding metadata: model={model_name}, dims={dims}")
+        except Exception as e:
+            logger.warning(f"Failed to save embedding metadata: {e}")

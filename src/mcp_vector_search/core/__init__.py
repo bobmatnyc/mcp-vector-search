@@ -7,6 +7,7 @@ from .git import (
     GitNotRepoError,
     GitReferenceError,
 )
+from .models import IndexResult, ProjectStatus
 
 __all__ = [
     "GitError",
@@ -14,4 +15,6 @@ __all__ = [
     "GitNotAvailableError",
     "GitNotRepoError",
     "GitReferenceError",
+    "IndexResult",
+    "ProjectStatus",
 ]
