@@ -87,13 +87,25 @@ class ComponentFactory:
 
     @staticmethod
     def create_indexer(
-        database: VectorDatabase, project_root: Path, config: ProjectConfig
+        database: VectorDatabase,
+        project_root: Path,
+        config: ProjectConfig,
+        index_path: str | None = None,
     ) -> SemanticIndexer:
-        """Create semantic indexer."""
+        """Create semantic indexer.
+
+        Args:
+            database: Vector database instance
+            project_root: Project root directory (where source code lives)
+            config: Project configuration
+            index_path: Optional separate directory for .mcp-vector-search/ index data.
+                Falls back to INDEX_PATH env var, then project_root.
+        """
         return SemanticIndexer(
             database=database,
             project_root=project_root,
             config=config,
+            index_path=index_path,
         )
 
     @staticmethod

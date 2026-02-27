@@ -94,12 +94,13 @@ class SemanticIndexer:
         ignore_patterns: set[str] | None = None,
         skip_blame: bool = False,
         progress_tracker: Any = None,
+        index_path: str | None = None,
     ) -> None:
         """Initialize semantic indexer.
 
         Args:
             database: Vector database instance
-            project_root: Project root directory
+            project_root: Project root directory (where source code lives)
             file_extensions: File extensions to index (deprecated, use config)
             config: Project configuration (preferred over file_extensions)
             max_workers: Maximum number of worker processes for parallel parsing (ignored if use_multiprocessing=False)
@@ -111,13 +112,34 @@ class SemanticIndexer:
             ignore_patterns: Additional patterns to ignore (merged with defaults, e.g., vendor patterns)
             skip_blame: Skip git blame tracking for faster indexing (default: False)
             progress_tracker: Optional ProgressTracker instance for displaying progress bars
+            index_path: Optional separate directory for .mcp-vector-search/ index data.
+                Falls back to INDEX_PATH env var, then project_root.
 
         Environment Variables:
             MCP_VECTOR_SEARCH_BATCH_SIZE: Override batch size (default: 256)
             MCP_VECTOR_SEARCH_SKIP_BLAME: Skip git blame tracking (true/1/yes)
+            INDEX_PATH: Separate directory for .mcp-vector-search/ index data
         """
         self.database = database
         self.project_root = project_root
+
+        # Resolve index_path: explicit parameter > INDEX_PATH env var > project_root
+        if index_path:
+            self.index_path = Path(index_path)
+        elif os.environ.get("INDEX_PATH"):
+            self.index_path = Path(os.environ["INDEX_PATH"])
+        else:
+            self.index_path = self.project_root
+
+        # Convenience: the .mcp-vector-search directory under index_path
+        self._mcp_dir = self.index_path / ".mcp-vector-search"
+
+        if self.index_path != self.project_root:
+            logger.info(
+                f"Using separate index path: {self.index_path} "
+                f"(project root: {self.project_root})"
+            )
+
         self.config = config
         self.auto_optimize = auto_optimize
         self._applied_optimizations: dict[str, Any] | None = None
@@ -168,7 +190,7 @@ class SemanticIndexer:
             ignore_patterns=ignore_patterns,
         )
 
-        self.metadata = IndexMetadata(project_root)
+        self.metadata = IndexMetadata(self.index_path)
 
         self.metrics_collector = IndexerMetricsCollector(collectors)
 
@@ -227,23 +249,21 @@ class SemanticIndexer:
         self.use_multiprocessing = use_multiprocessing
 
         # Initialize directory index
-        self.directory_index = DirectoryIndex(
-            project_root / ".mcp-vector-search" / "directory_index.json"
-        )
+        self.directory_index = DirectoryIndex(self._mcp_dir / "directory_index.json")
         # Load existing directory index
         self.directory_index.load()
 
         # Initialize relationship store for pre-computing visualization relationships
-        self.relationship_store = RelationshipStore(project_root)
+        self.relationship_store = RelationshipStore(self.index_path)
 
         # Initialize trend tracker for historical metrics
-        self.trend_tracker = TrendTracker(project_root)
+        self.trend_tracker = TrendTracker(self.index_path)
 
         # Initialize two-phase backends
         # Both use same db_path directory for LanceDB
-        index_path = project_root / ".mcp-vector-search" / "lance"
-        self.chunks_backend = ChunksBackend(index_path)
-        self.vectors_backend = VectorsBackend(index_path)
+        lance_path = self._mcp_dir / "lance"
+        self.chunks_backend = ChunksBackend(lance_path)
+        self.vectors_backend = VectorsBackend(lance_path)
 
         # Background KG build tracking
         self._kg_build_task: asyncio.Task | None = None
@@ -270,7 +290,7 @@ class SemanticIndexer:
             from .kg_builder import KGBuilder
             from .knowledge_graph import KnowledgeGraph
 
-            kg_path = self.project_root / ".mcp-vector-search" / "knowledge_graph"
+            kg_path = self._mcp_dir / "knowledge_graph"
             kg = KnowledgeGraph(kg_path)
             await kg.initialize()
 
@@ -1837,7 +1857,7 @@ class SemanticIndexer:
         if not force:
             return False
 
-        base_path = self.project_root / ".mcp-vector-search"
+        base_path = self._mcp_dir
 
         # Database paths (only .new paths used in this method - others in _finalize)
         lance_new = base_path / "lance.new"
@@ -1911,7 +1931,7 @@ class SemanticIndexer:
         Called after successful indexing when force_reindex=True.
         Performs atomic rename operations to switch from .new to final.
         """
-        base_path = self.project_root / ".mcp-vector-search"
+        base_path = self._mcp_dir
 
         # Database paths
         lance_path = base_path / "lance"
@@ -2085,7 +2105,7 @@ class SemanticIndexer:
             self.apply_auto_optimizations()
 
         # Clean up stale lock files
-        cleanup_stale_locks(self.project_root)
+        cleanup_stale_locks(self.index_path)
 
         # Discover all indexable files
         all_files = self.file_discovery.find_indexable_files()
@@ -2238,7 +2258,7 @@ class SemanticIndexer:
             # After _finalize_atomic_rebuild(), the .new directories have been renamed
             # to final paths, but backend objects still point to old .new paths.
             # We must reinitialize backends to point to the correct final paths.
-            base_path = self.project_root / ".mcp-vector-search"
+            base_path = self._mcp_dir
             lance_path = base_path / "lance"
 
             # Create fresh backend instances pointing to final paths
@@ -2516,7 +2536,7 @@ class SemanticIndexer:
             self.apply_auto_optimizations()
 
         # Clean up stale lock files from previous interrupted indexing runs
-        cleanup_stale_locks(self.project_root)
+        cleanup_stale_locks(self.index_path)
 
         # Track indexed count for backward compatibility
         indexed_count = 0
