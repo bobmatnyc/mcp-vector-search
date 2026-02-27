@@ -13,5 +13,6 @@ __author__ = "Robert Matsuoka"
 __email__ = "bob@matsuoka.com"
 
 from .core.exceptions import MCPVectorSearchError  # noqa: E402
+from .core.models import ContentChunk  # noqa: E402
 
-__all__ = ["MCPVectorSearchError", "__version__", "__build__"]
+__all__ = ["MCPVectorSearchError", "ContentChunk", "__version__", "__build__"]

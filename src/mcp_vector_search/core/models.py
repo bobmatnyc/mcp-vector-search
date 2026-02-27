@@ -1,6 +1,7 @@
 """Data models for MCP Vector Search."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -8,14 +9,192 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 @dataclass
-class CodeChunk:
-    """Represents a chunk of code with metadata."""
+class ProjectStatus:
+    """Stable return type for get_project_status().
+
+    Aggregates stats from both chunks_backend (Phase 1) and vectors_backend
+    (Phase 2) to give a complete picture of the index state.
+
+    Attributes:
+        total_files: Number of unique files indexed in chunks_backend.
+        total_chunks: Total code chunks stored (Phase 1 storage).
+        total_vectors: Chunks with embeddings ready for semantic search (Phase 2).
+        index_size_bytes: Raw on-disk size of the index directory in bytes.
+        last_indexed: Timestamp of the most recent indexing run, or None.
+        status: High-level state: "ready", "empty", "error", or "indexing".
+        backends: Per-backend stats dicts for introspection.
+    """
+
+    total_files: int = 0
+    total_chunks: int = 0
+    total_vectors: int = 0
+    index_size_bytes: int = 0
+    last_indexed: datetime | None = None
+    status: str = "unknown"  # "ready", "empty", "error", "indexing"
+    backends: dict[str, dict] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "total_files": self.total_files,
+            "total_chunks": self.total_chunks,
+            "total_vectors": self.total_vectors,
+            "index_size_bytes": self.index_size_bytes,
+            "last_indexed": (
+                self.last_indexed.isoformat() if self.last_indexed else None
+            ),
+            "status": self.status,
+            "backends": self.backends,
+        }
+
+
+class IndexResult(int):
+    """Stable return type for index_project().
+
+    Subclasses ``int`` so all existing callers that compare the return value
+    numerically (``result > 0``, ``result == 3``, ``isinstance(result, int)``)
+    continue to work without modification.  The integer value represents the
+    number of **files** processed (same as before).
+
+    Extra fields carry the rich indexing metadata introduced by #115.
+
+    Example::
+
+        result = await indexer.index_project()
+        print(result)                  # 42  (files processed)
+        print(result.chunks_indexed)   # 3800
+        print(result.status)           # "success"
+
+    Attributes:
+        chunks_indexed: Code chunks stored to Phase 1 (chunks.lance).
+        files_processed: Files touched during this indexing run (== int value).
+        duration_seconds: Wall-clock time for the full run.
+        errors: List of non-fatal error messages collected during indexing.
+        status: "success", "partial" (some errors), or "error" (nothing indexed).
+    """
+
+    chunks_indexed: int
+    files_processed: int
+    duration_seconds: float
+    errors: list[str]
+    status: str
+
+    def __new__(
+        cls,
+        files_processed: int = 0,
+        chunks_indexed: int = 0,
+        duration_seconds: float = 0.0,
+        errors: list[str] | None = None,
+        status: str = "success",
+    ) -> "IndexResult":
+        instance = super().__new__(cls, files_processed)
+        instance.files_processed = files_processed
+        instance.chunks_indexed = chunks_indexed
+        instance.duration_seconds = duration_seconds
+        instance.errors = errors if errors is not None else []
+        instance.status = status
+        return instance
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "files_processed": self.files_processed,
+            "chunks_indexed": self.chunks_indexed,
+            "duration_seconds": self.duration_seconds,
+            "errors": self.errors,
+            "status": self.status,
+        }
+
+
+@dataclass
+class ContentChunk:
+    """Base chunk for any indexed content (code, documentation, tickets, wikis).
+
+    This is the base class for all content chunks. It supports non-code content
+    such as documentation pages, ticket descriptions, and wiki articles alongside
+    code-specific subclasses like CodeChunk.
+
+    Attributes:
+        content: The raw text content of this chunk.
+        file_path: Path to the source file (or virtual path for non-file sources).
+        metadata: Arbitrary key-value metadata for extensibility.
+        source_type: Category of content. One of: "code", "documentation",
+            "ticket", "wiki". Defaults to "code".
+        start_line: First line of the chunk within the source file, or None for
+            non-line-based content (e.g. ticket body).
+        end_line: Last line of the chunk within the source file, or None.
+
+    Examples:
+        >>> chunk = ContentChunk(
+        ...     content="# Overview\\nThis module handles authentication.",
+        ...     file_path=Path("docs/auth.md"),
+        ...     metadata={"section": "overview"},
+        ...     source_type="documentation",
+        ... )
+        >>> chunk.source_type
+        'documentation'
+    """
 
     content: str
     file_path: Path
-    start_line: int
-    end_line: int
-    language: str
+    metadata: dict = field(default_factory=dict)
+    source_type: str = "code"  # "code", "documentation", "ticket", "wiki"
+    start_line: int | None = None
+    end_line: int | None = None
+
+    def __post_init__(self) -> None:
+        """Ensure metadata is initialized."""
+        if self.metadata is None:
+            self.metadata = {}
+
+    @property
+    def line_count(self) -> int | None:
+        """Get the number of lines in this chunk, or None if line numbers unavailable."""
+        if self.start_line is not None and self.end_line is not None:
+            return self.end_line - self.start_line + 1
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for storage."""
+        return {
+            "content": self.content,
+            "file_path": str(self.file_path),
+            "metadata": self.metadata,
+            "source_type": self.source_type,
+            "start_line": self.start_line,
+            "end_line": self.end_line,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ContentChunk":
+        """Create from dictionary."""
+        return cls(
+            content=data["content"],
+            file_path=Path(data["file_path"]),
+            metadata=data.get("metadata", {}),
+            source_type=data.get("source_type", "code"),
+            start_line=data.get("start_line"),
+            end_line=data.get("end_line"),
+        )
+
+
+@dataclass
+class CodeChunk(ContentChunk):
+    """Represents a chunk of code with metadata.
+
+    Inherits content, file_path, metadata, source_type, start_line, and end_line
+    from ContentChunk. All existing call sites remain backward-compatible because
+    the positional argument order (content, file_path, start_line, end_line, language)
+    is preserved via the parent fields followed by code-specific ones.
+
+    Note: start_line and end_line are required integers for code chunks (they are
+    optional on ContentChunk). The language field is required for CodeChunk.
+    """
+
+    # Code-specific required fields (appended after inherited optional fields).
+    # To preserve backward-compatible construction, callers must pass start_line
+    # and end_line explicitly; they default to 0 here so the dataclass MRO works.
+    language: str = ""
     chunk_type: str = "code"  # code, function, class, comment, docstring
     function_name: str | None = None
     class_name: str | None = None
@@ -60,6 +239,8 @@ class CodeChunk:
 
     def __post_init__(self) -> None:
         """Initialize default values and generate chunk ID."""
+        # Call parent to initialise metadata dict
+        super().__post_init__()
         if self.imports is None:
             self.imports = []
         if self.calls is None:
@@ -91,7 +272,9 @@ class CodeChunk:
             # This ensures deterministic IDs while handling same-location chunks
             name = self.function_name or self.class_name or ""
             content_hash = hashlib.sha256(self.content[:100].encode()).hexdigest()[:8]
-            id_string = f"{self.file_path}:{self.chunk_type}:{name}:{self.start_line}:{self.end_line}:{content_hash}"
+            start = self.start_line or 0
+            end = self.end_line or 0
+            id_string = f"{self.file_path}:{self.chunk_type}:{name}:{start}:{end}:{content_hash}"
             self.chunk_id = hashlib.sha256(id_string.encode()).hexdigest()[:16]
 
     @property
@@ -102,7 +285,9 @@ class CodeChunk:
     @property
     def line_count(self) -> int:
         """Get the number of lines in this chunk."""
-        return self.end_line - self.start_line + 1
+        if self.start_line is not None and self.end_line is not None:
+            return self.end_line - self.start_line + 1
+        return 0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for storage."""
