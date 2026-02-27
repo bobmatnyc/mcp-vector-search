@@ -17,6 +17,7 @@ Use cases:
 """
 
 import pickle  # nosec B403 - BM25 index is local-only, not from untrusted sources
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +51,11 @@ class BM25Backend:
         self._chunk_ids: list[str] = []
         self._corpus_texts: list[str] = []  # For debugging/inspection
 
-    def build_index(self, chunks: list[dict[str, Any]]) -> None:
+    def build_index(
+        self,
+        chunks: list[dict[str, Any]],
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> None:
         """Build BM25 index from code chunks.
 
         Tokenizes each chunk by combining content and metadata (function name,
@@ -63,6 +68,9 @@ class BM25Backend:
                 - name (str): Function/class name (optional)
                 - file_path (str): Source file path
                 - chunk_type (str): function, class, method, etc.
+            progress_callback: Optional callable invoked periodically with
+                (current, total) during tokenization.  Called every 500 chunks
+                and once more at completion.
 
         Raises:
             DatabaseError: If index building fails
@@ -79,7 +87,7 @@ class BM25Backend:
             corpus = []
             chunk_ids = []
 
-            for chunk in chunks:
+            for idx, chunk in enumerate(chunks):
                 # Combine content and metadata for comprehensive search
                 # This allows matching on function names, file paths, and code content
                 text_parts = []
@@ -114,6 +122,14 @@ class BM25Backend:
 
                 corpus.append(tokens)
                 chunk_ids.append(chunk["chunk_id"])
+
+                # Progress callback for large indices (every 500 chunks)
+                if progress_callback and (idx + 1) % 500 == 0:
+                    progress_callback(idx + 1, len(chunks))
+
+            # Final progress update (ensure 100% is reported)
+            if progress_callback:
+                progress_callback(len(chunks), len(chunks))
 
             # Build BM25 index
             self._bm25 = BM25Okapi(corpus)

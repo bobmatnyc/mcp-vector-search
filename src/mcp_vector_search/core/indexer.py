@@ -2266,7 +2266,7 @@ class SemanticIndexer:
         # Build BM25 index — provide console feedback since this can take
         # 10-30 s for large projects (reads all chunks from LanceDB).
         if self.progress_tracker:
-            sys.stderr.write("  Building keyword search index...\n")
+            sys.stderr.write("  Loading chunks for keyword index...\n")
             sys.stderr.flush()
         await self._build_bm25_index()
 
@@ -3724,6 +3724,14 @@ class SemanticIndexer:
                 logger.info("No chunks in chunks table, skipping BM25 index build")
                 return
 
+            # Show chunk count after reading from database
+            chunk_count = len(df)
+            if self.progress_tracker:
+                sys.stderr.write(
+                    f"  Building keyword search index ({chunk_count:,} chunks)...\n"
+                )
+                sys.stderr.flush()
+
             # Vectorised conversion: use to_dict("records") instead of iterrows()
             # (~10-50x faster for 200K+ rows).
             # Fill missing columns with defaults before converting.
@@ -3742,9 +3750,20 @@ class SemanticIndexer:
                 f"📚 Phase 3: Building BM25 index from {len(chunks_for_bm25):,} chunks..."
             )
 
-            # Build BM25 index
+            # Build BM25 index with tokenization progress reporting
+            bm25_start = time.monotonic()
+
+            def _bm25_progress(current: int, total: int) -> None:
+                if self.progress_tracker:
+                    self.progress_tracker.progress_bar_with_eta(
+                        current=current,
+                        total=total,
+                        prefix="Tokenizing chunks",
+                        start_time=bm25_start,
+                    )
+
             bm25_backend = BM25Backend()
-            bm25_backend.build_index(chunks_for_bm25)
+            bm25_backend.build_index(chunks_for_bm25, progress_callback=_bm25_progress)
 
             # Save to disk.
             # Use self._mcp_dir (respects index_path) instead of config.index_path
