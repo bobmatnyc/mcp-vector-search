@@ -12,6 +12,37 @@ __build__ = "282"
 __author__ = "Robert Matsuoka"
 __email__ = "bob@matsuoka.com"
 
-from .core.exceptions import MCPVectorSearchError  # noqa: E402
+from .core.exceptions import (  # noqa: E402
+    ConfigurationError,
+    DatabaseError,
+    DatabaseInitializationError,
+    DatabaseNotInitializedError,
+    EmbeddingError,
+    IndexCorruptionError,
+    IndexingError,
+    InitializationError,
+    MCPVectorSearchError,
+    ParsingError,
+    ProjectError,
+    ProjectNotFoundError,
+    SearchError,
+)
 
-__all__ = ["MCPVectorSearchError", "__version__", "__build__"]
+__all__ = [
+    "__version__",
+    "__build__",
+    # Exceptions - public API
+    "MCPVectorSearchError",
+    "SearchError",
+    "IndexingError",
+    "DatabaseError",
+    "DatabaseInitializationError",
+    "DatabaseNotInitializedError",
+    "EmbeddingError",
+    "ConfigurationError",
+    "InitializationError",
+    "IndexCorruptionError",
+    "ParsingError",
+    "ProjectError",
+    "ProjectNotFoundError",
+]

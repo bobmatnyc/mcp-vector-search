@@ -161,6 +161,10 @@ class SemanticSearchEngine:
 
         Returns:
             List of search results
+
+        Raises:
+            SearchError: If the search operation fails.
+            RustPanicError: If a native backend panic is detected.
         """
         if not query.strip():
             return []
@@ -355,6 +359,9 @@ class SemanticSearchEngine:
 
         Returns:
             List of similar code results
+
+        Raises:
+            SearchError: If reading the reference file or searching fails.
         """
         try:
             # Read the reference file using async I/O

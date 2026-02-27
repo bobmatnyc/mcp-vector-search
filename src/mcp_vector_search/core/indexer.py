@@ -30,7 +30,12 @@ from .chunks_backend import ChunksBackend, compute_file_hash
 from .context_builder import build_contextual_text
 from .database import VectorDatabase
 from .directory_index import DirectoryIndex
-from .exceptions import DatabaseError, DatabaseInitializationError, ParsingError
+from .exceptions import (
+    DatabaseError,
+    DatabaseInitializationError,
+    IndexingError,
+    ParsingError,
+)
 from .file_discovery import FileDiscovery
 from .index_metadata import IndexMetadata
 from .memory_monitor import MemoryMonitor
@@ -270,7 +275,7 @@ class SemanticIndexer:
             from .kg_builder import KGBuilder
             from .knowledge_graph import KnowledgeGraph
 
-            kg_path = self.project_root / ".mcp-vector-search" / "knowledge_graph"
+            kg_path = self._mcp_dir / "knowledge_graph"
             kg = KnowledgeGraph(kg_path)
             await kg.initialize()
 
@@ -1837,7 +1842,7 @@ class SemanticIndexer:
         if not force:
             return False
 
-        base_path = self.project_root / ".mcp-vector-search"
+        base_path = self._mcp_dir
 
         # Database paths (only .new paths used in this method - others in _finalize)
         lance_new = base_path / "lance.new"
@@ -1911,7 +1916,7 @@ class SemanticIndexer:
         Called after successful indexing when force_reindex=True.
         Performs atomic rename operations to switch from .new to final.
         """
-        base_path = self.project_root / ".mcp-vector-search"
+        base_path = self._mcp_dir
 
         # Database paths
         lance_path = base_path / "lance"
@@ -2238,7 +2243,7 @@ class SemanticIndexer:
             # After _finalize_atomic_rebuild(), the .new directories have been renamed
             # to final paths, but backend objects still point to old .new paths.
             # We must reinitialize backends to point to the correct final paths.
-            base_path = self.project_root / ".mcp-vector-search"
+            base_path = self._mcp_dir
             lance_path = base_path / "lance"
 
             # Create fresh backend instances pointing to final paths
@@ -2459,6 +2464,11 @@ class SemanticIndexer:
 
         Returns:
             Number of files indexed (for backward compatibility)
+
+        Raises:
+            IndexingError: If an unrecoverable indexing error occurs.
+            DatabaseError: If a database-level operation fails.
+            DatabaseInitializationError: If the database cannot be initialised.
 
         Note:
             Two-phase architecture enables:
@@ -3097,6 +3107,11 @@ class SemanticIndexer:
 
         Returns:
             True if file was successfully indexed
+
+        Raises:
+            IndexingError: If the file cannot be indexed for any reason.
+            ParsingError: If the file cannot be parsed into chunks.
+            DatabaseError: If a database-level storage operation fails.
         """
         # Initialize backends if not already initialized
         if self.chunks_backend._db is None:
@@ -3225,9 +3240,12 @@ class SemanticIndexer:
             logger.debug(f"Indexed {len(chunks)} chunks from {file_path}")
             return True
 
+        except (DatabaseError, ParsingError, IndexingError):
+            # Already typed exceptions -- let them propagate as-is
+            raise
         except Exception as e:
             logger.error(f"Failed to index file {file_path}: {e}")
-            raise ParsingError(f"Failed to index file {file_path}: {e}") from e
+            raise IndexingError(f"Failed to index file {file_path}: {e}") from e
 
     async def reindex_file(self, file_path: Path) -> bool:
         """Reindex a single file (removes existing chunks first).
