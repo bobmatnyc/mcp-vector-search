@@ -1491,6 +1491,11 @@ class SemanticIndexer:
 
             # Flush any remaining chunks that didn't fill a full batch
             if pending_chunks and backend_fatal_error is None:
+                if self.progress_tracker:
+                    sys.stderr.write(
+                        f"  Saving final batch ({len(pending_chunks):,} chunks)...\n"
+                    )
+                    sys.stderr.flush()
                 try:
                     await _flush_pending_chunks()
                 except DatabaseError as db_err:
@@ -1590,7 +1595,7 @@ class SemanticIndexer:
             return 0, 0
 
         # Show chunk count to user so they know embedding is starting
-        if self.progress_tracker and sys.stderr.isatty():
+        if self.progress_tracker:
             sys.stderr.write(
                 f"  Embedding {total_pending_chunks:,} chunks"
                 f" (batch size: {batch_size})...\n"
@@ -2249,6 +2254,9 @@ class SemanticIndexer:
 
         # Update metadata after chunking
         if files_processed > 0:
+            if self.progress_tracker:
+                sys.stderr.write("  Updating directory index...\n")
+                sys.stderr.flush()
             # Update directory index
             try:
                 logger.debug("Updating directory index after chunking...")
@@ -2278,8 +2286,8 @@ class SemanticIndexer:
 
         # Build BM25 index — provide console feedback since this can take
         # 10-30 s for large projects (reads all chunks from LanceDB).
-        if self.progress_tracker and sys.stderr.isatty():
-            sys.stderr.write("\r  Building keyword search index...\n")
+        if self.progress_tracker:
+            sys.stderr.write("  Building keyword search index...\n")
             sys.stderr.flush()
         await self._build_bm25_index()
 
@@ -2427,7 +2435,7 @@ class SemanticIndexer:
                 }
 
         # Run Phase 2 embedding
-        if self.progress_tracker and sys.stderr.isatty():
+        if self.progress_tracker:
             sys.stderr.write("  Starting embedding phase...\n")
             sys.stderr.flush()
         chunks_embedded, batches_processed = await self._phase2_embed_chunks(
@@ -2438,7 +2446,7 @@ class SemanticIndexer:
         # This activates IVF_SQ approximate nearest-neighbor search for large
         # datasets.  Skipped automatically for small datasets (< 4,096 rows).
         # Non-fatal: search falls back to brute-force if index creation fails.
-        if self.progress_tracker and sys.stderr.isatty():
+        if self.progress_tracker:
             sys.stderr.write("  Building vector search index...\n")
             sys.stderr.flush()
         await self.vectors_backend.rebuild_index()
