@@ -1,6 +1,36 @@
-"""Custom exception hierarchy for MCP Vector Search."""
+"""Typed exception hierarchy for mcp-vector-search.
+
+Hierarchy
+---------
+MCPVectorSearchError (base)
+├── DatabaseError          – LanceDB / storage layer errors
+│   ├── DatabaseInitializationError
+│   ├── DatabaseNotInitializedError
+│   ├── ConnectionPoolError
+│   ├── DocumentAdditionError
+│   ├── IndexCorruptionError
+│   └── RustPanicError
+├── SearchError            – search-time failures (query, reranking, etc.)
+├── IndexingError          – indexing-time failures (named to avoid shadowing built-in IndexError)
+│   └── ParsingError       – code parsing subset of indexing errors
+├── EmbeddingError         – embedding generation errors
+├── ConfigError            – configuration / validation errors
+│   └── ConfigurationError – (legacy alias)
+├── InitializationError    – engine / model startup errors
+└── ProjectError           – project management errors
+    ├── ProjectNotFoundError
+    └── ProjectInitializationError
+
+Backward compatibility: ``SearchError`` previously inherited from ``DatabaseError``.
+It now inherits directly from ``MCPVectorSearchError`` so callers can distinguish
+search-layer failures from storage-layer failures.  Code that catches
+``MCPVectorSearchError`` (or ``Exception``) still works unchanged.
+"""
 
 from typing import Any
+
+# ── convenience alias so consumers can write ``from mcp_vector_search import MVSError``
+MVSError = None  # defined after class below
 
 
 class MCPVectorSearchError(Exception):
@@ -11,8 +41,15 @@ class MCPVectorSearchError(Exception):
         self.context = context or {}
 
 
+# Convenience alias
+MVSError = MCPVectorSearchError  # type: ignore[assignment]
+
+
+# ── Database layer ──────────────────────────────────────────────────────
+
+
 class DatabaseError(MCPVectorSearchError):
-    """Database-related errors."""
+    """Database-related errors (LanceDB / storage layer)."""
 
     pass
 
@@ -41,12 +78,6 @@ class DocumentAdditionError(DatabaseError):
     pass
 
 
-class SearchError(DatabaseError):
-    """Search operation failed."""
-
-    pass
-
-
 class IndexCorruptionError(DatabaseError):
     """Index corruption detected."""
 
@@ -54,20 +85,54 @@ class IndexCorruptionError(DatabaseError):
 
 
 class RustPanicError(DatabaseError):
-    """ChromaDB Rust bindings panic detected.
+    """Rust bindings panic detected (HNSW index metadata inconsistencies)."""
 
-    This error occurs when ChromaDB's Rust bindings encounter
-    HNSW index metadata inconsistencies, typically manifesting as:
-    'range start index X out of range for slice of length Y'
+    pass
+
+
+# ── Search layer ────────────────────────────────────────────────────────
+
+
+class SearchError(MCPVectorSearchError):
+    """Search operation failed.
+
+    Raised by ``SemanticSearchEngine.search()`` and ``search_similar()``.
+
+    .. versionchanged:: 3.0.33
+       Now inherits from ``MCPVectorSearchError`` (was ``DatabaseError``).
     """
 
     pass
 
 
-class ParsingError(MCPVectorSearchError):
-    """Code parsing errors."""
+class QueryExpansionError(SearchError):
+    """Query expansion / preprocessing failed."""
 
     pass
+
+
+# ── Indexing layer ──────────────────────────────────────────────────────
+
+
+class IndexingError(MCPVectorSearchError):
+    """Indexing operation failed.
+
+    Named ``IndexingError`` (not ``IndexError``) to avoid shadowing
+    the Python built-in ``IndexError``.
+
+    Raised by ``SemanticIndexer.index_project()`` and ``index_file()``.
+    """
+
+    pass
+
+
+class ParsingError(IndexingError):
+    """Code parsing errors (subset of indexing errors)."""
+
+    pass
+
+
+# ── Embedding layer ─────────────────────────────────────────────────────
 
 
 class EmbeddingError(MCPVectorSearchError):
@@ -76,10 +141,29 @@ class EmbeddingError(MCPVectorSearchError):
     pass
 
 
-class ConfigurationError(MCPVectorSearchError):
-    """Configuration validation errors."""
+# ── Configuration layer ─────────────────────────────────────────────────
+
+
+class ConfigError(MCPVectorSearchError):
+    """Configuration / validation errors."""
 
     pass
+
+
+# Legacy alias for backward compatibility
+ConfigurationError = ConfigError
+
+
+# ── Initialization layer ────────────────────────────────────────────────
+
+
+class InitializationError(MCPVectorSearchError):
+    """Engine / model startup errors."""
+
+    pass
+
+
+# ── Project layer ───────────────────────────────────────────────────────
 
 
 class ProjectError(MCPVectorSearchError):

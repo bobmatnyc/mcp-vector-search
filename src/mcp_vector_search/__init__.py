@@ -7,12 +7,54 @@ import warnings
 # with Pydantic's protected "model_" namespace. This is a lancedb issue, not ours.
 warnings.filterwarnings("ignore", message=".*has conflict with protected namespace.*")
 
-__version__ = "3.0.32"
-__build__ = "282"
+__version__ = "3.0.33"
+__build__ = "283"
 __author__ = "Robert Matsuoka"
 __email__ = "bob@matsuoka.com"
 
-from .core.exceptions import MCPVectorSearchError  # noqa: E402
+from .core.exceptions import (  # noqa: E402
+    ConfigError,
+    ConfigurationError,
+    DatabaseError,
+    DatabaseInitializationError,
+    DatabaseNotInitializedError,
+    EmbeddingError,
+    IndexCorruptionError,
+    IndexingError,
+    InitializationError,
+    MCPVectorSearchError,
+    MVSError,
+    ParsingError,
+    ProjectError,
+    ProjectInitializationError,
+    ProjectNotFoundError,
+    QueryExpansionError,
+    SearchError,
+)
 from .core.models import ContentChunk  # noqa: E402
 
-__all__ = ["MCPVectorSearchError", "ContentChunk", "__version__", "__build__"]
+__all__ = [
+    # Public typed hierarchy (Issue #110)
+    "MVSError",
+    "MCPVectorSearchError",
+    "SearchError",
+    "QueryExpansionError",
+    "IndexingError",
+    "ConfigError",
+    "ConfigurationError",
+    "InitializationError",
+    "DatabaseError",
+    "DatabaseInitializationError",
+    "DatabaseNotInitializedError",
+    "EmbeddingError",
+    "IndexCorruptionError",
+    "ParsingError",
+    "ProjectError",
+    "ProjectInitializationError",
+    "ProjectNotFoundError",
+    # Data types
+    "ContentChunk",
+    # Version info
+    "__version__",
+    "__build__",
+]
