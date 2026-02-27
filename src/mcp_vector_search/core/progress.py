@@ -137,6 +137,9 @@ class ProgressTracker:
         This progress bar updates on the same line without spawning background threads,
         making it safe to use with Kuzu and other non-thread-safe libraries.
 
+        Silent when stderr is not a TTY (e.g., MCP server mode) to avoid
+        raw carriage-return characters polluting non-interactive output.
+
         Args:
             current: Current progress value
             total: Total value (100% completion)
@@ -148,6 +151,11 @@ class ProgressTracker:
             # Output: Parsing files... ━━━━━━━━━╸          45% 328/730
         """
         if total == 0:
+            return
+
+        # Skip progress bar output when stderr is not a TTY (e.g., MCP server,
+        # CI pipelines, or log capture) to avoid raw \r sequences in logs.
+        if not sys.stderr.isatty():
             return
 
         # Calculate percentage and filled width
@@ -181,6 +189,9 @@ class ProgressTracker:
     ) -> None:
         """Display a progress bar with ETA estimate.
 
+        Silent when stderr is not a TTY (e.g., MCP server mode) to avoid
+        raw carriage-return characters polluting non-interactive output.
+
         Args:
             current: Current progress value
             total: Total value (100% completion)
@@ -194,6 +205,11 @@ class ProgressTracker:
             # Output: Embedding chunks... ━━━━━━━━━━━━━╸       67% 54,234/81,238 [01:23 remaining]
         """
         if total == 0:
+            return
+
+        # Skip progress bar output when stderr is not a TTY (e.g., MCP server,
+        # CI pipelines, or log capture) to avoid raw \r sequences in logs.
+        if not sys.stderr.isatty():
             return
 
         # Calculate percentage and filled width
