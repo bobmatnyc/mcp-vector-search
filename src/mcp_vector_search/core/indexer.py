@@ -8,7 +8,6 @@ import asyncio
 import gc
 import json
 import os
-import platform
 import shutil
 import sys
 import threading
@@ -669,16 +668,10 @@ class SemanticIndexer:
                         logger.error(f"Failed to check file {file_path}: {e}")
                         continue
 
-                # Batch delete old chunks
-                # WORKAROUND: Skip delete on macOS to avoid SIGBUS crash
-                # LanceDB delete() triggers memory-mapped file compaction which conflicts
-                # with PyTorch's memory-mapped model files on Apple Silicon.
-                # Duplicate chunks will be handled by deduplication logic during query.
-                if (
-                    not self._atomic_rebuild_active
-                    and files_to_delete
-                    and platform.system() != "Darwin"
-                ):
+                # Batch delete old chunks for changed files before re-chunking.
+                # LanceDB delete() is metadata-only and does NOT trigger compact_files().
+                # The macOS SIGBUS workaround is in _compact_table(), not here.
+                if not self._atomic_rebuild_active and files_to_delete:
                     deleted_count = await self.chunks_backend.delete_files_batch(
                         files_to_delete
                     )
@@ -686,11 +679,6 @@ class SemanticIndexer:
                         logger.info(
                             f"Batch deleted {deleted_count} old chunks for {len(files_to_delete)} files"
                         )
-                elif files_to_delete and platform.system() == "Darwin":
-                    logger.debug(
-                        f"Skipping batch delete on macOS for {len(files_to_delete)} files "
-                        "(defer cleanup to avoid SIGBUS)"
-                    )
 
                 # Process files in batches and put on queue
                 for batch_start in range(0, len(files_to_process), file_batch_size):
@@ -1306,16 +1294,12 @@ class SemanticIndexer:
                         f"File hash computation complete: {len(files_to_process)} files changed, {len(files) - len(files_to_process)} unchanged"
                     )
 
-            # Batch delete old chunks for all files (skip if atomic rebuild is active)
-            # WORKAROUND: Skip delete on macOS to avoid SIGBUS crash
-            # LanceDB delete() triggers memory-mapped file compaction which conflicts
-            # with PyTorch's memory-mapped model files on Apple Silicon.
-            # Duplicate chunks will be handled by deduplication logic during query.
-            if (
-                not self._atomic_rebuild_active
-                and files_to_delete
-                and platform.system() != "Darwin"
-            ):
+            # Batch delete old chunks for changed files before inserting new ones.
+            # This prevents duplicate chunks from accumulating across re-index runs.
+            # Note: LanceDB delete() is metadata-only (deletion vectors) and does NOT
+            # trigger compact_files(). The SIGBUS workaround for macOS applies only to
+            # compaction, which is separately guarded in _compact_table().
+            if not self._atomic_rebuild_active and files_to_delete:
                 deleted_count = await self.chunks_backend.delete_files_batch(
                     files_to_delete
                 )
@@ -1323,11 +1307,6 @@ class SemanticIndexer:
                     logger.info(
                         f"Batch deleted {deleted_count} old chunks for {len(files_to_delete)} files"
                     )
-            elif files_to_delete and platform.system() == "Darwin":
-                logger.debug(
-                    f"Skipping batch delete on macOS for {len(files_to_delete)} files "
-                    "(defer cleanup to avoid SIGBUS)"
-                )
 
             # Now process files for parsing and chunking.
             # PERFORMANCE: Accumulate chunks across files and flush to LanceDB in
@@ -2942,14 +2921,10 @@ class SemanticIndexer:
         if not self.file_discovery.should_index_file(file_path):
             return ([], None)
 
-        # Skip delete on force reindex with fresh database OR when atomic rebuild is active
-        # This optimization eliminates ~25k unnecessary database queries for large codebases
-        # WORKAROUND: Skip delete on macOS to avoid SIGBUS crash
-        if (
-            not skip_delete
-            and not self._atomic_rebuild_active
-            and platform.system() != "Darwin"
-        ):
+        # Skip delete on force reindex with fresh database OR when atomic rebuild is active.
+        # This optimization eliminates ~25k unnecessary database queries for large codebases.
+        # Note: LanceDB delete() is metadata-only and does NOT trigger compact_files().
+        if not skip_delete and not self._atomic_rebuild_active:
             await self.database.delete_by_file(file_path)
 
         # Parse file into chunks
@@ -3019,13 +2994,9 @@ class SemanticIndexer:
                 success_flags.append(True)  # Skipped file is not an error
                 continue
 
-            # Only schedule deletion if not building fresh database AND not in atomic rebuild
-            # WORKAROUND: Skip delete on macOS to avoid SIGBUS crash (same reason as chunks_backend)
-            if (
-                not skip_delete
-                and not self._atomic_rebuild_active
-                and platform.system() != "Darwin"
-            ):
+            # Only schedule deletion if not building fresh database AND not in atomic rebuild.
+            # LanceDB delete() is metadata-only and does NOT trigger compact_files().
+            if not skip_delete and not self._atomic_rebuild_active:
                 delete_task = asyncio.create_task(
                     self.database.delete_by_file(file_path)
                 )
@@ -3241,13 +3212,9 @@ class SemanticIndexer:
             if not self.file_discovery.should_index_file(file_path):
                 return False
 
-            # Skip delete on force reindex with fresh database OR when atomic rebuild is active
-            # WORKAROUND: Skip delete on macOS to avoid SIGBUS crash
-            if (
-                not skip_delete
-                and not self._atomic_rebuild_active
-                and platform.system() != "Darwin"
-            ):
+            # Skip delete on force reindex with fresh database OR when atomic rebuild is active.
+            # LanceDB delete() is metadata-only and does NOT trigger compact_files().
+            if not skip_delete and not self._atomic_rebuild_active:
                 await self.database.delete_by_file(file_path)
 
             # Parse file into chunks
@@ -3377,24 +3344,16 @@ class SemanticIndexer:
     async def remove_file(self, file_path: Path) -> int:
         """Remove all chunks for a file from the index.
 
-        WORKAROUND: Skipped on macOS to avoid SIGBUS crash caused by memory conflict
-        between PyTorch MPS memory-mapped model files and LanceDB delete operations.
-        On macOS, stale chunks will remain until the next full reindex.
+        LanceDB delete() is metadata-only (creates deletion vectors) and does NOT
+        trigger compact_files(). The macOS SIGBUS workaround applies only to
+        compaction, which is separately guarded in _compact_table().
 
         Args:
             file_path: Path to the file to remove
 
         Returns:
-            Number of chunks removed (0 on macOS as operation is skipped)
+            Number of chunks removed
         """
-        if platform.system() == "Darwin":
-            logger.debug(
-                f"Skipping remove_file on macOS for {file_path} to avoid SIGBUS crash "
-                "(PyTorch MPS + LanceDB delete memory conflict; "
-                "stale chunks will be cleaned up on next full reindex)"
-            )
-            return 0
-
         try:
             count = await self.database.delete_by_file(file_path)
             logger.debug(f"Removed {count} chunks for {file_path}")
