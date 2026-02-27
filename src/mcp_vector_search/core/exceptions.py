@@ -126,6 +126,11 @@ class IndexingError(MCPVectorSearchError):
     pass
 
 
+# Alias so callers can write ``mcp_vector_search.exceptions.IndexError`` without
+# shadowing the built-in in their own module scope.
+IndexError = IndexingError  # noqa: A001
+
+
 class ParsingError(IndexingError):
     """Code parsing errors (subset of indexing errors)."""
 
