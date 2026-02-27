@@ -131,6 +131,53 @@ class ChunksBackend:
         self._table = None
         self._append_count = 0  # Track appends for periodic compaction
 
+    # ------------------------------------------------------------------
+    # Helpers: idempotent table operations
+    # ------------------------------------------------------------------
+
+    def _list_table_names(self) -> list[str]:
+        """Return table names from LanceDB, handling API variations.
+
+        LanceDB list_tables() may return a response object with a .tables
+        attribute or a plain list, depending on version.
+        """
+        tables_response = self._db.list_tables()
+        if hasattr(tables_response, "tables"):
+            return tables_response.tables
+        return tables_response
+
+    def _idempotent_create_table(
+        self,
+        name: str,
+        data: Any,
+        schema: pa.Schema | None = None,
+        mode: str | None = None,
+    ) -> Any:
+        """Create a LanceDB table idempotently.
+
+        By default uses ``exist_ok=True`` so that creating a table that
+        already exists simply opens the existing table instead of raising.
+        Pass ``mode="overwrite"`` to force-replace an existing table.
+
+        Args:
+            name: Table name
+            data: Initial data (list of dicts or PyArrow table)
+            schema: Optional PyArrow schema
+            mode: Optional LanceDB write mode ("overwrite", "append").
+                  When None, ``exist_ok=True`` is used instead.
+
+        Returns:
+            LanceDB table handle
+        """
+        kwargs: dict[str, Any] = {}
+        if schema is not None:
+            kwargs["schema"] = schema
+        if mode is not None:
+            kwargs["mode"] = mode
+        else:
+            kwargs["exist_ok"] = True
+        return self._db.create_table(name, data, **kwargs)
+
     async def initialize(self) -> None:
         """Create table if not exists with proper schema.
 
@@ -145,13 +192,7 @@ class ChunksBackend:
             self._db = lancedb.connect(str(self.db_path))
 
             # Check if table exists
-            # list_tables() returns a response object with .tables attribute or is iterable
-            tables_response = self._db.list_tables()
-            table_names = (
-                tables_response.tables
-                if hasattr(tables_response, "tables")
-                else tables_response
-            )
+            table_names = self._list_table_names()
 
             if self.TABLE_NAME in table_names:
                 try:
@@ -279,50 +320,14 @@ class ChunksBackend:
 
             # Create or append to table
             if self._table is None:
-                # Check if table exists (it might exist but self._table wasn't opened)
-                tables_response = self._db.list_tables()
-                table_names = (
-                    tables_response.tables
-                    if hasattr(tables_response, "tables")
-                    else tables_response
+                # Idempotent create: exist_ok=True opens the existing table
+                # if present, creates it otherwise.
+                self._table = self._idempotent_create_table(
+                    self.TABLE_NAME, normalized_chunks, schema=CHUNKS_SCHEMA
                 )
-
-                if self.TABLE_NAME in table_names:
-                    # Table exists, open it
-                    try:
-                        self._table = self._db.open_table(self.TABLE_NAME)
-                    except Exception as open_err:
-                        if "not found" in str(open_err).lower():
-                            logger.warning(
-                                f"Stale table entry '{self.TABLE_NAME}' detected in add_chunks "
-                                f"(listed but not openable: {open_err}). "
-                                f"Dropping stale entry and creating fresh table."
-                            )
-                            try:
-                                self._db.drop_table(self.TABLE_NAME)
-                            except Exception:
-                                pass
-                            self._table = self._db.create_table(
-                                self.TABLE_NAME, normalized_chunks, schema=CHUNKS_SCHEMA
-                            )
-                            logger.debug(
-                                f"Created fresh chunks table with {len(normalized_chunks)} chunks"
-                            )
-                        else:
-                            raise
-                    else:
-                        self._table.add(normalized_chunks, mode="append")
-                        logger.debug(
-                            f"Opened existing table and added {len(normalized_chunks)} chunks (append mode)"
-                        )
-                else:
-                    # Create table with first batch
-                    self._table = self._db.create_table(
-                        self.TABLE_NAME, normalized_chunks, schema=CHUNKS_SCHEMA
-                    )
-                    logger.debug(
-                        f"Created chunks table with {len(normalized_chunks)} chunks"
-                    )
+                logger.debug(
+                    f"Created/opened chunks table with {len(normalized_chunks)} chunks"
+                )
             else:
                 # Append to existing table
                 # OPTIMIZATION: Use mode='append' for faster bulk inserts
@@ -426,50 +431,14 @@ class ChunksBackend:
 
             # Create or append to table
             if self._table is None:
-                # Check if table exists
-                tables_response = self._db.list_tables()
-                table_names = (
-                    tables_response.tables
-                    if hasattr(tables_response, "tables")
-                    else tables_response
+                # Idempotent create: exist_ok=True opens the existing table
+                # if present, creates it otherwise.
+                self._table = self._idempotent_create_table(
+                    self.TABLE_NAME, normalized_chunks, schema=CHUNKS_SCHEMA
                 )
-
-                if self.TABLE_NAME in table_names:
-                    # Table exists, open it
-                    try:
-                        self._table = self._db.open_table(self.TABLE_NAME)
-                    except Exception as open_err:
-                        if "not found" in str(open_err).lower():
-                            logger.warning(
-                                f"Stale table entry '{self.TABLE_NAME}' detected in add_chunks_batch "
-                                f"(listed but not openable: {open_err}). "
-                                f"Dropping stale entry and creating fresh table."
-                            )
-                            try:
-                                self._db.drop_table(self.TABLE_NAME)
-                            except Exception:
-                                pass
-                            self._table = self._db.create_table(
-                                self.TABLE_NAME, normalized_chunks, schema=CHUNKS_SCHEMA
-                            )
-                            logger.debug(
-                                f"Created fresh chunks table with {len(normalized_chunks)} chunks"
-                            )
-                        else:
-                            raise
-                    else:
-                        self._table.add(normalized_chunks, mode="append")
-                        logger.debug(
-                            f"Opened existing table and added {len(normalized_chunks)} chunks (append mode)"
-                        )
-                else:
-                    # Create table with first batch
-                    self._table = self._db.create_table(
-                        self.TABLE_NAME, normalized_chunks, schema=CHUNKS_SCHEMA
-                    )
-                    logger.debug(
-                        f"Created chunks table with {len(normalized_chunks)} chunks"
-                    )
+                logger.debug(
+                    f"Created/opened chunks table with {len(normalized_chunks)} chunks"
+                )
             else:
                 # Append to existing table
                 # OPTIMIZATION: Use mode='append' for faster bulk inserts
@@ -527,38 +496,11 @@ class ChunksBackend:
 
             # Create or append to table
             if self._table is None:
-                tables_response = self._db.list_tables()
-                table_names = (
-                    tables_response.tables
-                    if hasattr(tables_response, "tables")
-                    else tables_response
+                # Idempotent create: exist_ok=True opens the existing table
+                # if present, creates it otherwise.
+                self._table = self._idempotent_create_table(
+                    self.TABLE_NAME, chunks, schema=CHUNKS_SCHEMA
                 )
-
-                if self.TABLE_NAME in table_names:
-                    try:
-                        self._table = self._db.open_table(self.TABLE_NAME)
-                    except Exception as open_err:
-                        if "not found" in str(open_err).lower():
-                            logger.warning(
-                                f"Stale table entry '{self.TABLE_NAME}' detected in add_chunks_raw "
-                                f"(listed but not openable: {open_err}). "
-                                f"Dropping stale entry and creating fresh table."
-                            )
-                            try:
-                                self._db.drop_table(self.TABLE_NAME)
-                            except Exception:
-                                pass
-                            self._table = self._db.create_table(
-                                self.TABLE_NAME, chunks, schema=CHUNKS_SCHEMA
-                            )
-                        else:
-                            raise
-                    else:
-                        self._table.add(chunks, mode="append")
-                else:
-                    self._table = self._db.create_table(
-                        self.TABLE_NAME, chunks, schema=CHUNKS_SCHEMA
-                    )
             else:
                 self._table.add(chunks, mode="append")
 

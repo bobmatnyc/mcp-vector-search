@@ -230,6 +230,17 @@ class LanceVectorDatabase:
         self._write_buffer: list[dict] = []
         self._write_buffer_size = _detect_optimal_write_buffer_size()
 
+    # ------------------------------------------------------------------
+    # Helpers: idempotent table operations
+    # ------------------------------------------------------------------
+
+    def _list_table_names(self) -> list[str]:
+        """Return table names from LanceDB, handling API variations."""
+        tables_response = self._db.list_tables()
+        if hasattr(tables_response, "tables"):
+            return tables_response.tables
+        return tables_response
+
     def _is_corruption_error(self, error: Exception) -> bool:
         """Check if error indicates corrupted LanceDB data fragments.
 
@@ -309,13 +320,7 @@ class LanceVectorDatabase:
             self._db = lancedb.connect(str(self.persist_directory))
 
             # Check if table exists, open if it does
-            # list_tables() returns a response object with .tables attribute or is iterable
-            tables_response = self._db.list_tables()
-            table_names = (
-                tables_response.tables
-                if hasattr(tables_response, "tables")
-                else tables_response
-            )
+            table_names = self._list_table_names()
 
             if self.collection_name in table_names:
                 try:
@@ -359,7 +364,10 @@ class LanceVectorDatabase:
             if self._table is None:
                 # Create table with explicit schema (uses instance schema with correct dimension)
                 self._table = self._db.create_table(
-                    self.collection_name, self._write_buffer, schema=self._schema
+                    self.collection_name,
+                    self._write_buffer,
+                    schema=self._schema,
+                    exist_ok=True,
                 )
                 logger.debug(
                     f"Created LanceDB table '{self.collection_name}' with {len(self._write_buffer)} chunks"

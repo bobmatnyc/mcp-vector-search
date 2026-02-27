@@ -254,7 +254,7 @@ class TwoPhaseArchitectureMigration(Migration):
                 # Let LanceDB infer schema from data (handles extra columns gracefully)
                 # Using explicit schema would fail on forward-compatible migrations
                 # when new columns are added to the schema definition
-                db.create_table(self.NEW_CHUNKS_TABLE, chunks_data)
+                db.create_table(self.NEW_CHUNKS_TABLE, chunks_data, mode="overwrite")
                 logger.info(f"✓ Created chunks table with {len(chunks_data):,} rows")
                 metadata["chunks_migrated"] = len(chunks_data)
 
@@ -265,7 +265,7 @@ class TwoPhaseArchitectureMigration(Migration):
                 # 1. Vector dimension varies (384 for MiniLM, 768 for GraphCodeBERT, etc.)
                 # 2. Schema has evolved over time (function_name, class_name, project_name added)
                 # 3. Migration must be forward-compatible with schema changes
-                db.create_table(self.NEW_VECTORS_TABLE, vectors_data)
+                db.create_table(self.NEW_VECTORS_TABLE, vectors_data, mode="overwrite")
                 logger.info(f"✓ Created vectors table with {len(vectors_data):,} rows")
                 metadata["vectors_migrated"] = len(vectors_data)
 
