@@ -241,6 +241,38 @@ class LanceVectorDatabase:
             return tables_response.tables
         return tables_response
 
+    def _idempotent_create_table(
+        self,
+        name: str,
+        data: Any,
+        schema: pa.Schema | None = None,
+        mode: str | None = None,
+    ) -> Any:
+        """Create a LanceDB table idempotently.
+
+        By default uses ``exist_ok=True`` so that creating a table that
+        already exists simply opens the existing table instead of raising.
+        Pass ``mode="overwrite"`` to force-replace an existing table.
+
+        Args:
+            name: Table name
+            data: Initial data (list of dicts or PyArrow table)
+            schema: Optional PyArrow schema
+            mode: Optional LanceDB write mode ("overwrite", "append").
+                  When None, ``exist_ok=True`` is used instead.
+
+        Returns:
+            LanceDB table handle
+        """
+        kwargs: dict[str, Any] = {}
+        if schema is not None:
+            kwargs["schema"] = schema
+        if mode is not None:
+            kwargs["mode"] = mode
+        else:
+            kwargs["exist_ok"] = True
+        return self._db.create_table(name, data, **kwargs)
+
     def _is_corruption_error(self, error: Exception) -> bool:
         """Check if error indicates corrupted LanceDB data fragments.
 
@@ -306,11 +338,15 @@ class LanceVectorDatabase:
             logger.error(f"Failed to recover from corruption: {e}")
             return False
 
-    async def initialize(self) -> None:
+    async def initialize(self, force: bool = False) -> None:
         """Initialize LanceDB database and table.
 
         Creates directory if needed and opens/creates the table.
         LanceDB uses lazy initialization - table is created on first add_chunks.
+
+        Args:
+            force: If True, drop and recreate existing table (destructive).
+                   Use for full re-index operations. Default: False (idempotent open).
         """
         try:
             # Ensure directory exists
@@ -323,20 +359,49 @@ class LanceVectorDatabase:
             table_names = self._list_table_names()
 
             if self.collection_name in table_names:
-                try:
-                    self._table = self._db.open_table(self.collection_name)
-                    logger.debug(
-                        f"LanceDB table '{self.collection_name}' opened at {self.persist_directory}"
+                if force:
+                    # force=True: drop and recreate for full re-index
+                    logger.info(
+                        f"force=True: dropping table '{self.collection_name}' for recreation."
                     )
-                except Exception as e:
-                    # Check for corruption and auto-recover
-                    if self._handle_corrupt_table(e, self.collection_name):
-                        self._table = None
-                        logger.info(
-                            f"Table '{self.collection_name}' corrupted and deleted. Will be recreated on next index."
+                    try:
+                        self._db.drop_table(self.collection_name)
+                    except Exception as drop_err:
+                        logger.warning(f"Failed to drop table (non-fatal): {drop_err}")
+                    self._table = None
+                    logger.debug(
+                        f"LanceDB table '{self.collection_name}' will be recreated on first add"
+                    )
+                else:
+                    try:
+                        self._table = self._db.open_table(self.collection_name)
+                        logger.debug(
+                            f"LanceDB table '{self.collection_name}' opened at {self.persist_directory}"
                         )
-                    else:
-                        raise
+                    except Exception as e:
+                        # Check for stale table entry (listed but not actually openable)
+                        if (
+                            "not found" in str(e).lower()
+                            and "fragment" not in str(e).lower()
+                        ):
+                            logger.warning(
+                                f"Stale table entry '{self.collection_name}' detected "
+                                f"(listed but not openable: {e}). "
+                                f"Cleaning up for fresh creation."
+                            )
+                            try:
+                                self._db.drop_table(self.collection_name)
+                            except Exception:
+                                pass
+                            self._table = None
+                        # Check for corruption and auto-recover
+                        elif self._handle_corrupt_table(e, self.collection_name):
+                            self._table = None
+                            logger.info(
+                                f"Table '{self.collection_name}' corrupted and deleted. Will be recreated on next index."
+                            )
+                        else:
+                            raise
             else:
                 # Table will be created on first add_chunks
                 self._table = None
@@ -362,12 +427,13 @@ class LanceVectorDatabase:
         try:
             # Create or append to table with buffered records
             if self._table is None:
-                # Create table with explicit schema (uses instance schema with correct dimension)
-                self._table = self._db.create_table(
+                # Idempotent create: exist_ok=True opens existing table instead of raising.
+                # Uses _idempotent_create_table helper for consistent behaviour with
+                # chunks_backend and vectors_backend.
+                self._table = self._idempotent_create_table(
                     self.collection_name,
                     self._write_buffer,
                     schema=self._schema,
-                    exist_ok=True,
                 )
                 logger.debug(
                     f"Created LanceDB table '{self.collection_name}' with {len(self._write_buffer)} chunks"

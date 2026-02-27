@@ -320,8 +320,12 @@ class VectorsBackend:
 
         return deleted_count
 
-    async def initialize(self) -> None:
+    async def initialize(self, force: bool = False) -> None:
         """Create table if not exists with proper schema and vector index.
+
+        Args:
+            force: If True, drop and recreate existing table (destructive).
+                   Use for full re-index operations. Default: False (idempotent open).
 
         Raises:
             DatabaseInitializationError: If initialization fails
@@ -338,35 +342,47 @@ class VectorsBackend:
             table_names = self._list_table_names()
 
             if self.table_name in table_names:
-                try:
-                    self._table = self._db.open_table(self.table_name)
-                    logger.debug(
-                        f"Opened existing vectors table '{self.table_name}' at {self.db_path}"
+                if force:
+                    # force=True: drop and recreate for full re-index
+                    logger.info(
+                        f"force=True: dropping vectors table '{self.table_name}' for recreation."
                     )
-                except Exception as e:
-                    # Check for stale table entry (listed but not actually openable)
-                    if (
-                        "not found" in str(e).lower()
-                        and "fragment" not in str(e).lower()
-                    ):
-                        logger.warning(
-                            f"Stale table entry '{self.table_name}' detected "
-                            f"(listed but not openable: {e}). "
-                            f"Cleaning up for fresh creation."
+                    try:
+                        self._db.drop_table(self.table_name)
+                    except Exception as drop_err:
+                        logger.warning(f"Failed to drop table (non-fatal): {drop_err}")
+                    self._table = None
+                    logger.debug("Vectors table will be recreated on first write")
+                else:
+                    try:
+                        self._table = self._db.open_table(self.table_name)
+                        logger.debug(
+                            f"Opened existing vectors table '{self.table_name}' at {self.db_path}"
                         )
-                        try:
-                            self._db.drop_table(self.table_name)
-                        except Exception:
-                            pass
-                        self._table = None
-                    # Check for corruption and auto-recover
-                    elif self._handle_corrupt_table(e, self.table_name):
-                        self._table = None
-                        logger.info(
-                            f"Vectors table '{self.table_name}' corrupted and deleted. Will be recreated on next index."
-                        )
-                    else:
-                        raise
+                    except Exception as e:
+                        # Check for stale table entry (listed but not actually openable)
+                        if (
+                            "not found" in str(e).lower()
+                            and "fragment" not in str(e).lower()
+                        ):
+                            logger.warning(
+                                f"Stale table entry '{self.table_name}' detected "
+                                f"(listed but not openable: {e}). "
+                                f"Cleaning up for fresh creation."
+                            )
+                            try:
+                                self._db.drop_table(self.table_name)
+                            except Exception:
+                                pass
+                            self._table = None
+                        # Check for corruption and auto-recover
+                        elif self._handle_corrupt_table(e, self.table_name):
+                            self._table = None
+                            logger.info(
+                                f"Vectors table '{self.table_name}' corrupted and deleted. Will be recreated on next index."
+                            )
+                        else:
+                            raise
             else:
                 # Table will be created on first add_vectors with schema
                 self._table = None
