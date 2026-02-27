@@ -31,7 +31,12 @@ from .chunks_backend import ChunksBackend, compute_file_hash
 from .context_builder import build_contextual_text
 from .database import VectorDatabase
 from .directory_index import DirectoryIndex
-from .exceptions import DatabaseError, DatabaseInitializationError, ParsingError
+from .exceptions import (
+    DatabaseError,
+    DatabaseInitializationError,
+    IndexingError,
+    ParsingError,
+)
 from .file_discovery import FileDiscovery
 from .index_metadata import IndexMetadata
 from .memory_monitor import MemoryMonitor
@@ -599,9 +604,11 @@ class SemanticIndexer:
 
         if not files_to_index:
             logger.info("All files are up to date")
-            # Still build BM25 index if it doesn't exist
-            if self.config and self.config.index_path:
-                bm25_path = self.config.index_path / "bm25_index.pkl"
+            # Still build BM25 index if it doesn't exist.
+            # Use self._mcp_dir (respects index_path) instead of config.index_path
+            # so that a separate index_path is honoured here too.
+            if self.config:
+                bm25_path = self._mcp_dir / "bm25_index.pkl"
                 if not bm25_path.exists():
                     logger.info(f"BM25 index not found at {bm25_path}, building now...")
                     await self._build_bm25_index()
@@ -2480,7 +2487,39 @@ class SemanticIndexer:
             - Producer: Chunks files in batches, puts chunks on queue
             - Consumer: Embeds chunks from queue concurrently
             - Result: GPU doesn't sit idle during parsing phase (30-50% speedup)
+
+        Raises:
+            IndexingError: If an unexpected error occurs during indexing.
+                           Note: ``DatabaseInitializationError`` is handled internally
+                           (logged and returns 0) to allow graceful degradation.
         """
+        try:
+            return await self._index_project_impl(
+                force_reindex=force_reindex,
+                show_progress=show_progress,
+                skip_relationships=skip_relationships,
+                phase=phase,
+                metrics_json=metrics_json,
+                pipeline=pipeline,
+            )
+        except IndexingError:
+            raise
+        except Exception as e:
+            raise IndexingError(
+                f"Indexing failed for project {self.project_root}: {e}",
+                context={"project_root": str(self.project_root), "phase": phase},
+            ) from e
+
+    async def _index_project_impl(
+        self,
+        force_reindex: bool = False,
+        show_progress: bool = True,
+        skip_relationships: bool = False,
+        phase: str = "all",
+        metrics_json: bool = False,
+        pipeline: bool = True,
+    ) -> int:
+        """Internal implementation of index_project (no public exception wrapping)."""
         logger.info(
             f"Starting indexing of project: {self.project_root} (phase: {phase})"
         )
@@ -3671,8 +3710,10 @@ class SemanticIndexer:
             bm25_backend = BM25Backend()
             bm25_backend.build_index(chunks_for_bm25)
 
-            # Save to disk
-            bm25_path = self.config.index_path / "bm25_index.pkl"
+            # Save to disk.
+            # Use self._mcp_dir (respects index_path) instead of config.index_path
+            # so that a separate index_path is honoured here too.
+            bm25_path = self._mcp_dir / "bm25_index.pkl"
             bm25_backend.save(bm25_path)
 
             stats = bm25_backend.get_stats()

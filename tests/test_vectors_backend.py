@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from src.mcp_vector_search.core.exceptions import (
+from mcp_vector_search.core.exceptions import (
     DatabaseError,
     DatabaseNotInitializedError,
     SearchError,
 )
-from src.mcp_vector_search.core.vectors_backend import VectorsBackend
+from mcp_vector_search.core.vectors_backend import VectorsBackend
 
 
 @pytest.fixture
@@ -303,7 +303,7 @@ class TestVectorSearch:
         """Test that search raises SearchError when table doesn't exist."""
         query_vector = [0.1] * 384
 
-        from src.mcp_vector_search.core.exceptions import SearchError
+        from mcp_vector_search.core.exceptions import SearchError
 
         with pytest.raises(SearchError) as exc_info:
             await vectors_backend.search(query_vector, limit=10)
@@ -810,3 +810,62 @@ async def test_schema_evolution_during_table_creation(tmp_path: Path):
     )
 
     await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_initialize_idempotent_no_table_exists_error(
+    tmp_path: Path, sample_chunks_with_vectors
+):
+    """Test that calling initialize() twice does NOT raise 'Table already exists'."""
+    db_path = tmp_path / "test_db"
+    backend = VectorsBackend(db_path)
+    await backend.initialize()
+    await backend.add_vectors(sample_chunks_with_vectors)
+    await backend.close()
+
+    # Second init on the same path must open the existing table without error
+    backend2 = VectorsBackend(db_path)
+    await backend2.initialize()  # Must NOT raise "Table already exists"
+    stats = await backend2.get_stats()
+    assert stats["total"] == 3
+    await backend2.close()
+
+
+@pytest.mark.asyncio
+async def test_initialize_force_drops_existing_table(
+    tmp_path: Path, sample_chunks_with_vectors
+):
+    """Test that initialize(force=True) drops and recreates the existing table."""
+    db_path = tmp_path / "test_db"
+    backend = VectorsBackend(db_path)
+    await backend.initialize()
+    await backend.add_vectors(sample_chunks_with_vectors)
+    await backend.close()
+
+    # force=True must drop the table
+    backend2 = VectorsBackend(db_path)
+    await backend2.initialize(force=True)
+    # Table dropped — _table is None until first write
+    assert backend2._table is None
+    stats = await backend2.get_stats()
+    assert stats["total"] == 0
+    await backend2.close()
+
+
+@pytest.mark.asyncio
+async def test_initialize_force_false_preserves_existing_data(
+    tmp_path: Path, sample_chunks_with_vectors
+):
+    """Test that initialize(force=False) preserves existing table data."""
+    db_path = tmp_path / "test_db"
+    backend = VectorsBackend(db_path)
+    await backend.initialize()
+    await backend.add_vectors(sample_chunks_with_vectors)
+    await backend.close()
+
+    # force=False (default) must open existing table, not drop it
+    backend2 = VectorsBackend(db_path)
+    await backend2.initialize(force=False)
+    stats = await backend2.get_stats()
+    assert stats["total"] == 3
+    await backend2.close()

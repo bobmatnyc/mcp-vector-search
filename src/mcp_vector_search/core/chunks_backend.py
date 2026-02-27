@@ -178,8 +178,12 @@ class ChunksBackend:
             kwargs["exist_ok"] = True
         return self._db.create_table(name, data, **kwargs)
 
-    async def initialize(self) -> None:
+    async def initialize(self, force: bool = False) -> None:
         """Create table if not exists with proper schema.
+
+        Args:
+            force: If True, drop and recreate existing table (destructive).
+                   Use for full re-index operations. Default: False (idempotent open).
 
         Raises:
             DatabaseInitializationError: If initialization fails
@@ -195,38 +199,54 @@ class ChunksBackend:
             table_names = self._list_table_names()
 
             if self.TABLE_NAME in table_names:
-                try:
-                    self._table = self._db.open_table(self.TABLE_NAME)
-
-                    # Validate schema compatibility (handles atomic rebuild stale dirs + schema upgrades)
-                    existing_fields = set(self._table.schema.names)
-                    required_fields = {field.name for field in CHUNKS_SCHEMA}
-
-                    if not required_fields.issubset(existing_fields):
-                        missing = required_fields - existing_fields
-                        logger.warning(
-                            f"Schema mismatch: missing fields {missing}. "
-                            f"Recreating table with current schema."
-                        )
+                if force:
+                    # force=True: drop and recreate for full re-index
+                    logger.info(
+                        f"force=True: dropping chunks table '{self.TABLE_NAME}' for recreation."
+                    )
+                    try:
                         self._db.drop_table(self.TABLE_NAME)
-                        self._table = None
-                        logger.debug("Table dropped, will be recreated on first write")
-                    else:
-                        logger.debug(f"Opened existing chunks table at {self.db_path}")
-                except Exception as e:
-                    if "not found" in str(e).lower():
-                        logger.warning(
-                            f"Stale table entry '{self.TABLE_NAME}' detected "
-                            f"(listed but not openable: {e}). "
-                            f"Cleaning up for fresh creation."
-                        )
-                        try:
+                    except Exception as drop_err:
+                        logger.warning(f"Failed to drop table (non-fatal): {drop_err}")
+                    self._table = None
+                    logger.debug("Chunks table will be recreated on first write")
+                else:
+                    try:
+                        self._table = self._db.open_table(self.TABLE_NAME)
+
+                        # Validate schema compatibility (handles atomic rebuild stale dirs + schema upgrades)
+                        existing_fields = set(self._table.schema.names)
+                        required_fields = {field.name for field in CHUNKS_SCHEMA}
+
+                        if not required_fields.issubset(existing_fields):
+                            missing = required_fields - existing_fields
+                            logger.warning(
+                                f"Schema mismatch: missing fields {missing}. "
+                                f"Recreating table with current schema."
+                            )
                             self._db.drop_table(self.TABLE_NAME)
-                        except Exception:
-                            pass
-                        self._table = None
-                    else:
-                        raise
+                            self._table = None
+                            logger.debug(
+                                "Table dropped, will be recreated on first write"
+                            )
+                        else:
+                            logger.debug(
+                                f"Opened existing chunks table at {self.db_path}"
+                            )
+                    except Exception as e:
+                        if "not found" in str(e).lower():
+                            logger.warning(
+                                f"Stale table entry '{self.TABLE_NAME}' detected "
+                                f"(listed but not openable: {e}). "
+                                f"Cleaning up for fresh creation."
+                            )
+                            try:
+                                self._db.drop_table(self.TABLE_NAME)
+                            except Exception:
+                                pass
+                            self._table = None
+                        else:
+                            raise
             else:
                 # Table will be created on first add_chunks with schema
                 self._table = None

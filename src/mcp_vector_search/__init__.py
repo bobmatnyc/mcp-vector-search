@@ -31,7 +31,11 @@ from .core.exceptions import (  # noqa: E402
     QueryExpansionError,
     SearchError,
 )
+from .core.indexer import HealthStatus  # noqa: E402
 from .core.models import ContentChunk  # noqa: E402
+
+# Convenience alias: ``mcp_vector_search.IndexError`` without shadowing built-in
+IndexError = IndexingError  # noqa: A001
 
 __all__ = [
     # Public typed hierarchy (Issue #110)
@@ -40,6 +44,7 @@ __all__ = [
     "SearchError",
     "QueryExpansionError",
     "IndexingError",
+    "IndexError",  # alias for IndexingError
     "ConfigError",
     "ConfigurationError",
     "InitializationError",
@@ -54,6 +59,7 @@ __all__ = [
     "ProjectNotFoundError",
     # Data types
     "ContentChunk",
+    "HealthStatus",
     # Version info
     "__version__",
     "__build__",

@@ -467,6 +467,82 @@ class TestSemanticIndexer:
         assert len(multi_files) >= 2  # At least test.py and test.js
         assert all(f.suffix in [".py", ".js"] for f in multi_files)
 
+    def test_index_path_defaults_to_project_root(self, temp_project_dir):
+        """When index_path is not given, index data lives under project_root."""
+        indexer = SemanticIndexer(
+            database=Mock(),
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
+        )
+
+        assert indexer.index_path == temp_project_dir
+        assert indexer._mcp_dir == temp_project_dir / ".mcp-vector-search"
+
+    def test_index_path_explicit_override(self, temp_project_dir, tmp_path):
+        """When index_path is provided, index data lives under that directory."""
+        separate_index = tmp_path / "my_index"
+
+        indexer = SemanticIndexer(
+            database=Mock(),
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
+            index_path=str(separate_index),
+        )
+
+        assert indexer.index_path == separate_index
+        assert indexer._mcp_dir == separate_index / ".mcp-vector-search"
+        # project_root is unchanged - still used for finding source files
+        assert indexer.project_root == temp_project_dir
+
+    def test_index_path_env_var(self, temp_project_dir, tmp_path, monkeypatch):
+        """INDEX_PATH env var is used when no explicit index_path is given."""
+        env_index = tmp_path / "env_index"
+        monkeypatch.setenv("INDEX_PATH", str(env_index))
+
+        indexer = SemanticIndexer(
+            database=Mock(),
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
+        )
+
+        assert indexer.index_path == env_index
+        assert indexer._mcp_dir == env_index / ".mcp-vector-search"
+        # project_root is unchanged
+        assert indexer.project_root == temp_project_dir
+
+    def test_index_path_explicit_overrides_env_var(
+        self, temp_project_dir, tmp_path, monkeypatch
+    ):
+        """Explicit index_path takes priority over INDEX_PATH env var."""
+        env_index = tmp_path / "env_index"
+        explicit_index = tmp_path / "explicit_index"
+        monkeypatch.setenv("INDEX_PATH", str(env_index))
+
+        indexer = SemanticIndexer(
+            database=Mock(),
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
+            index_path=str(explicit_index),
+        )
+
+        assert indexer.index_path == explicit_index
+        assert indexer._mcp_dir == explicit_index / ".mcp-vector-search"
+
+    def test_backends_use_index_path(self, temp_project_dir, tmp_path):
+        """ChunksBackend and VectorsBackend are created under index_path, not project_root."""
+        separate_index = tmp_path / "external_index"
+
+        indexer = SemanticIndexer(
+            database=Mock(),
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
+            index_path=str(separate_index),
+        )
+
+        expected_lance = separate_index / ".mcp-vector-search" / "lance"
+        assert indexer.chunks_backend.db_path == expected_lance
+        assert indexer.vectors_backend.db_path == expected_lance
+
     @pytest.mark.asyncio
     async def test_metadata_consistency(self, mock_database, temp_project_dir):
         """Test metadata consistency after operations."""

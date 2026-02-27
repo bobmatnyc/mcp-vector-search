@@ -531,3 +531,57 @@ async def test_incremental_indexing_workflow(temp_db_path):
     assert stats["total"] == 1
 
     await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_initialize_idempotent_no_table_exists_error(temp_db_path, sample_chunks):
+    """Test that calling initialize() twice does NOT raise 'Table already exists'."""
+    backend = ChunksBackend(temp_db_path)
+
+    # First init then add chunks to create the table
+    await backend.initialize()
+    await backend.add_chunks(sample_chunks, "hash1")
+    await backend.close()
+
+    # Second init on the same path must open the existing table without error
+    backend2 = ChunksBackend(temp_db_path)
+    await backend2.initialize()  # Must NOT raise "Table already exists"
+    stats = await backend2.get_stats()
+    assert stats["total"] == 2
+    await backend2.close()
+
+
+@pytest.mark.asyncio
+async def test_initialize_force_drops_existing_table(temp_db_path, sample_chunks):
+    """Test that initialize(force=True) drops and recreates the existing table."""
+    backend = ChunksBackend(temp_db_path)
+    await backend.initialize()
+    await backend.add_chunks(sample_chunks, "hash1")
+    await backend.close()
+
+    # force=True must drop the table (no data after reopen)
+    backend2 = ChunksBackend(temp_db_path)
+    await backend2.initialize(force=True)
+    # Table dropped — _table is None until first write
+    assert backend2._table is None
+    stats = await backend2.get_stats()
+    assert stats["total"] == 0
+    await backend2.close()
+
+
+@pytest.mark.asyncio
+async def test_initialize_force_false_preserves_existing_data(
+    temp_db_path, sample_chunks
+):
+    """Test that initialize(force=False) preserves existing table data."""
+    backend = ChunksBackend(temp_db_path)
+    await backend.initialize()
+    await backend.add_chunks(sample_chunks, "hash1")
+    await backend.close()
+
+    # force=False (default) must open existing table, not drop it
+    backend2 = ChunksBackend(temp_db_path)
+    await backend2.initialize(force=False)
+    stats = await backend2.get_stats()
+    assert stats["total"] == 2
+    await backend2.close()

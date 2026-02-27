@@ -1,6 +1,7 @@
 """Component factory for creating commonly used objects."""
 
 import functools
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,35 @@ from .project import ProjectManager
 from .search import SemanticSearchEngine
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+def resolve_index_path(
+    config: ProjectConfig,
+    index_path: str | Path | None = None,
+) -> Path:
+    """Resolve the effective index root directory.
+
+    Priority order:
+    1. Explicit ``index_path`` argument
+    2. ``INDEX_PATH`` environment variable
+    3. ``config.index_path`` (project default, usually ``<project_root>/.mcp-vector-search``)
+
+    Args:
+        config: Project configuration (provides the fallback path).
+        index_path: Optional caller-supplied override.
+
+    Returns:
+        Resolved absolute path to the ``.mcp-vector-search`` parent directory.
+        The caller is responsible for appending ``/ ".mcp-vector-search"`` or
+        sub-paths like ``/ ".mcp-vector-search" / "lance"`` as required.
+    """
+    if index_path:
+        return Path(index_path).resolve()
+    env_path = os.environ.get("INDEX_PATH")
+    if env_path:
+        return Path(env_path).resolve()
+    # config.index_path already points to the .mcp-vector-search directory
+    return config.index_path
 
 
 @dataclass
@@ -63,6 +93,7 @@ class ComponentFactory:
         embedding_function: CodeBERTEmbeddingFunction,
         use_pooling: bool = True,  # Kept for backward compatibility (ignored)
         backend: str | None = None,  # Kept for backward compatibility (ignored)
+        index_path: str | Path | None = None,
         **pool_kwargs,
     ) -> VectorDatabase:
         """Create vector database (LanceDB).
@@ -72,15 +103,30 @@ class ComponentFactory:
             embedding_function: Embedding function
             use_pooling: DEPRECATED - kept for backward compatibility
             backend: DEPRECATED - kept for backward compatibility
+            index_path: Optional separate directory for index data.
+                Overrides config.index_path and INDEX_PATH env var.
+                When provided, the database is placed at
+                ``<index_path>/.mcp-vector-search/lance``.
             **pool_kwargs: DEPRECATED - kept for backward compatibility
 
         Returns:
             LanceDB vector database instance
         """
-        # Always use LanceDB backend
+        # Resolve the effective index root (honours INDEX_PATH env var and explicit override)
+        effective_root = resolve_index_path(config, index_path)
+        # config.index_path already IS the .mcp-vector-search directory, so when
+        # resolve_index_path returns config.index_path we append "lance" directly.
+        # When it returns an external path (INDEX_PATH / explicit arg) we must also
+        # descend into .mcp-vector-search/lance to match SemanticIndexer._mcp_dir layout.
+        if effective_root == config.index_path:
+            lance_path = effective_root / "lance"
+        else:
+            lance_path = effective_root / ".mcp-vector-search" / "lance"
+            logger.debug(f"Using separate lance index path: {lance_path}")
+
         logger.debug("Using LanceDB backend")
         return LanceVectorDatabase(
-            persist_directory=config.index_path / "lance",
+            persist_directory=lance_path,
             embedding_function=embedding_function,
             collection_name="chunks",  # Standard table name
         )
@@ -148,6 +194,7 @@ class ComponentFactory:
         include_auto_indexer: bool = False,
         similarity_threshold: float = 0.3,
         auto_reindex_threshold: int = 5,
+        index_path: str | Path | None = None,
         **pool_kwargs,
     ) -> ComponentBundle:
         """Create standard set of components for CLI commands.
@@ -159,6 +206,8 @@ class ComponentFactory:
             include_auto_indexer: Whether to create auto-indexer
             similarity_threshold: Default similarity threshold for search
             auto_reindex_threshold: Max files to auto-reindex
+            index_path: Optional separate directory for .mcp-vector-search/ index data.
+                Falls back to INDEX_PATH env var, then config.index_path.
             **pool_kwargs: DEPRECATED - kept for backward compatibility
 
         Returns:
@@ -172,19 +221,21 @@ class ComponentFactory:
             config.embedding_model
         )
 
-        # Create database
+        # Create database (respects index_path / INDEX_PATH env var)
         database = ComponentFactory.create_database(
             config=config,
             embedding_function=embedding_function,
             use_pooling=use_pooling,
+            index_path=index_path,
             **pool_kwargs,
         )
 
-        # Create indexer
+        # Create indexer (respects index_path / INDEX_PATH env var)
         indexer = ComponentFactory.create_indexer(
             database=database,
             project_root=project_root,
             config=config,
+            index_path=str(index_path) if index_path else None,
         )
 
         # Create optional components
