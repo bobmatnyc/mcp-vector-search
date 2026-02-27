@@ -10,6 +10,7 @@ for semantic search. Enables:
 
 import platform
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -1236,17 +1237,38 @@ class VectorsBackend:
             # Rule of thumb from LanceDB docs: good recall vs. latency balance
             num_partitions = min(512, max(16, int(math.sqrt(row_count))))
 
+            # Cap partitions so each has ≥4096 rows for clean KMeans training.
+            # Lance warns "dataset is too small" when partition size < 4096,
+            # producing ~30 lines of noisy WARN output per index build.
+            max_for_clean_kmeans = max(1, row_count // 4096)
+            if num_partitions > max_for_clean_kmeans:
+                num_partitions = max_for_clean_kmeans
+
             logger.info(
                 f"Creating IVF_SQ vector index: {row_count:,} rows, {vector_dim}d, "
                 f"{num_partitions} partitions (int8 scalar quantization)"
             )
 
-            self._table.create_index(
-                metric="cosine",
-                num_partitions=num_partitions,
-                index_type="IVF_SQ",
-                replace=True,
-            )
+            # Suppress Rust-level KMeans "empty cluster" warnings from Lance.
+            # These are informational (index still works) but produce noisy
+            # stderr output that bypasses Python logging.
+            import os as _os
+
+            _stderr_fd = sys.stderr.fileno()
+            _saved = _os.dup(_stderr_fd)
+            _devnull = _os.open(_os.devnull, _os.O_WRONLY)
+            _os.dup2(_devnull, _stderr_fd)
+            try:
+                self._table.create_index(
+                    metric="cosine",
+                    num_partitions=num_partitions,
+                    index_type="IVF_SQ",
+                    replace=True,
+                )
+            finally:
+                _os.dup2(_saved, _stderr_fd)
+                _os.close(_saved)
+                _os.close(_devnull)
 
             logger.info("Vector index created successfully")
 
