@@ -642,93 +642,31 @@ class SemanticIndexer:
             phase_start_time = time.time()
 
             with metrics_tracker.phase("parsing") as parsing_metrics:
-                # Batch delete optimization (like _phase1_chunk_files)
+                # files_to_index was already filtered by the outer _index_with_pipeline
+                # scope (get_all_indexed_file_hashes + _detect_file_moves + change
+                # detection loop).  Build files_to_process directly without redoing
+                # any of that work — avoids duplicate "Scanning files" progress bars
+                # and redundant DB round-trips.
                 files_to_delete = []
                 files_to_process = []
 
-                # OPTIMIZATION: Load all indexed file hashes ONCE for O(1) per-file lookup
-                indexed_file_hashes = {}
-                if not force_reindex:
-                    logger.info("Loading indexed file hashes for change detection...")
-                    indexed_file_hashes = (
-                        await self.chunks_backend.get_all_indexed_file_hashes()
-                    )
-                    logger.info(
-                        f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
-                    )
-
-                # Detect file moves/renames — update metadata instead of re-chunking
-                if not force_reindex:
-                    detected_moves, _moved_old_paths, file_hash_cache = (
-                        self._detect_file_moves(files_to_index, indexed_file_hashes)
-                    )
-                    if detected_moves:
-                        logger.info(
-                            f"Detected {len(detected_moves)} file move(s), updating metadata..."
-                        )
-                        for old_path, new_path, _file_hash in detected_moves:
-                            chunks_updated = await self.chunks_backend.update_file_path(
-                                old_path, new_path
-                            )
-                            vectors_updated = (
-                                await self.vectors_backend.update_file_path(
-                                    old_path, new_path
-                                )
-                            )
-                            logger.info(
-                                f"  Moved: {old_path} -> {new_path} "
-                                f"({chunks_updated} chunks, {vectors_updated} vectors)"
-                            )
-                        # Reload so change detection sees updated paths
-                        indexed_file_hashes = (
-                            await self.chunks_backend.get_all_indexed_file_hashes()
-                        )
-                else:
-                    file_hash_cache: dict[Path, str] = {}
-
-                # Compute file hashes
-                if force_reindex:
-                    logger.info("Force mode enabled, skipping file hash computation...")
-                else:
-                    logger.info(
-                        f"Computing file hashes for change detection ({len(files_to_index)} files)..."
-                    )
-
-                for idx, file_path in enumerate(files_to_index):
+                for file_path in files_to_index:
                     try:
-                        if idx > 0 and idx % 1000 == 0 and not self.progress_tracker:
-                            logger.info(
-                                f"Computing file hashes: {idx}/{len(files_to_index)}"
-                            )
-
                         if force_reindex:
                             file_hash = ""
                         else:
+                            # Reuse hash already computed by the outer scope
                             file_hash = file_hash_cache.get(
                                 file_path
                             ) or compute_file_hash(file_path)
 
                         rel_path = str(file_path.relative_to(self.project_root))
-
-                        # OPTIMIZATION: O(1) dict lookup instead of per-file database query
-                        if not force_reindex:
-                            stored_hash = indexed_file_hashes.get(rel_path)
-                            if stored_hash is not None and stored_hash == file_hash:
-                                logger.debug(f"Skipping unchanged file: {rel_path}")
-                                continue
-
                         files_to_delete.append(rel_path)
                         files_to_process.append((file_path, rel_path, file_hash))
 
                     except Exception as e:
                         logger.error(f"Failed to check file {file_path}: {e}")
                         continue
-
-                if not force_reindex:
-                    logger.info(
-                        f"File hash computation complete: {len(files_to_process)} files changed, "
-                        f"{len(files_to_index) - len(files_to_process)} unchanged"
-                    )
 
                 # Batch delete old chunks
                 # WORKAROUND: Skip delete on macOS to avoid SIGBUS crash
@@ -1162,7 +1100,7 @@ class SemanticIndexer:
                 file_hash = compute_file_hash(file_path)
                 current_hash_to_paths.setdefault(file_hash, set()).add(rel_path)
                 file_hash_cache[file_path] = file_hash
-            except Exception:  # nosec B112  # noqa: B112
+            except Exception:  # nosec B112
                 continue
 
             # Progress feedback during hashing
@@ -1215,7 +1153,10 @@ class SemanticIndexer:
         return moves, moved_old_paths, file_hash_cache
 
     async def _phase1_chunk_files(
-        self, files: list[Path], force: bool = False
+        self,
+        files: list[Path],
+        force: bool = False,
+        file_hash_cache: dict[Path, str] | None = None,
     ) -> tuple[int, int]:
         """Phase 1: Parse and chunk files, store to chunks.lance.
 
@@ -1225,6 +1166,13 @@ class SemanticIndexer:
         Args:
             files: Files to process
             force: If True, re-chunk even if unchanged
+            file_hash_cache: Pre-computed file hashes from the caller.  When
+                provided the caller has ALREADY performed change detection and
+                ``files`` contains only files that need processing — skip the
+                redundant ``get_all_indexed_file_hashes`` / ``_detect_file_moves``
+                / change-detection loop and treat every entry in ``files`` as
+                requiring processing.  When None (default) the full change
+                detection is run (backward-compatible standalone behaviour).
 
         Returns:
             Tuple of (files_processed, chunks_created)
@@ -1248,91 +1196,114 @@ class SemanticIndexer:
             files_to_delete = []
             files_to_process = []
 
-            # OPTIMIZATION: Load all indexed file hashes ONCE for O(1) per-file lookup
-            # This replaces 39K per-file database queries with a single scan
-            indexed_file_hashes = {}
-            if not force:
-                logger.info("Loading indexed file hashes for change detection...")
-                indexed_file_hashes = (
-                    await self.chunks_backend.get_all_indexed_file_hashes()
-                )
-                logger.info(
-                    f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
-                )
+            # When file_hash_cache is provided the caller already ran change
+            # detection — every file in `files` needs processing.  Skip the
+            # redundant get_all_indexed_file_hashes / _detect_file_moves /
+            # per-file hash loop to avoid duplicate "Scanning files" bars and
+            # wasted DB round-trips.
+            caller_prefiltered = file_hash_cache is not None
 
-            # Detect file moves/renames — update metadata instead of re-chunking
-            if not force:
-                detected_moves, _moved_old_paths, file_hash_cache = (
-                    self._detect_file_moves(files, indexed_file_hashes)
-                )
-                if detected_moves:
-                    logger.info(
-                        f"Detected {len(detected_moves)} file move(s), updating metadata..."
-                    )
-                    for old_path, new_path, _file_hash in detected_moves:
-                        chunks_updated = await self.chunks_backend.update_file_path(
-                            old_path, new_path
-                        )
-                        vectors_updated = await self.vectors_backend.update_file_path(
-                            old_path, new_path
-                        )
-                        logger.info(
-                            f"  Moved: {old_path} -> {new_path} "
-                            f"({chunks_updated} chunks, {vectors_updated} vectors)"
-                        )
-                    # Reload so change detection sees updated paths
+            if caller_prefiltered:
+                # Caller has already filtered; build files_to_process directly.
+                _fhc: dict[Path, str] = file_hash_cache  # type: ignore[assignment]
+                for file_path in files:
+                    try:
+                        file_hash = _fhc.get(file_path) or compute_file_hash(file_path)
+                        rel_path = str(file_path.relative_to(self.project_root))
+                        files_to_delete.append(rel_path)
+                        files_to_process.append((file_path, rel_path, file_hash))
+                    except Exception as e:
+                        logger.error(f"Failed to check file {file_path}: {e}")
+                        continue
+            else:
+                # Standalone call: run full change detection (backward-compatible).
+
+                # OPTIMIZATION: Load all indexed file hashes ONCE for O(1) per-file lookup
+                # This replaces 39K per-file database queries with a single scan
+                indexed_file_hashes: dict[str, str] = {}
+                _local_fhc: dict[Path, str] = {}
+                if not force:
+                    logger.info("Loading indexed file hashes for change detection...")
                     indexed_file_hashes = (
                         await self.chunks_backend.get_all_indexed_file_hashes()
                     )
-            else:
-                file_hash_cache: dict[Path, str] = {}
+                    logger.info(
+                        f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
+                    )
 
-            # Log start of hash computation phase
-            if force:
-                logger.info("Force mode enabled, skipping file hash computation...")
-            else:
-                logger.info(
-                    f"Computing file hashes for change detection ({len(files)} files)..."
-                )
-
-            for idx, file_path in enumerate(files):
-                try:
-                    # Log progress every 1000 files (fallback when no progress tracker)
-                    if idx > 0 and idx % 1000 == 0 and not self.progress_tracker:
-                        logger.info(f"Computing file hashes: {idx}/{len(files)}")
-
-                    # Skip hash computation when force=True (all files will be reindexed)
-                    if force:
-                        file_hash = ""  # Empty hash when forcing full reindex
-                    else:
-                        # Reuse hash from move-detection cache to avoid re-hashing
-                        file_hash = file_hash_cache.get(file_path) or compute_file_hash(
-                            file_path
+                # Detect file moves/renames — update metadata instead of re-chunking
+                if not force:
+                    detected_moves, _moved_old_paths, _local_fhc = (
+                        self._detect_file_moves(files, indexed_file_hashes)
+                    )
+                    if detected_moves:
+                        logger.info(
+                            f"Detected {len(detected_moves)} file move(s), updating metadata..."
+                        )
+                        for old_path, new_path, _file_hash in detected_moves:
+                            chunks_updated = await self.chunks_backend.update_file_path(
+                                old_path, new_path
+                            )
+                            vectors_updated = (
+                                await self.vectors_backend.update_file_path(
+                                    old_path, new_path
+                                )
+                            )
+                            logger.info(
+                                f"  Moved: {old_path} -> {new_path} "
+                                f"({chunks_updated} chunks, {vectors_updated} vectors)"
+                            )
+                        # Reload so change detection sees updated paths
+                        indexed_file_hashes = (
+                            await self.chunks_backend.get_all_indexed_file_hashes()
                         )
 
-                    rel_path = str(file_path.relative_to(self.project_root))
+                # Log start of hash computation phase
+                if force:
+                    logger.info("Force mode enabled, skipping file hash computation...")
+                else:
+                    logger.info(
+                        f"Computing file hashes for change detection ({len(files)} files)..."
+                    )
 
-                    # Check if file changed (skip if unchanged and not forcing)
-                    # OPTIMIZATION: O(1) dict lookup instead of per-file database query
-                    if not force:
-                        stored_hash = indexed_file_hashes.get(rel_path)
-                        if stored_hash is not None and stored_hash == file_hash:
-                            logger.debug(f"Skipping unchanged file: {rel_path}")
-                            continue
+                for idx, file_path in enumerate(files):
+                    try:
+                        # Log progress every 1000 files (fallback when no progress tracker)
+                        if idx > 0 and idx % 1000 == 0 and not self.progress_tracker:
+                            logger.info(f"Computing file hashes: {idx}/{len(files)}")
 
-                    # Mark file for deletion and processing
-                    files_to_delete.append(rel_path)
-                    files_to_process.append((file_path, rel_path, file_hash))
+                        # Skip hash computation when force=True (all files will be reindexed)
+                        if force:
+                            file_hash = ""  # Empty hash when forcing full reindex
+                        else:
+                            # Reuse hash from move-detection cache to avoid re-hashing
+                            file_hash = _local_fhc.get(file_path) or compute_file_hash(
+                                file_path
+                            )
 
-                except Exception as e:
-                    logger.error(f"Failed to check file {file_path}: {e}")
-                    continue
+                        rel_path = str(file_path.relative_to(self.project_root))
 
-            # Log completion of hash computation phase
-            if not force:
-                logger.info(
-                    f"File hash computation complete: {len(files_to_process)} files changed, {len(files) - len(files_to_process)} unchanged"
-                )
+                        # Check if file changed (skip if unchanged and not forcing)
+                        # OPTIMIZATION: O(1) dict lookup instead of per-file database query
+                        if not force:
+                            stored_hash = indexed_file_hashes.get(rel_path)
+                            if stored_hash is not None and stored_hash == file_hash:
+                                logger.debug(f"Skipping unchanged file: {rel_path}")
+                                continue
+
+                        # Mark file for deletion and processing
+                        files_to_delete.append(rel_path)
+                        files_to_process.append((file_path, rel_path, file_hash))
+
+                    except Exception as e:
+                        logger.error(f"Failed to check file {file_path}: {e}")
+                        continue
+
+                # Log completion of hash computation phase
+                if not force:
+                    logger.info(
+                        f"File hash computation complete: {len(files_to_process)} files changed, {len(files) - len(files_to_process)} unchanged"
+                    )
 
             # Batch delete old chunks for all files (skip if atomic rebuild is active)
             # WORKAROUND: Skip delete on macOS to avoid SIGBUS crash
@@ -1357,8 +1328,28 @@ class SemanticIndexer:
                     "(defer cleanup to avoid SIGBUS)"
                 )
 
-            # Now process files for parsing and chunking
+            # Now process files for parsing and chunking.
+            # PERFORMANCE: Accumulate chunks across files and flush to LanceDB in
+            # batches of write_batch_files files instead of one `add_chunks` call per
+            # file.  This reduces LanceDB Arrow-allocation overhead from O(n_files) to
+            # O(n_files / batch_size) — roughly 20x fewer write round-trips for a
+            # 5,272-file repo with the default batch size of 256.
+            write_batch_files = 256
             backend_fatal_error: Exception | None = None
+            # Buffer accumulates (chunk_dict_with_hash, file_path) tuples.
+            pending_chunks: list[dict] = []  # chunk dicts with file_hash pre-injected
+            pending_files_count = 0  # number of source files in pending_chunks
+
+            async def _flush_pending_chunks() -> int:
+                """Write accumulated pending_chunks to LanceDB; return count written."""
+                nonlocal pending_files_count
+                if not pending_chunks:
+                    return 0
+                count = await self.chunks_backend.add_chunks_batch(pending_chunks)
+                pending_chunks.clear()
+                pending_files_count = 0
+                return count
+
             for _idx, (file_path, rel_path, file_hash) in enumerate(files_to_process):
                 # Check memory before processing each file (CRITICAL: not every 100!)
                 is_ok, usage_pct, status = self.memory_monitor.check_memory_limit()
@@ -1368,6 +1359,8 @@ class SemanticIndexer:
                         f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB), "
                         "waiting for memory to free up..."
                     )
+                    # Flush before waiting so we don't hold large buffers in memory
+                    await _flush_pending_chunks()
                     await self.memory_monitor.wait_for_memory_available(
                         target_pct=self.memory_monitor.warn_threshold
                     )
@@ -1385,12 +1378,14 @@ class SemanticIndexer:
                         self.chunk_processor.build_chunk_hierarchy, chunks
                     )
 
-                    # Convert CodeChunk objects to dicts for storage
-                    chunk_dicts = []
+                    # Convert CodeChunk objects to dicts and inject file_hash for batching
+                    file_chunk_count = 0
                     for chunk in chunks_with_hierarchy:
                         chunk_dict = {
                             "chunk_id": chunk.chunk_id,
                             "file_path": rel_path,
+                            # file_hash is required by add_chunks_batch (pre-injected here)
+                            "file_hash": file_hash,
                             "content": chunk.content,
                             "language": chunk.language,
                             "start_line": chunk.start_line,
@@ -1421,27 +1416,46 @@ class SemanticIndexer:
                             ],
                             "inherits_from": chunk.inherits_from or [],
                         }
-                        chunk_dicts.append(chunk_dict)
+                        pending_chunks.append(chunk_dict)
+                        file_chunk_count += 1
 
-                    # Store chunks (without embeddings) to chunks.lance
-                    if chunk_dicts:
-                        count = await self.chunks_backend.add_chunks(
-                            chunk_dicts, file_hash
-                        )
-                        chunks_created += count
+                    if file_chunk_count > 0:
                         files_processed += 1
-                        logger.debug(f"Chunked {count} chunks from {rel_path}")
+                        chunks_created += file_chunk_count
+                        pending_files_count += 1
+                        logger.debug(
+                            f"Parsed {file_chunk_count} chunks from {rel_path}"
+                        )
 
-                        # Periodic GC to prevent Arrow buffer accumulation on Linux.
-                        # LanceDB issue #2512: each append allocates Arrow buffers that
-                        # CPython's reference counter does not release quickly enough,
-                        # leading to RSS growth proportional to file count.
-                        if files_processed % 1000 == 0:
-                            gc.collect()
-                            logger.debug(
-                                "GC collect after %d files (Arrow buffer cleanup)",
-                                files_processed,
-                            )
+                        # Flush when write-batch is full
+                        if pending_files_count >= write_batch_files:
+                            try:
+                                await _flush_pending_chunks()
+                            except DatabaseError as db_err:
+                                err_lower = str(db_err).lower()
+                                if (
+                                    "not found" in err_lower
+                                    or "not initialized" in err_lower
+                                ):
+                                    logger.error(
+                                        f"Backend error flushing chunk batch: {db_err}\n"
+                                        f"  Aborting Phase 1 to avoid repeated failures.\n"
+                                        f"  Try: mvs index --force  (to rebuild from scratch)"
+                                    )
+                                    backend_fatal_error = db_err
+                                    break
+                                logger.error(f"Failed to flush chunk batch: {db_err}")
+
+                            # Periodic GC to prevent Arrow buffer accumulation on Linux.
+                            # LanceDB issue #2512: each append allocates Arrow buffers that
+                            # CPython's reference counter does not release quickly enough,
+                            # leading to RSS growth proportional to file count.
+                            if files_processed % 1000 == 0:
+                                gc.collect()
+                                logger.debug(
+                                    "GC collect after %d files (Arrow buffer cleanup)",
+                                    files_processed,
+                                )
 
                         # Show progress bar if tracker is available (update every file)
                         if self.progress_tracker:
@@ -1470,6 +1484,16 @@ class SemanticIndexer:
                 except Exception as e:
                     logger.error(f"Failed to chunk file {file_path}: {e}")
                     continue
+
+                if backend_fatal_error is not None:
+                    break
+
+            # Flush any remaining chunks that didn't fill a full batch
+            if pending_chunks and backend_fatal_error is None:
+                try:
+                    await _flush_pending_chunks()
+                except DatabaseError as db_err:
+                    logger.error(f"Failed to flush final chunk batch: {db_err}")
 
             if backend_fatal_error is not None:
                 logger.error(
@@ -2198,10 +2222,14 @@ class SemanticIndexer:
                 f"{files_skipped} unchanged out of {len(all_files)} total files"
             )
 
-        # Process files through Phase 1
+        # Process files through Phase 1.
+        # Pass file_hash_cache so _phase1_chunk_files skips redundant change
+        # detection (get_all_indexed_file_hashes / _detect_file_moves / hash
+        # loop) — all of that was already done above.
         if files_to_index:
+            _phase1_fhc: dict[Path, str] | None = file_hash_cache if not fresh else None
             indexed_count, created = await self._phase1_chunk_files(
-                files_to_index, force=fresh
+                files_to_index, force=fresh, file_hash_cache=_phase1_fhc
             )
             files_processed = indexed_count
             chunks_created = created
