@@ -502,8 +502,10 @@ class SemanticIndexer:
                 f"Loaded {len(indexed_file_hashes)} indexed files for change detection"
             )
 
-            # Detect file moves/renames — update metadata instead of re-chunking
-            detected_moves, _moved_old_paths = self._detect_file_moves(
+            # Detect file moves/renames — update metadata instead of re-chunking.
+            # Also returns a file_hash_cache (Path → hash) so we skip double-hashing
+            # during the change detection loop below.
+            detected_moves, _moved_old_paths, file_hash_cache = self._detect_file_moves(
                 all_files, indexed_file_hashes
             )
             if detected_moves:
@@ -526,10 +528,12 @@ class SemanticIndexer:
                     await self.chunks_backend.get_all_indexed_file_hashes()
                 )
 
+            # Change detection: compare on-disk hashes to indexed hashes.
+            # Reuse file_hash_cache from _detect_file_moves to avoid re-hashing.
             filtered_files = []
-            for idx, f in enumerate(all_files, start=1):
+            for f in all_files:
                 try:
-                    file_hash = compute_file_hash(f)
+                    file_hash = file_hash_cache.get(f) or compute_file_hash(f)
                     rel_path = str(f.relative_to(self.project_root))
 
                     # OPTIMIZATION: O(1) dict lookup instead of per-file database query
@@ -539,11 +543,6 @@ class SemanticIndexer:
                 except Exception as e:
                     logger.warning(f"Error checking file {f}: {e}, will re-index")
                     filtered_files.append(f)
-
-                if idx % 500 == 0:
-                    logger.info(
-                        f"Change detection progress: {idx}/{len(all_files)} files checked"
-                    )
 
             files_to_index = filtered_files
             logger.info(
@@ -607,8 +606,8 @@ class SemanticIndexer:
 
                 # Detect file moves/renames — update metadata instead of re-chunking
                 if not force_reindex:
-                    detected_moves, _moved_old_paths = self._detect_file_moves(
-                        files_to_index, indexed_file_hashes
+                    detected_moves, _moved_old_paths, file_hash_cache = (
+                        self._detect_file_moves(files_to_index, indexed_file_hashes)
                     )
                     if detected_moves:
                         logger.info(
@@ -631,6 +630,8 @@ class SemanticIndexer:
                         indexed_file_hashes = (
                             await self.chunks_backend.get_all_indexed_file_hashes()
                         )
+                else:
+                    file_hash_cache: dict[Path, str] = {}
 
                 # Compute file hashes
                 if force_reindex:
@@ -640,9 +641,10 @@ class SemanticIndexer:
                         f"Computing file hashes for change detection ({len(files_to_index)} files)..."
                     )
 
+                scan_start_time = time.time()
                 for idx, file_path in enumerate(files_to_index):
                     try:
-                        if idx > 0 and idx % 1000 == 0:
+                        if idx > 0 and idx % 1000 == 0 and not self.progress_tracker:
                             logger.info(
                                 f"Computing file hashes: {idx}/{len(files_to_index)}"
                             )
@@ -650,7 +652,9 @@ class SemanticIndexer:
                         if force_reindex:
                             file_hash = ""
                         else:
-                            file_hash = compute_file_hash(file_path)
+                            file_hash = file_hash_cache.get(
+                                file_path
+                            ) or compute_file_hash(file_path)
 
                         rel_path = str(file_path.relative_to(self.project_root))
 
@@ -659,6 +663,14 @@ class SemanticIndexer:
                             stored_hash = indexed_file_hashes.get(rel_path)
                             if stored_hash is not None and stored_hash == file_hash:
                                 logger.debug(f"Skipping unchanged file: {rel_path}")
+                                # Update progress bar for skipped files too
+                                if self.progress_tracker:
+                                    self.progress_tracker.progress_bar_with_eta(
+                                        current=idx + 1,
+                                        total=len(files_to_index),
+                                        prefix="Scanning files",
+                                        start_time=scan_start_time,
+                                    )
                                 continue
 
                         files_to_delete.append(rel_path)
@@ -667,6 +679,15 @@ class SemanticIndexer:
                     except Exception as e:
                         logger.error(f"Failed to check file {file_path}: {e}")
                         continue
+
+                    # Show progress bar if tracker is available
+                    if self.progress_tracker:
+                        self.progress_tracker.progress_bar_with_eta(
+                            current=idx + 1,
+                            total=len(files_to_index),
+                            prefix="Scanning files",
+                            start_time=scan_start_time,
+                        )
 
                 if not force_reindex:
                     logger.info(
@@ -1058,7 +1079,7 @@ class SemanticIndexer:
         self,
         current_files: list[Path],
         indexed_file_hashes: dict[str, str],
-    ) -> tuple[list[tuple[str, str, str]], set[str]]:
+    ) -> tuple[list[tuple[str, str, str]], set[str], dict[Path, str]]:
         """Detect file moves/renames by matching content hashes.
 
         Compares the set of currently indexed paths against on-disk paths.
@@ -1069,6 +1090,9 @@ class SemanticIndexer:
         paths share the same hash, they are matched by sorted name order —
         this covers batch directory-rename scenarios while staying safe.
 
+        Also returns the file_path → hash mapping computed during the scan
+        so callers can reuse it for change detection without re-hashing.
+
         Args:
             current_files: All currently-discoverable files on disk
             indexed_file_hashes: Mapping of rel_path → file_hash from the DB
@@ -1078,24 +1102,47 @@ class SemanticIndexer:
             - List of (old_path, new_path, file_hash) for each detected move
             - Set of old_path strings that were moved (exclude from normal
               delete/re-process flow after caller reloads hashes)
+            - Dict mapping absolute Path → hash for all scanned files
+              (reusable by change detection to avoid double-hashing)
         """
+        import time as _time
+
         # Reverse index: hash → set of paths currently in the DB
         hash_to_indexed: dict[str, set[str]] = {}
         for path, hash_val in indexed_file_hashes.items():
             hash_to_indexed.setdefault(hash_val, set()).add(path)
 
         # Build set of relative paths that exist on disk right now, and a
-        # reverse map from hash → set of on-disk relative paths
+        # reverse map from hash → set of on-disk relative paths.
+        # Also cache file_path → hash so callers skip double-hashing.
         current_rel_paths: set[str] = set()
         current_hash_to_paths: dict[str, set[str]] = {}
-        for file_path in current_files:
+        file_hash_cache: dict[Path, str] = {}
+        total = len(current_files)
+        scan_start = _time.time()
+        for idx, file_path in enumerate(current_files, start=1):
             try:
                 rel_path = str(file_path.relative_to(self.project_root))
                 current_rel_paths.add(rel_path)
                 file_hash = compute_file_hash(file_path)
                 current_hash_to_paths.setdefault(file_hash, set()).add(rel_path)
+                file_hash_cache[file_path] = file_hash
             except Exception:  # nosec B112  # noqa: B112
                 continue
+
+            # Progress feedback during hashing
+            if self.progress_tracker:
+                self.progress_tracker.progress_bar_with_eta(
+                    current=idx,
+                    total=total,
+                    prefix="Scanning files",
+                    start_time=scan_start,
+                )
+            elif idx % 500 == 0:
+                logger.info(f"Scanning files: {idx:,}/{total:,} hashed")
+
+        if total >= 500:
+            logger.info(f"Scanned {total:,} files in {_time.time() - scan_start:.1f}s")
 
         # Find moves: indexed paths that are no longer on disk (orphaned) paired
         # with new on-disk paths that share the same hash and are not yet indexed
@@ -1130,7 +1177,7 @@ class SemanticIndexer:
                     moves.append((old_p, new_p, hash_val))
                     moved_old_paths.add(old_p)
 
-        return moves, moved_old_paths
+        return moves, moved_old_paths, file_hash_cache
 
     async def _phase1_chunk_files(
         self, files: list[Path], force: bool = False
@@ -1180,8 +1227,8 @@ class SemanticIndexer:
 
             # Detect file moves/renames — update metadata instead of re-chunking
             if not force:
-                detected_moves, _moved_old_paths = self._detect_file_moves(
-                    files, indexed_file_hashes
+                detected_moves, _moved_old_paths, file_hash_cache = (
+                    self._detect_file_moves(files, indexed_file_hashes)
                 )
                 if detected_moves:
                     logger.info(
@@ -1202,6 +1249,8 @@ class SemanticIndexer:
                     indexed_file_hashes = (
                         await self.chunks_backend.get_all_indexed_file_hashes()
                     )
+            else:
+                file_hash_cache: dict[Path, str] = {}
 
             # Log start of hash computation phase
             if force:
@@ -1211,18 +1260,21 @@ class SemanticIndexer:
                     f"Computing file hashes for change detection ({len(files)} files)..."
                 )
 
+            scan_start_time = time.time()
             for idx, file_path in enumerate(files):
                 try:
-                    # Log progress every 1000 files
-                    if idx > 0 and idx % 1000 == 0:
+                    # Log progress every 1000 files (fallback when no progress tracker)
+                    if idx > 0 and idx % 1000 == 0 and not self.progress_tracker:
                         logger.info(f"Computing file hashes: {idx}/{len(files)}")
 
                     # Skip hash computation when force=True (all files will be reindexed)
                     if force:
                         file_hash = ""  # Empty hash when forcing full reindex
                     else:
-                        # Compute current file hash for change detection
-                        file_hash = compute_file_hash(file_path)
+                        # Reuse hash from move-detection cache to avoid re-hashing
+                        file_hash = file_hash_cache.get(file_path) or compute_file_hash(
+                            file_path
+                        )
 
                     rel_path = str(file_path.relative_to(self.project_root))
 
@@ -1232,6 +1284,14 @@ class SemanticIndexer:
                         stored_hash = indexed_file_hashes.get(rel_path)
                         if stored_hash is not None and stored_hash == file_hash:
                             logger.debug(f"Skipping unchanged file: {rel_path}")
+                            # Update progress bar for skipped files too
+                            if self.progress_tracker:
+                                self.progress_tracker.progress_bar_with_eta(
+                                    current=idx + 1,
+                                    total=len(files),
+                                    prefix="Scanning files",
+                                    start_time=scan_start_time,
+                                )
                             continue
 
                     # Mark file for deletion and processing
@@ -1241,6 +1301,15 @@ class SemanticIndexer:
                 except Exception as e:
                     logger.error(f"Failed to check file {file_path}: {e}")
                     continue
+
+                # Show progress bar if tracker is available (update for each processed file)
+                if self.progress_tracker:
+                    self.progress_tracker.progress_bar_with_eta(
+                        current=idx + 1,
+                        total=len(files),
+                        prefix="Scanning files",
+                        start_time=scan_start_time,
+                    )
 
             # Log completion of hash computation phase
             if not force:
@@ -2059,7 +2128,7 @@ class SemanticIndexer:
                 )
 
             # Detect file moves/renames — update metadata instead of re-chunking
-            detected_moves, _moved_old_paths = self._detect_file_moves(
+            detected_moves, _moved_old_paths, file_hash_cache = self._detect_file_moves(
                 all_files, indexed_file_hashes
             )
             if detected_moves:
@@ -2084,9 +2153,10 @@ class SemanticIndexer:
 
             filtered_files = []
             files_checked = 0
+            scan_start_time = time.time()
             for f in all_files:
                 try:
-                    file_hash = compute_file_hash(f)
+                    file_hash = file_hash_cache.get(f) or compute_file_hash(f)
                     rel_path = str(f.relative_to(self.project_root))
 
                     # OPTIMIZATION: O(1) dict lookup instead of per-file database query
@@ -2101,7 +2171,15 @@ class SemanticIndexer:
                     errors.append(str(e))
 
                 files_checked += 1
-                if files_checked % 1000 == 0:
+                # Show progress bar if tracker is available
+                if self.progress_tracker:
+                    self.progress_tracker.progress_bar_with_eta(
+                        current=files_checked,
+                        total=len(all_files),
+                        prefix="Scanning files",
+                        start_time=scan_start_time,
+                    )
+                elif files_checked % 1000 == 0:
                     logger.info(
                         f"Change detection progress: {files_checked}/{len(all_files)} files checked..."
                     )
@@ -2504,8 +2582,8 @@ class SemanticIndexer:
                         )
 
                         # Detect file moves/renames — update metadata instead of re-chunking
-                        detected_moves, _moved_old_paths = self._detect_file_moves(
-                            all_files, indexed_file_hashes
+                        detected_moves, _moved_old_paths, file_hash_cache = (
+                            self._detect_file_moves(all_files, indexed_file_hashes)
                         )
                         if detected_moves:
                             logger.info(
@@ -2532,9 +2610,12 @@ class SemanticIndexer:
                             )
 
                         filtered_files = []
+                        scan_start_time = time.time()
                         for idx, f in enumerate(all_files, start=1):
                             try:
-                                file_hash = compute_file_hash(f)
+                                file_hash = file_hash_cache.get(f) or compute_file_hash(
+                                    f
+                                )
                                 rel_path = str(f.relative_to(self.project_root))
 
                                 # OPTIMIZATION: O(1) dict lookup instead of per-file database query
@@ -2547,8 +2628,15 @@ class SemanticIndexer:
                                 )
                                 filtered_files.append(f)
 
-                            # Progress logging every 500 files
-                            if idx % 500 == 0:
+                            # Show progress bar if tracker is available
+                            if self.progress_tracker:
+                                self.progress_tracker.progress_bar_with_eta(
+                                    current=idx,
+                                    total=len(all_files),
+                                    prefix="Scanning files",
+                                    start_time=scan_start_time,
+                                )
+                            elif idx % 500 == 0:
                                 logger.info(
                                     f"Change detection progress: {idx}/{len(all_files)} files checked"
                                 )
