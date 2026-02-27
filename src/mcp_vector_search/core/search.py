@@ -1,5 +1,6 @@
 """Semantic search engine for MCP Vector Search."""
 
+import asyncio
 import os
 import re
 import time
@@ -139,6 +140,8 @@ class SemanticSearchEngine:
         rerank_top_n: int = 50,
         use_mmr: bool = True,
         diversity: float = 0.5,
+        timeout: float | None = 30.0,
+        use_reranker: bool | None = None,
     ) -> list[SearchResult]:
         """Perform semantic search for code.
 
@@ -158,9 +161,76 @@ class SemanticSearchEngine:
             use_mmr: Whether to apply MMR diversity filtering (default: True)
             diversity: Diversity parameter for MMR (0.0-1.0, default 0.5)
                       0.0 = pure relevance, 1.0 = maximum diversity
+            timeout: Maximum seconds to wait for search (None = no timeout, default 30.0)
+            use_reranker: Whether to apply cross-encoder reranking. Alias for use_rerank.
+                         When provided, overrides use_rerank. (default: None)
 
         Returns:
             List of search results
+
+        Raises:
+            asyncio.TimeoutError: If search exceeds the specified timeout
+        """
+        # use_reranker overrides use_rerank when explicitly provided
+        if use_reranker is not None:
+            use_rerank = use_reranker
+
+        if not query.strip():
+            return []
+
+        if timeout is not None:
+            return await asyncio.wait_for(
+                self._search_internal(
+                    query=query,
+                    limit=limit,
+                    filters=filters,
+                    similarity_threshold=similarity_threshold,
+                    include_context=include_context,
+                    search_mode=search_mode,
+                    hybrid_alpha=hybrid_alpha,
+                    expand=expand,
+                    use_rerank=use_rerank,
+                    rerank_top_n=rerank_top_n,
+                    use_mmr=use_mmr,
+                    diversity=diversity,
+                ),
+                timeout=timeout,
+            )
+
+        return await self._search_internal(
+            query=query,
+            limit=limit,
+            filters=filters,
+            similarity_threshold=similarity_threshold,
+            include_context=include_context,
+            search_mode=search_mode,
+            hybrid_alpha=hybrid_alpha,
+            expand=expand,
+            use_rerank=use_rerank,
+            rerank_top_n=rerank_top_n,
+            use_mmr=use_mmr,
+            diversity=diversity,
+        )
+
+    async def _search_internal(
+        self,
+        query: str,
+        limit: int = 10,
+        filters: dict[str, Any] | None = None,
+        similarity_threshold: float | None = None,
+        include_context: bool = True,
+        search_mode: SearchMode = SearchMode.HYBRID,
+        hybrid_alpha: float = 0.7,
+        expand: bool = True,
+        use_rerank: bool = True,
+        rerank_top_n: int = 50,
+        use_mmr: bool = True,
+        diversity: float = 0.5,
+    ) -> list[SearchResult]:
+        """Internal search implementation (without timeout handling).
+
+        Called by search() after resolving timeout and use_reranker parameters.
+        See search() for parameter documentation.
         """
         if not query.strip():
             return []
@@ -519,6 +589,65 @@ class SemanticSearchEngine:
             Dictionary with cache statistics including hits, misses, size, and hit rate
         """
         return self._result_enhancer.get_cache_info()
+
+    async def warm_up(self) -> None:
+        """Pre-load embedding model and cross-encoder reranker.
+
+        Call during startup to avoid cold-start latency on first search.
+        This method eagerly loads models that are otherwise lazy-loaded,
+        so subsequent searches are fast from the very first call.
+
+        Example:
+            engine = SemanticSearchEngine(...)
+            await engine.warm_up()  # Load models at startup
+            results = await engine.search("...")  # Fast, no cold-start
+        """
+        logger.info("Warming up search engine models...")
+
+        # Load the embedding model by triggering a dummy query embedding
+        try:
+            if hasattr(self.database, "_embedding_function"):
+                embedding_func = self.database._embedding_function
+            elif hasattr(self.database, "embedding_function"):
+                embedding_func = self.database.embedding_function
+            else:
+                embedding_func = None
+
+            if embedding_func is not None:
+                # Trigger model load with a short dummy query
+                if hasattr(embedding_func, "embed_query"):
+                    embedding_func.embed_query("warm up")
+                else:
+                    embedding_func(["warm up"])
+                logger.debug("Embedding model pre-loaded")
+        except Exception as e:
+            # Non-fatal: warm-up failure should not block startup
+            logger.debug(f"Embedding model warm-up failed (non-fatal): {e}")
+
+        # Load cross-encoder reranker if available
+        try:
+            if self._reranker is None:
+                reranker = CrossEncoderReranker()
+                if reranker.is_available:
+                    self._reranker = reranker
+                    # Trigger model load (lazy _ensure_model call)
+                    self._reranker._ensure_model()
+                    logger.debug(
+                        f"Cross-encoder reranker pre-loaded: {self._reranker.model_name}"
+                    )
+                else:
+                    logger.debug(
+                        "Cross-encoder reranker unavailable (sentence-transformers not installed)"
+                    )
+            else:
+                # Already initialized — ensure model is loaded
+                self._reranker._ensure_model()
+                logger.debug("Cross-encoder reranker already loaded")
+        except Exception as e:
+            # Non-fatal: warm-up failure should not block startup
+            logger.debug(f"Cross-encoder warm-up failed (non-fatal): {e}")
+
+        logger.info("Search engine warm-up complete")
 
     # Private helper methods
 

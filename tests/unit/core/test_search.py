@@ -488,3 +488,186 @@ class TestSemanticSearchEngine:
 
         # If health check exists and was called, database should be functional
         # The key is that no "Database not initialized" warning appears
+
+    @pytest.mark.asyncio
+    async def test_search_timeout_parameter(self, mock_database, sample_code_chunks):
+        """Test search respects timeout parameter."""
+        await mock_database.add_chunks(sample_code_chunks)
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/test"),
+            similarity_threshold=0.1,
+        )
+
+        # Search with a generous timeout should succeed
+        results = await search_engine.search(
+            "function", limit=5, similarity_threshold=0.1, timeout=30.0
+        )
+        assert isinstance(results, list)
+
+    @pytest.mark.asyncio
+    async def test_search_timeout_none(self, mock_database, sample_code_chunks):
+        """Test search with timeout=None runs without timeout constraint."""
+        await mock_database.add_chunks(sample_code_chunks)
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/test"),
+            similarity_threshold=0.1,
+        )
+
+        # timeout=None means no timeout (should still work)
+        results = await search_engine.search(
+            "function", limit=5, similarity_threshold=0.1, timeout=None
+        )
+        assert isinstance(results, list)
+
+    @pytest.mark.asyncio
+    async def test_search_timeout_exceeded(self, mock_database):
+        """Test that search raises TimeoutError when timeout is exceeded."""
+        import asyncio
+
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/test"),
+        )
+
+        # Patch _search_internal to simulate a slow search
+        async def slow_search(*args, **kwargs):
+            await asyncio.sleep(10.0)
+            return []
+
+        search_engine._search_internal = slow_search  # type: ignore[method-assign]
+
+        with pytest.raises(asyncio.TimeoutError):
+            await search_engine.search("test query", timeout=0.01)
+
+    @pytest.mark.asyncio
+    async def test_search_use_reranker_alias(self, mock_database, sample_code_chunks):
+        """Test that use_reranker parameter is an alias for use_rerank."""
+        await mock_database.add_chunks(sample_code_chunks)
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/test"),
+            similarity_threshold=0.1,
+        )
+
+        # use_reranker=False should disable reranking (same as use_rerank=False)
+        results = await search_engine.search(
+            "function",
+            limit=5,
+            similarity_threshold=0.1,
+            use_reranker=False,
+        )
+        assert isinstance(results, list)
+
+    @pytest.mark.asyncio
+    async def test_search_use_reranker_overrides_use_rerank(
+        self, mock_database, sample_code_chunks
+    ):
+        """Test that use_reranker overrides use_rerank when both provided."""
+        await mock_database.add_chunks(sample_code_chunks)
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/test"),
+            similarity_threshold=0.1,
+        )
+
+        # use_reranker=True should override use_rerank=False
+        results = await search_engine.search(
+            "function",
+            limit=5,
+            similarity_threshold=0.1,
+            use_rerank=False,
+            use_reranker=True,  # This should win
+        )
+        assert isinstance(results, list)
+
+    @pytest.mark.asyncio
+    async def test_warm_up_runs_without_error(self, mock_database):
+        """Test warm_up() completes without raising exceptions."""
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/test"),
+        )
+
+        # warm_up should not raise, even if models aren't available
+        await search_engine.warm_up()
+
+    @pytest.mark.asyncio
+    async def test_warm_up_pre_loads_reranker(self, mock_database):
+        """Test warm_up() pre-loads the cross-encoder reranker when available."""
+        from unittest.mock import MagicMock, patch
+
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/test"),
+        )
+
+        # Initially reranker should be None (lazy)
+        assert search_engine._reranker is None
+
+        # Mock sentence_transformers to be available
+        mock_cross_encoder = MagicMock()
+        mock_model_instance = MagicMock()
+        mock_cross_encoder.return_value = mock_model_instance
+
+        with patch.dict(
+            "sys.modules",
+            {"sentence_transformers": MagicMock(CrossEncoder=mock_cross_encoder)},
+        ):
+            await search_engine.warm_up()
+
+        # After warm_up, reranker should be initialized
+        assert search_engine._reranker is not None
+
+    @pytest.mark.asyncio
+    async def test_warm_up_pre_loads_embedding_model(self, mock_database):
+        """Test warm_up() pre-loads the embedding model via embed_query or __call__."""
+        from unittest.mock import MagicMock
+
+        # Add mock embedding function to database with embed_query so warm_up uses it
+        mock_embedding_func = MagicMock()
+        mock_embedding_func.embed_query = MagicMock(return_value=[0.1, 0.2, 0.3])
+        mock_database._embedding_function = mock_embedding_func
+
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/test"),
+        )
+
+        await search_engine.warm_up()
+
+        # embed_query or __call__ should have been called to warm up the model
+        mock_embedding_func.embed_query.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_warm_up_uses_embed_query_when_available(self, mock_database):
+        """Test warm_up() uses embed_query() method when available (for asymmetric models)."""
+        from unittest.mock import MagicMock
+
+        # Add mock embedding function with embed_query method
+        mock_embedding_func = MagicMock()
+        mock_embedding_func.embed_query = MagicMock(return_value=[0.1, 0.2, 0.3])
+        mock_database._embedding_function = mock_embedding_func
+
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/test"),
+        )
+
+        await search_engine.warm_up()
+
+        # embed_query should have been called (preferred over __call__)
+        mock_embedding_func.embed_query.assert_called_once_with("warm up")
+
+    @pytest.mark.asyncio
+    async def test_warm_up_idempotent(self, mock_database):
+        """Test warm_up() can be called multiple times without error."""
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/test"),
+        )
+
+        # Calling warm_up multiple times should not raise
+        await search_engine.warm_up()
+        await search_engine.warm_up()
