@@ -661,7 +661,6 @@ class SemanticIndexer:
                         f"Computing file hashes for change detection ({len(files_to_index)} files)..."
                     )
 
-                scan_start_time = time.time()
                 for idx, file_path in enumerate(files_to_index):
                     try:
                         if idx > 0 and idx % 1000 == 0 and not self.progress_tracker:
@@ -683,14 +682,6 @@ class SemanticIndexer:
                             stored_hash = indexed_file_hashes.get(rel_path)
                             if stored_hash is not None and stored_hash == file_hash:
                                 logger.debug(f"Skipping unchanged file: {rel_path}")
-                                # Update progress bar for skipped files too
-                                if self.progress_tracker:
-                                    self.progress_tracker.progress_bar_with_eta(
-                                        current=idx + 1,
-                                        total=len(files_to_index),
-                                        prefix="Scanning files",
-                                        start_time=scan_start_time,
-                                    )
                                 continue
 
                         files_to_delete.append(rel_path)
@@ -699,15 +690,6 @@ class SemanticIndexer:
                     except Exception as e:
                         logger.error(f"Failed to check file {file_path}: {e}")
                         continue
-
-                    # Show progress bar if tracker is available
-                    if self.progress_tracker:
-                        self.progress_tracker.progress_bar_with_eta(
-                            current=idx + 1,
-                            total=len(files_to_index),
-                            prefix="Scanning files",
-                            start_time=scan_start_time,
-                        )
 
                 if not force_reindex:
                     logger.info(
@@ -1280,7 +1262,6 @@ class SemanticIndexer:
                     f"Computing file hashes for change detection ({len(files)} files)..."
                 )
 
-            scan_start_time = time.time()
             for idx, file_path in enumerate(files):
                 try:
                     # Log progress every 1000 files (fallback when no progress tracker)
@@ -1304,14 +1285,6 @@ class SemanticIndexer:
                         stored_hash = indexed_file_hashes.get(rel_path)
                         if stored_hash is not None and stored_hash == file_hash:
                             logger.debug(f"Skipping unchanged file: {rel_path}")
-                            # Update progress bar for skipped files too
-                            if self.progress_tracker:
-                                self.progress_tracker.progress_bar_with_eta(
-                                    current=idx + 1,
-                                    total=len(files),
-                                    prefix="Scanning files",
-                                    start_time=scan_start_time,
-                                )
                             continue
 
                     # Mark file for deletion and processing
@@ -1321,15 +1294,6 @@ class SemanticIndexer:
                 except Exception as e:
                     logger.error(f"Failed to check file {file_path}: {e}")
                     continue
-
-                # Show progress bar if tracker is available (update for each processed file)
-                if self.progress_tracker:
-                    self.progress_tracker.progress_bar_with_eta(
-                        current=idx + 1,
-                        total=len(files),
-                        prefix="Scanning files",
-                        start_time=scan_start_time,
-                    )
 
             # Log completion of hash computation phase
             if not force:
@@ -2173,7 +2137,6 @@ class SemanticIndexer:
 
             filtered_files = []
             files_checked = 0
-            scan_start_time = time.time()
             for f in all_files:
                 try:
                     file_hash = file_hash_cache.get(f) or compute_file_hash(f)
@@ -2191,15 +2154,7 @@ class SemanticIndexer:
                     errors.append(str(e))
 
                 files_checked += 1
-                # Show progress bar if tracker is available
-                if self.progress_tracker:
-                    self.progress_tracker.progress_bar_with_eta(
-                        current=files_checked,
-                        total=len(all_files),
-                        prefix="Scanning files",
-                        start_time=scan_start_time,
-                    )
-                elif files_checked % 1000 == 0:
+                if files_checked % 1000 == 0 and not self.progress_tracker:
                     logger.info(
                         f"Change detection progress: {files_checked}/{len(all_files)} files checked..."
                     )
@@ -2630,7 +2585,6 @@ class SemanticIndexer:
                             )
 
                         filtered_files = []
-                        scan_start_time = time.time()
                         for idx, f in enumerate(all_files, start=1):
                             try:
                                 file_hash = file_hash_cache.get(f) or compute_file_hash(
@@ -2648,15 +2602,7 @@ class SemanticIndexer:
                                 )
                                 filtered_files.append(f)
 
-                            # Show progress bar if tracker is available
-                            if self.progress_tracker:
-                                self.progress_tracker.progress_bar_with_eta(
-                                    current=idx,
-                                    total=len(all_files),
-                                    prefix="Scanning files",
-                                    start_time=scan_start_time,
-                                )
-                            elif idx % 500 == 0:
+                            if idx % 500 == 0 and not self.progress_tracker:
                                 logger.info(
                                     f"Change detection progress: {idx}/{len(all_files)} files checked"
                                 )
