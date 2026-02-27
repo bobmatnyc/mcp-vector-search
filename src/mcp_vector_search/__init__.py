@@ -12,7 +12,52 @@ __build__ = "282"
 __author__ = "Robert Matsuoka"
 __email__ = "bob@matsuoka.com"
 
-from .core.exceptions import MCPVectorSearchError  # noqa: E402
+from .core.exceptions import (  # noqa: E402
+    ConfigError,
+    ConfigurationError,
+    DatabaseError,
+    DatabaseInitializationError,
+    DatabaseNotInitializedError,
+    EmbeddingError,
+    IndexCorruptionError,
+    IndexingError,
+    InitializationError,
+    MCPVectorSearchError,
+    MVSError,
+    ParsingError,
+    ProjectError,
+    ProjectInitializationError,
+    ProjectNotFoundError,
+    SearchError,
+)
 from .core.models import ContentChunk  # noqa: E402
 
-__all__ = ["MCPVectorSearchError", "ContentChunk", "__version__", "__build__"]
+# Convenience alias: ``mcp_vector_search.IndexError`` without shadowing built-in
+IndexError = IndexingError  # noqa: A001
+
+__all__ = [
+    # Public typed hierarchy (Issue #110)
+    "MVSError",
+    "SearchError",
+    "IndexingError",
+    "IndexError",  # alias for IndexingError
+    "ConfigError",
+    "InitializationError",
+    "DatabaseError",
+    # Existing / lower-level exceptions
+    "MCPVectorSearchError",
+    "ConfigurationError",
+    "DatabaseInitializationError",
+    "DatabaseNotInitializedError",
+    "EmbeddingError",
+    "IndexCorruptionError",
+    "ParsingError",
+    "ProjectError",
+    "ProjectInitializationError",
+    "ProjectNotFoundError",
+    # Data types
+    "ContentChunk",
+    # Version info
+    "__version__",
+    "__build__",
+]

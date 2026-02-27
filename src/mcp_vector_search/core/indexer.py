@@ -31,7 +31,12 @@ from .chunks_backend import ChunksBackend, compute_file_hash
 from .context_builder import build_contextual_text
 from .database import VectorDatabase
 from .directory_index import DirectoryIndex
-from .exceptions import DatabaseError, DatabaseInitializationError, ParsingError
+from .exceptions import (
+    DatabaseError,
+    DatabaseInitializationError,
+    IndexingError,
+    ParsingError,
+)
 from .file_discovery import FileDiscovery
 from .index_metadata import IndexMetadata
 from .memory_monitor import MemoryMonitor
@@ -2480,7 +2485,39 @@ class SemanticIndexer:
             - Producer: Chunks files in batches, puts chunks on queue
             - Consumer: Embeds chunks from queue concurrently
             - Result: GPU doesn't sit idle during parsing phase (30-50% speedup)
+
+        Raises:
+            IndexingError: If an unexpected error occurs during indexing.
+                           Note: ``DatabaseInitializationError`` is handled internally
+                           (logged and returns 0) to allow graceful degradation.
         """
+        try:
+            return await self._index_project_impl(
+                force_reindex=force_reindex,
+                show_progress=show_progress,
+                skip_relationships=skip_relationships,
+                phase=phase,
+                metrics_json=metrics_json,
+                pipeline=pipeline,
+            )
+        except IndexingError:
+            raise
+        except Exception as e:
+            raise IndexingError(
+                f"Indexing failed for project {self.project_root}: {e}",
+                context={"project_root": str(self.project_root), "phase": phase},
+            ) from e
+
+    async def _index_project_impl(
+        self,
+        force_reindex: bool = False,
+        show_progress: bool = True,
+        skip_relationships: bool = False,
+        phase: str = "all",
+        metrics_json: bool = False,
+        pipeline: bool = True,
+    ) -> int:
+        """Internal implementation of index_project (no public exception wrapping)."""
         logger.info(
             f"Starting indexing of project: {self.project_root} (phase: {phase})"
         )

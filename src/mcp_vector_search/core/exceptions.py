@@ -11,8 +11,81 @@ class MCPVectorSearchError(Exception):
         self.context = context or {}
 
 
-class DatabaseError(MCPVectorSearchError):
-    """Database-related errors."""
+# ---------------------------------------------------------------------------
+# Public typed exception hierarchy (Issue #110)
+# ---------------------------------------------------------------------------
+
+
+class MVSError(MCPVectorSearchError):
+    """Base exception for all mcp-vector-search public API errors.
+
+    All exceptions raised by public API methods inherit from this class,
+    allowing callers to catch any library error with a single ``except MVSError``.
+    """
+
+    pass
+
+
+class SearchError(MVSError):
+    """Search failures (embedding errors, DB errors, malformed queries).
+
+    Raised by:
+    - ``SemanticSearchEngine.search()``
+    - ``SemanticSearchEngine.search_similar()``
+    - ``SemanticSearchEngine.search_by_context()``
+    """
+
+    pass
+
+
+class IndexingError(MVSError):
+    """Indexing failures (file parse errors, embedding failures, table errors).
+
+    Raised by:
+    - ``SemanticIndexer.index_project()``
+
+    Note: Named ``IndexingError`` (not ``IndexError``) to avoid shadowing the
+    Python built-in ``IndexError``.  Import as
+    ``from mcp_vector_search.core.exceptions import IndexingError`` or use
+    the ``IndexError`` alias exported from the package root.
+    """
+
+    pass
+
+
+# Alias so callers can write ``mcp_vector_search.exceptions.IndexError`` without
+# shadowing the built-in in their own module scope.
+IndexError = IndexingError  # noqa: A001
+
+
+class ConfigError(MVSError):
+    """Configuration issues (missing deps, bad paths, model mismatch).
+
+    Raised when the project configuration is invalid or unusable.
+    """
+
+    pass
+
+
+class InitializationError(MVSError):
+    """Startup failures (model loading, DB connection).
+
+    Raised when the library cannot initialise its runtime dependencies.
+    """
+
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Lower-level / internal exceptions (pre-existing hierarchy, preserved as-is)
+# ---------------------------------------------------------------------------
+
+
+class DatabaseError(MVSError):
+    """Database/backend failures (LanceDB, Lance, PyArrow).
+
+    Also the base class for all database-level internal errors.
+    """
 
     pass
 
@@ -41,12 +114,6 @@ class DocumentAdditionError(DatabaseError):
     pass
 
 
-class SearchError(DatabaseError):
-    """Search operation failed."""
-
-    pass
-
-
 class IndexCorruptionError(DatabaseError):
     """Index corruption detected."""
 
@@ -64,25 +131,25 @@ class RustPanicError(DatabaseError):
     pass
 
 
-class ParsingError(MCPVectorSearchError):
+class ParsingError(MVSError):
     """Code parsing errors."""
 
     pass
 
 
-class EmbeddingError(MCPVectorSearchError):
+class EmbeddingError(MVSError):
     """Embedding generation errors."""
 
     pass
 
 
-class ConfigurationError(MCPVectorSearchError):
+class ConfigurationError(MVSError):
     """Configuration validation errors."""
 
     pass
 
 
-class ProjectError(MCPVectorSearchError):
+class ProjectError(MVSError):
     """Project management errors."""
 
     pass
