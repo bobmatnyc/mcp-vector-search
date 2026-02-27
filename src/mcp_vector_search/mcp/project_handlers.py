@@ -209,6 +209,7 @@ class ProjectHandlers:
                 project_root=self.project_root,
                 config=config,
                 batch_size=batch_size,
+                skip_blame=True,
             )
 
             async with database:

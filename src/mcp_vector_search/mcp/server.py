@@ -132,6 +132,7 @@ class MCPVectorSearchServer:
                     database=self.database,
                     project_root=self.project_root,
                     config=config,
+                    skip_blame=True,
                 )
 
                 # Setup file watcher

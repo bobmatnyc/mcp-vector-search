@@ -166,6 +166,7 @@ async def _run_reindex(
         config=config,
         batch_size=batch_size,
         progress_tracker=progress_tracker,
+        skip_blame=True,
     )
     console.print("[green]✓[/green] [dim]Backend ready[/dim]")
 

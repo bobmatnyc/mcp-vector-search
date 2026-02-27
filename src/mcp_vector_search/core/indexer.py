@@ -92,7 +92,7 @@ class SemanticIndexer:
         use_multiprocessing: bool = True,
         auto_optimize: bool = True,
         ignore_patterns: set[str] | None = None,
-        skip_blame: bool = False,
+        skip_blame: bool = True,
         progress_tracker: Any = None,
         index_path: str | None = None,
     ) -> None:

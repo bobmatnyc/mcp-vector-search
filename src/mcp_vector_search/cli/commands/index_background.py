@@ -161,6 +161,7 @@ class BackgroundIndexer:
                 database=database,
                 project_root=self.project_root,
                 config=config,
+                skip_blame=True,
             )
 
             async with database:
