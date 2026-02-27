@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import shutil
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -2263,7 +2264,11 @@ class SemanticIndexer:
                 logger.error(f"Failed to update directory index: {e}")
                 errors.append(f"Directory index update failed: {e}")
 
-        # Build BM25 index
+        # Build BM25 index — provide console feedback since this can take
+        # 10-30 s for large projects (reads all chunks from LanceDB).
+        if self.progress_tracker and sys.stderr.isatty():
+            sys.stderr.write("\r  Building keyword search index...\n")
+            sys.stderr.flush()
         await self._build_bm25_index()
 
         # Finalize atomic rebuild if fresh and we processed files
@@ -3708,30 +3713,47 @@ class SemanticIndexer:
 
             logger.info("📚 Phase 3: Building BM25 index for keyword search...")
 
-            # Query all records from chunks.lance table (to_pandas is most efficient for bulk reads)
+            # Read only the columns BM25 needs (skip large/unused columns like
+            # embeddings, metadata, etc.) to reduce memory and I/O.
             import asyncio
 
-            df = await asyncio.to_thread(self.chunks_backend._table.to_pandas)
+            bm25_columns = ["chunk_id", "content", "name", "file_path", "chunk_type"]
+
+            def _read_bm25_columns():
+                """Read only required columns via Lance scanner for speed."""
+                try:
+                    # Use lance scanner with column projection (faster than to_pandas)
+                    scanner = self.chunks_backend._table.to_lance().scanner(
+                        columns=bm25_columns
+                    )
+                    table = scanner.to_table()
+                    return table.to_pandas()
+                except Exception:
+                    # Fallback: read all columns if scanner fails
+                    return self.chunks_backend._table.to_pandas()
+
+            df = await asyncio.to_thread(_read_bm25_columns)
 
             if df.empty:
                 logger.info("No chunks in chunks table, skipping BM25 index build")
                 return
 
-            # Convert DataFrame rows to dicts for BM25Backend
-            # BM25Backend expects: chunk_id, content, name, file_path, chunk_type
-            chunks_for_bm25 = []
-            for _, row in df.iterrows():
-                chunk_dict = {
-                    "chunk_id": row["chunk_id"],
-                    "content": row["content"],
-                    "name": row.get("name", ""),  # chunks.lance has "name" field
-                    "file_path": row["file_path"],
-                    "chunk_type": row.get("chunk_type", "code"),
-                }
-                chunks_for_bm25.append(chunk_dict)
+            # Vectorised conversion: use to_dict("records") instead of iterrows()
+            # (~10-50x faster for 200K+ rows).
+            # Fill missing columns with defaults before converting.
+            if "name" not in df.columns:
+                df["name"] = ""
+            else:
+                df["name"] = df["name"].fillna("")
+            if "chunk_type" not in df.columns:
+                df["chunk_type"] = "code"
+            else:
+                df["chunk_type"] = df["chunk_type"].fillna("code")
+
+            chunks_for_bm25 = df[bm25_columns].to_dict("records")
 
             logger.info(
-                f"📚 Phase 3: Building BM25 index from {len(chunks_for_bm25)} chunks..."
+                f"📚 Phase 3: Building BM25 index from {len(chunks_for_bm25):,} chunks..."
             )
 
             # Build BM25 index
