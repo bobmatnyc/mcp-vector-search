@@ -419,6 +419,65 @@ def _parse_grade_filter(grade_str: str) -> set[str]:
     return allowed_grades
 
 
+async def _check_auto_reindex(
+    project_root: Path,
+    config: object,
+    database: object,
+) -> None:
+    """Check if a version-triggered reindex is needed and perform it non-fatally.
+
+    Reads the index metadata, compares the stored version against the running
+    version, and runs a full reindex when the major or minor version has
+    changed.  Failures are caught and reported as warnings so callers always
+    continue.
+
+    Args:
+        project_root: Project root directory.
+        config: Loaded project configuration (must expose ``auto_reindex_on_upgrade``).
+        database: Initialised database instance passed to SemanticIndexer.
+    """
+    if not config.auto_reindex_on_upgrade:
+        return
+
+    indexer = SemanticIndexer(
+        database=database,
+        project_root=project_root,
+        config=config,
+    )
+
+    if not indexer.needs_reindex_for_version():
+        return
+
+    from ..output import console
+
+    index_version = indexer.get_index_version()
+    from ... import __version__
+
+    if index_version:
+        console.print(
+            f"[yellow]⚠️  Index created with version {index_version} (current: {__version__})[/yellow]"
+        )
+    else:
+        console.print(
+            "[yellow]⚠️  Index version not found (legacy format detected)[/yellow]"
+        )
+
+    console.print("[yellow]   Reindexing to take advantage of improvements...[/yellow]")
+
+    try:
+        indexed_count = await indexer.index_project(
+            force_reindex=True, show_progress=False
+        )
+        console.print(
+            f"[green]✓ Index updated to version {__version__} ({indexed_count} files reindexed)[/green]\n"
+        )
+    except Exception as e:
+        console.print(f"[red]✗ Reindexing failed: {e}[/red]")
+        console.print(
+            "[yellow]  Continuing with existing index (may have outdated patterns)[/yellow]\n"
+        )
+
+
 async def run_search(
     project_root: Path,
     query: str,
@@ -465,46 +524,8 @@ async def run_search(
     )
     await database.initialize()
 
-    # Create indexer for version check
-    indexer = SemanticIndexer(
-        database=database,
-        project_root=project_root,
-        config=config,
-    )
-
     # Check if reindex is needed due to version upgrade
-    if config.auto_reindex_on_upgrade and indexer.needs_reindex_for_version():
-        from ..output import console
-
-        index_version = indexer.get_index_version()
-        from ... import __version__
-
-        if index_version:
-            console.print(
-                f"[yellow]⚠️  Index created with version {index_version} (current: {__version__})[/yellow]"
-            )
-        else:
-            console.print(
-                "[yellow]⚠️  Index version not found (legacy format detected)[/yellow]"
-            )
-
-        console.print(
-            "[yellow]   Reindexing to take advantage of improvements...[/yellow]"
-        )
-
-        # Auto-reindex with progress
-        try:
-            indexed_count = await indexer.index_project(
-                force_reindex=True, show_progress=False
-            )
-            console.print(
-                f"[green]✓ Index updated to version {__version__} ({indexed_count} files reindexed)[/green]\n"
-            )
-        except Exception as e:
-            console.print(f"[red]✗ Reindexing failed: {e}[/red]")
-            console.print(
-                "[yellow]  Continuing with existing index (may have outdated patterns)[/yellow]\n"
-            )
+    await _check_auto_reindex(project_root, config, database)
 
     search_engine = SemanticSearchEngine(
         database=database,
@@ -820,6 +841,9 @@ async def run_similar_search(
         collection_name="vectors",  # Search queries vectors.lance (contains 768-dim embeddings)
     )
 
+    # Check if reindex is needed due to version upgrade
+    await _check_auto_reindex(project_root, config, database)
+
     search_engine = SemanticSearchEngine(
         database=database,
         project_root=project_root,
@@ -929,6 +953,9 @@ async def run_context_search(
         embedding_function=embedding_function,
         collection_name="vectors",  # Search queries vectors.lance (contains 768-dim embeddings)
     )
+
+    # Check if reindex is needed due to version upgrade
+    await _check_auto_reindex(project_root, config, database)
 
     search_engine = SemanticSearchEngine(
         database=database,

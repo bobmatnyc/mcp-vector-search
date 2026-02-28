@@ -126,6 +126,10 @@ class MCPVectorSearchServer:
                 database=self.database, project_root=self.project_root
             )
 
+            # Check if reindex is needed due to version upgrade (non-fatal)
+            if config.auto_reindex_on_upgrade:
+                await self._check_auto_reindex(config)
+
             # Setup indexer for file watching (do this before handlers for status access)
             if self.enable_file_watching:
                 self.indexer = SemanticIndexer(
@@ -209,6 +213,52 @@ class MCPVectorSearchServer:
         except Exception as e:
             # Don't block server startup on migration failures
             logger.warning(f"Migration check failed (non-fatal): {e}")
+
+    async def _check_auto_reindex(self, config: object) -> None:
+        """Check if a version-triggered reindex is needed and perform it non-fatally.
+
+        Called during initialize() after the database is ready.  Creates a
+        temporary SemanticIndexer to inspect the stored index version and, if
+        the major or minor version has changed, runs a full reindex so that
+        Claude Desktop users benefit from index improvements without having to
+        run any CLI command manually.
+
+        Failures are caught and logged as warnings so server startup is never
+        blocked.
+
+        Args:
+            config: Loaded project configuration.
+        """
+        try:
+            indexer = SemanticIndexer(
+                database=self.database,
+                project_root=self.project_root,
+                config=config,
+            )
+
+            if not indexer.needs_reindex_for_version():
+                return
+
+            from .. import __version__
+
+            index_version = indexer.get_index_version()
+            if index_version:
+                logger.info(
+                    f"Index version upgrade detected: {index_version} -> {__version__}, reindexing..."
+                )
+            else:
+                logger.info(
+                    f"Index version not found (legacy format), reindexing for {__version__}..."
+                )
+
+            indexed_count = await indexer.index_project(
+                force_reindex=True, show_progress=False
+            )
+            logger.info(
+                f"Auto-reindex complete: {indexed_count} files indexed for version {__version__}"
+            )
+        except Exception as e:
+            logger.warning(f"Auto-reindex on upgrade failed (non-fatal): {e}")
 
     async def cleanup(self) -> None:
         """Cleanup resources."""
