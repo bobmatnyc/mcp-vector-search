@@ -7,8 +7,8 @@ import warnings
 # with Pydantic's protected "model_" namespace. This is a lancedb issue, not ours.
 warnings.filterwarnings("ignore", message=".*has conflict with protected namespace.*")
 
-__version__ = "3.0.40"
-__build__ = "290"
+__version__ = "3.0.41"
+__build__ = "291"
 __author__ = "Robert Matsuoka"
 __email__ = "bob@matsuoka.com"
 

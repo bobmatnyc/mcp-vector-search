@@ -2118,6 +2118,29 @@ class SemanticIndexer:
         # Run auto migrations
         await self._run_auto_migrations()
 
+        # Auto-repair: rebuild index_metadata.json if missing but chunks exist
+        if not self.metadata._metadata_file.exists():
+            try:
+                chunk_count = (
+                    self.chunks_backend._table.count_rows()
+                    if self.chunks_backend._table
+                    else 0
+                )
+                if chunk_count > 0:
+                    logger.info(
+                        "Auto-rebuilding missing index_metadata.json from chunks database..."
+                    )
+                    if self.progress_tracker:
+                        sys.stderr.write(
+                            "  Rebuilding index metadata (auto-repair)...\n"
+                        )
+                        sys.stderr.flush()
+                    await self._auto_rebuild_metadata()
+            except Exception as e:
+                logger.warning(
+                    f"Auto-rebuild of index metadata failed (non-fatal): {e}"
+                )
+
         # Apply auto-optimizations if enabled
         if self.auto_optimize:
             self.apply_auto_optimizations()
@@ -3430,6 +3453,45 @@ class SemanticIndexer:
     def _save_index_metadata(self, metadata: dict[str, float]) -> None:
         """Save index metadata (backward compatibility)."""
         self.metadata.save(metadata)
+
+    async def _auto_rebuild_metadata(self) -> None:
+        """Auto-rebuild index_metadata.json from chunks database.
+
+        Called when metadata file is missing but chunks exist.
+        Reconstructs file modification times by querying the chunks table
+        for unique file paths and checking filesystem mtimes.
+        """
+        import os as _os
+
+        if self.chunks_backend._table is None:
+            return
+
+        # Read unique file paths from chunks table (column projection for speed)
+        scanner = self.chunks_backend._table.to_lance().scanner(columns=["file_path"])
+        table = scanner.to_table()
+        df = table.to_pandas()
+
+        if df.empty:
+            return
+
+        file_paths = df["file_path"].unique().tolist()
+
+        # Build metadata dict from filesystem mtimes
+        metadata: dict[str, float] = {}
+        for fp in file_paths:
+            full_path = self.project_root / fp
+            if full_path.exists():
+                try:
+                    metadata[fp] = _os.path.getmtime(full_path)
+                except OSError:
+                    pass
+
+        # Save rebuilt metadata
+        self.metadata.save(metadata)
+        logger.info(
+            f"Auto-rebuilt index_metadata.json: {len(metadata)} files "
+            f"(from {len(file_paths)} in database)"
+        )
 
     async def _parse_file(self, file_path: Path) -> list[CodeChunk]:
         """Parse a file (backward compatibility)."""

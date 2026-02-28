@@ -222,10 +222,7 @@ async def show_status(
                     "\n[yellow]⚠️  Missing index_metadata.json but chunks database exists[/yellow]"
                 )
                 console.print(
-                    "    [yellow]This can cause full reindexing instead of incremental updates.[/yellow]"
-                )
-                console.print(
-                    "    [cyan]Run 'mcp-vector-search reset rebuild-metadata' to fix this.[/cyan]\n"
+                    "    [dim]Will be auto-rebuilt on next 'mvs index' run.[/dim]\n"
                 )
 
         # Get indexing statistics from database (fast, no filesystem scan)
