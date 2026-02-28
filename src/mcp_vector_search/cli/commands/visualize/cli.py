@@ -39,7 +39,7 @@ def visualize_callback(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
         # Default to serve when no subcommand given
         # Must pass explicit defaults since typer.Option doesn't work when called directly
-        serve(port=8501, graph_file=Path("chunk-graph.json"), code_only=False)
+        serve(port=8501, graph_file=Path("chunk-graph.json"), code_only=True)
 
 
 @app.command()
@@ -57,9 +57,9 @@ def export(
         help="Export only chunks from specific file (supports wildcards)",
     ),
     code_only: bool = typer.Option(
-        False,
-        "--code-only",
-        help="Exclude documentation chunks (text, comment, docstring)",
+        True,
+        "--code-only/--all-chunks",
+        help="Exclude documentation chunks (text, comment, docstring) [default: True]",
     ),
 ) -> None:
     """Export chunk relationships as JSON for D3.js visualization.
@@ -250,9 +250,9 @@ def serve(
         help="Graph JSON file to visualize",
     ),
     code_only: bool = typer.Option(
-        False,
-        "--code-only",
-        help="Exclude documentation chunks (text, comment, docstring)",
+        True,
+        "--code-only/--all-chunks",
+        help="Exclude documentation chunks (text, comment, docstring) [default: True]",
     ),
 ) -> None:
     """Start local HTTP server for D3.js visualization.

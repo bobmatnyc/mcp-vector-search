@@ -26,8 +26,8 @@ def export_to_json(graph_data: dict[str, Any], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Write to file using orjson for fast serialization
-    # OPT_INDENT_2 gives readable output, OPT_SORT_KEYS for consistency
+    # No indent for compact output (~15% smaller files)
     with open(output_path, "wb") as f:
-        f.write(orjson.dumps(graph_data, option=orjson.OPT_INDENT_2))
+        f.write(orjson.dumps(graph_data))
 
     console.print(f"[green]✓[/green] Exported graph data to [cyan]{output_path}[/cyan]")

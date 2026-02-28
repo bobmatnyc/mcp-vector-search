@@ -1828,28 +1828,16 @@ function displayChunkContent(chunkData, addToHistory = true) {
     // Track sections for dropdown navigation
     const sections = [];
 
-    // === ORDER: Docstring (comments), Code, Metadata ===
+    // === ORDER: Code (lazy loaded), Metadata ===
 
-    // === 1. Docstring Section (Comments) ===
-    if (chunkData.docstring) {
-        sections.push({ id: 'docstring', label: '📖 Docstring' });
-        html += '<div class="viewer-section" data-section="docstring">';
-        html += '<div class="viewer-section-title">📖 Docstring</div>';
-        html += `<div style="color: #8b949e; font-style: italic; padding: 8px 12px; background: #161b22; border-radius: 4px; white-space: pre-wrap;">${escapeHtml(chunkData.docstring)}</div>`;
-        html += '</div>';
-    }
-
-    // === 2. Source Code Section ===
-    if (chunkData.content) {
-        sections.push({ id: 'source-code', label: '📝 Source Code' });
-        html += '<div class="viewer-section" data-section="source-code">';
-        html += '<div class="viewer-section-title">📝 Source Code</div>';
-        const langClass = getLanguageClass(chunkData.file_path);
-        html += `<pre><code class="hljs${langClass ? ' language-' + langClass : ''}">${escapeHtml(chunkData.content)}</code></pre>`;
-        html += '</div>';
-    } else {
-        html += '<p style="color: #8b949e; padding: 20px; text-align: center;">No content available for this chunk.</p>';
-    }
+    // === 1. Source Code Section (lazy loaded via /api/chunk-content) ===
+    sections.push({ id: 'source-code', label: '📝 Source Code' });
+    const langClass = getLanguageClass(chunkData.file_path);
+    const codeClass = `hljs${langClass ? ' language-' + langClass : ''}`;
+    html += '<div class="viewer-section" data-section="source-code">';
+    html += '<div class="viewer-section-title">📝 Source Code</div>';
+    html += `<pre id="chunk-code-pre-${chunkData.id}"><code id="chunk-code-${chunkData.id}" class="${codeClass}" style="color:#8b949e;">Loading...</code></pre>`;
+    html += '</div>';
 
     // === 3. Metadata Section ===
     sections.push({ id: 'metadata', label: 'ℹ️ Metadata' });
@@ -2056,12 +2044,25 @@ function displayChunkContent(chunkData, addToHistory = true) {
 
     content.innerHTML = html;
 
-    // Apply syntax highlighting to code blocks
-    content.querySelectorAll('pre code').forEach((block) => {
-        if (typeof hljs !== 'undefined') {
-            hljs.highlightElement(block);
+    // Lazy-load chunk source content from server to avoid storing it in the graph JSON.
+    // Falls back to node.preview (200-char excerpt) if the API is unavailable.
+    if (chunkData.id) {
+        const codeEl = document.getElementById(`chunk-code-${chunkData.id}`);
+        if (codeEl) {
+            fetch(`/api/chunk-content/${encodeURIComponent(chunkData.id)}`)
+                .then(r => r.json())
+                .then(data => {
+                    const text = data.content || chunkData.preview || 'No content available.';
+                    codeEl.textContent = text;
+                    if (typeof hljs !== 'undefined') {
+                        hljs.highlightElement(codeEl);
+                    }
+                })
+                .catch(() => {
+                    codeEl.textContent = chunkData.preview || 'No content available.';
+                });
         }
-    });
+    }
 
     // Populate section dropdown for navigation
     populateSectionDropdown(sections);
@@ -4601,8 +4602,7 @@ function buildFileHierarchy(maxDepth = 3, includeAllForNodeId = null) {
             lines_of_code: node.lines_of_code || (node.end_line && node.start_line ? node.end_line - node.start_line + 1 : 0),
             start_line: node.start_line,
             end_line: node.end_line,
-            content: node.content,
-            docstring: node.docstring,
+            preview: node.preview,
             language: node.language,
             depth: currentDepth,
             quality_score: node.quality_score,
@@ -4705,8 +4705,7 @@ function buildASTHierarchy() {
             lines_of_code: node.lines_of_code || (node.end_line && node.start_line ? node.end_line - node.start_line + 1 : 1),
             start_line: node.start_line,
             end_line: node.end_line,
-            content: node.content,
-            docstring: node.docstring,
+            preview: node.preview,
             language: language,
             quality_score: node.quality_score,
             smell_count: node.smell_count,

@@ -556,8 +556,9 @@ async def build_graph_data(
             "complexity": chunk.complexity_score,
             "parent_id": parent_id,  # Now properly set for all chunks
             "depth": chunk.chunk_depth,
-            "content": chunk.content,  # Add content for code viewer
-            "docstring": chunk.docstring,
+            # content/docstring omitted from graph export to reduce JSON size.
+            # Use /api/chunk-content/{id} for lazy loading on demand.
+            "preview": (chunk.content or "")[:200],  # Short preview for tooltips
             "language": chunk.language,
         }
 

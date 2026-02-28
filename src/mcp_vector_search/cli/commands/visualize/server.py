@@ -13,7 +13,7 @@ from pathlib import Path
 
 import orjson
 import uvicorn
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -23,6 +23,40 @@ from rich.panel import Panel
 from mcp_vector_search import __version__
 
 console = Console()
+
+# Module-level cache: loaded once at first request, held for server lifetime.
+# To invalidate, restart the server (graph file regeneration requires restart).
+_graph_cache: dict | None = None
+_nodes_by_id: dict[str, dict] = {}
+_children_by_parent: dict[str, list[dict]] = {}
+
+
+def _ensure_cache(graph_file: Path) -> dict:
+    """Load and parse graph JSON once; build O(1) lookup indexes on first call.
+
+    Args:
+        graph_file: Path to the chunk-graph.json file
+
+    Returns:
+        Parsed graph data dict (cached after first call)
+    """
+    global _graph_cache, _nodes_by_id, _children_by_parent
+    if _graph_cache is not None:
+        return _graph_cache
+
+    with open(graph_file, "rb") as f:
+        _graph_cache = orjson.loads(f.read())
+
+    # Build O(1) lookup indexes
+    for node in _graph_cache.get("nodes", []):
+        _nodes_by_id[node["id"]] = node
+        parent = node.get("parent_id")
+        if parent:
+            _children_by_parent.setdefault(parent, []).append(node)
+
+    total = len(_nodes_by_id)
+    console.print(f"[green]✓[/green] Graph cache loaded: {total} nodes indexed")
+    return _graph_cache
 
 
 def find_free_port(start_port: int = 8501, end_port: int = 8599) -> int:
@@ -135,8 +169,7 @@ def create_app(viz_dir: Path) -> FastAPI:
             )
 
         try:
-            with open(graph_file, "rb") as f:
-                data = orjson.loads(f.read())
+            data = _ensure_cache(graph_file)
 
             # Return nodes and links using orjson for fast serialization
             return Response(
@@ -176,8 +209,7 @@ def create_app(viz_dir: Path) -> FastAPI:
             )
 
         try:
-            with open(graph_file, "rb") as f:
-                data = orjson.loads(f.read())
+            data = _ensure_cache(graph_file)
 
             all_nodes = data.get("nodes", [])
             all_links = data.get("links", [])
@@ -222,9 +254,7 @@ def create_app(viz_dir: Path) -> FastAPI:
                     if parent_id in initial_node_ids:
                         child_id = link["target"]
                         # Count if child is directory/file but NOT in initial view
-                        child_node = next(
-                            (n for n in all_nodes if n["id"] == child_id), None
-                        )
+                        child_node = _nodes_by_id.get(child_id)  # O(1) lookup
                         if child_node and child_id not in initial_node_ids:
                             child_type = child_node.get("type")
                             if child_type in ("directory", "file"):
@@ -299,14 +329,12 @@ def create_app(viz_dir: Path) -> FastAPI:
             )
 
         try:
-            with open(graph_file, "rb") as f:
-                data = orjson.loads(f.read())
+            data = _ensure_cache(graph_file)
 
-            all_nodes = data.get("nodes", [])
             all_links = data.get("links", [])
 
-            # Find the node being expanded
-            node = next((n for n in all_nodes if n["id"] == node_id), None)
+            # O(1) node lookup using index
+            node = _nodes_by_id.get(node_id)
             if not node:
                 return Response(
                     content='{"error": "Node not found", "nodes": [], "links": []}',
@@ -325,26 +353,15 @@ def create_app(viz_dir: Path) -> FastAPI:
                 ):
                     child_ids.add(link["target"])
 
-            # Get child nodes
+            # Get child nodes using O(1) index; mark expandable using _children_by_parent
             child_nodes = []
             for child_id in child_ids:
-                child_node = next((n for n in all_nodes if n["id"] == child_id), None)
+                child_node = _nodes_by_id.get(child_id)  # O(1) lookup
                 if child_node:
                     child_copy = child_node.copy()
-                    # Mark as expandable if it has children
-                    child_copy["expandable"] = False
+                    # Mark expandable if node has any children in the index
+                    child_copy["expandable"] = child_id in _children_by_parent
                     child_copy["expanded"] = False
-
-                    # Check if this node has children
-                    for link in all_links:
-                        if link["source"] == child_id and link.get("type") in (
-                            "dir_containment",
-                            "file_containment",
-                            "chunk_hierarchy",
-                        ):
-                            child_copy["expandable"] = True
-                            break
-
                     child_nodes.append(child_copy)
 
             # Get links connecting children to parent and among children
@@ -400,8 +417,7 @@ def create_app(viz_dir: Path) -> FastAPI:
             )
 
         try:
-            with open(graph_file, "rb") as f:
-                data = orjson.loads(f.read())
+            data = _ensure_cache(graph_file)
 
             all_nodes = data.get("nodes", [])
             all_links = data.get("links", [])
@@ -568,15 +584,10 @@ def create_app(viz_dir: Path) -> FastAPI:
         try:
             import ast
 
-            with open(graph_file, "rb") as f:
-                data = orjson.loads(f.read())
+            _ensure_cache(graph_file)
 
-            # Find the target chunk
-            target_node = None
-            for node in data.get("nodes", []):
-                if node.get("id") == chunk_id:
-                    target_node = node
-                    break
+            # O(1) node lookup using index
+            target_node = _nodes_by_id.get(chunk_id)
 
             if not target_node:
                 return Response(
@@ -609,7 +620,7 @@ def create_app(viz_dir: Path) -> FastAPI:
                 return calls
 
             if function_name:
-                for node in data.get("nodes", []):
+                for node in _nodes_by_id.values():
                     if node.get("type") != "chunk":
                         continue
                     node_file = node.get("file_path", "")
@@ -637,7 +648,7 @@ def create_app(viz_dir: Path) -> FastAPI:
             semantic = []
             target_words = set(target_content.lower().split())
 
-            for node in data.get("nodes", []):
+            for node in _nodes_by_id.values():
                 if node.get("type") != "chunk" or node.get("id") == chunk_id:
                     continue
                 content = node.get("content", "")
@@ -709,15 +720,10 @@ def create_app(viz_dir: Path) -> FastAPI:
         try:
             import ast
 
-            with open(graph_file, "rb") as f:
-                data = orjson.loads(f.read())
+            _ensure_cache(graph_file)
 
-            # Find the target chunk
-            target_node = None
-            for node in data.get("nodes", []):
-                if node.get("id") == chunk_id:
-                    target_node = node
-                    break
+            # O(1) node lookup using index
+            target_node = _nodes_by_id.get(chunk_id)
 
             if not target_node:
                 return Response(
@@ -756,7 +762,7 @@ def create_app(viz_dir: Path) -> FastAPI:
                     pass
                 return calls
 
-            for node in data.get("nodes", []):
+            for node in _nodes_by_id.values():
                 # Skip non-code chunks and same-file chunks
                 if node.get("type") != "chunk":
                     continue
@@ -819,13 +825,11 @@ def create_app(viz_dir: Path) -> FastAPI:
             )
 
         try:
-            with open(graph_file, "rb") as f:
-                data = orjson.loads(f.read())
+            _ensure_cache(graph_file)
 
-            # Find chunks associated with this file
-            # Look for nodes that have this file as parent via containment links
+            # Use _children_by_parent for O(1) lookup; file nodes are parents of chunks
             chunks = []
-            for node in data.get("nodes", []):
+            for node in _children_by_parent.get(file_id, []):
                 if node.get("type") == "chunk" and node.get("file_id") == file_id:
                     chunks.append(
                         {
@@ -893,6 +897,62 @@ def create_app(viz_dir: Path) -> FastAPI:
             generate_chunks(),
             media_type="application/json",
             headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"},
+        )
+
+    @app.get("/api/chunk-content/{chunk_id:path}")
+    async def get_chunk_content(chunk_id: str) -> Response:
+        """Lazy-load source content for a chunk on demand.
+
+        Reads the actual source file from disk using line range metadata,
+        falling back to the in-graph preview if the file is not accessible.
+        This keeps content out of the large graph JSON (saves 30-60% file size).
+
+        Args:
+            chunk_id: The chunk node ID
+
+        Returns:
+            JSON with 'content' (str) and 'source' ("file" | "preview")
+        """
+        graph_file = viz_dir / "chunk-graph.json"
+
+        if not graph_file.exists():
+            raise HTTPException(status_code=404, detail="Graph data not found")
+
+        _ensure_cache(graph_file)
+        node = _nodes_by_id.get(chunk_id)
+        if not node:
+            raise HTTPException(status_code=404, detail=f"Chunk {chunk_id} not found")
+
+        file_path_str = node.get("file_path", "")
+        start_line = node.get("start_line", 0)
+        end_line = node.get("end_line", 0)
+
+        # Project root is two levels up from viz_dir
+        # viz_dir = <project>/.mcp-vector-search/visualization
+        project_root = viz_dir.parent.parent
+
+        if file_path_str and start_line and end_line:
+            full_path = project_root / file_path_str
+            if full_path.exists():
+                try:
+                    lines = full_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).splitlines()
+                    content = "\n".join(lines[max(0, start_line - 1) : end_line])
+                    return Response(
+                        content=orjson.dumps({"content": content, "source": "file"}),
+                        media_type="application/json",
+                        headers={"Cache-Control": "max-age=300"},
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not read source file {full_path}: {e}")
+
+        # Fallback: return in-graph preview (200-char truncation)
+        preview = node.get("preview", "")
+        return Response(
+            content=orjson.dumps({"content": preview, "source": "preview"}),
+            media_type="application/json",
+            headers={"Cache-Control": "max-age=300"},
         )
 
     @app.get("/")
