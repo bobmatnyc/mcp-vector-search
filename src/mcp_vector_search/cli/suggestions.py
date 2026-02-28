@@ -44,9 +44,12 @@ class ContextualSuggestionProvider:
                 config_file = config_dir / "config.json"
                 state["has_config"] = config_file.exists()
 
-                # Check for index
-                index_dir = config_dir / "chroma_db"
-                state["has_index"] = index_dir.exists() and any(index_dir.iterdir())
+                # Check for index (LanceDB at lance/, legacy ChromaDB at chroma_db/)
+                lance_dir = config_dir / "lance"
+                chroma_dir = config_dir / "chroma_db"
+                state["has_index"] = (
+                    lance_dir.exists() and any(lance_dir.iterdir())
+                ) or (chroma_dir.exists() and any(chroma_dir.iterdir()))
 
             # Check if it's a git repo
             git_dir = self.project_root / ".git"
