@@ -7,8 +7,8 @@ import warnings
 # with Pydantic's protected "model_" namespace. This is a lancedb issue, not ours.
 warnings.filterwarnings("ignore", message=".*has conflict with protected namespace.*")
 
-__version__ = "3.0.41"
-__build__ = "291"
+__version__ = "3.0.42"
+__build__ = "292"
 __author__ = "Robert Matsuoka"
 __email__ = "bob@matsuoka.com"
 
@@ -31,8 +31,7 @@ from .core.exceptions import (  # noqa: E402
     QueryExpansionError,
     SearchError,
 )
-from .core.indexer import HealthStatus  # noqa: E402
-from .core.models import ContentChunk  # noqa: E402
+from .core.models import ContentChunk, HealthStatus  # noqa: E402
 
 # Convenience alias: ``mcp_vector_search.IndexError`` without shadowing built-in
 IndexError = IndexingError  # noqa: A001

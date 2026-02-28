@@ -13,7 +13,6 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -82,29 +81,9 @@ def cleanup_stale_locks(project_dir: Path) -> None:
         )
 
 
-@dataclass
-class HealthStatus:
-    """Result of a SemanticIndexer.health_check() call.
-
-    Attributes:
-        db_connected: True when the LanceDB directory is reachable.
-        tables_exist: Names of LanceDB tables that currently exist on disk.
-        model_loaded: True when the embedding function is attached to the
-            database and exposes a ``model_name`` attribute.
-        index_valid: True when both ``chunks`` and ``vectors`` tables exist
-            and the DB is connected (a *structural* validity check only –
-            no search is executed).
-        status: Overall status string: ``"healthy"``, ``"degraded"``, or
-            ``"unhealthy"``.
-        details: Free-form string values keyed by diagnostic label.
-    """
-
-    db_connected: bool = False
-    tables_exist: list[str] = field(default_factory=list)
-    model_loaded: bool = False
-    index_valid: bool = False
-    status: str = "unknown"
-    details: dict[str, str] = field(default_factory=dict)
+# HealthStatus lives in models.py to avoid pulling LanceDB into the package
+# __init__.py import chain (which would break the KG subprocess).
+from .models import HealthStatus  # noqa: F401, E402
 
 
 class SemanticIndexer:
