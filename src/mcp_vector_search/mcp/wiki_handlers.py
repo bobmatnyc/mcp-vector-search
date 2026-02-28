@@ -78,7 +78,7 @@ class WikiHandlers:
             # Initialize vector database (main index)
             embedding_function, _ = create_embedding_function(config.embedding_model)
             vector_database = create_database(
-                persist_directory=config.index_path,
+                persist_directory=config.index_path / "lance",
                 embedding_function=embedding_function,
             )
             await vector_database.initialize()

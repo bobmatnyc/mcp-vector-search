@@ -524,7 +524,7 @@ def cli_with_suggestions():
                 from rich.console import Console
 
                 console = Console(stderr=True)
-                console.print(f"\\n[red]Error:[/red] {e}")
+                console.print(f"\n[red]Error:[/red] {e}")
 
                 # Show enhanced suggestions
                 add_common_suggestions(None, command_name)

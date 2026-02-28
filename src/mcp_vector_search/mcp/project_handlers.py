@@ -200,7 +200,7 @@ class ProjectHandlers:
             )
 
             database = create_database(
-                persist_directory=config.index_path,
+                persist_directory=config.index_path / "lance",
                 embedding_function=embedding_function,
             )
 
