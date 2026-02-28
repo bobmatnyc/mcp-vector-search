@@ -503,6 +503,18 @@ def cli_with_suggestions():
 
     import click
 
+    # Handle common pattern: "mvs search query ..." → "mvs search ..."
+    # The search callback has a positional `query` parameter which consumes
+    # the literal word "query" before Click can resolve subcommands, leaving
+    # the actual search terms as an unrecognized "command". Strip the redundant
+    # word so "mvs search query 'business rules'" works like "mvs search 'business rules'".
+    if (
+        len(sys.argv) >= 4
+        and sys.argv[1] == "search"
+        and sys.argv[2].lower() == "query"
+    ):
+        sys.argv = [sys.argv[0], "search"] + sys.argv[3:]
+
     try:
         # Call the app with standalone_mode=False to get exceptions instead of sys.exit
         # Capture return value - when standalone_mode=False, typer.Exit returns code instead of raising

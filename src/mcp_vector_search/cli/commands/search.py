@@ -1068,9 +1068,6 @@ def show_favorites_cmd(
 # Add main command to search_app (allows: mcp-vector-search search main "query")
 search_app.command("main")(search_main)
 
-# Add query alias (allows: mcp-vector-search search query "business rules")
-search_app.command("query")(search_main)
-
 
 if __name__ == "__main__":
     search_app()
