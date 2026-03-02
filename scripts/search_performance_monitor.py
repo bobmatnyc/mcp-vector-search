@@ -14,10 +14,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from mcp_vector_search.core.database import ChromaVectorDatabase
-from mcp_vector_search.core.embeddings import create_embedding_function
+from mcp_vector_search.core.factory import ComponentFactory, DatabaseContext
 from mcp_vector_search.core.project import ProjectManager
-from mcp_vector_search.core.search import SemanticSearchEngine
 
 
 @dataclass
@@ -62,25 +60,24 @@ class SearchPerformanceMonitor:
             print("❌ Project not initialized. Run 'mcp-vector-search init' first.")
             return False
 
-        config = project_manager.load_config()
-
-        # Create components
-        embedding_function, _ = create_embedding_function(config.embedding_model)
-        database = ChromaVectorDatabase(
-            persist_directory=config.index_path,
-            embedding_function=embedding_function,
-        )
-
-        self.search_engine = SemanticSearchEngine(
-            database=database,
+        # Create components using the standard factory
+        self._components = await ComponentFactory.create_standard_components(
             project_root=self.project_root,
-            similarity_threshold=config.similarity_threshold,
+            use_pooling=False,
+            include_search_engine=True,
+            include_auto_indexer=False,
         )
+        self._db_context = DatabaseContext(self._components.database)
+        await self._db_context.__aenter__()
 
-        # Initialize database
-        await database.initialize()
+        self.search_engine = self._components.search_engine
         print("✓ Monitor ready")
         return True
+
+    async def teardown(self) -> None:
+        """Clean up resources."""
+        if hasattr(self, "_db_context"):
+            await self._db_context.__aexit__(None, None, None)
 
     async def run_quick_check(self) -> QuickMetrics:
         """Run a quick performance check."""
@@ -371,6 +368,9 @@ async def main():
         import traceback
 
         traceback.print_exc()
+
+    finally:
+        await monitor.teardown()
 
 
 if __name__ == "__main__":
