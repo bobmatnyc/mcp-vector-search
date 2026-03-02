@@ -137,6 +137,166 @@ NFS/EFS).
 
   New env vars: `MCP_VECTOR_SEARCH_EMBED_BATCH_SIZE`, `MCP_VECTOR_SEARCH_WRITE_BATCH_SIZE`
 
+## [3.0.47] - 2026-02-28
+
+### Performance
+
+- **Visualization memory for large codebases (300-700 MB → ~50 MB)** — Three-phase optimization for projects with 100K+ chunks:
+  - Phase 1: removed `orjson OPT_INDENT_2` from JSON export (~15% size reduction); switched default to `--code-only` (eliminates 83.8% text/markdown nodes); added `--all-chunks` flag to opt back in
+  - Phase 2: in-memory graph cache at first request with `nodes_by_id` and `children_by_parent` O(1) index maps — eliminates re-reading 600 MB per click; all O(n) node lookups replaced with O(1) dict access
+  - Phase 3: stripped `content`/`docstring` from graph nodes (42% of JSON size); added 200-char preview field for tooltips; new `/api/chunk-content/{id}` endpoint lazy-loads full content from disk on node click
+
+## [3.0.46] - 2026-02-28
+
+### Fixed
+
+- **`auto_reindex_on_upgrade` wired to all search entry points** — Previously only the basic `mvs search` CLI command checked for a version bump; Claude Desktop users calling MCP tools directly never received an automatic reindex on major/minor version upgrades
+  - Added `_check_auto_reindex()` to MCP server `initialize()` — triggers full reindex before handlers start responding to queries
+  - Extracted shared `_check_auto_reindex()` helper used by both CLI commands and MCP server
+  - Wired into `run_similar_search()` and `run_context_search()` as well
+  - All checks are non-fatal (failures logged, server/search continues)
+
+## [3.0.45] - 2026-02-28
+
+### Fixed
+
+- **MCP database path bugs and `search query` subcommand** — Fixed several search CLI and MCP path resolution issues
+  - Resolved MCP database path not being resolved correctly in certain project configurations
+  - Added `mvs search query "..."` subcommand for explicit keyword-style queries
+  - Fixed `mvs search query "..."` → strips redundant leading "query" word before passing to search engine
+
+## [3.0.44] - 2026-02-28
+
+### Fixed
+
+- **`HealthStatus` moved to `models.py`** — Eliminates KG subprocess LanceDB thread leak that occurred when `HealthStatus` was imported from `indexer.py`, which triggered the full LanceDB backend initialisation in the subprocess context
+
+- **Index detection updated to `lance/` directory** — Changed from checking for legacy `chroma_db/` to checking `lance/` for all index presence detection
+
+- **Legacy `chroma_db` check removed** — Removed the remaining fallback check for the old ChromaDB index format
+
+## [3.0.43] - 2026-02-28
+
+### Fixed
+
+- **Auto-rebuild missing `index_metadata.json`** — When `index_metadata.json` is absent but the chunks database exists, the file was rebuilt automatically at the start of `chunk_files()` instead of prompting the user to run a manual command
+  - Added `_auto_rebuild_metadata()`: scans the chunks table for unique file paths, collects filesystem mtimes, saves the metadata file
+  - Added auto-repair check in `chunk_files()` after backend initialisation
+  - Updated `status.py` warning message to say "Will be auto-rebuilt on next `mvs index`"
+  - Non-fatal: failures are logged but do not block indexing
+
+## [3.0.42] - 2026-02-28
+
+### Fixed
+
+- **KMeans empty-cluster warnings suppressed** — IVF index build no longer floods logs with `KMeans: ran out of distinct points` warnings during the index training phase; filter applied via `warnings.filterwarnings` around the training call
+
+## [3.0.41] - 2026-02-28
+
+### Added
+
+- **BM25 keyword index progress bar** — Eliminated the static "Building keyword search index..." message that gave no feedback for 15-30 s on large projects
+  - Shows chunk count after LanceDB read: "Building keyword search index (80,431 chunks)..."
+  - Shows tokenisation progress bar with ETA: "Tokenizing chunks... 45% 36,000/80,431"
+  - Callback fires every 500 chunks for responsive updates
+  - Caller message changed to "Loading chunks for keyword index..." (DB-read phase)
+
+## [3.0.40] - 2026-02-27
+
+### Fixed
+
+- **10× chunk duplication on macOS** — Removed the macOS `platform.system() == "Darwin"` guard on delete operations that was silently skipping all chunk removal before re-index, causing every reindex to append duplicates instead of replacing stale chunks
+
+## [3.0.39] - 2026-02-27
+
+### Performance
+
+- **Eliminated duplicate file scanning and batched LanceDB writes** — Removed a second full filesystem scan that ran after the first, costing up to 30 s on large monorepos; all writes now batched through the shared `write_batch_files` accumulator
+
+- **BM25 index build optimised** — Removed redundant BM25 rebuild that ran inside `embed_chunks` even when no new embeddings were added; added post-parsing phase status messages so users see progress during the tokenisation step
+
+- **`embed_chunks` phase status messages** — "Post-processing embeddings…" message now appears immediately after the embedding phase completes so there is no silent gap before the BM25 build begins
+
+## [3.0.38] - 2026-02-27
+
+### Fixed
+
+- **Phase status messages appear after parsing** — Ensured "Parsing complete" and subsequent phase status messages are always emitted after all file parsing completes, fixing a race where early-exit paths skipped the messages
+
+## [3.0.37] - 2026-02-27
+
+### Fixed
+
+- **`IndexError` alias added to exceptions module** — `IndexError` was missing from the public `exceptions` re-export causing `ImportError` for callers importing it from `mcp_vector_search.exceptions`
+
+## [3.0.36] - 2026-02-27
+
+### Added
+
+- **Index metadata storage and `health_check()`** (`#114`, `#119`) — `SemanticIndexer` now persists `index_metadata.json` alongside the LanceDB tables containing version, model name, creation/update timestamps, and file counts; `health_check()` reads this file and returns a structured `HealthStatus` object with `is_healthy`, `status`, and `details` fields
+
+- **`index_path` fully configurable** (`#111`) — The LanceDB index directory is now properly separated from `project_root`; `SemanticIndexer(index_path=...)` stores the database at the specified path; resolves `#111`
+
+- **Typed exception hierarchy for public API** (`#110`) — `mcp_vector_search.exceptions` now exports `IndexNotFoundError`, `IndexCorruptedError`, `EmbeddingError`, `SearchError`, `ConfigurationError` and `ParsingError`, all subclasses of `MCPVectorSearchError`
+
+### Fixed
+
+- **LanceDB `create_table` calls made idempotent** (`#112`) — All `create_table` calls pass `mode="overwrite"` or `exist_ok=True` so repeated initialisation does not raise `TableAlreadyExistsError`
+
+## [3.0.35] - 2026-02-27
+
+### Added
+
+- **Embedding model name stored in index metadata** — `index_metadata.json` now includes the embedding model name used at index creation; `health_check()` can detect model mismatch between current config and stored index
+
+## [3.0.34] - 2026-02-27
+
+### Added
+
+- **Stable `ProjectStatus` and `IndexResult` return types** (`#113`, `#115`) — `get_project_status()` now returns a `ProjectStatus` dataclass; search methods return typed `IndexResult` objects with `chunks`, `total`, and `query_time_ms` fields for a stable public API
+
+- **`timeout` parameters, `warm_up()`, and optional reranking** (`#116`) — Added `timeout` argument to all search methods; added `warm_up()` to pre-load the embedding model before first query; added optional cross-encoder reranking via `rerank=True`
+
+- **Public visualisation API and `ContentChunk`** (`#117`, `#118`) — Added `SemanticIndexer.get_visualization_data()` returning a graph-ready JSON structure; added `ContentChunk` model for non-code content (markdown, text, config files)
+
+## [3.0.33] - 2026-02-27
+
+### Added
+
+- **Information Architecture (IA) root node in Knowledge Graph** (`#109`) — The KG now contains a single IA root node connecting all top-level namespace, module, and directory nodes, enabling full-graph traversal from a single entry point
+
+### Fixed
+
+- **Typed exception hierarchy backported** — `MCPVectorSearchError` base class and all subclasses available from `mcp_vector_search.exceptions` for callers on 3.0.33+
+
+## [3.0.32] - 2026-02-27
+
+### Performance
+
+- **Git blame disabled by default** — `skip_blame=True` is now the default across all indexing paths, removing the 50-100 ms per-file overhead that was accidentally enabled in earlier releases; projects can opt in with `--blame` / `enable_blame=True`
+
+## [3.0.31] - 2026-02-27
+
+### Performance
+
+- **Eliminated double-hashing in incremental index** — The SHA-256 hash computed during move-detection is now cached and reused by the change-detection phase; previously the same file was hashed twice per incremental run
+
+### Fixed
+
+- **Progress bar silenced in non-TTY mode** — The rich progress bar no longer renders when stdout/stderr is not a terminal (MCP server, CI pipelines, redirected output), fixing garbled output in non-interactive contexts
+
+## [3.0.30] - 2026-02-26
+
+### Fixed
+
+- **IVF index minimum raised from 256 to 4,096 rows** — Prevents `KMeans empty-cluster` warnings on small projects; the IVF_SQ ANN index is now only built when the vector table has at least 4,096 rows
+
+## [3.0.29] - 2026-02-26
+
+### Added
+
+- **File move/rename detection** — Incremental index now detects when a file is moved or renamed (same content hash, different path) and updates all metadata records without re-embedding; avoids unnecessary re-embedding of unchanged files after refactors or directory restructuring
+
 ## [3.0.28] - 2026-02-26
 
 ### Fixed
