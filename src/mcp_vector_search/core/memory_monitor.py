@@ -11,6 +11,44 @@ import psutil
 from loguru import logger
 
 
+def _detect_memory_limit_gb() -> float:
+    """Detect actual memory limit: cgroup v2 -> cgroup v1 -> system RAM.
+
+    Reads the container-imposed memory limit before falling back to total
+    system RAM.  This prevents MemoryMonitor from defaulting to the host's
+    physical RAM (e.g. 25 GB hard-coded) while the process is actually
+    running inside a cgroup-limited container (e.g. AWS g4dn.xlarge with a
+    14 GB ECS task limit).
+
+    Returns:
+        Memory limit in gigabytes as a float.
+    """
+    import pathlib
+
+    # cgroup v2 (modern Docker / Kubernetes / ECS / systemd)
+    try:
+        cgroup_v2 = pathlib.Path("/sys/fs/cgroup/memory.max")
+        if cgroup_v2.exists():
+            raw = cgroup_v2.read_text().strip()
+            if raw != "max":
+                return int(raw) / (1024**3)
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+
+    # cgroup v1 (older Docker)
+    try:
+        cgroup_v1 = pathlib.Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+        if cgroup_v1.exists():
+            limit = int(cgroup_v1.read_text().strip())
+            if limit < (1 << 62):  # not "unlimited" sentinel (~4 EiB)
+                return limit / (1024**3)
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+
+    # Fallback: total system RAM
+    return psutil.virtual_memory().total / (1024**3)
+
+
 class MemoryMonitor:
     """Monitor and enforce memory limits during indexing operations.
 
@@ -27,14 +65,14 @@ class MemoryMonitor:
         """Initialize memory monitor.
 
         Args:
-            max_memory_gb: Maximum memory in GB (default: 25GB or from env var)
+            max_memory_gb: Maximum memory in GB (default: auto-detected from cgroup/system RAM × 85%)
             warn_threshold_pct: Warning threshold as fraction (default: 0.8 = 80%)
             critical_threshold_pct: Critical threshold as fraction (default: 0.9 = 90%)
 
         Environment Variables:
             MCP_VECTOR_SEARCH_MAX_MEMORY_GB: Override max memory limit in GB
         """
-        # Get max memory from env var or use default
+        # Get max memory from env var or use auto-detection
         env_max_memory = os.environ.get("MCP_VECTOR_SEARCH_MAX_MEMORY_GB")
         if env_max_memory:
             try:
@@ -47,9 +85,16 @@ class MemoryMonitor:
                     f"Invalid MCP_VECTOR_SEARCH_MAX_MEMORY_GB value: {env_max_memory}, using default"
                 )
 
-        # Default to 25GB if not specified
+        # Auto-detect container/system memory limit when not explicitly provided
         if max_memory_gb is None:
-            max_memory_gb = 25.0
+            detected_gb = _detect_memory_limit_gb()
+            # Apply 85% safety margin so thresholds fire well before OOM
+            max_memory_gb = detected_gb * 0.85
+            logger.info(
+                "Memory limit: %.1f GB detected (%.1f GB \u00d7 85%% safety margin)",
+                detected_gb,
+                detected_gb,
+            )
 
         self.max_memory_bytes = int(max_memory_gb * 1024 * 1024 * 1024)
         self.max_memory_gb = max_memory_gb

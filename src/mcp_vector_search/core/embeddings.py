@@ -619,7 +619,13 @@ class CodeBERTEmbeddingFunction:
                 show_progress_bar=False,
                 device=self.device,  # Ensure inputs go to GPU
             )
-            return embeddings.tolist()
+            result = embeddings.tolist()
+            del embeddings  # release numpy array before cache clear
+            if self.device == "cuda":
+                import torch
+
+                torch.cuda.empty_cache()
+            return result
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Embed multiple documents, applying document_prefix when configured.
