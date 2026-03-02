@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.48] - 2026-03-02
+
+### Fixed
+
+- **SIGSEGV Crash After ~2h on GPU Instances (#122)** — `MemoryMonitor` defaulted to a 25 GB cap regardless of actual container limits. On a g4dn.xlarge with a 14 GB task limit, 13.2 GB RSS computed as 52.8% — safely below all thresholds — while the process was actually at 94% of real memory. The safety net never fired; native PyTorch/LanceDB code then attempted an allocation the cgroup denied, crashing as SIGSEGV.
+  - Added `_detect_memory_limit_gb()`: reads cgroup v2 (`/sys/fs/cgroup/memory.max`), then cgroup v1 (`memory.limit_in_bytes`), then psutil total RAM — fully adaptive to container and bare-metal environments
+  - Applies 85% safety margin to leave headroom for native allocations invisible to Python RSS (CUDA pinned memory, Arrow off-heap, Rust LanceDB buffers)
+  - `MCP_VECTOR_SEARCH_MAX_MEMORY_GB` env var overrides auto-detection entirely
+  - Added `torch.cuda.empty_cache()` after every `model.encode()` call on CUDA devices to return freed GPU blocks to the allocator between batches
+  - Reduced default asyncio queue depth from 10 to 4 (`MCP_VECTOR_SEARCH_QUEUE_DEPTH`) — cuts peak buffered chunk-dict memory in flight by 60%
+  - Added periodic `gc.collect()` in `embed_consumer()` every 10,000 chunks to release Arrow/PyArrow buffer objects
+
+- **Exit Code 120 Startup Guard Failure (#123)** — Exit code 120 was not application-defined. It propagated from a native LanceDB/Kuzu Rust crash during KG subprocess initialization, blindly re-raised by `typer.Exit(result.returncode)`. Three consecutive retries all failed within 1-2 seconds because stale `.txn` transaction files from the previous unclean shutdown blocked the subprocess from opening LanceDB tables.
+  - `kg.py` and `reindex.py`: normalize all non-0/1 subprocess exit codes to 1; emit `logger.error()` naming the likely cause (native crash) and the recovery command
+  - Added `cleanup_stale_transactions()`: removes LanceDB `.txn` files older than 1 hour at every indexing startup (non-fatal, silently skipped on error)
+  - Added `cleanup_stale_progress()`: removes `progress.json` showing `phase=chunking` with 0 files processed when older than 1 hour (crash artifact from before any real work began)
+
+### Performance
+
+- **GPU Embedding Pipeline: Parallel Producers + Batched LanceDB Writes (#124)** — Four bottlenecks caused ~1.2 chunks/sec on a Tesla T4 GPU against a theoretical 1,000+ chunks/sec with MiniLM-L6-v2. Full reindex of 232K chunks took 17+ hours instead of the expected minutes of GPU time.
+  - Fixed `file_batch_size = 256` hardcoded inside `_index_with_pipeline()` that silently ignored `self.batch_size` and `MCP_VECTOR_SEARCH_FILE_BATCH_SIZE`
+  - Implemented `MCP_VECTOR_SEARCH_NUM_PRODUCERS` (default 4): `files_to_process` is split into N stride-based slices; N producer tasks run concurrently; each sends its own `None` sentinel; the consumer counts sentinels and exits only after receiving all N (was always 1 producer despite being documented)
+  - Separated `self.embed_batch_size` from `self.batch_size`: resolved via `embed_batch_size` param → `MCP_VECTOR_SEARCH_EMBED_BATCH_SIZE` env var → `_detect_optimal_batch_size()` (512 on CUDA, 256 on MPS, 128 on CPU). Previously the file-parse batch size was used as the GPU embedding batch size.
+  - Added `--embed-batch-size` CLI flag to `mvs index` (default 0 = auto-detect)
+  - `embed_consumer()` now accumulates embeddings into a write buffer and flushes to LanceDB only when `len(write_buffer) >= MCP_VECTOR_SEARCH_WRITE_BATCH_SIZE` (default 4096) — reduces ~390 separate LanceDB `.add()` transactions for 200K chunks down to ~50, dramatically cutting EFS fragment file creation
+  - `try/finally` in the consumer guarantees the write buffer is always flushed even on exception
+
+  New env vars: `MCP_VECTOR_SEARCH_EMBED_BATCH_SIZE`, `MCP_VECTOR_SEARCH_WRITE_BATCH_SIZE`
+
 ## [3.0.28] - 2026-02-26
 
 ### Fixed
