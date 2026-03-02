@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.53] - 2026-03-02
+
+### Refactored
+
+- **Dependency Injection holistic cleanup** — Audited the entire indexing pipeline for DI compliance and eliminated all violations:
+
+  - **`SemanticIndexerConfig` dataclass (`indexer.py`)** — New `@dataclass` consolidating all ten `MCP_VECTOR_SEARCH_*` env-var reads (`FILE_BATCH_SIZE`, `EMBED_BATCH_SIZE`, `MAX_WORKERS`, `NUM_PRODUCERS`, `QUEUE_DEPTH`, `WRITE_BATCH_SIZE`, `MAX_MEMORY_GB`, `ENABLE_BACKGROUND_KG`, `AUTO_OPTIMIZE`) into a single `from_env()` classmethod. Reads now happen once at the process boundary (CLI/factory entry point) rather than scattered through business logic. Config object is stored on `self._indexer_config` and consumed by runtime methods via `self._indexer_config.field` instead of repeated `os.environ.get()` calls.
+
+  - **Injectable backends (`SemanticIndexer.__init__`)** — `__init__` now accepts `chunks_backend: ChunksBackend | None`, `vectors_backend: VectorsBackend | None`, and `memory_monitor: MemoryMonitor | None` optional parameters with `or`-pattern defaults. Existing callers that pass no arguments continue to work unchanged; tests and library users can inject mocks/stubs without monkeypatching `os.environ`.
+
+  - **`MemoryMonitor.from_env()` (`memory_monitor.py`)** — Added explicit classmethod making the env dependency visible at the call site; existing `__init__` env-var fallback retained for backward compatibility.
+
+  - **`CodeBERTEmbeddingFunction` env override removed (`embeddings.py`)** — `__init__` was silently overriding the caller-provided `model_name` with `MCP_VECTOR_SEARCH_EMBEDDING_MODEL` if the env var was set. Removed; env read lives only in `create_embedding_function()` factory where callers can see it.
+
+  - **`LanceDBBackend` injectable cache size (`lancedb_backend.py`)** — Added `cache_size: int | None = None` constructor param with env fallback (`MCP_VECTOR_SEARCH_CACHE_SIZE`), making the dependency injectable.
+
+  - **`factory.py` + `index.py` wiring** — `create_standard_components()` calls `SemanticIndexerConfig.from_env()` once and passes `indexer_config` down to `create_indexer()`. All four `SemanticIndexer(...)` call sites in `index.py` pass `indexer_config=SemanticIndexerConfig.from_env()` explicitly.
+
+## [3.0.52] - 2026-03-02
+
+### Fixed
+
+- **Redundant `console` re-imports in `index.py`** — Six function bodies in `index.py` contained `from ..output import console` re-import statements despite `console` already being imported at module level (line 24). Removed all six; one occurrence used a local `output_console` alias which was replaced with the module-level `console` directly.
+
+## [3.0.51] - 2026-03-02
+
+### Documentation
+
+- **CHANGELOG backfill (3.0.29–3.0.47)** — Added detailed entries for 19 previously undocumented patch releases covering schema evolution, performance improvements, test infrastructure, and bug fixes shipped between 2026-02-19 and 2026-02-28.
+
 ## [3.0.50] - 2026-03-02
 
 ### Performance
