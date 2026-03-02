@@ -4,15 +4,27 @@ from unittest.mock import MagicMock, patch
 
 from mcp_vector_search.core.memory_monitor import MemoryMonitor
 
+# Sentinel value returned by mocked _detect_memory_limit_gb so tests are
+# deterministic regardless of the host machine's actual RAM or cgroup limits.
+_MOCK_DETECTED_GB = 32.0
+# MemoryMonitor applies an 85% safety margin to the detected value.
+_MOCK_MAX_GB = _MOCK_DETECTED_GB * 0.85  # 27.2 GB
+
 
 class TestMemoryMonitor:
     """Test memory monitor functionality."""
 
     def test_initialization_default(self):
-        """Test default initialization."""
-        monitor = MemoryMonitor()
-        assert monitor.max_memory_gb == 25.0
-        assert monitor.max_memory_bytes == 25 * 1024 * 1024 * 1024
+        """Test default initialization uses auto-detected memory limit."""
+        # Patch _detect_memory_limit_gb so the test is deterministic across
+        # machines regardless of actual RAM or container cgroup limits.
+        with patch(
+            "mcp_vector_search.core.memory_monitor._detect_memory_limit_gb",
+            return_value=_MOCK_DETECTED_GB,
+        ):
+            monitor = MemoryMonitor()
+        assert abs(monitor.max_memory_gb - _MOCK_MAX_GB) < 0.01
+        assert monitor.max_memory_bytes == int(_MOCK_MAX_GB * 1024 * 1024 * 1024)
         assert monitor.warn_threshold == 0.8
         assert monitor.critical_threshold == 0.9
 
@@ -31,10 +43,16 @@ class TestMemoryMonitor:
         assert monitor.max_memory_gb == 15.5
 
     def test_initialization_invalid_env(self, monkeypatch):
-        """Test initialization with invalid environment variable."""
+        """Test initialization with invalid env var falls back to auto-detection."""
         monkeypatch.setenv("MCP_VECTOR_SEARCH_MAX_MEMORY_GB", "invalid")
-        monitor = MemoryMonitor()
-        assert monitor.max_memory_gb == 25.0  # Falls back to default
+        # Patch _detect_memory_limit_gb so the fallback is deterministic.
+        with patch(
+            "mcp_vector_search.core.memory_monitor._detect_memory_limit_gb",
+            return_value=_MOCK_DETECTED_GB,
+        ):
+            monitor = MemoryMonitor()
+        # Invalid env var should fall back to auto-detection (not a hardcoded 25 GB).
+        assert abs(monitor.max_memory_gb - _MOCK_MAX_GB) < 0.01
 
     @patch("psutil.Process")
     def test_get_current_memory_mb(self, mock_process):
