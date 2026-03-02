@@ -43,7 +43,7 @@ def _detect_optimal_workers() -> int:
         - Apple Silicon (16+ cores): 14 workers (leave 2 for system)
         - Apple Silicon (10-15 cores): 10 workers (leave headroom)
         - Apple Silicon (<10 cores): cores - 1
-        - Other architectures: 75% of CPU cores
+        - Other architectures: min(cpu_count, 16)
 
     Environment Variables:
         MCP_VECTOR_SEARCH_MAX_WORKERS: Override auto-detection
@@ -84,8 +84,8 @@ def _detect_optimal_workers() -> int:
             f"CPU architecture detection failed: {e}, using default worker calculation"
         )
 
-    # Default: 75% of cores
-    workers = max(1, cpu_count * 3 // 4)
+    # Default: min(cpu_count, 16) — full utilization up to 16, capped to prevent thrashing
+    workers = min(cpu_count, 16)
     logger.debug(f"Using {workers} workers ({cpu_count} CPU cores detected)")
     return workers
 
@@ -338,10 +338,10 @@ class ChunkProcessor:
             # Use spawn on macOS to avoid SIGILL from fork+PyTorch interaction
             mp_context = _get_mp_context()
             self._persistent_pool = ProcessPoolExecutor(
-                max_workers=max_workers, mp_context=mp_context
+                max_workers=self.max_workers, mp_context=mp_context
             )
             logger.info(
-                f"Created persistent ProcessPoolExecutor with {max_workers} workers using '{mp_context._name}' start method (reused across all batches)"
+                f"Created persistent ProcessPoolExecutor with {self.max_workers} workers using '{mp_context._name}' start method (reused across all batches)"
             )
 
         # Submit each file as an individual future to the persistent pool.

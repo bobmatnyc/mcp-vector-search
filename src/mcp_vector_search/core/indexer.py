@@ -177,12 +177,14 @@ def _detect_filesystem_type(db_path: Path) -> str:
             db_str = str(db_path.resolve())
             best_mount = ""
             best_fstype = "default"
+            best_source = ""
 
             with open("/proc/mounts") as f:
                 for line in f:
                     parts = line.split()
                     if len(parts) < 3:
                         continue
+                    source = parts[0]
                     mount_point = parts[1]
                     fstype = parts[2].lower()
                     # Find longest matching mount point for db_path
@@ -191,9 +193,15 @@ def _detect_filesystem_type(db_path: Path) -> str:
                     ):
                         best_mount = mount_point
                         best_fstype = fstype
+                        best_source = source
 
             if best_fstype in ("nfs", "nfs4", "cifs", "smbfs", "efs"):
                 return "nfs"
+
+            # Check for NVMe: source device name contains "nvme" (e.g. /dev/nvme0n1p1)
+            # OR mount point path suggests a dedicated NVMe mount (e.g. /mnt/nvme)
+            if "nvme" in best_source.lower() or "/nvme" in best_mount.lower():
+                return "nvme"
 
         # macOS / fallback: use stat -f to detect network filesystems
         import subprocess
@@ -238,6 +246,9 @@ class SemanticIndexerConfig:
     max_memory_gb: float | None = None  # None = cgroup/system auto
     enable_background_kg: bool = False
     auto_optimize: bool = True
+    two_pass: bool = (
+        False  # If True, use sequential chunk-all-then-embed-all instead of pipeline
+    )
 
     @classmethod
     def from_env(cls) -> "SemanticIndexerConfig":
@@ -326,6 +337,13 @@ class SemanticIndexerConfig:
         auto_kg_val = _os.environ.get("MCP_VECTOR_SEARCH_AUTO_KG", "false").lower()
         enable_background_kg = auto_kg_val in ("1", "true", "yes")
 
+        # two_pass: sequential chunk-all then embed-all (avoids GPU starvation on slow EFS)
+        two_pass = _os.environ.get("MCP_VECTOR_SEARCH_TWO_PASS", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+
         return cls(
             index_path=index_path,
             file_batch_size=file_batch_size,
@@ -336,6 +354,7 @@ class SemanticIndexerConfig:
             write_batch_size=write_batch_size,
             max_memory_gb=max_memory_gb,
             enable_background_kg=enable_background_kg,
+            two_pass=two_pass,
         )
 
 
@@ -3105,8 +3124,9 @@ class SemanticIndexer:
         chunks_embedded = 0
         files_to_index = []  # Initialize to empty list for directory index updates
 
-        # Decide whether to use pipeline or sequential execution
-        use_pipeline = pipeline and phase == "all"
+        # Decide whether to use pipeline or sequential execution.
+        # two_pass forces sequential mode even when the caller requests pipeline.
+        use_pipeline = pipeline and phase == "all" and not self._indexer_config.two_pass
 
         if use_pipeline:
             # PIPELINE MODE: Overlap Phase 1 (chunking) and Phase 2 (embedding)

@@ -13,6 +13,7 @@ The cross-encoder model scores each (query, document) pair directly, allowing it
 capture semantic interactions that bi-encoders miss.
 """
 
+import os
 from typing import Any
 
 from loguru import logger
@@ -71,20 +72,28 @@ class CrossEncoderReranker:
             logger.debug(f"Loading cross-encoder model: {self._model_name}")
             self._model = CrossEncoder(self._model_name)
 
-            # Try to use MPS/CUDA if available for acceleration
+            # Try to use MPS/CUDA if available for acceleration,
+            # honouring MCP_VECTOR_SEARCH_DEVICE env var override.
             try:
-                import torch
-
-                if torch.backends.mps.is_available():
-                    # MPS (Apple Silicon GPU) support
-                    logger.debug("Cross-encoder using MPS device (Apple Silicon)")
-                    self._model.model.to("mps")
-                elif torch.cuda.is_available():
-                    # CUDA (NVIDIA GPU) support
-                    logger.debug("Cross-encoder using CUDA device")
-                    self._model.model.to("cuda")
+                env_device = os.environ.get("MCP_VECTOR_SEARCH_DEVICE", "").lower()
+                if env_device in ("cpu", "cuda", "mps"):
+                    logger.debug(
+                        f"Cross-encoder using device from env var: {env_device}"
+                    )
+                    self._model.model.to(env_device)
                 else:
-                    logger.debug("Cross-encoder using CPU (no GPU available)")
+                    import torch
+
+                    if torch.backends.mps.is_available():
+                        # MPS (Apple Silicon GPU) support
+                        logger.debug("Cross-encoder using MPS device (Apple Silicon)")
+                        self._model.model.to("mps")
+                    elif torch.cuda.is_available():
+                        # CUDA (NVIDIA GPU) support
+                        logger.debug("Cross-encoder using CUDA device")
+                        self._model.model.to("cuda")
+                    else:
+                        logger.debug("Cross-encoder using CPU (no GPU available)")
             except Exception as e:
                 # Non-fatal: fall back to CPU if device detection fails
                 logger.debug(f"GPU detection failed, using CPU: {e}")

@@ -419,6 +419,12 @@ def main(
         min=0,
         rich_help_panel="⚡ Performance",
     ),
+    two_pass: bool | None = typer.Option(
+        None,
+        "--two-pass/--no-two-pass",
+        help="Use sequential chunk-all then embed-all instead of pipeline (default: auto from MCP_VECTOR_SEARCH_TWO_PASS env var)",
+        rich_help_panel="⚡ Performance",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -537,6 +543,7 @@ def main(
                     re_embed=re_embed,
                     embedding_model_override=embedding_model,
                     embed_batch_size=embed_batch_size,
+                    two_pass=two_pass,
                 )
             )
 
@@ -703,6 +710,7 @@ async def run_indexing(
     re_embed: bool = False,
     embedding_model_override: str | None = None,
     embed_batch_size: int = 0,
+    two_pass: bool | None = None,
 ) -> None:
     """Run the indexing process.
 
@@ -714,6 +722,7 @@ async def run_indexing(
         skip_blame: Skip git blame tracking for faster indexing
         re_embed: Re-embed all chunks with current or specified model without re-parsing
         embedding_model_override: Override embedding model (e.g., microsoft/graphcodebert-base)
+        two_pass: Override two_pass mode (None = use env var / config default)
     """
     # Load project configuration
     project_manager = ProjectManager(project_root)
@@ -995,6 +1004,12 @@ async def run_indexing(
     # Create progress tracker for progress bars (always enabled now)
     progress_tracker_obj = ProgressTracker(console, verbose=verbose)
 
+    indexer_cfg = SemanticIndexerConfig.from_env()
+    if two_pass is not None:
+        import dataclasses
+
+        indexer_cfg = dataclasses.replace(indexer_cfg, two_pass=two_pass)
+
     indexer = SemanticIndexer(
         database=database,
         project_root=project_root,
@@ -1006,7 +1021,7 @@ async def run_indexing(
         ignore_patterns=vendor_patterns_set,
         skip_blame=skip_blame,
         progress_tracker=progress_tracker_obj,
-        indexer_config=SemanticIndexerConfig.from_env(),
+        indexer_config=indexer_cfg,
     )
     # Set cancellation flag for graceful shutdown
     if cancellation_flag:

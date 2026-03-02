@@ -38,21 +38,25 @@ def detect_hardware_config() -> dict[str, Any]:
         "cache_size": 100,
     }
 
-    # Detect device (MPS > CUDA > CPU)
-    try:
-        import torch
+    # Detect device (MPS > CUDA > CPU), honouring env var override
+    env_device = os.environ.get("MCP_VECTOR_SEARCH_DEVICE", "").lower()
+    if env_device in ("cpu", "cuda", "mps"):
+        config["device"] = env_device
+    else:
+        try:
+            import torch
 
-        if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            config["device"] = "mps"
-        elif torch.cuda.is_available():
-            config["device"] = "cuda"
-    except ImportError:
-        pass
+            if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+                config["device"] = "mps"
+            elif torch.cuda.is_available():
+                config["device"] = "cuda"
+        except ImportError:
+            pass
 
     # Detect RAM on macOS
     if platform.system() == "Darwin":
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B607
                 ["sysctl", "-n", "hw.memsize"],
                 capture_output=True,
                 text=True,
@@ -62,7 +66,7 @@ def detect_hardware_config() -> dict[str, Any]:
                 config["ram_gb"] = int(result.stdout.strip()) / (1024**3)
 
             # Get chip name
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B607
                 ["sysctl", "-n", "machdep.cpu.brand_string"],
                 capture_output=True,
                 text=True,
