@@ -408,18 +408,11 @@ class CodeBERTEmbeddingFunction:
         """Initialize embedding function.
 
         Args:
-            model_name: Name of the sentence transformer model
+            model_name: Name of the sentence transformer model to use.
+                The caller is responsible for resolving any env var overrides
+                before constructing this class (see create_embedding_function()).
             timeout: Timeout in seconds for embedding generation (default: 300s)
-
-        Environment Variables:
-            MCP_VECTOR_SEARCH_EMBEDDING_MODEL: Override embedding model (highest priority)
         """
-        # Check environment variable override FIRST (highest priority)
-        env_model = os.environ.get("MCP_VECTOR_SEARCH_EMBEDDING_MODEL")
-        if env_model:
-            model_name = env_model
-            logger.info(f"Using embedding model from environment: {model_name}")
-
         try:
             # Auto-detect optimal device (MPS > CUDA > CPU)
             device = _detect_device()

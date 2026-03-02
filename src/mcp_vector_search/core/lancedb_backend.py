@@ -176,6 +176,7 @@ class LanceVectorDatabase:
         embedding_function: Any,  # EmbeddingFunction protocol
         collection_name: str = "code_search",
         vector_dim: int | None = None,  # Optional: specify vector dimension
+        cache_size: int | None = None,  # LRU search-result cache capacity
     ) -> None:
         """Initialize LanceDB vector database.
 
@@ -184,6 +185,8 @@ class LanceVectorDatabase:
             embedding_function: Function to generate embeddings
             collection_name: Name of the table
             vector_dim: Vector dimension (auto-detected if not provided)
+            cache_size: Maximum number of search results to cache. Falls back
+                to MCP_VECTOR_SEARCH_CACHE_SIZE env var, then 100.
         """
         self.persist_directory = (
             Path(persist_directory)
@@ -218,12 +221,14 @@ class LanceVectorDatabase:
         self._schema = _create_lance_schema(self.vector_dim)
 
         # LRU cache for search results (same as ChromaDB implementation)
-        import os
-
-        cache_size = int(os.environ.get("MCP_VECTOR_SEARCH_CACHE_SIZE", "100"))
+        resolved_cache_size = (
+            cache_size
+            if cache_size is not None
+            else int(os.environ.get("MCP_VECTOR_SEARCH_CACHE_SIZE", "100"))
+        )
         self._search_cache: dict[str, list[SearchResult]] = {}
         self._search_cache_order: list[str] = []
-        self._search_cache_max_size = cache_size
+        self._search_cache_max_size = resolved_cache_size
 
         # Write buffer for batching database inserts (2-4x speedup)
         # Auto-detect optimal buffer size based on available RAM

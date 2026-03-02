@@ -113,6 +113,39 @@ class MemoryMonitor:
             f"(warn: {warn_threshold_pct * 100:.0f}%, critical: {critical_threshold_pct * 100:.0f}%)"
         )
 
+    @classmethod
+    def from_env(
+        cls,
+        warn_threshold_pct: float = 0.8,
+        critical_threshold_pct: float = 0.9,
+    ) -> "MemoryMonitor":
+        """Create MemoryMonitor with max_memory_gb resolved from env var.
+
+        Reads MCP_VECTOR_SEARCH_MAX_MEMORY_GB explicitly, making the env
+        dependency visible at the call site rather than hidden in __init__.
+
+        Args:
+            warn_threshold_pct: Warning threshold as fraction (default: 0.8)
+            critical_threshold_pct: Critical threshold as fraction (default: 0.9)
+
+        Returns:
+            MemoryMonitor instance with env-resolved max_memory_gb
+        """
+        max_gb: float | None = None
+        val = os.environ.get("MCP_VECTOR_SEARCH_MAX_MEMORY_GB")
+        if val:
+            try:
+                max_gb = float(val)
+            except ValueError:
+                logger.warning(
+                    f"Invalid MCP_VECTOR_SEARCH_MAX_MEMORY_GB: {val!r}, using auto-detect"
+                )
+        return cls(
+            max_memory_gb=max_gb,
+            warn_threshold_pct=warn_threshold_pct,
+            critical_threshold_pct=critical_threshold_pct,
+        )
+
     def get_current_memory_mb(self) -> float:
         """Get current process memory usage in MB.
 
