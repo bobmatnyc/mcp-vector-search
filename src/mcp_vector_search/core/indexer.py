@@ -1090,20 +1090,33 @@ class SemanticIndexer:
                                 }
                                 chunk_dicts.append(chunk_dict)
 
-                            # Store chunks to chunks.lance
+                            # Accumulate chunks for a single batched write after the
+                            # full batch is parsed.  file_hash is injected here so
+                            # add_chunks_batch() can deduplicate per-file.  This mirrors
+                            # the two-pass path (see _flush_pending_chunks / add_chunks_batch).
+                            # NOTE: the old per-file add_chunks() call was the primary cause
+                            # of GPU starvation: 512 sequential EFS writes (25-100s) per
+                            # batch while the GPU sat idle.
                             if chunk_dicts:
-                                count = await self.chunks_backend.add_chunks(
-                                    chunk_dicts, file_hash
-                                )
+                                for cd in chunk_dicts:
+                                    cd["file_hash"] = file_hash
                                 batch_chunks.extend(chunk_dicts)
-                                chunks_created += count
                                 batch_files_processed += 1
-                                # Use TRACE to avoid cluttering progress displays
-                                logger.trace(f"Chunked {count} chunks from {rel_path}")
+                                logger.trace(
+                                    f"Chunked {len(chunk_dicts)} chunks from {rel_path}"
+                                )
 
                         except Exception as e:
                             logger.error(f"Failed to chunk file {file_path}: {e}")
                             continue
+
+                    # Write all accumulated batch chunks to chunks.lance in ONE call.
+                    # This replaces N per-file add_chunks() calls with a single
+                    # add_chunks_batch() call per batch, eliminating the primary source
+                    # of GPU starvation (N×EFS writes → 1×EFS write per batch).
+                    if batch_chunks:
+                        count = await self.chunks_backend.add_chunks_batch(batch_chunks)
+                        chunks_created += count
 
                     files_indexed += batch_files_processed
 
