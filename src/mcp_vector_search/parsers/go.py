@@ -41,8 +41,8 @@ class GoParser(BaseParser):
     async def parse_file(self, file_path: Path) -> list[CodeChunk]:
         """Parse a Go file and extract code chunks."""
         try:
-            with open(file_path, encoding="utf-8", errors="replace") as f:
-                content = f.read()
+            file_bytes = file_path.read_bytes()
+            content = file_bytes.decode("utf-8", errors="replace")
             return await self.parse_content(content, file_path)
         except Exception as e:
             logger.error(f"Failed to read file {file_path}: {e}")
@@ -58,7 +58,8 @@ class GoParser(BaseParser):
 
         if self._use_tree_sitter:
             try:
-                tree = self._parser.parse(content.encode("utf-8"))
+                content_bytes = content.encode("utf-8")
+                tree = self._parser.parse(content_bytes)
                 return self._extract_chunks_from_tree(tree, content, file_path)
             except Exception as e:
                 logger.warning(f"Tree-sitter parsing failed for {file_path}: {e}")
@@ -536,8 +537,8 @@ class GoParser(BaseParser):
     def parse_file_sync(self, file_path: Path) -> list[CodeChunk]:
         """Parse file synchronously (optimized for multiprocessing workers)."""
         try:
-            with open(file_path, encoding="utf-8", errors="replace") as f:
-                content = f.read()
+            file_bytes = file_path.read_bytes()
+            content = file_bytes.decode("utf-8", errors="replace")
             return self._parse_content_sync(content, file_path)
         except Exception as e:
             logger.error(f"Failed to read file {file_path}: {e}")
@@ -553,7 +554,8 @@ class GoParser(BaseParser):
 
         if self._use_tree_sitter:
             try:
-                tree = self._parser.parse(content.encode("utf-8"))
+                content_bytes = content.encode("utf-8")
+                tree = self._parser.parse(content_bytes)
                 return self._extract_chunks_from_tree(tree, content, file_path)
             except Exception as e:
                 logger.warning(f"Tree-sitter parsing failed for {file_path}: {e}")
