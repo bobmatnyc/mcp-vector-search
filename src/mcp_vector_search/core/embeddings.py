@@ -8,6 +8,7 @@ import logging
 import multiprocessing
 import os
 import sys
+import threading
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -241,25 +242,32 @@ def _detect_optimal_batch_size() -> int:
             gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             gpu_name = torch.cuda.get_device_name(0)
 
-            # Choose batch size based on VRAM
-            if gpu_memory_gb >= 8:
-                batch_size = 512
-                logger.info(
-                    f"GPU detected ({gpu_name}, {gpu_memory_gb:.1f}GB VRAM): using batch size {batch_size}"
-                )
-                return batch_size
-            elif gpu_memory_gb >= 4:
-                batch_size = 256
-                logger.info(
-                    f"GPU detected ({gpu_name}, {gpu_memory_gb:.1f}GB VRAM): using batch size {batch_size}"
-                )
-                return batch_size
-            else:
-                batch_size = 128
-                logger.info(
-                    f"GPU detected ({gpu_name}, {gpu_memory_gb:.1f}GB VRAM): using batch size {batch_size}"
-                )
-                return batch_size
+            # Detect sm (compute capability) version — e.g. sm_75 → 75, sm_80 → 80
+            major, minor = torch.cuda.get_device_capability(0)
+            sm_version = major * 10 + minor
+
+            # Per-architecture batch size caps (memory-bandwidth limited architectures
+            # cannot saturate large batches; newer architectures handle them well)
+            _sm_max_batch: dict[int, int] = {
+                90: 1024,  # H100 (sm_90) — massive HBM3 bandwidth
+                89: 512,  # L4, RTX 4090 (sm_89)
+                86: 512,  # A10G, RTX 3090 (sm_86)
+                80: 512,  # A100 (sm_80)
+                75: 128,  # T4 (sm_75) — memory-bandwidth limited
+                70: 256,  # V100 (sm_70) — FP16 fast but older HBM
+            }
+            sm_cap = _sm_max_batch.get(sm_version, 256)
+
+            # Memory-based batch size capped by sm-version architecture limit
+            mem_batch = (
+                512 if gpu_memory_gb >= 8 else (256 if gpu_memory_gb >= 4 else 128)
+            )
+            batch_size = min(mem_batch, sm_cap)
+            logger.info(
+                f"GPU detected ({gpu_name}, {gpu_memory_gb:.1f}GB VRAM, sm_{sm_version}): "
+                f"batch_size={batch_size} (mem_cap={mem_batch}, sm_cap={sm_cap})"
+            )
+            return batch_size
         except Exception as e:
             logger.warning(f"GPU detection failed: {e}, falling back to CPU batch size")
 
@@ -550,6 +558,47 @@ class CodeBERTEmbeddingFunction:
                     f"Update MODEL_SPECIFICATIONS in defaults.py"
                 )
 
+            # Multi-GPU: initialize additional models for devices 1..N-1 (CUDA only).
+            # self.model is already on cuda:0; _gpu_models holds models for cuda:1+.
+            # self._gpu_models must be initialised BEFORE warm-up so the warm-up loop
+            # can potentially cover all GPUs in the future.
+            self._gpu_models: list = []
+            self._gpu_counter: int = 0
+            self._gpu_lock = threading.Lock()
+
+            if device == "cuda" and not self.is_codet5p:
+                import torch as _torch_multi
+
+                n_gpus = _torch_multi.cuda.device_count()
+                if n_gpus > 1:
+                    logger.info(f"Multi-GPU mode: {n_gpus} CUDA devices detected")
+                    try:
+                        import torch as _tmg
+
+                        _dtype_mg = _tmg.float16
+                    except Exception:
+                        _dtype_mg = None  # type: ignore[assignment]
+
+                    for gpu_idx in range(1, n_gpus):
+                        try:
+                            _extra_kwargs: dict = (
+                                {"torch_dtype": _dtype_mg}
+                                if _dtype_mg is not None
+                                else {}
+                            )
+                            with suppress_stdout_stderr():
+                                extra_model = SentenceTransformer(
+                                    self.model_name,
+                                    device=f"cuda:{gpu_idx}",
+                                    model_kwargs=_extra_kwargs,
+                                )
+                            self._gpu_models.append(extra_model)
+                            logger.info(f"  Loaded model on cuda:{gpu_idx}")
+                        except Exception as _e:
+                            logger.warning(
+                                f"  Failed to load model on cuda:{gpu_idx}: {_e}"
+                            )
+
             # Fix 7: GPU kernel warm-up — first encode() triggers CUDA/MPS JIT (2-10s).
             # Running a tiny dummy batch here amortises that cost before real work begins.
             if device in ("cuda", "mps") and not self.is_codet5p:
@@ -664,6 +713,24 @@ class CodeBERTEmbeddingFunction:
             # Fix 5: normalize_embeddings=True — L2 normalization on GPU is faster than
             #        post-inference CPU normalization and ensures cosine metric correctness
             batch_size = self._encode_batch_size
+
+            # Multi-GPU round-robin dispatch (CUDA only, when extra GPUs loaded)
+            if self.device == "cuda" and self._gpu_models:
+                with self._gpu_lock:
+                    idx = self._gpu_counter % (len(self._gpu_models) + 1)
+                    self._gpu_counter += 1
+                if idx == 0:
+                    active_model = self.model  # primary GPU (cuda:0)
+                else:
+                    active_model = self._gpu_models[idx - 1]
+                embeddings = active_model.encode(
+                    input,
+                    batch_size=batch_size,
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                ).tolist()
+                return embeddings
+
             # CRITICAL: Pass device to ensure input tensors are moved to GPU
             # Without this, model weights are on GPU but inputs stay on CPU (0% GPU compute)
             embeddings = self.model.encode(
