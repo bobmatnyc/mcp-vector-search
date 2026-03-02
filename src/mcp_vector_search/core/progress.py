@@ -50,6 +50,10 @@ class ProgressTracker:
         self.total_phases = 0
         self._phase_start_time: float | None = None
         self._start_time: float | None = None
+        # Cache isatty() — it's a syscall whose result is constant for the
+        # process lifetime.  Both progress_bar() and progress_bar_with_eta()
+        # check this on every call, so caching avoids repeated syscall overhead.
+        self._stderr_is_tty: bool = sys.stderr.isatty()
 
     def start(self, title: str, total_phases: int) -> None:
         """Start tracking with title and phase count.
@@ -155,7 +159,7 @@ class ProgressTracker:
 
         # Skip progress bar output when stderr is not a TTY (e.g., MCP server,
         # CI pipelines, or log capture) to avoid raw \r sequences in logs.
-        if not sys.stderr.isatty():
+        if not self._stderr_is_tty:
             return
 
         # Calculate percentage and filled width
@@ -209,7 +213,7 @@ class ProgressTracker:
 
         # Skip progress bar output when stderr is not a TTY (e.g., MCP server,
         # CI pipelines, or log capture) to avoid raw \r sequences in logs.
-        if not sys.stderr.isatty():
+        if not self._stderr_is_tty:
             return
 
         # Calculate percentage and filled width

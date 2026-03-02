@@ -24,6 +24,47 @@ class ResourceLimits:
     available_memory_mb: int
 
 
+def _detect_cpu_quota() -> int | None:
+    """Detect container CPU quota from cgroup v2 or v1.
+
+    Returns the effective CPU count imposed by the container runtime, or
+    None when running on bare metal / in a container without CPU limits.
+
+    All filesystem reads are wrapped in try/except so this is non-fatal
+    on Windows, macOS, and Linux systems without cgroup mounts.
+
+    Returns:
+        Ceiling of (quota / period) when a quota is set, otherwise None.
+    """
+    import math
+    import pathlib
+
+    # cgroup v2 — unified hierarchy (Linux 4.5+, default on most modern distros)
+    try:
+        p = pathlib.Path("/sys/fs/cgroup/cpu.max")
+        if p.exists():
+            quota_str, period_str = p.read_text().strip().split()
+            if quota_str != "max":
+                return max(1, math.ceil(int(quota_str) / int(period_str)))
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+
+    # cgroup v1 — legacy hierarchy
+    try:
+        quota = int(
+            pathlib.Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read_text().strip()
+        )
+        if quota > 0:
+            period = int(
+                pathlib.Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read_text().strip()
+            )
+            return max(1, math.ceil(quota / period))
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+
+    return None
+
+
 def get_system_memory() -> tuple[int, int]:
     """Get total and available system memory in MB.
 
@@ -67,17 +108,26 @@ def calculate_optimal_workers(
     # Calculate memory-based optimal workers
     optimal = usable_mb // memory_per_worker_mb
 
-    # Also check CPU cores for upper bound
-    cpu_count = os.cpu_count() or 4
+    # Also check CPU cores for upper bound.
+    # Use cgroup quota when available — os.cpu_count() returns the HOST's
+    # core count even inside a container, which causes over-subscription
+    # (e.g. 64 cores reported but only 2 CPU cores allocated via --cpus=2).
+    host_cpu_count = os.cpu_count() or 4
+    quota = _detect_cpu_quota()
+    if quota is not None:
+        cpu_count = min(host_cpu_count, quota)
+        logger.info("CPU quota detected: %d cores (host has %d)", quota, host_cpu_count)
+    else:
+        cpu_count = host_cpu_count
 
-    # If max_workers not specified, use CPU count as upper bound
+    # If max_workers not specified, use effective CPU count as upper bound
     if max_workers is None:
         max_workers = cpu_count
 
     # Apply bounds: min_workers <= optimal <= max_workers
     optimal = max(min_workers, min(optimal, max_workers))
 
-    # Also respect CPU count as hard upper bound
+    # Also respect effective CPU count as hard upper bound
     optimal = min(optimal, cpu_count)
 
     limits = ResourceLimits(

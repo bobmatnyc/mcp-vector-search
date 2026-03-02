@@ -344,12 +344,30 @@ class ChunkProcessor:
                 f"Created persistent ProcessPoolExecutor with {max_workers} workers using '{mp_context._name}' start method (reused across all batches)"
             )
 
-        # Run parsing in persistent pool
+        # Submit each file as an individual future to the persistent pool.
+        # This lets asyncio.gather interleave other coroutines while workers
+        # run, instead of blocking the event loop in a single run_in_executor
+        # call that holds a list() until ALL files finish.
         loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(
-            None,
-            lambda: list(self._persistent_pool.map(_parse_file_standalone, parse_args)),
-        )
+        futures = [
+            loop.run_in_executor(self._persistent_pool, _parse_file_standalone, args)
+            for args in parse_args
+        ]
+        raw_results = await asyncio.gather(*futures, return_exceptions=True)
+
+        # Normalise: run_in_executor raises BaseException subclasses directly
+        # when the worker raises; _parse_file_standalone already wraps errors
+        # into the (path, [], exc) return value, but exceptions can also
+        # propagate from pickling / pool-level failures.
+        results: list[tuple[Path, list[CodeChunk], Exception | None]] = []
+        for i, result in enumerate(raw_results):
+            if isinstance(result, BaseException):
+                # Pool-level failure (e.g. worker crashed during pickle)
+                file_path = file_paths[i]
+                logger.error(f"Worker pool error for {file_path}: {result}")
+                results.append((file_path, [], Exception(str(result))))
+            else:
+                results.append(result)
 
         logger.debug(
             f"Multiprocess parsing completed: {len(results)} files parsed with {max_workers} workers"
@@ -459,17 +477,32 @@ class ChunkProcessor:
                     file=sys.stderr,
                 )
 
+        # Pre-build O(1) lookup structures to avoid O(C×F) nested scan.
+        # class_by_name: class_name -> class chunk (last one wins for duplicates)
+        class_by_name: dict[str, CodeChunk] = {
+            c.class_name: c for c in class_chunks if c.class_name
+        }
+        # child_id_sets: chunk_id -> set of already-registered child IDs
+        # Avoids repeated `if func.chunk_id not in parent_class.child_chunk_ids`
+        # which is O(N) per check on a list; set gives O(1).
+        child_id_sets: dict[str, set[str]] = {
+            c.chunk_id: set(c.child_chunk_ids) for c in class_chunks
+        }
+
         # Build relationships
         for func in function_chunks:
             if func.class_name:
-                # Find parent class
-                parent_class = next(
-                    (c for c in class_chunks if c.class_name == func.class_name), None
-                )
+                # O(1) lookup instead of O(C) linear scan
+                parent_class = class_by_name.get(func.class_name)
                 if parent_class:
                     func.parent_chunk_id = parent_class.chunk_id
                     func.chunk_depth = parent_class.chunk_depth + 1
-                    if func.chunk_id not in parent_class.child_chunk_ids:
+                    if func.chunk_id not in child_id_sets.get(
+                        parent_class.chunk_id, set()
+                    ):
+                        child_id_sets.setdefault(parent_class.chunk_id, set()).add(
+                            func.chunk_id
+                        )
                         parent_class.child_chunk_ids.append(func.chunk_id)
                     if self.debug:
                         import sys

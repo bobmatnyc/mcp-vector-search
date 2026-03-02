@@ -22,6 +22,7 @@ header and insert a single ``---\\n`` divider before the code.
 
 from __future__ import annotations
 
+import json as _json
 from typing import Any
 
 
@@ -100,8 +101,6 @@ def build_contextual_text(chunk: Any) -> str:
     #   * list[str] of JSON strings like '{"source": "os", "statement": "import os"}'
     #   * list[str] of plain module names
     #   * A single JSON-encoded string (legacy storage format from chunks.lance)
-    import json as _json
-
     sources: list[str] = []
     if isinstance(imports_raw, str):
         # Stored as a single JSON-encoded list (legacy lancedb_backend format)
