@@ -19,7 +19,7 @@ from ...config.defaults import get_default_cache_path
 from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
 from ...core.factory import create_database
-from ...core.indexer import SemanticIndexer
+from ...core.indexer import SemanticIndexer, SemanticIndexerConfig
 from ...core.progress import ProgressTracker
 from ...core.project import ProjectManager
 from ..output import (
@@ -1006,6 +1006,7 @@ async def run_indexing(
         ignore_patterns=vendor_patterns_set,
         skip_blame=skip_blame,
         progress_tracker=progress_tracker_obj,
+        indexer_config=SemanticIndexerConfig.from_env(),
     )
     # Set cancellation flag for graceful shutdown
     if cancellation_flag:
@@ -1508,6 +1509,7 @@ async def _reindex_entire_project(project_root: Path) -> None:
         database=database,
         project_root=project_root,
         config=config,
+        indexer_config=SemanticIndexerConfig.from_env(),
     )
 
     try:
@@ -1565,6 +1567,7 @@ async def _reindex_single_file(project_root: Path, file_path: Path) -> None:
         database=database,
         project_root=project_root,
         config=config,
+        indexer_config=SemanticIndexerConfig.from_env(),
     )
 
     async with database:
@@ -2262,6 +2265,7 @@ async def _show_two_phase_status(project_root: Path) -> None:
         database=database,
         project_root=project_root,
         config=config,
+        indexer_config=SemanticIndexerConfig.from_env(),
     )
 
     # Get two-phase status

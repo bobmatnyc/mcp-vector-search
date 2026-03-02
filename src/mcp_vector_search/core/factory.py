@@ -15,7 +15,7 @@ from ..config.settings import ProjectConfig
 from .auto_indexer import AutoIndexer
 from .database import VectorDatabase
 from .embeddings import CodeBERTEmbeddingFunction, create_embedding_function
-from .indexer import SemanticIndexer
+from .indexer import SemanticIndexer, SemanticIndexerConfig
 from .lancedb_backend import LanceVectorDatabase
 from .project import ProjectManager
 from .search import SemanticSearchEngine
@@ -137,6 +137,7 @@ class ComponentFactory:
         project_root: Path,
         config: ProjectConfig,
         index_path: str | None = None,
+        indexer_config: "SemanticIndexerConfig | None" = None,
     ) -> SemanticIndexer:
         """Create semantic indexer.
 
@@ -146,12 +147,21 @@ class ComponentFactory:
             config: Project configuration
             index_path: Optional separate directory for .mcp-vector-search/ index data.
                 Falls back to INDEX_PATH env var, then project_root.
+            indexer_config: Optional pre-resolved config from SemanticIndexerConfig.from_env().
+                When provided, env var reads inside SemanticIndexer.__init__ are skipped.
         """
+        # Build resolved config at the process boundary if not provided by caller.
+        resolved_config = (
+            indexer_config
+            if indexer_config is not None
+            else SemanticIndexerConfig.from_env()
+        )
         return SemanticIndexer(
             database=database,
             project_root=project_root,
             config=config,
             index_path=index_path,
+            indexer_config=resolved_config,
         )
 
     @staticmethod
@@ -216,6 +226,10 @@ class ComponentFactory:
         # Load configuration
         project_manager, config = ComponentFactory.load_config(project_root)
 
+        # Build resolved indexer config once at the process boundary.
+        # This centralises all MCP_VECTOR_SEARCH_* env var reads in one place.
+        indexer_config = SemanticIndexerConfig.from_env()
+
         # Create embedding function
         embedding_function, _ = ComponentFactory.create_embedding_function(
             config.embedding_model
@@ -236,6 +250,7 @@ class ComponentFactory:
             project_root=project_root,
             config=config,
             index_path=str(index_path) if index_path else None,
+            indexer_config=indexer_config,
         )
 
         # Create optional components
