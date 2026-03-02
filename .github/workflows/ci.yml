@@ -136,6 +136,13 @@ jobs:
           uv sync --dev
           uv pip install -e .
 
+      - name: Add venv to PATH
+        # Expose the project venv so 'mcp-vector-search' and 'python3' are
+        # available even when the working directory is outside the project tree
+        # (e.g. /tmp/test-project which has no pyproject.toml and therefore
+        # causes 'uv run mcp-vector-search' to fail with "No such file").
+        run: echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+
       - name: Run performance tests
         run: |
           # Create a test project for benchmarking
@@ -144,8 +151,9 @@ jobs:
           echo "def hello(): pass" > test.py
 
           # Initialize and run benchmarks (pipe yes for non-interactive)
-          echo "Y" | uv run mcp-vector-search init --extensions .py --embedding-model sentence-transformers/all-MiniLM-L6-v2 --no-mcp --no-auto-indexing
-          uv run python3 ${{ github.workspace }}/scripts/search_performance_monitor.py --save
+          # Use the CLI directly (venv is in PATH via the step above)
+          echo "Y" | mcp-vector-search init --extensions .py --embedding-model sentence-transformers/all-MiniLM-L6-v2 --no-mcp --no-auto-indexing
+          python3 ${{ github.workspace }}/scripts/search_performance_monitor.py --save
 
       - name: Upload performance results
         uses: actions/upload-artifact@v4
