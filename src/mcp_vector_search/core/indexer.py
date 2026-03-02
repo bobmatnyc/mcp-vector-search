@@ -163,6 +163,57 @@ def cleanup_stale_progress(index_path: Path, stale_age_seconds: int = 3600) -> N
         pass  # Non-fatal: never block indexing over a cleanup failure
 
 
+def _detect_filesystem_type(db_path: Path) -> str:
+    """Detect filesystem type of the database path for I/O optimization.
+
+    Returns: "nfs" for NFS/EFS/CIFS mounts, "nvme" for local NVMe, "default" otherwise.
+
+    Non-fatal: any error causes fallback to "default".
+    """
+    try:
+        # Linux: parse /proc/mounts to find the mount for db_path
+        if Path("/proc/mounts").exists():
+            db_str = str(db_path.resolve())
+            best_mount = ""
+            best_fstype = "default"
+
+            with open("/proc/mounts") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 3:
+                        continue
+                    mount_point = parts[1]
+                    fstype = parts[2].lower()
+                    # Find longest matching mount point for db_path
+                    if db_str.startswith(mount_point) and len(mount_point) > len(
+                        best_mount
+                    ):
+                        best_mount = mount_point
+                        best_fstype = fstype
+
+            if best_fstype in ("nfs", "nfs4", "cifs", "smbfs", "efs"):
+                return "nfs"
+
+        # macOS / fallback: use stat -f to detect network filesystems
+        import subprocess
+
+        result = subprocess.run(  # nosec B607
+            ["stat", "-f", "-c", "%T", str(db_path.resolve())],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+        if result.returncode == 0:
+            fstype = result.stdout.strip().lower()
+            if "nfs" in fstype or "smbfs" in fstype or "cifs" in fstype:
+                return "nfs"
+
+        return "default"
+    except Exception:
+        return "default"
+
+
 # HealthStatus lives in models.py to avoid pulling LanceDB into the package
 # __init__.py import chain (which would break the KG subprocess).
 from .models import HealthStatus  # noqa: F401, E402
@@ -1025,9 +1076,25 @@ class SemanticIndexer:
             embed_start_time = time.time()
 
             # Batched LanceDB writes: buffer chunks to reduce fragment count
-            write_batch_size = int(
-                os.environ.get("MCP_VECTOR_SEARCH_WRITE_BATCH_SIZE", "4096")
-            )
+            # Auto-detect optimal batch size from filesystem type unless overridden
+            if not os.environ.get("MCP_VECTOR_SEARCH_WRITE_BATCH_SIZE"):
+                _fs_type = _detect_filesystem_type(self._mcp_dir / "lance")
+                _fs_batch_defaults: dict[str, int] = {
+                    "nfs": 16384,
+                    "nvme": 1024,
+                    "default": 4096,
+                }
+                write_batch_size = _fs_batch_defaults[_fs_type]
+                if _fs_type != "default":
+                    logger.info(
+                        "Detected %s filesystem: write_batch_size=%d",
+                        _fs_type.upper(),
+                        write_batch_size,
+                    )
+            else:
+                write_batch_size = int(
+                    os.environ.get("MCP_VECTOR_SEARCH_WRITE_BATCH_SIZE", "4096")
+                )
             write_buffer: list[dict] = []
 
             # Count sentinels: one per producer — consumer stops after all producers finish
