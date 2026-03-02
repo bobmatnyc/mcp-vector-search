@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.57] - 2026-03-02
+
+### Fixed
+
+- **CI/CD Performance Benchmarks job** — Failed with `error: Failed to spawn: mcp-vector-search — No such file or directory` on every tag push. Root cause: the benchmark step does `cd /tmp/test-project` (no `pyproject.toml`) then `uv run mcp-vector-search`, but `uv` walks up from the current directory looking for `pyproject.toml` and can't find the workspace venv from an unrelated temp directory. Fix: added an explicit "Add venv to PATH" step that appends `$GITHUB_WORKSPACE/.venv/bin` to `$GITHUB_PATH`; the benchmark step then uses `mcp-vector-search` and `python3` directly without the `uv run` prefix.
+
 ## [3.0.55] - 2026-03-02
 
 ### Fixed
