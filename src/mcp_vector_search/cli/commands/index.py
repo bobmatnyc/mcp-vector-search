@@ -412,6 +412,13 @@ def main(
         help="Override embedding model (e.g., microsoft/graphcodebert-base)",
         rich_help_panel="📁 Configuration",
     ),
+    embed_batch_size: int = typer.Option(
+        0,
+        "--embed-batch-size",
+        help="GPU embedding batch size. 0=auto-detect based on GPU/CPU. Larger values improve GPU throughput (512-4096 for CUDA).",
+        min=0,
+        rich_help_panel="⚡ Performance",
+    ),
 ) -> None:
     """📑 Index your codebase for semantic search.
 
@@ -529,6 +536,7 @@ def main(
                     skip_blame=not enable_blame,
                     re_embed=re_embed,
                     embedding_model_override=embedding_model,
+                    embed_batch_size=embed_batch_size,
                 )
             )
 
@@ -694,6 +702,7 @@ async def run_indexing(
     skip_blame: bool = True,
     re_embed: bool = False,
     embedding_model_override: str | None = None,
+    embed_batch_size: int = 0,
 ) -> None:
     """Run the indexing process.
 
@@ -992,6 +1001,7 @@ async def run_indexing(
         config=config,
         debug=debug,
         batch_size=batch_size,
+        embed_batch_size=embed_batch_size,
         auto_optimize=auto_optimize,
         ignore_patterns=vendor_patterns_set,
         skip_blame=skip_blame,

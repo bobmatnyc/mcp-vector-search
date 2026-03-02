@@ -81,6 +81,88 @@ def cleanup_stale_locks(project_dir: Path) -> None:
         )
 
 
+def cleanup_stale_transactions(index_path: Path, stale_age_seconds: int = 3600) -> None:
+    """Remove stale LanceDB transaction files from crashed previous runs.
+
+    LanceDB writes *.txn files inside {table}/_transactions/ directories while a
+    write is in progress. If the process crashes mid-transaction these files are
+    left behind and cause the next run to fail during table initialisation with
+    an OS-level exit code (e.g. 120) that is indistinguishable from a signal.
+
+    This helper removes transaction files that are older than *stale_age_seconds*
+    (default: 1 hour). It is intentionally non-fatal — any OSError is swallowed
+    so a failed cleanup never blocks indexing.
+
+    Args:
+        index_path: Root of the index directory (contains the ``lance/`` sub-dir).
+        stale_age_seconds: Files older than this many seconds are considered stale
+            and will be removed. Default is 3600 (one hour).
+    """
+    import glob
+
+    lance_dir = index_path / "lance"
+    if not lance_dir.exists():
+        return
+
+    txn_pattern = str(lance_dir / "**" / "_transactions" / "*.txn")
+    stale_cutoff = time.time() - stale_age_seconds
+    cleaned = 0
+    for txn_file in glob.glob(txn_pattern, recursive=True):
+        try:
+            if os.path.getmtime(txn_file) < stale_cutoff:
+                os.remove(txn_file)
+                cleaned += 1
+                logger.debug("Removed stale LanceDB transaction file: %s", txn_file)
+        except OSError:
+            pass  # Non-fatal: never block indexing over a cleanup failure
+
+    if cleaned:
+        logger.info(
+            "Cleaned up %d stale LanceDB transaction file(s) from previous crashed run",
+            cleaned,
+        )
+
+
+def cleanup_stale_progress(index_path: Path, stale_age_seconds: int = 3600) -> None:
+    """Remove a stale progress.json left by a crashed indexing run.
+
+    If progress.json reports ``phase: "chunking"`` with zero files processed and
+    the file itself is older than *stale_age_seconds* it almost certainly belongs
+    to a run that crashed at initialisation (before any real work was done).
+    Leaving it around causes subsequent runs to display misleading progress.
+
+    Args:
+        index_path: Root of the index directory (contains ``.mcp-vector-search/``).
+        stale_age_seconds: Files older than this many seconds are considered stale.
+            Default is 3600 (one hour).
+    """
+    progress_file = index_path / ".mcp-vector-search" / "progress.json"
+    if not progress_file.exists():
+        return
+
+    try:
+        age = time.time() - os.path.getmtime(str(progress_file))
+        if age < stale_age_seconds:
+            return  # Recent file — leave it alone
+
+        with open(progress_file) as fh:
+            data = json.load(fh)
+
+        phase = data.get("phase", "")
+        chunking = data.get("chunking", {})
+        processed_files = chunking.get("processed_files", -1)
+
+        if phase == "chunking" and processed_files == 0:
+            os.remove(str(progress_file))
+            logger.info(
+                "Removed stale progress.json (phase=chunking, 0 files processed, "
+                "age=%.0f s) — likely left by a crashed previous run",
+                age,
+            )
+    except Exception:
+        pass  # Non-fatal: never block indexing over a cleanup failure
+
+
 # HealthStatus lives in models.py to avoid pulling LanceDB into the package
 # __init__.py import chain (which would break the KG subprocess).
 from .models import HealthStatus  # noqa: F401, E402
@@ -97,6 +179,7 @@ class SemanticIndexer:
         config: ProjectConfig | None = None,
         max_workers: int | None = None,
         batch_size: int | None = None,
+        embed_batch_size: int = 0,
         debug: bool = False,
         collectors: list[MetricCollector] | None = None,
         use_multiprocessing: bool = True,
@@ -114,7 +197,9 @@ class SemanticIndexer:
             file_extensions: File extensions to index (deprecated, use config)
             config: Project configuration (preferred over file_extensions)
             max_workers: Maximum number of worker processes for parallel parsing (ignored if use_multiprocessing=False)
-            batch_size: Number of files to process in each batch (default: 256, override with MCP_VECTOR_SEARCH_BATCH_SIZE or auto-optimization)
+            batch_size: Number of files to process in each batch (default: 512, override with MCP_VECTOR_SEARCH_FILE_BATCH_SIZE)
+            embed_batch_size: GPU embedding batch size (0=auto-detect from GPU/CPU). Override with
+                MCP_VECTOR_SEARCH_EMBED_BATCH_SIZE. Larger values improve GPU throughput (512-4096 for CUDA).
             debug: Enable debug output for hierarchy building
             collectors: Metric collectors to run during indexing (defaults to all complexity collectors)
             use_multiprocessing: Enable multiprocess parallel parsing (default: True, disable for debugging)
@@ -126,7 +211,9 @@ class SemanticIndexer:
                 Falls back to INDEX_PATH env var, then project_root.
 
         Environment Variables:
-            MCP_VECTOR_SEARCH_BATCH_SIZE: Override batch size (default: 256)
+            MCP_VECTOR_SEARCH_FILE_BATCH_SIZE: Override file batch size (default: 512)
+            MCP_VECTOR_SEARCH_EMBED_BATCH_SIZE: Override GPU embedding batch size (default: auto-detect)
+            MCP_VECTOR_SEARCH_BATCH_SIZE: Legacy alias for MCP_VECTOR_SEARCH_FILE_BATCH_SIZE
             MCP_VECTOR_SEARCH_SKIP_BLAME: Skip git blame tracking (true/1/yes)
             INDEX_PATH: Separate directory for .mcp-vector-search/ index data
         """
@@ -183,6 +270,35 @@ class SemanticIndexer:
                 self.batch_size = 512
         else:
             self.batch_size = batch_size
+
+        # Set embed_batch_size: explicit param > env var > GPU auto-detect
+        if embed_batch_size != 0:
+            self.embed_batch_size = embed_batch_size
+            logger.info(
+                f"Using embed batch size from parameter: {self.embed_batch_size}"
+            )
+        else:
+            env_embed_batch_size = os.environ.get("MCP_VECTOR_SEARCH_EMBED_BATCH_SIZE")
+            if env_embed_batch_size:
+                try:
+                    self.embed_batch_size = int(env_embed_batch_size)
+                    logger.info(
+                        f"Using embed batch size from environment: {self.embed_batch_size}"
+                    )
+                except ValueError:
+                    logger.warning(
+                        f"Invalid MCP_VECTOR_SEARCH_EMBED_BATCH_SIZE value: {env_embed_batch_size}, "
+                        "using GPU auto-detection"
+                    )
+                    from .embeddings import _detect_optimal_batch_size
+
+                    self.embed_batch_size = _detect_optimal_batch_size()
+            else:
+                # Auto-detect from GPU/CPU capabilities
+                from .embeddings import _detect_optimal_batch_size
+
+                self.embed_batch_size = _detect_optimal_batch_size()
+                logger.info(f"Auto-detected embed batch size: {self.embed_batch_size}")
 
         # Handle backward compatibility: use config.file_extensions or fallback to parameter
         if config is not None:
@@ -596,9 +712,11 @@ class SemanticIndexer:
             return 0, 0, 0
 
         # PIPELINE IMPLEMENTATION: Producer-consumer pattern
-        # PERFORMANCE: Increased queue buffer from 2 to 10 to allow more parsed batches ahead
-        # This prevents GPU starvation when parsing batches take varying amounts of time
-        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=10)
+        # Queue depth is configurable via MCP_VECTOR_SEARCH_QUEUE_DEPTH (default: 4).
+        # Lower values reduce peak buffered chunk-dict memory; higher values allow
+        # more parsed batches to queue ahead and reduce GPU starvation.
+        queue_maxsize = int(os.environ.get("MCP_VECTOR_SEARCH_QUEUE_DEPTH", "4"))
+        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
         files_indexed = 0
         chunks_created = 0
         chunks_embedded = 0
@@ -606,73 +724,83 @@ class SemanticIndexer:
         # Get metrics tracker
         metrics_tracker = get_metrics_tracker()
 
-        # Batch size for file processing (can be different from embedding batch size)
-        file_batch_size = 256  # Process files in groups of 256
+        # File batch size for parsing: use self.batch_size (configurable, not hardcoded)
+        file_batch_size = self.batch_size
 
-        async def chunk_producer():
-            """Producer: Parse and chunk files in batches, put on queue."""
-            nonlocal files_indexed, chunks_created
+        # Number of concurrent producer tasks (each handles a slice of files_to_process)
+        num_producers = int(os.environ.get("MCP_VECTOR_SEARCH_NUM_PRODUCERS", "4"))
 
-            logger.info(
-                f"📄 Phase 1: Chunking {len(files_to_index)} files (parsing and extracting code structure)..."
+        # --- Prepare files_to_process and batch-delete old chunks BEFORE launching producers ---
+        # This is done once in the main scope so all producers share the same list.
+        # files_to_index was already filtered by the outer _index_with_pipeline scope
+        # (get_all_indexed_file_hashes + _detect_file_moves + change detection loop).
+        logger.info(
+            f"📄 Phase 1: Chunking {len(files_to_index)} files (parsing and extracting code structure)..."
+        )
+        phase_start_time = time.time()
+
+        files_to_delete = []
+        files_to_process = []
+        for file_path in files_to_index:
+            try:
+                if force_reindex:
+                    file_hash = ""
+                else:
+                    # Reuse hash already computed by the outer scope
+                    file_hash = file_hash_cache.get(file_path) or compute_file_hash(
+                        file_path
+                    )
+
+                rel_path = str(file_path.relative_to(self.project_root))
+                files_to_delete.append(rel_path)
+                files_to_process.append((file_path, rel_path, file_hash))
+
+            except Exception as e:
+                logger.error(f"Failed to check file {file_path}: {e}")
+                continue
+
+        # Batch delete old chunks for changed files before re-chunking.
+        # LanceDB delete() is metadata-only and does NOT trigger compact_files().
+        # The macOS SIGBUS workaround is in _compact_table(), not here.
+        if not self._atomic_rebuild_active and files_to_delete:
+            deleted_count = await self.chunks_backend.delete_files_batch(
+                files_to_delete
+            )
+            if deleted_count > 0:
+                logger.info(
+                    f"Batch deleted {deleted_count} old chunks for {len(files_to_delete)} files"
+                )
+
+        # Clamp num_producers to the actual number of files (avoid empty producers)
+        effective_num_producers = max(1, min(num_producers, len(files_to_process)))
+        if effective_num_producers < num_producers:
+            logger.debug(
+                f"Clamping producers from {num_producers} to {effective_num_producers} "
+                f"(only {len(files_to_process)} files to process)"
             )
 
-            # Track start time for ETA calculation
-            phase_start_time = time.time()
+        async def chunk_producer(producer_id: int, file_slice: list) -> None:
+            """Producer: Parse and chunk a slice of files, put batches on queue.
+
+            Args:
+                producer_id: Index of this producer (0-based, for logging)
+                file_slice: Subset of files_to_process this producer owns
+            """
+            nonlocal files_indexed, chunks_created
 
             with metrics_tracker.phase("parsing") as parsing_metrics:
-                # files_to_index was already filtered by the outer _index_with_pipeline
-                # scope (get_all_indexed_file_hashes + _detect_file_moves + change
-                # detection loop).  Build files_to_process directly without redoing
-                # any of that work — avoids duplicate "Scanning files" progress bars
-                # and redundant DB round-trips.
-                files_to_delete = []
-                files_to_process = []
-
-                for file_path in files_to_index:
-                    try:
-                        if force_reindex:
-                            file_hash = ""
-                        else:
-                            # Reuse hash already computed by the outer scope
-                            file_hash = file_hash_cache.get(
-                                file_path
-                            ) or compute_file_hash(file_path)
-
-                        rel_path = str(file_path.relative_to(self.project_root))
-                        files_to_delete.append(rel_path)
-                        files_to_process.append((file_path, rel_path, file_hash))
-
-                    except Exception as e:
-                        logger.error(f"Failed to check file {file_path}: {e}")
-                        continue
-
-                # Batch delete old chunks for changed files before re-chunking.
-                # LanceDB delete() is metadata-only and does NOT trigger compact_files().
-                # The macOS SIGBUS workaround is in _compact_table(), not here.
-                if not self._atomic_rebuild_active and files_to_delete:
-                    deleted_count = await self.chunks_backend.delete_files_batch(
-                        files_to_delete
-                    )
-                    if deleted_count > 0:
-                        logger.info(
-                            f"Batch deleted {deleted_count} old chunks for {len(files_to_delete)} files"
-                        )
-
                 # Process files in batches and put on queue
-                for batch_start in range(0, len(files_to_process), file_batch_size):
+                for batch_start in range(0, len(file_slice), file_batch_size):
                     # Check if consumer is still alive
                     if consumer_task.done():
                         exc = consumer_task.exception()
                         logger.error(
-                            f"Consumer died unexpectedly: {exc}. Stopping producer."
+                            f"Consumer died unexpectedly: {exc}. Stopping producer {producer_id}."
                         )
                         break
 
-                    batch_end = min(
-                        batch_start + file_batch_size, len(files_to_process)
-                    )
-                    batch = files_to_process[batch_start:batch_end]
+                    batch_end = min(batch_start + file_batch_size, len(file_slice))
+                    batch = file_slice[batch_start:batch_end]
 
                     batch_chunks = []
                     batch_files_processed = 0
@@ -780,20 +908,20 @@ class SemanticIndexer:
                         # Yield to event loop to let consumer process the batch
                         await asyncio.sleep(0)
 
-                # Update metrics
+                # Update metrics for this producer's share
                 parsing_metrics.item_count = files_indexed
 
-            # Track chunking separately
+            # Track chunking separately (each producer updates the shared metric)
             with metrics_tracker.phase("chunking") as chunking_metrics:
                 chunking_metrics.item_count = chunks_created
 
-            # Log completion
+            # Log this producer's completion
             self.memory_monitor.log_memory_summary()
             logger.info(
-                f"✓ Phase 1 complete: {files_indexed} files processed, {chunks_created} chunks created"
+                f"✓ Producer {producer_id} complete: processed slice of {len(file_slice)} files"
             )
 
-            # Signal completion
+            # Each producer sends its own sentinel so the consumer knows when ALL are done
             await chunk_queue.put(None)
 
         async def embed_consumer():
@@ -804,83 +932,69 @@ class SemanticIndexer:
                 "🧠 Phase 2: Embedding pending chunks (GPU processing for semantic search)..."
             )
 
-            embedding_batch_size = self.batch_size  # Use configured batch size
+            embedding_batch_size = (
+                self.embed_batch_size
+            )  # GPU embedding batch size (separate from file batch size)
             consecutive_errors = 0  # Track consecutive errors to detect fatal issues
             # Track start time for ETA calculation
             embed_start_time = time.time()
 
+            # Batched LanceDB writes: buffer chunks to reduce fragment count
+            write_batch_size = int(
+                os.environ.get("MCP_VECTOR_SEARCH_WRITE_BATCH_SIZE", "4096")
+            )
+            write_buffer: list[dict] = []
+
+            # Count sentinels: one per producer — consumer stops after all producers finish
+            sentinels_received = 0
+
             with metrics_tracker.phase("embedding") as embedding_metrics:
-                while True:
-                    # Get next batch from queue (blocks until available)
-                    batch_data = await chunk_queue.get()
+                try:
+                    while sentinels_received < effective_num_producers:
+                        # Get next batch from queue (blocks until available)
+                        batch_data = await chunk_queue.get()
 
-                    # Check for completion signal
-                    if batch_data is None:
-                        break
-
-                    chunks = batch_data["chunks"]
-
-                    if not chunks:
-                        continue
-
-                    # Process chunks in embedding batches
-                    for emb_batch_start in range(0, len(chunks), embedding_batch_size):
-                        emb_batch_end = min(
-                            emb_batch_start + embedding_batch_size, len(chunks)
-                        )
-                        emb_batch = chunks[emb_batch_start:emb_batch_end]
-
-                        # Check memory before embedding
-                        usage_pct = self.memory_monitor.get_memory_usage_pct()
-
-                        # Proactively reduce batch size if memory is high
-                        while usage_pct > 0.90 and embedding_batch_size > 100:
-                            embedding_batch_size = embedding_batch_size // 2
-                            logger.warning(
-                                f"⚠️  Memory at {usage_pct * 100:.1f}%, proactively reducing batch to {embedding_batch_size}"
+                        # Check for completion signal from a producer
+                        if batch_data is None:
+                            sentinels_received += 1
+                            logger.debug(
+                                f"Received sentinel {sentinels_received}/{effective_num_producers} from producers"
                             )
+                            continue
+
+                        chunks = batch_data["chunks"]
+
+                        if not chunks:
+                            continue
+
+                        # Process chunks in embedding batches
+                        for emb_batch_start in range(
+                            0, len(chunks), embedding_batch_size
+                        ):
+                            emb_batch_end = min(
+                                emb_batch_start + embedding_batch_size, len(chunks)
+                            )
+                            emb_batch = chunks[emb_batch_start:emb_batch_end]
+
+                            # Check memory before embedding
                             usage_pct = self.memory_monitor.get_memory_usage_pct()
 
-                        if usage_pct > 0.90:
-                            logger.warning(
-                                f"Memory usage at {usage_pct * 100:.1f}%, waiting for memory to drop..."
-                            )
-                            try:
-                                await asyncio.wait_for(
-                                    self.memory_monitor.wait_for_memory_available(
-                                        target_pct=0.80
-                                    ),
-                                    timeout=120.0,  # 2 minute timeout
-                                )
-                            except TimeoutError:
+                            # Proactively reduce batch size if memory is high
+                            while usage_pct > 0.90 and embedding_batch_size > 100:
+                                embedding_batch_size = embedding_batch_size // 2
                                 logger.warning(
-                                    "Memory wait timed out after 120s, proceeding anyway"
+                                    f"⚠️  Memory at {usage_pct * 100:.1f}%, proactively reducing batch to {embedding_batch_size}"
                                 )
+                                usage_pct = self.memory_monitor.get_memory_usage_pct()
 
-                        try:
-                            # Generate embeddings using context-enriched text.
-                            # build_contextual_text() prepends file path, language,
-                            # class/function context, imports, and docstring to each
-                            # chunk before embedding, improving retrieval quality by
-                            # 35–49% (contextual RAG research).  The stored
-                            # chunk["content"] field is NOT modified — only the text
-                            # sent to the embedding model is enriched.
-                            contents = [build_contextual_text(c) for c in emb_batch]
-
-                            # Check memory before expensive embedding
-                            is_ok, usage_pct, status = (
-                                self.memory_monitor.check_memory_limit()
-                            )
-                            if not is_ok:
+                            if usage_pct > 0.90:
                                 logger.warning(
-                                    f"Memory limit exceeded before embedding "
-                                    f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB). "
-                                    "Waiting for memory..."
+                                    f"Memory usage at {usage_pct * 100:.1f}%, waiting for memory to drop..."
                                 )
                                 try:
                                     await asyncio.wait_for(
                                         self.memory_monitor.wait_for_memory_available(
-                                            target_pct=self.memory_monitor.warn_threshold
+                                            target_pct=0.80
                                         ),
                                         timeout=120.0,  # 2 minute timeout
                                     )
@@ -889,108 +1003,196 @@ class SemanticIndexer:
                                         "Memory wait timed out after 120s, proceeding anyway"
                                     )
 
-                            # Generate embeddings
-                            vectors = None
-                            if hasattr(self.database, "_embedding_function"):
-                                vectors = self.database._embedding_function(contents)
-                            elif hasattr(self.database, "_collection") and hasattr(
-                                self.database._collection, "_embedding_function"
-                            ):
-                                vectors = self.database._collection._embedding_function(
-                                    contents
+                            try:
+                                # Generate embeddings using context-enriched text.
+                                # build_contextual_text() prepends file path, language,
+                                # class/function context, imports, and docstring to each
+                                # chunk before embedding, improving retrieval quality by
+                                # 35–49% (contextual RAG research).  The stored
+                                # chunk["content"] field is NOT modified — only the text
+                                # sent to the embedding model is enriched.
+                                contents = [build_contextual_text(c) for c in emb_batch]
+
+                                # Check memory before expensive embedding
+                                is_ok, usage_pct, status = (
+                                    self.memory_monitor.check_memory_limit()
                                 )
-                            elif hasattr(self.database, "embedding_function"):
-                                vectors = (
-                                    self.database.embedding_function.embed_documents(
+                                if not is_ok:
+                                    logger.warning(
+                                        f"Memory limit exceeded before embedding "
+                                        f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB). "
+                                        "Waiting for memory..."
+                                    )
+                                    try:
+                                        await asyncio.wait_for(
+                                            self.memory_monitor.wait_for_memory_available(
+                                                target_pct=self.memory_monitor.warn_threshold
+                                            ),
+                                            timeout=120.0,  # 2 minute timeout
+                                        )
+                                    except TimeoutError:
+                                        logger.warning(
+                                            "Memory wait timed out after 120s, proceeding anyway"
+                                        )
+
+                                # Generate embeddings
+                                vectors = None
+                                if hasattr(self.database, "_embedding_function"):
+                                    vectors = self.database._embedding_function(
                                         contents
                                     )
-                                )
-                            else:
+                                elif hasattr(self.database, "_collection") and hasattr(
+                                    self.database._collection, "_embedding_function"
+                                ):
+                                    vectors = (
+                                        self.database._collection._embedding_function(
+                                            contents
+                                        )
+                                    )
+                                elif hasattr(self.database, "embedding_function"):
+                                    vectors = self.database.embedding_function.embed_documents(
+                                        contents
+                                    )
+                                else:
+                                    logger.error(
+                                        "Cannot access embedding function from database, skipping batch"
+                                    )
+                                    continue
+
+                                if vectors is None:
+                                    raise ValueError("Failed to generate embeddings")
+
+                                # Add to write buffer
+                                for chunk, vec in zip(emb_batch, vectors, strict=True):
+                                    write_buffer.append(
+                                        {
+                                            "chunk_id": chunk["chunk_id"],
+                                            "vector": vec,
+                                            "file_path": chunk["file_path"],
+                                            "content": chunk["content"],
+                                            "language": chunk["language"],
+                                            "start_line": chunk["start_line"],
+                                            "end_line": chunk["end_line"],
+                                            "chunk_type": chunk["chunk_type"],
+                                            "name": chunk["name"],
+                                            "hierarchy_path": chunk["hierarchy_path"],
+                                        }
+                                    )
+                                chunks_embedded += len(emb_batch)
+
+                                # Flush write buffer when it reaches write_batch_size
+                                # This reduces LanceDB fragment count and EFS I/O amplification
+                                if len(write_buffer) >= write_batch_size:
+                                    model_name = self.get_embedding_model_name()
+                                    await self.vectors_backend.add_vectors(
+                                        write_buffer, model_version=model_name
+                                    )
+                                    logger.debug(
+                                        f"Flushed {len(write_buffer)} vectors to LanceDB"
+                                    )
+                                    write_buffer = []
+
+                                # Reset consecutive error counter on success
+                                consecutive_errors = 0
+
+                                # Periodic GC to release Arrow/LanceDB buffers that
+                                # CPython's reference-counter may not catch immediately.
+                                # Runs every 10 000 embedded chunks to keep overhead low.
+                                if (
+                                    chunks_embedded % 10_000 == 0
+                                    and chunks_embedded > 0
+                                ):
+                                    import gc
+
+                                    gc.collect()
+                                    logger.debug(
+                                        "GC collect at %d embedded chunks (Arrow buffer cleanup)",
+                                        chunks_embedded,
+                                    )
+
+                                # Show progress bar if tracker is available
+                                # Note: We use chunks_created as an estimate of total (may update as producer runs)
+                                if self.progress_tracker and chunks_created > 0:
+                                    self.progress_tracker.progress_bar_with_eta(
+                                        current=chunks_embedded,
+                                        total=chunks_created,
+                                        prefix="Embedding chunks",
+                                        start_time=embed_start_time,
+                                    )
+                                else:
+                                    logger.info(
+                                        f"Phase 2 progress: {chunks_embedded} chunks embedded"
+                                    )
+
+                            except Exception as e:
+                                consecutive_errors += 1
                                 logger.error(
-                                    "Cannot access embedding function from database, skipping batch"
+                                    f"Failed to embed batch (consecutive errors: {consecutive_errors}): {e}"
                                 )
+
+                                # Fail after too many consecutive errors to avoid silent hangs
+                                if consecutive_errors >= 3:
+                                    logger.error(
+                                        f"Too many consecutive embedding errors ({consecutive_errors}), "
+                                        "stopping consumer to prevent silent failure"
+                                    )
+                                    raise
+
                                 continue
 
-                            if vectors is None:
-                                raise ValueError("Failed to generate embeddings")
-
-                            # Add to vectors table
-                            chunks_with_vectors = []
-                            for chunk, vec in zip(emb_batch, vectors, strict=True):
-                                chunk_with_vec = {
-                                    "chunk_id": chunk["chunk_id"],
-                                    "vector": vec,
-                                    "file_path": chunk["file_path"],
-                                    "content": chunk["content"],
-                                    "language": chunk["language"],
-                                    "start_line": chunk["start_line"],
-                                    "end_line": chunk["end_line"],
-                                    "chunk_type": chunk["chunk_type"],
-                                    "name": chunk["name"],
-                                    "hierarchy_path": chunk["hierarchy_path"],
-                                }
-                                chunks_with_vectors.append(chunk_with_vec)
-
-                            # Store to vectors.lance
+                finally:
+                    # Always flush remaining write buffer even if an exception occurred
+                    if write_buffer:
+                        try:
                             model_name = self.get_embedding_model_name()
                             await self.vectors_backend.add_vectors(
-                                chunks_with_vectors, model_version=model_name
+                                write_buffer, model_version=model_name
                             )
-                            chunks_embedded += len(emb_batch)
-
-                            # Reset consecutive error counter on success
-                            consecutive_errors = 0
-
-                            # Show progress bar if tracker is available
-                            # Note: We use chunks_created as an estimate of total (may update as producer runs)
-                            if self.progress_tracker and chunks_created > 0:
-                                self.progress_tracker.progress_bar_with_eta(
-                                    current=chunks_embedded,
-                                    total=chunks_created,
-                                    prefix="Embedding chunks",
-                                    start_time=embed_start_time,
-                                )
-                            else:
-                                logger.info(
-                                    f"Phase 2 progress: {chunks_embedded} chunks embedded"
-                                )
-
-                        except Exception as e:
-                            consecutive_errors += 1
+                            logger.debug(
+                                f"Flushed remaining {len(write_buffer)} vectors to LanceDB"
+                            )
+                        except Exception as flush_err:
                             logger.error(
-                                f"Failed to embed batch (consecutive errors: {consecutive_errors}): {e}"
+                                f"Failed to flush remaining write buffer: {flush_err}"
                             )
-
-                            # Fail after too many consecutive errors to avoid silent hangs
-                            if consecutive_errors >= 3:
-                                logger.error(
-                                    f"Too many consecutive embedding errors ({consecutive_errors}), "
-                                    "stopping consumer to prevent silent failure"
-                                )
-                                raise
-
-                            continue
+                        write_buffer = []
 
                 # Update metrics
                 embedding_metrics.item_count = chunks_embedded
 
             logger.info(f"✓ Phase 2 complete: {chunks_embedded} chunks embedded")
 
-        # Run producer and consumer concurrently with pipeline parallelism
+        # Split files_to_process into num_producers roughly equal slices (stride-based)
+        # Stride-based (round-robin) distributes files evenly while keeping similar
+        # file types together for better cache locality in the parser.
+        producer_slices = [
+            files_to_process[i::effective_num_producers]
+            for i in range(effective_num_producers)
+        ]
         logger.info(
-            "Starting pipeline: Phase 1 (parsing) and Phase 2 (embedding) will overlap"
+            f"Starting pipeline: {effective_num_producers} producer(s) + 1 consumer "
+            f"(Phase 1 parsing and Phase 2 embedding will overlap)"
         )
-        producer_task = asyncio.create_task(chunk_producer())
+
+        # Run producer and consumer concurrently with pipeline parallelism
+        # Consumer must be created FIRST so producer tasks can reference it
         consumer_task = asyncio.create_task(embed_consumer())
 
-        # Wait for both to complete with proper error handling
+        # Create one producer task per slice
+        producer_tasks = [
+            asyncio.create_task(chunk_producer(i, producer_slices[i]))
+            for i in range(effective_num_producers)
+        ]
+
+        # Wait for all tasks to complete with proper error handling
+        all_tasks = producer_tasks + [consumer_task]
         try:
-            await asyncio.gather(producer_task, consumer_task)
+            await asyncio.gather(*all_tasks)
         except Exception as e:
             logger.error(f"Pipeline task failed: {e}")
 
-            # Cancel the other task if one fails
-            for task in [producer_task, consumer_task]:
+            # Cancel all remaining tasks if one fails
+            for task in all_tasks:
                 if not task.done():
                     task.cancel()
                     try:
@@ -2127,6 +2329,11 @@ class SemanticIndexer:
         # Clean up stale lock files
         cleanup_stale_locks(self.index_path)
 
+        # Clean up stale LanceDB transaction files and stale progress.json
+        # from any previous run that crashed mid-initialisation (non-fatal).
+        cleanup_stale_transactions(self.index_path)
+        cleanup_stale_progress(self.index_path)
+
         # Discover all indexable files
         all_files = self.file_discovery.find_indexable_files()
 
@@ -2614,6 +2821,11 @@ class SemanticIndexer:
 
         # Clean up stale lock files from previous interrupted indexing runs
         cleanup_stale_locks(self.index_path)
+
+        # Clean up stale LanceDB transaction files and stale progress.json
+        # from any previous run that crashed mid-initialisation (non-fatal).
+        cleanup_stale_transactions(self.index_path)
+        cleanup_stale_progress(self.index_path)
 
         # Track indexed count for backward compatibility
         indexed_count = 0
