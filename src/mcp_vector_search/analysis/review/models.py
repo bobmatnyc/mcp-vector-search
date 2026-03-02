@@ -1,10 +1,10 @@
 """Data structures for AI-powered code review system."""
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class ReviewType(str, Enum):
+class ReviewType(StrEnum):
     """Type of code review to perform."""
 
     SECURITY = "security"
@@ -15,7 +15,7 @@ class ReviewType(str, Enum):
     DOCUMENTATION = "documentation"
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     """Severity level of a finding."""
 
     CRITICAL = "critical"

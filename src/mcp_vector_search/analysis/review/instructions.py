@@ -653,7 +653,9 @@ class InstructionsLoader:
                 elif config_file == ".rubocop.yml":
                     rules.extend(self._extract_rubocop_rules(config_path, lang_name))
                 elif config_file == "Cargo.toml":
-                    rules.append(f"{lang_name}: Cargo.toml present (check for clippy config)")
+                    rules.append(
+                        f"{lang_name}: Cargo.toml present (check for clippy config)"
+                    )
                 elif config_file == ".golangci.yml":
                     rules.append(f"{lang_name}: golangci-lint configured")
                 else:

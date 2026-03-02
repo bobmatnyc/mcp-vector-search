@@ -1,7 +1,6 @@
 """CLI commands for skill management."""
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -13,7 +12,6 @@ from ...skills import (
     get_skill_metadata,
     install_skill_to_claude,
 )
-
 
 app = typer.Typer(
     name="skills",
@@ -50,9 +48,7 @@ def list_skills() -> None:
 
 @app.command("show")
 def show_skill(
-    skill_name: str = typer.Argument(
-        ..., help="Name of the skill to display"
-    ),
+    skill_name: str = typer.Argument(..., help="Name of the skill to display"),
 ) -> None:
     """📖 Display skill content."""
     try:
@@ -65,10 +61,8 @@ def show_skill(
 
 @app.command("install")
 def install_skill(
-    skill_name: str = typer.Argument(
-        ..., help="Name of the skill to install"
-    ),
-    claude_dir: Optional[Path] = typer.Option(
+    skill_name: str = typer.Argument(..., help="Name of the skill to install"),
+    claude_dir: Path | None = typer.Option(
         None,
         "--claude-dir",
         help="Claude configuration directory (auto-detected if not specified)",
@@ -127,7 +121,7 @@ def install_skill(
 
 @app.command("install-all")
 def install_all_skills(
-    claude_dir: Optional[Path] = typer.Option(
+    claude_dir: Path | None = typer.Option(
         None,
         "--claude-dir",
         help="Claude configuration directory (auto-detected if not specified)",
@@ -152,20 +146,22 @@ def install_all_skills(
         try:
             # Use the individual install command logic
             ctx = typer.Context(install_skill)
-            ctx.invoke(install_skill, skill_name=skill, claude_dir=claude_dir, force=force)
+            ctx.invoke(
+                install_skill, skill_name=skill, claude_dir=claude_dir, force=force
+            )
             success_count += 1
         except typer.Exit:
             continue  # Skip failed installations
 
-    console.print(f"[green]✅ Successfully installed {success_count}/{len(skills)} skills[/green]")
+    console.print(
+        f"[green]✅ Successfully installed {success_count}/{len(skills)} skills[/green]"
+    )
 
 
 @app.command("uninstall")
 def uninstall_skill(
-    skill_name: str = typer.Argument(
-        ..., help="Name of the skill to uninstall"
-    ),
-    claude_dir: Optional[Path] = typer.Option(
+    skill_name: str = typer.Argument(..., help="Name of the skill to uninstall"),
+    claude_dir: Path | None = typer.Option(
         None,
         "--claude-dir",
         help="Claude configuration directory (auto-detected if not specified)",
@@ -191,10 +187,13 @@ def uninstall_skill(
 
     target_dir = claude_dir / skill_name
     if not target_dir.exists():
-        console.print(f"[yellow]Skill '{skill_name}' not found at {target_dir}[/yellow]")
+        console.print(
+            f"[yellow]Skill '{skill_name}' not found at {target_dir}[/yellow]"
+        )
         raise typer.Exit(1)
 
     # Remove the skill directory
     import shutil
+
     shutil.rmtree(target_dir)
     console.print(f"[green]✅ Successfully uninstalled skill from {target_dir}[/green]")

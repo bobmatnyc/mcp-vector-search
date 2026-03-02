@@ -53,7 +53,13 @@ LANGUAGE_PROFILES: dict[str, LanguageProfile] = {
     "python": LanguageProfile(
         name="Python",
         extensions=[".py", ".pyw", ".pyi"],
-        config_files=["pyproject.toml", ".flake8", "setup.cfg", "mypy.ini", "ruff.toml"],
+        config_files=[
+            "pyproject.toml",
+            ".flake8",
+            "setup.cfg",
+            "mypy.ini",
+            "ruff.toml",
+        ],
         idioms=[
             "Use type hints for all function signatures (PEP 484)",
             "Follow PEP 8 style guide (snake_case, 79-88 char lines)",
@@ -85,7 +91,12 @@ LANGUAGE_PROFILES: dict[str, LanguageProfile] = {
     "typescript": LanguageProfile(
         name="TypeScript",
         extensions=[".ts", ".tsx", ".mts", ".cts"],
-        config_files=["tsconfig.json", ".eslintrc.js", ".eslintrc.json", "prettier.config.js"],
+        config_files=[
+            "tsconfig.json",
+            ".eslintrc.js",
+            ".eslintrc.json",
+            "prettier.config.js",
+        ],
         idioms=[
             "Use strict TypeScript (strict: true in tsconfig)",
             "Prefer interface over type for object shapes",
@@ -116,7 +127,12 @@ LANGUAGE_PROFILES: dict[str, LanguageProfile] = {
     "javascript": LanguageProfile(
         name="JavaScript",
         extensions=[".js", ".jsx", ".mjs", ".cjs"],
-        config_files=[".eslintrc.js", ".eslintrc.json", "prettier.config.js", ".prettierrc"],
+        config_files=[
+            ".eslintrc.js",
+            ".eslintrc.json",
+            "prettier.config.js",
+            ".prettierrc",
+        ],
         idioms=[
             "Use const/let instead of var",
             "Prefer arrow functions for callbacks",
@@ -146,7 +162,13 @@ LANGUAGE_PROFILES: dict[str, LanguageProfile] = {
     "java": LanguageProfile(
         name="Java",
         extensions=[".java"],
-        config_files=["checkstyle.xml", "pmd.xml", "spotbugs.xml", "build.gradle", "pom.xml"],
+        config_files=[
+            "checkstyle.xml",
+            "pmd.xml",
+            "spotbugs.xml",
+            "build.gradle",
+            "pom.xml",
+        ],
         idioms=[
             "Follow Java naming conventions (camelCase methods, PascalCase classes)",
             "Use Optional<T> instead of null returns",
@@ -301,7 +323,12 @@ LANGUAGE_PROFILES: dict[str, LanguageProfile] = {
     "php": LanguageProfile(
         name="PHP",
         extensions=[".php", ".phtml"],
-        config_files=[".php-cs-fixer.php", "phpcs.xml", "phpstan.neon", "composer.json"],
+        config_files=[
+            ".php-cs-fixer.php",
+            "phpcs.xml",
+            "phpstan.neon",
+            "composer.json",
+        ],
         idioms=[
             "Use strict types declaration (declare(strict_types=1))",
             "Follow PSR-12 coding standard",

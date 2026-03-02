@@ -1,9 +1,14 @@
 """Integration tests for indexing workflow."""
 
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
+
+# GitHub Actions and other CI environments are ~3-5x slower than dev machines.
+# Use a relaxed threshold in CI to avoid flaky timing failures.
+_SEARCH_TIME_LIMIT = 5.0 if os.environ.get("CI") else 1.0
 
 from mcp_vector_search.core.factory import ComponentFactory, DatabaseContext
 from mcp_vector_search.core.project import ProjectManager
@@ -255,7 +260,9 @@ class TestIndexingWorkflow:
             search_time = time.perf_counter() - start_time
 
             # Search should be fast even with many files
-            assert search_time < 1.0, f"Search took too long: {search_time:.3f}s"
+            assert search_time < _SEARCH_TIME_LIMIT, (
+                f"Search took too long: {search_time:.3f}s"
+            )
             assert isinstance(results, list)
 
     @pytest.mark.skip(reason="Requires vectors_backend initialization")
@@ -411,7 +418,7 @@ class TestIndexingWorkflow:
                     similarity_threshold=0.1,
                 )
 
-                assert search_time < 1.0, (
+                assert search_time < _SEARCH_TIME_LIMIT, (
                     f"Search for '{query}' took too long: {search_time:.3f}s"
                 )
                 assert isinstance(result, list)

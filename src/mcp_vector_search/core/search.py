@@ -4,7 +4,7 @@ import asyncio
 import os
 import re
 import time
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +32,7 @@ from .vectors_backend import VectorsBackend
 RRF_K = 60
 
 
-class SearchMode(str, Enum):
+class SearchMode(StrEnum):
     """Search mode for semantic search engine."""
 
     VECTOR = "vector"  # Pure vector similarity search
