@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.49] - 2026-03-02
+
+### Performance
+
+Comprehensive preemptive audit of the indexing pipeline identified 26 additional
+bottlenecks across 8 files. Changes in this release produce significant throughput
+improvements on all hardware (CPU, MPS, CUDA) and environments (bare-metal, container,
+NFS/EFS).
+
+- **Embedding engine overhaul (`embeddings.py`)** — 8 issues fixed:
+  - Cached `_detect_optimal_batch_size()` with `@functools.lru_cache(maxsize=1)` and
+    stored result in `self._encode_batch_size`; on MPS the previous code spawned one
+    `sysctl` subprocess per batch call (10K chunks = 10K child processes)
+  - Removed `torch.cuda.empty_cache()` from the hot path — this was a regression
+    introduced in 3.0.48's #122 fix that defeats PyTorch's caching allocator, adding
+    10-50 ms of VRAM flush-and-re-acquire overhead to every encode batch
+  - Added `model_kwargs={"torch_dtype": torch.float16}` on CUDA/MPS for 1.7-2.0×
+    throughput improvement with negligible accuracy loss
+  - Set `max_concurrent=1` for CUDA/MPS (GPU serializes internally; was 16, causing
+    redundant context-switching) and `min(cpu_count, 8)` for CPU
+  - Added `normalize_embeddings=True` to `model.encode()` — delegates L2 normalisation
+    to the GPU inside the SBERT encode path instead of post-hoc CPU computation
+  - Replaced `list.remove()` O(n) LRU eviction with `collections.OrderedDict` +
+    `move_to_end()` / `popitem(last=False)` for O(1) operations
+  - GPU warm-up: run a dummy encode in `__init__` for CUDA/MPS to amortise CUDA JIT
+    compilation penalty (2–10 s) before the first real batch
+  - Persistent `ThreadPoolExecutor` created once in `__init__`, reused across all
+    calls (saves 0.5–2 ms per call vs re-creating on every invocation)
+
+- **Pipeline orchestration (`indexer.py`)** — 8 issues fixed:
+  - Process pool now actually used in the pipeline path: `chunk_producer` previously
+    did serial `await parse_file()` in a loop; it now calls `parse_files_multiprocess()`
+    in batches for 6–12× parsing speedup (tree-sitter C parse() releases the GIL)
+  - Added `pipeline_cancel = asyncio.Event()` so producers unblock immediately when
+    the consumer crashes instead of deadlocking forever on a full queue
+  - All embedding calls now run via `asyncio.to_thread()` to avoid 100 ms–2 s
+    synchronous GPU blocks on the event loop thread
+  - Queue depth now scales with producer count: `effective_num_producers × 4` (was
+    hardcoded to 4 regardless of N, starving producers)
+  - `asyncio.gather(*all_tasks, return_exceptions=True)` prevents silently swallowing
+    the second exception when multiple tasks fail concurrently
+  - Consumer `finally` block now marks unwritten vectors as error state via
+    `chunks_backend.mark_chunks_error()` instead of silently dropping them
+  - LPT scheduling: files sorted by descending `stat().st_size` before stride-slicing
+    so each producer receives roughly equal work
+  - Memory checks throttled to every 10th batch (`idx % 10 == 0`) to remove
+    per-chunk overhead from the hot embed path
+
+- **LanceDB storage backends (`vectors_backend.py`, `chunks_backend.py`)** — 5 issues:
+  - `get_unembedded_chunk_ids()` now uses a Lance scanner with `columns=["chunk_id"]`
+    instead of a full `to_pandas()` — reduces I/O from ~300 MB to ~1.5 MB for 100K rows
+    (the previous code loaded all 768-float vectors just to return a list of IDs)
+  - `has_vector()`, `get_stats()`, `delete_file_vectors()`: replaced full table scans
+    with column-projected scanners
+  - `mark_chunks_complete()` / `mark_chunks_error()`: `table.update()` replaces the
+    delete+re-add pattern that created 2 Lance fragments per status update
+  - Compaction threshold changed from call-count based (`% 500`, which never fired at
+    2 M rows) to row-count based (`% 20_000`) so compaction actually runs in practice
+  - `_schema_verified` flag added to both backends to skip per-call schema diffs after
+    first successful verification
+
+- **Chunking internals and environment detection** — 6 issues:
+  - `build_chunk_hierarchy()` O(C×F) → O(C+F): class lookups now use a `class_by_name`
+    dict and `child_id_sets` set instead of linear scans through the file list
+  - `parse_files_multiprocess()` uses `asyncio.gather(*futures, return_exceptions=True)`
+    over individual futures — non-blocking, collects partial failures without aborting
+    the entire batch
+  - `import json` moved from function body to module top-level in `context_builder.py`
+  - `sys.stderr.isatty()` cached as `self._stderr_is_tty` in `progress.py __init__`
+    instead of called on every progress tick
+  - `resource_manager._detect_cpu_quota()`: reads cgroup v2 `cpu.max` or v1
+    `cpu.cfs_quota_us / cpu.cfs_period_us` to find the container CPU limit;
+    `os.cpu_count()` returns the host count inside containers, causing over-provisioning
+  - `calculate_optimal_workers()` uses `min(host_cpu_count, quota)` when a cgroup
+    CPU quota is detected
+
+### Documentation
+
+- Added five parallel research audit reports to `docs/research/`:
+  - Chunking pipeline performance audit
+  - Embedding/GPU performance audit
+  - Environment detection and adaptive tuning audit
+  - LanceDB storage-layer performance audit
+  - Pipeline orchestration and async patterns audit
+
 ## [3.0.48] - 2026-03-02
 
 ### Fixed
