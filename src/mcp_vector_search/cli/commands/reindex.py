@@ -395,6 +395,15 @@ async def _build_knowledge_graph(
     )
 
     if result.returncode != 0:
+        if result.returncode not in (0, 1):
+            # Unexpected exit code — likely a native LanceDB/Kuzu crash
+            # (e.g. SIGSEGV=11, OS-defined=120) rather than an application error.
+            logger.error(
+                "KG subprocess exited with unexpected code %d. "
+                "This is typically a native LanceDB or Kuzu crash during initialization. "
+                "To recover: rm -rf .mcp-vector-search/lance/*/_transactions/ && mvs index --force",
+                result.returncode,
+            )
         # Clean up temp file
         try:
             Path(temp_path).unlink()
