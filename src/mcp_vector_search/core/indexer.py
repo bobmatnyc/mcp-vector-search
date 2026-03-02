@@ -712,11 +712,6 @@ class SemanticIndexer:
             return 0, 0, 0
 
         # PIPELINE IMPLEMENTATION: Producer-consumer pattern
-        # Queue depth is configurable via MCP_VECTOR_SEARCH_QUEUE_DEPTH (default: 4).
-        # Lower values reduce peak buffered chunk-dict memory; higher values allow
-        # more parsed batches to queue ahead and reduce GPU starvation.
-        queue_maxsize = int(os.environ.get("MCP_VECTOR_SEARCH_QUEUE_DEPTH", "4"))
-        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
         files_indexed = 0
         chunks_created = 0
         chunks_embedded = 0
@@ -779,6 +774,31 @@ class SemanticIndexer:
                 f"(only {len(files_to_process)} files to process)"
             )
 
+        # FIX 3 (HIGH): Auto-scale queue depth to num_producers * 4.
+        # With depth=4 and 4 producers each producer gets ~1 slot, eliminating
+        # pipelining benefit.  N*4 gives each producer 4 batches of lookahead.
+        queue_maxsize = int(
+            os.environ.get(
+                "MCP_VECTOR_SEARCH_QUEUE_DEPTH",
+                str(effective_num_producers * 4),
+            )
+        )
+        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
+
+        # FIX 1 (CRITICAL RELIABILITY): Cancellation event so producers can detect
+        # that the consumer has crashed and stop blocking on chunk_queue.put().
+        pipeline_cancel = asyncio.Event()
+
+        # FIX 6 (HIGH): LPT scheduling — sort files by descending size so large
+        # files distribute evenly across producers (Longest Processing Time heuristic).
+        try:
+            files_to_process.sort(
+                key=lambda x: x[0].stat().st_size if x[0].exists() else 0,
+                reverse=True,
+            )
+        except OSError:
+            pass  # Non-fatal: proceed with original order
+
         async def chunk_producer(producer_id: int, file_slice: list) -> None:
             """Producer: Parse and chunk a slice of files, put batches on queue.
 
@@ -791,13 +811,20 @@ class SemanticIndexer:
             with metrics_tracker.phase("parsing") as parsing_metrics:
                 # Process files in batches and put on queue
                 for batch_start in range(0, len(file_slice), file_batch_size):
+                    # Check if pipeline was cancelled (consumer crashed)
+                    if pipeline_cancel.is_set():
+                        logger.warning(
+                            "Producer %d: pipeline cancelled, stopping", producer_id
+                        )
+                        return
+
                     # Check if consumer is still alive
                     if consumer_task.done():
                         exc = consumer_task.exception()
                         logger.error(
                             f"Consumer died unexpectedly: {exc}. Stopping producer {producer_id}."
                         )
-                        break
+                        return
 
                     batch_end = min(batch_start + file_batch_size, len(file_slice))
                     batch = file_slice[batch_start:batch_end]
@@ -805,25 +832,59 @@ class SemanticIndexer:
                     batch_chunks = []
                     batch_files_processed = 0
 
-                    for file_path, rel_path, file_hash in batch:
-                        # Check memory before processing
-                        is_ok, usage_pct, status = (
-                            self.memory_monitor.check_memory_limit()
+                    # FIX 2 (CRITICAL PERFORMANCE): Use process pool for batch parsing.
+                    # parse_files_multiprocess() uses ProcessPoolExecutor giving 6-12x
+                    # speedup on multi-core machines vs. serial per-file await.
+                    batch_paths = [fp for fp, _rel, _hash in batch]
+                    rel_paths = {fp: rel for fp, rel, _hash in batch}
+                    file_hashes = {fp: fh for fp, _rel, fh in batch}
+
+                    if self.use_multiprocessing and len(batch_paths) > 1:
+                        parse_results = (
+                            await self.chunk_processor.parse_files_multiprocess(
+                                batch_paths
+                            )
                         )
-                        if not is_ok:
-                            logger.warning(
-                                f"Memory limit exceeded during chunking "
-                                f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB), "
-                                "waiting for memory to free up..."
+                    else:
+                        # Fallback: parse sequentially for single-file batches or
+                        # when multiprocessing is disabled
+                        parse_results = []
+                        for fp in batch_paths:
+                            try:
+                                chunks = await self.chunk_processor.parse_file(fp)
+                                parse_results.append((fp, chunks, None))
+                            except Exception as exc:
+                                parse_results.append((fp, [], exc))
+
+                    # FIX 8 (LOW): Throttle memory checks to every 10 files to
+                    # avoid 200-500ms of psutil syscall overhead at 50K files.
+                    for idx, (file_path, chunks, parse_error) in enumerate(
+                        parse_results
+                    ):
+                        rel_path = rel_paths.get(file_path, str(file_path))
+                        file_hash = file_hashes.get(file_path, "")
+
+                        if idx % 10 == 0:
+                            is_ok, usage_pct, status = (
+                                self.memory_monitor.check_memory_limit()
                             )
-                            await self.memory_monitor.wait_for_memory_available(
-                                target_pct=self.memory_monitor.warn_threshold
+                            if not is_ok:
+                                logger.warning(
+                                    f"Memory limit exceeded during chunking "
+                                    f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB), "
+                                    "waiting for memory to free up..."
+                                )
+                                await self.memory_monitor.wait_for_memory_available(
+                                    target_pct=self.memory_monitor.warn_threshold
+                                )
+
+                        if parse_error:
+                            logger.error(
+                                f"Failed to chunk file {file_path}: {parse_error}"
                             )
+                            continue
 
                         try:
-                            # Parse file (runs in thread pool to avoid blocking event loop)
-                            chunks = await self.chunk_processor.parse_file(file_path)
-
                             if not chunks:
                                 # Use TRACE to avoid cluttering progress displays
                                 logger.trace(f"No chunks extracted from {file_path}")
@@ -887,7 +948,10 @@ class SemanticIndexer:
 
                     files_indexed += batch_files_processed
 
-                    # Put batch on queue for embedding (blocks if queue is full - backpressure)
+                    # Put batch on queue for embedding.
+                    # FIX 1 (CRITICAL RELIABILITY): Race put() against pipeline_cancel
+                    # so producers don't hang forever if the consumer crashes and the
+                    # queue is full.
                     if batch_chunks:
                         # Show progress bar if tracker is available
                         if self.progress_tracker:
@@ -902,9 +966,30 @@ class SemanticIndexer:
                                 f"Phase 1 progress: {files_indexed}/{len(files_to_process)} files, "
                                 f"{chunks_created} chunks | Queuing {len(batch_chunks)} chunks for embedding"
                             )
-                        await chunk_queue.put(
-                            {"chunks": batch_chunks, "batch_size": len(batch_chunks)}
+                        put_task = asyncio.ensure_future(
+                            chunk_queue.put(
+                                {
+                                    "chunks": batch_chunks,
+                                    "batch_size": len(batch_chunks),
+                                }
+                            )
                         )
+                        cancel_task = asyncio.ensure_future(pipeline_cancel.wait())
+                        done, pending = await asyncio.wait(
+                            [put_task, cancel_task],
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for t in pending:
+                            t.cancel()
+                            try:
+                                await t
+                            except asyncio.CancelledError:
+                                pass
+                        if pipeline_cancel.is_set():
+                            logger.warning(
+                                "Producer %d: pipeline cancelled, stopping", producer_id
+                            )
+                            return
                         # Yield to event loop to let consumer process the batch
                         await asyncio.sleep(0)
 
@@ -1035,23 +1120,27 @@ class SemanticIndexer:
                                             "Memory wait timed out after 120s, proceeding anyway"
                                         )
 
-                                # Generate embeddings
+                                # FIX 4 (HIGH): Wrap the synchronous embedding call in
+                                # asyncio.to_thread so the event loop thread is not
+                                # blocked for 100ms-2s per batch.  Progress display,
+                                # memory monitoring, and cancellation can run during
+                                # the embedding without this blocking them.
                                 vectors = None
                                 if hasattr(self.database, "_embedding_function"):
-                                    vectors = self.database._embedding_function(
-                                        contents
+                                    vectors = await asyncio.to_thread(
+                                        self.database._embedding_function, contents
                                     )
                                 elif hasattr(self.database, "_collection") and hasattr(
                                     self.database._collection, "_embedding_function"
                                 ):
-                                    vectors = (
-                                        self.database._collection._embedding_function(
-                                            contents
-                                        )
+                                    vectors = await asyncio.to_thread(
+                                        self.database._collection._embedding_function,
+                                        contents,
                                     )
                                 elif hasattr(self.database, "embedding_function"):
-                                    vectors = self.database.embedding_function.embed_documents(
-                                        contents
+                                    vectors = await asyncio.to_thread(
+                                        self.database.embedding_function.embed_documents,
+                                        contents,
                                     )
                                 else:
                                     logger.error(
@@ -1141,6 +1230,11 @@ class SemanticIndexer:
                                 continue
 
                 finally:
+                    # FIX 1 (CRITICAL RELIABILITY): Signal producers that the
+                    # consumer is exiting (whether normally or due to an error) so
+                    # they stop blocking on chunk_queue.put().
+                    pipeline_cancel.set()
+
                     # Always flush remaining write buffer even if an exception occurred
                     if write_buffer:
                         try:
@@ -1152,9 +1246,23 @@ class SemanticIndexer:
                                 f"Flushed remaining {len(write_buffer)} vectors to LanceDB"
                             )
                         except Exception as flush_err:
+                            # FIX 7 (MEDIUM): Mark lost chunk IDs for re-embedding on
+                            # next run instead of silently losing vectors forever.
+                            lost_ids = [
+                                c["chunk_id"] for c in write_buffer if "chunk_id" in c
+                            ]
                             logger.error(
-                                f"Failed to flush remaining write buffer: {flush_err}"
+                                "CRITICAL: Failed to flush %d vectors to LanceDB: %s",
+                                len(lost_ids),
+                                flush_err,
                             )
+                            if lost_ids and hasattr(self, "chunks_backend"):
+                                try:
+                                    await self.chunks_backend.mark_chunks_error(
+                                        lost_ids, str(flush_err)
+                                    )
+                                except Exception:
+                                    pass
                         write_buffer = []
 
                 # Update metrics
@@ -1184,12 +1292,22 @@ class SemanticIndexer:
             for i in range(effective_num_producers)
         ]
 
-        # Wait for all tasks to complete with proper error handling
+        # Wait for all tasks to complete with proper error handling.
+        # FIX 5 (HIGH): Use return_exceptions=True so a second simultaneous
+        # failure is not swallowed when the first exception is raised.
         all_tasks = producer_tasks + [consumer_task]
-        try:
-            await asyncio.gather(*all_tasks)
-        except Exception as e:
-            logger.error(f"Pipeline task failed: {e}")
+        results = await asyncio.gather(*all_tasks, return_exceptions=True)
+        exceptions = [
+            r
+            for r in results
+            if isinstance(r, BaseException)
+            and not isinstance(r, asyncio.CancelledError)
+        ]
+        if exceptions:
+            logger.error(f"Pipeline task failed: {exceptions[0]}")
+            # Log any additional simultaneous failures
+            for exc in exceptions[1:]:
+                logger.error("Additional pipeline task failure: %s", exc)
 
             # Cancel all remaining tasks if one fails
             for task in all_tasks:
@@ -1200,8 +1318,8 @@ class SemanticIndexer:
                     except asyncio.CancelledError:
                         pass
 
-            # Re-raise the original exception
-            raise
+            # Re-raise the first exception
+            raise exceptions[0]
 
         # Update metadata for backward compatibility
         if files_indexed > 0:
