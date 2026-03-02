@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.55] - 2026-03-02
+
+### Fixed
+
+- **CI/CD pipeline** — Three independent failures that caused every CI run to fail since v3.0.51:
+  - **Ruff format**: `analysis/review/instructions.py`, `language_profiles.py`, `cli/commands/skills.py`, `skills/__init__.py` had stale formatting not caught by pre-commit.
+  - **Ruff lint**: `skills/__init__.py` used deprecated `typing.Dict/List` (UP035) and unsorted imports; `skills.py` used `Optional[X]` instead of `X | None` (UP045) and unsorted imports; `analysis/review/models.py` and `core/search.py` used `class Foo(str, Enum)` instead of `StrEnum` (UP042).
+  - **Flaky timing tests**: `test_large_project_workflow` and `test_performance_workflow` asserted `search_time < 1.0 s` — a threshold GitHub Actions shared runners regularly exceeded (observed 1.004 s and 1.398 s). Now uses `_SEARCH_TIME_LIMIT = 5.0 s` when `CI=true` (set automatically by GitHub Actions) and `1.0 s` locally.
+
+- **Issue #125 — T4 GPU pipeline throughput** (closes #125):
+  - **Fix 2 (P0) — `MCP_VECTOR_SEARCH_DEVICE` env var in all invocation paths**: `hardware.py::detect_hardware_config()` and `reranker.py` (cross-encoder) were doing independent torch device detection, ignoring `MCP_VECTOR_SEARCH_DEVICE`. Both now honour the env var before falling through to auto-detection.
+  - **Fix 3 (P1) — NVMe detection in `_detect_filesystem_type()`**: The `"nvme": 1024` write-batch entry was dead code because the function never returned `"nvme"`. Now tracks source device column from `/proc/mounts`; returns `"nvme"` when the block device name contains "nvme" (e.g. `/dev/nvme0n1p1`) or the mount path contains `/nvme`.
+  - **Fix 4 (P1) — Two-pass indexing mode**: New `SemanticIndexerConfig.two_pass` field (default `False`), read from `MCP_VECTOR_SEARCH_TWO_PASS` env var (`1/true/yes`). When enabled, forces sequential chunk-all-then-embed-all regardless of `pipeline=True`, eliminating producer–consumer starvation on EFS-backed repositories. CLI: `--two-pass / --no-two-pass` flag added to the `index` command.
+
 ## [3.0.53] - 2026-03-02
 
 ### Refactored
