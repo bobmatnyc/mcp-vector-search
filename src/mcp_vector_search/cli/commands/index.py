@@ -1123,8 +1123,6 @@ async def _run_batch_indexing(
 
         import time
 
-        from ..output import console
-
         console.print()
         console.print("[cyan]📦[/cyan] Starting chunking process...")
 
@@ -1183,8 +1181,6 @@ async def _run_batch_indexing(
     elif show_progress:
         # ========== PROGRESS TUI MODE (default) ==========
         import time
-
-        from ..output import console
 
         console.print()  # Add blank line before progress
 
@@ -1292,10 +1288,8 @@ async def _run_batch_indexing(
             logger.debug(f"Could not load KG stats: {e}")
     else:
         # KG not built - show hint
-        from ..output import console as output_console
-
-        output_console.print()
-        output_console.print(
+        console.print()
+        console.print(
             "[dim]💡 Run 'mcp-vector-search kg build' to enable graph queries[/dim]"
         )
 
@@ -1760,8 +1754,6 @@ def _show_background_status(project_root: Path) -> None:
     """
     from rich.table import Table
 
-    from ..output import console
-
     progress_file = project_root / ".mcp-vector-search" / "indexing_progress.json"
 
     if not progress_file.exists():
@@ -2065,8 +2057,6 @@ async def _compute_relationships_sync(project_root: Path) -> None:
         TimeRemainingColumn,
     )
 
-    from ..output import console
-
     # Load project configuration
     project_manager = ProjectManager(project_root)
 
@@ -2251,8 +2241,6 @@ async def _show_two_phase_status(project_root: Path) -> None:
         project_root: Project root directory
     """
     from rich.table import Table
-
-    from ..output import console
 
     # Load project configuration
     project_manager = ProjectManager(project_root)
