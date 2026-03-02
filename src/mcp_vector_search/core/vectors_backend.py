@@ -124,7 +124,9 @@ class VectorsBackend:
         self._table = None
         # Vector dimension is auto-detected from first batch or set explicitly
         self.vector_dim = vector_dim
-        self._append_count = 0  # Track appends for periodic compaction
+        self._append_count = 0  # Track appends (row count) for periodic compaction
+        # Fix 5: schema verification cache — avoids per-call set-diff on stable schema
+        self._schema_verified: bool = False
 
     # ------------------------------------------------------------------
     # Helpers: idempotent table operations
@@ -353,6 +355,8 @@ class VectorsBackend:
                     except Exception as drop_err:
                         logger.warning(f"Failed to drop table (non-fatal): {drop_err}")
                     self._table = None
+                    # Fix 5: reset schema cache so it is re-verified after recreation
+                    self._schema_verified = False
                     logger.debug("Vectors table will be recreated on first write")
                 else:
                     try:
@@ -597,13 +601,19 @@ class VectorsBackend:
                         )
                     else:
                         # Dimensions match — evolve schema if needed, then append
-                        self._evolve_schema_if_needed(existing_schema, schema)
+                        # Fix 5: skip schema set-diff when schema is known stable
+                        if not self._schema_verified:
+                            self._evolve_schema_if_needed(existing_schema, schema)
                         self._delete_chunk_ids(chunk_ids_to_add)
                         self._table.add(pa_table, mode="append")
+                        # Fix 5: mark schema as verified after first successful write
+                        self._schema_verified = True
                         logger.debug(
                             f"Appended {len(normalized_vectors)} vectors to existing table"
                         )
                 else:
+                    # Fix 5: freshly created table has the current schema by definition
+                    self._schema_verified = True
                     logger.debug(
                         f"Created vectors table with {len(normalized_vectors)} vectors "
                         f"(dimension: {self.vector_dim})"
@@ -624,9 +634,12 @@ class VectorsBackend:
                     self._table = self._idempotent_create_table(
                         self.table_name, pa_table, schema=schema, mode="overwrite"
                     )
+                    # Fix 5: schema cache is invalid after table recreation
+                    self._schema_verified = False
                 else:
-                    # Dimensions match — evolve schema if needed, then append
-                    self._evolve_schema_if_needed(existing_schema, schema)
+                    # Fix 5: skip per-call schema set-diff when schema is known stable
+                    if not self._schema_verified:
+                        self._evolve_schema_if_needed(existing_schema, schema)
 
                     # Deduplicate: Delete existing vectors with same chunk_ids before appending
                     self._delete_chunk_ids(chunk_ids_to_add)
@@ -634,13 +647,17 @@ class VectorsBackend:
                     # OPTIMIZATION: Use mode='append' for faster bulk inserts
                     # This defers index updates until later, improving write throughput
                     self._table.add(pa_table, mode="append")
+                    # Fix 5: mark schema as verified after first successful write
+                    self._schema_verified = True
                     logger.debug(
                         f"Added {len(normalized_vectors)} vectors to table (append mode)"
                     )
 
-            # Track appends and compact periodically to prevent file descriptor exhaustion
-            self._append_count += 1
-            if self._append_count % 500 == 0:
+            # Fix 4: count rows (not calls) for compaction threshold.
+            # Old threshold: 500 calls × 4096 rows/call = 2M rows (never fires in practice).
+            # New threshold: compact every ~20K rows regardless of call count.
+            self._append_count += len(normalized_vectors)
+            if self._append_count % 20_000 < len(normalized_vectors):
                 self._compact_table()
 
             return len(normalized_vectors)
@@ -884,15 +901,31 @@ class VectorsBackend:
             return 0
 
         try:
-            # Count vectors before deletion
-            df = self._table.to_pandas().query(f"file_path == '{file_path}'")
-            count = len(df)
+            # Fix 3: column-projected scanner to count before deletion — avoids
+            # loading 768-float vectors just to count rows for a file.
+            escaped = file_path.replace(chr(39), chr(39) * 2)
+            filter_expr = f"file_path = '{escaped}'"
+            try:
+                scanner = self._table.to_lance().scanner(
+                    filter=filter_expr,
+                    columns=["chunk_id"],
+                )
+                count = len(scanner.to_table())
+            except Exception as proj_err:
+                logger.warning(
+                    "Column-projected pre-delete count failed, falling back: %s",
+                    proj_err,
+                )
+                df_fallback = self._table.to_pandas().query(
+                    f"file_path == '{file_path}'"
+                )
+                count = len(df_fallback)
 
             if count == 0:
                 return 0
 
             # Delete matching rows
-            self._table.delete(f"file_path = '{file_path}'")
+            self._table.delete(filter_expr)
 
             logger.debug(f"Deleted {count} vectors for file: {file_path}")
             return count
@@ -1100,12 +1133,24 @@ class VectorsBackend:
             return False
 
         try:
-            df = self._table.to_pandas().query(f"chunk_id == '{chunk_id}'")
-            return not df.empty
-
+            # Fix 3: column-projected scanner avoids loading 768-float vectors
+            escaped = chunk_id.replace(chr(39), chr(39) * 2)
+            scanner = self._table.to_lance().scanner(
+                filter=f"chunk_id = '{escaped}'",
+                columns=["chunk_id"],
+                limit=1,
+            )
+            return len(scanner.to_table()) > 0
         except Exception as e:
-            logger.warning(f"Failed to check vector for chunk {chunk_id}: {e}")
-            return False
+            logger.warning(
+                "Column-projected has_vector check failed, falling back: %s", e
+            )
+            try:
+                df = self._table.to_pandas().query(f"chunk_id == '{chunk_id}'")
+                return not df.empty
+            except Exception as e2:
+                logger.warning(f"Failed to check vector for chunk {chunk_id}: {e2}")
+                return False
 
     async def get_stats(self) -> dict[str, Any]:
         """Get vector statistics.
@@ -1132,32 +1177,30 @@ class VectorsBackend:
             }
 
         try:
-            df = self._table.to_pandas()
+            # Fix 3: use count_rows() for total and column-projected scanner for
+            # aggregation metadata — avoids loading 768-float vectors (300MB for 100K rows).
+            total = self._table.count_rows()
 
-            # Count total vectors
-            total = len(df)
-
-            # Count unique files
-            file_count = df["file_path"].nunique()
-
-            # Count by language
-            language_counts = df["language"].value_counts().to_dict()
-
-            # Count by chunk type
-            chunk_type_counts = df["chunk_type"].value_counts().to_dict()
-
-            # Count by model version
-            model_counts = df["model_version"].value_counts().to_dict()
-
-            # Calculate average vector norm (for debugging)
             try:
-                import numpy as np
+                scanner = self._table.to_lance().scanner(
+                    columns=["file_path", "language", "chunk_type", "model_version"]
+                )
+                result = scanner.to_table()
+                df = result.to_pandas()
 
-                vectors = np.array(list(df["vector"].values))
-                norms = np.linalg.norm(vectors, axis=1)
-                avg_norm = float(np.mean(norms))
-            except Exception:
-                avg_norm = 0.0
+                file_count = df["file_path"].nunique()
+                language_counts = df["language"].value_counts().to_dict()
+                chunk_type_counts = df["chunk_type"].value_counts().to_dict()
+                model_counts = df["model_version"].value_counts().to_dict()
+            except Exception as proj_err:
+                logger.warning(
+                    "Column-projected stats scanner failed, falling back: %s", proj_err
+                )
+                df_full = self._table.to_pandas()
+                file_count = df_full["file_path"].nunique()
+                language_counts = df_full["language"].value_counts().to_dict()
+                chunk_type_counts = df_full["chunk_type"].value_counts().to_dict()
+                model_counts = df_full["model_version"].value_counts().to_dict()
 
             return {
                 "total": total,
@@ -1165,7 +1208,8 @@ class VectorsBackend:
                 "languages": language_counts,
                 "chunk_types": chunk_type_counts,
                 "models": model_counts,
-                "avg_vector_norm": avg_norm,
+                # avg_vector_norm omitted: computing it requires loading all vectors (300MB+)
+                "avg_vector_norm": 0.0,
             }
 
         except Exception as e:
@@ -1301,9 +1345,19 @@ class VectorsBackend:
             return all_chunk_ids
 
         try:
-            # Get all chunk IDs that have vectors
-            df = self._table.to_pandas()
-            embedded_ids = set(df["chunk_id"].values)
+            # Fix 1: column-projected scanner — loads only chunk_id strings instead of
+            # ALL columns including 768-float vectors (300MB for 100K rows).
+            try:
+                scanner = self._table.to_lance().scanner(columns=["chunk_id"])
+                result = scanner.to_table()
+                embedded_ids = set(result.column("chunk_id").to_pylist())
+            except Exception as scan_err:
+                logger.warning(
+                    "Column-projected chunk_id scanner failed, falling back: %s",
+                    scan_err,
+                )
+                df = self._table.to_pandas()
+                embedded_ids = set(df["chunk_id"].values)
 
             # Find chunks without vectors
             unembedded = [cid for cid in all_chunk_ids if cid not in embedded_ids]

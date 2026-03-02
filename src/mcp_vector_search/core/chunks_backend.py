@@ -357,9 +357,11 @@ class ChunksBackend:
                     f"Added {len(normalized_chunks)} chunks to table (append mode)"
                 )
 
-            # Track appends and compact periodically to prevent file descriptor exhaustion
-            self._append_count += 1
-            if self._append_count % 500 == 0:
+            # Fix 4: count rows (not calls) for compaction threshold.
+            # Old threshold: 500 calls × N rows/call (rarely triggered for typical projects).
+            # New threshold: compact every ~20K rows regardless of call count.
+            self._append_count += len(normalized_chunks)
+            if self._append_count % 20_000 < len(normalized_chunks):
                 self._compact_table()
 
             return len(normalized_chunks)
@@ -468,9 +470,11 @@ class ChunksBackend:
                     f"Added {len(normalized_chunks)} chunks to table (append mode)"
                 )
 
-            # Track appends and compact periodically to prevent file descriptor exhaustion
-            self._append_count += 1
-            if self._append_count % 500 == 0:
+            # Fix 4: count rows (not calls) for compaction threshold.
+            # Old threshold: 500 calls × N rows/call (rarely triggered for typical projects).
+            # New threshold: compact every ~20K rows regardless of call count.
+            self._append_count += len(normalized_chunks)
+            if self._append_count % 20_000 < len(normalized_chunks):
                 self._compact_table()
 
             return len(normalized_chunks)
@@ -524,9 +528,11 @@ class ChunksBackend:
             else:
                 self._table.add(chunks, mode="append")
 
-            # Track appends and compact periodically to prevent file descriptor exhaustion
-            self._append_count += 1
-            if self._append_count % 500 == 0:
+            # Fix 4: count rows (not calls) for compaction threshold.
+            # Old threshold: 500 calls × N rows/call (rarely triggered for typical projects).
+            # New threshold: compact every ~20K rows regardless of call count.
+            self._append_count += len(chunks)
+            if self._append_count % 20_000 < len(chunks):
                 self._compact_table()
 
             return len(chunks)
@@ -780,23 +786,18 @@ class ChunksBackend:
             ids_str = "', '".join(chunk_ids)
             filter_expr = f"chunk_id IN ('{ids_str}')"
 
-            # OPTIMIZATION: Use LanceDB scanner for O(1) filtered query instead of to_pandas()
-            scanner = self._table.to_lance().scanner(filter=filter_expr)
-
-            # Convert to PyArrow table (only selected rows, not entire table)
-            result = scanner.to_table()
-            if len(result) == 0:
-                return
-
-            # Convert to pandas for manipulation
-            df = result.to_pandas()
-
-            df["embedding_status"] = "complete"
-            df["updated_at"] = datetime.utcnow().isoformat()
-            df["error_message"] = ""
-
-            self._table.delete(filter_expr)
-            self._table.add(df.to_dict("records"))
+            # Fix 2: use table.update() for in-place status-only mutation.
+            # Replaces scan → to_pandas → delete → add (which creates 2 LanceDB
+            # fragment files per call). update() mutates columns in place via a
+            # single delta file, following the same pattern as update_file_path().
+            self._table.update(
+                where=filter_expr,
+                values={
+                    "embedding_status": "complete",
+                    "updated_at": datetime.utcnow().isoformat(),
+                    "error_message": "",
+                },
+            )
 
             logger.debug(f"Marked {len(chunk_ids)} chunks as complete")
 
@@ -868,23 +869,18 @@ class ChunksBackend:
             ids_str = "', '".join(chunk_ids)
             filter_expr = f"chunk_id IN ('{ids_str}')"
 
-            # OPTIMIZATION: Use LanceDB scanner for O(1) filtered query instead of to_pandas()
-            scanner = self._table.to_lance().scanner(filter=filter_expr)
-
-            # Convert to PyArrow table (only selected rows, not entire table)
-            result = scanner.to_table()
-            if len(result) == 0:
-                return
-
-            # Convert to pandas for manipulation
-            df = result.to_pandas()
-
-            df["embedding_status"] = "error"
-            df["updated_at"] = datetime.utcnow().isoformat()
-            df["error_message"] = error[:500]  # Truncate long errors
-
-            self._table.delete(filter_expr)
-            self._table.add(df.to_dict("records"))
+            # Fix 2: use table.update() for in-place status-only mutation.
+            # Replaces scan → to_pandas → delete → add (which creates 2 LanceDB
+            # fragment files per call). update() mutates columns in place via a
+            # single delta file, following the same pattern as update_file_path().
+            self._table.update(
+                where=filter_expr,
+                values={
+                    "embedding_status": "error",
+                    "updated_at": datetime.utcnow().isoformat(),
+                    "error_message": error[:500],  # Truncate long errors
+                },
+            )
 
             logger.debug(f"Marked {len(chunk_ids)} chunks as error")
 
