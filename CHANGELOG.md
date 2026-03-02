@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.50] - 2026-03-02
+
+### Performance
+
+- **Bytes-direct tree-sitter parsing (`parsers/python.py`, `javascript.py`, `rust.py`, `go.py`, `java.py`, `ruby.py`, `dart.py`, `csharp.py`, `php.py`)** — All 9 parsers previously read files as text (`read_text(encoding="utf-8")`) then immediately called `content.encode("utf-8")` before passing to tree-sitter, holding both the `str` and `bytes` representations in memory simultaneously (2× peak memory per file during parsing). Changed to `read_bytes()` first, pass bytes directly to tree-sitter, decode to `str` once only for string operations. In `parse_content()` methods, encode once to a named variable instead of inline to make single-encode intent explicit.
+
+- **NFS/EFS adaptive write batch size (`indexer.py`)** — Added `_detect_filesystem_type(db_path)` that parses `/proc/mounts` on Linux to identify NFS/NFS4/CIFS/EFS storage, with a macOS `stat -f -c %T` fallback. The `write_batch_size` now auto-tunes per filesystem: NFS/EFS → 16384 chunks (amortises high per-operation network latency and EFS write-burst API calls), NVMe → 1024 (low-latency, small compact cycles), default → 4096 (unchanged). `MCP_VECTOR_SEARCH_WRITE_BATCH_SIZE` env var takes full precedence. Detection is always non-fatal.
+
+- **CUDA sm-version batch sizing (`embeddings.py`)** — `_detect_optimal_batch_size()` previously chose batch size from VRAM alone, which is a weak predictor. A T4 (sm_75) has 16 GB VRAM but is memory-bandwidth-limited and saturates at ~128 batch size; an A100 (sm_80) handles 512 efficiently at the same VRAM tier. Added `torch.cuda.get_device_capability()` → sm-version lookup with per-architecture caps: H100 sm_90 → 1024, L4/RTX-4090 sm_89 → 512, A10G/RTX-3090 sm_86 → 512, A100 sm_80 → 512, T4 sm_75 → 128, V100 sm_70 → 256. `batch_size = min(mem_batch, sm_cap)` satisfies both constraints; log now includes `sm_XX` and both caps.
+
+- **Multi-GPU round-robin dispatch (`embeddings.py`)** — When `torch.cuda.device_count() > 1`, `EmbeddingFunction.__init__` loads one `SentenceTransformer` instance per extra GPU (cuda:1..N-1) with fp16 dtype into `self._gpu_models`. `_generate_embeddings()` round-robins across the full GPU pool using a `threading.Lock`-guarded counter for thread-safe dispatch from `asyncio.to_thread`. Loading any extra GPU is best-effort — per-device failures log a warning and continue with fewer GPUs. Single-GPU, MPS, and CPU paths are completely unchanged.
+
+### Fixed
+
+- **Memory monitor tests (`tests/unit/test_memory_monitor.py`)** — Two tests asserted `max_memory_gb == 25.0` (the old hardcoded default) but since 3.0.48 the default is auto-detected from cgroup/system RAM. Fixed by patching `_detect_memory_limit_gb()` to return a deterministic sentinel (32 GB) so both tests verify the 85%-margin calculation independent of the host machine's actual RAM.
+
 ## [3.0.49] - 2026-03-02
 
 ### Performance
