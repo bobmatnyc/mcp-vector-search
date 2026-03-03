@@ -639,10 +639,13 @@ class KGBuilder:
                 f"[cyan]Validating relationships against {len(valid_entity_ids)} actual entity IDs...[/cyan]"
             )
 
-        # CRITICAL: Use very small batch size (50) to avoid Kuzu assertion failures
-        # Kuzu's Rust bindings have bugs that cause assertion failures in csr_node_group.cpp
-        # Smaller batches reduce the risk of hitting the bug
-        safe_batch_size = 50
+        # Batch size for relationship insertion.
+        # Previously 50 as a workaround for a Kuzu CSR assertion bug, but that was
+        # overly conservative and caused 500 round-trips for 25k relationships.
+        # 500 matches the node insertion batch size and is safe; the Kuzu bug only
+        # triggered with very large batches (thousands). If assertion failures
+        # resurface, fall back to 50.
+        safe_batch_size = 500
 
         total_inserted = 0
         total_skipped = 0
@@ -693,12 +696,51 @@ class KGBuilder:
                     # Show insertion progress
                     if progress_tracker and len(valid_rels) > 0:
                         progress_tracker.item(
-                            f"Inserting {len(valid_rels):,} {rel_type.lower()} relationships...",
+                            f"Inserting {len(valid_rels):,} {rel_type.lower()} relationships"
+                            f" (batch={safe_batch_size})...",
                             done=False,
                         )
 
+                    # Per-batch progress callback — updates the progress bar after
+                    # each batch so the user sees live feedback during large insertions.
+                    insert_start_time = time.time()
+
+                    def _make_progress_callback(
+                        rtype: str,
+                        n_total: int,
+                        start: float,
+                        tracker: object,
+                        con: Console,
+                    ):
+                        def _callback(inserted: int, total: int) -> None:
+                            if tracker:
+                                tracker.progress_bar_with_eta(
+                                    inserted,
+                                    total,
+                                    prefix=f"Inserting {rtype.lower()}",
+                                    start_time=start,
+                                )
+                            else:
+                                pct = int(inserted / total * 100) if total else 0
+                                con.print(
+                                    f"\r  {rtype.lower()}: {inserted:,}/{total:,} ({pct}%)",
+                                    end="",
+                                )
+
+                        return _callback
+
+                    progress_cb = _make_progress_callback(
+                        rel_type,
+                        len(valid_rels),
+                        insert_start_time,
+                        progress_tracker,
+                        console,
+                    )
+
                     count = self.kg.add_relationships_batch_sync(
-                        valid_rels, batch_size=safe_batch_size
+                        valid_rels,
+                        batch_size=safe_batch_size,
+                        progress_callback=progress_cb,
                     )
                     stats[rel_type.lower()] = count
                     total_inserted += count
@@ -707,7 +749,7 @@ class KGBuilder:
                             f"{count:,} {rel_type.lower()} inserted", done=True
                         )
                     else:
-                        console.print(f"  ✓ {count} {rel_type.lower()} relations")
+                        console.print(f"\n  ✓ {count} {rel_type.lower()} relations")
 
                 if skipped > 0:
                     total_skipped += skipped

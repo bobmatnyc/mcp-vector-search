@@ -13,6 +13,7 @@ Enables architectural queries like:
 """
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1915,7 +1916,10 @@ class KnowledgeGraph:
         return total
 
     def add_relationships_batch_sync(
-        self, relationships: list[CodeRelationship], batch_size: int = 500
+        self,
+        relationships: list[CodeRelationship],
+        batch_size: int = 500,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> int:
         """Batch insert relationships using UNWIND (synchronous).
 
@@ -1924,6 +1928,8 @@ class KnowledgeGraph:
         Args:
             relationships: List of CodeRelationship objects
             batch_size: Number of relationships per batch (default 500)
+            progress_callback: Optional callback(inserted_so_far, total) called
+                after each batch completes.
 
         Returns:
             Number of relationships inserted
@@ -1944,13 +1950,17 @@ class KnowledgeGraph:
         total = 0
         for rel_type, rels in by_type.items():
             total += self._add_relationships_batch_by_type_sync(
-                rels, rel_type, batch_size
+                rels, rel_type, batch_size, progress_callback=progress_callback
             )
 
         return total
 
     def _add_relationships_batch_by_type_sync(
-        self, relationships: list[CodeRelationship], rel_type: str, batch_size: int
+        self,
+        relationships: list[CodeRelationship],
+        rel_type: str,
+        batch_size: int,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> int:
         """Batch insert relationships of a specific type (synchronous).
 
@@ -1958,6 +1968,8 @@ class KnowledgeGraph:
             relationships: List of CodeRelationship objects
             rel_type: Relationship type (CALLS, IMPORTS, etc.)
             batch_size: Number of relationships per batch
+            progress_callback: Optional callback(inserted_so_far, total) called
+                after each batch completes.
 
         Returns:
             Number of relationships inserted
@@ -2023,6 +2035,8 @@ class KnowledgeGraph:
                 """
                 self._execute_query(query, {"batch": params})
                 total += len(batch)
+                if progress_callback:
+                    progress_callback(total, len(relationships))
             except Exception as e:
                 error_msg = str(e)
                 logger.debug(f"Batch insert failed for {rel_type}: {error_msg}")
