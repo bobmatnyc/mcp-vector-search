@@ -62,6 +62,7 @@ CODE_EXTENSIONS = {
     ".sh",
     ".bash",
     ".sql",
+    ".hs",
 }
 
 DOCUMENTATION_EXTENSIONS = {".md", ".txt", ".rst", ".adoc", ".org"}
