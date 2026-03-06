@@ -29,6 +29,7 @@ dependencies = [
     "pylance>=0.22.0",  # Required for LanceDB scanner API (performance optimization)
     "pandas>=2.0.0",
     "sentence-transformers>=5.2.0,<6.0.0",
+    "torch>=2.9.0,<2.10.0; sys_platform == 'darwin'",  # Pin below 2.10 on macOS — MPS regression breaks Apple Silicon GPU acceleration
     "transformers>=4.34.0,<5.0.0",
     "tree-sitter>=0.20.1",
     "tree-sitter-language-pack>=0.9.0",
