@@ -515,5 +515,94 @@ def _get_inline_wiki_template() -> str:
 """
 
 
+@wiki_app.command("publish")
+def wiki_publish(
+    project_path: Path = typer.Argument(
+        Path("."),
+        help="Project root (default: current directory)",
+    ),
+    wiki_dir: Path | None = typer.Option(
+        None,
+        "--wiki-dir",
+        "-w",
+        help="Directory containing generated wiki .md files (default: <project>/wiki)",
+    ),
+    message: str = typer.Option(
+        "Update wiki via mcp-vector-search",
+        "--message",
+        "-m",
+        help="Git commit message",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Stage changes but do not push",
+    ),
+) -> None:
+    """Publish generated wiki pages to GitHub Wiki.
+
+    Clones the repository's GitHub Wiki (.wiki.git), copies generated .md files,
+    commits, and pushes. Run 'mvs wiki generate' first to create the wiki files.
+
+    Example:
+        mvs wiki generate && mvs wiki publish
+    """
+    from rich.panel import Panel
+
+    from ...core.wiki_publisher import WikiPublisher
+
+    project_root = project_path.resolve()
+    wiki_output_dir = wiki_dir.resolve() if wiki_dir else None
+
+    publisher = WikiPublisher(
+        project_root=project_root,
+        wiki_output_dir=wiki_output_dir,
+    )
+
+    with console.status("[bold blue]Publishing wiki to GitHub...[/bold blue]"):
+        try:
+            result = publisher.publish(commit_message=message, dry_run=dry_run)
+        except ValueError as e:
+            console.print(f"[bold red]Error:[/bold red] {e}")
+            raise typer.Exit(1)
+        except Exception as e:
+            console.print(f"[bold red]Unexpected error:[/bold red] {e}")
+            raise typer.Exit(1)
+
+    if result.success:
+        status = (
+            "[yellow]Dry run complete[/yellow]"
+            if dry_run
+            else "[bold green]Published[/bold green]"
+        )
+        console.print(
+            Panel(
+                f"{status}\n\n"
+                + (
+                    f"Pages: {result.pages_published}\n"
+                    if result.pages_published
+                    else ""
+                )
+                + (
+                    f"Wiki URL: [link={result.wiki_url}]{result.wiki_url}[/link]\n"
+                    if result.wiki_url
+                    else ""
+                )
+                + result.message,
+                title="Wiki Publish",
+                border_style="green" if not dry_run else "yellow",
+            )
+        )
+    else:
+        console.print(
+            Panel(
+                f"[bold red]Failed[/bold red]\n\n{result.error}",
+                title="Wiki Publish Error",
+                border_style="red",
+            )
+        )
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     wiki_app()
