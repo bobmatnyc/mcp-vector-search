@@ -400,3 +400,91 @@ class KGHandlers:
                 ],
                 isError=True,
             )
+
+    async def handle_trace_execution_flow(self, args: dict[str, Any]) -> CallToolResult:
+        """Handle trace_execution_flow tool call."""
+        entry_point = args.get("entry_point", "")
+        if not entry_point:
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text="entry_point parameter is required")
+                ],
+                isError=True,
+            )
+
+        depth = int(args.get("depth", 3))
+        direction = args.get("direction", "outgoing")
+        if direction not in ("outgoing", "incoming", "both"):
+            direction = "outgoing"
+
+        try:
+            kg_path = self.project_root / ".mcp-vector-search" / "knowledge_graph"
+            kg = KnowledgeGraph(kg_path)
+            await kg.initialize()
+
+            result = await kg.trace_execution_flow(
+                entry_point=entry_point,
+                depth=depth,
+                direction=direction,
+            )
+
+            await kg.close()
+        except Exception as e:
+            logger.error(f"trace_execution_flow failed: {e}")
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Trace failed: {e}")],
+                isError=True,
+            )
+
+        if result["entry"] is None:
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"No entity found matching '{entry_point}'. Try a more specific name.",
+                    )
+                ],
+                isError=True,
+            )
+
+        # Format as readable text + JSON summary
+        entry = result["entry"]
+        nodes = result["nodes"]
+        edges = result["edges"]
+
+        lines = [
+            f"## Execution Flow: {entry['name']}",
+            f"Entry: {entry['name']} ({entry.get('entity_type', 'function')}) "
+            f"[{entry.get('file_path', '').split('/src/')[-1] if entry.get('file_path') else '?'}]",
+            f"Direction: {direction} | Depth: {result['depth_reached']}/{depth} | "
+            f"Nodes found: {result['total_nodes']}"
+            + (" (truncated)" if result["truncated"] else ""),
+            "",
+        ]
+
+        if not nodes:
+            lines.append(
+                f"No {'callees' if direction == 'outgoing' else 'callers'} found."
+            )
+        else:
+            lines.append(f"### Reachable nodes ({len(nodes)}):")
+            for node in sorted(nodes, key=lambda n: n["depth"]):
+                indent = "  " * node["depth"]
+                short_file = (node.get("file_path") or "?").split("/src/")[-1]
+                lines.append(
+                    f"{indent}[depth {node['depth']}] {node['name']} "
+                    f"({node.get('entity_type', '?')}) [{short_file}]"
+                )
+
+            lines.append("")
+            lines.append(f"### Call edges ({len(edges)}):")
+            for edge in edges[:30]:
+                lines.append(
+                    f"  {edge['from_name']} → {edge['to_name']} (depth {edge['depth']})"
+                )
+            if len(edges) > 30:
+                lines.append(f"  ... and {len(edges) - 30} more edges")
+
+        return CallToolResult(
+            content=[TextContent(type="text", text="\n".join(lines))],
+        )

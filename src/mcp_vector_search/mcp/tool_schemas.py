@@ -32,6 +32,7 @@ def get_tool_schemas() -> list[Tool]:
         _get_kg_query_schema(),
         _get_kg_ontology_schema(),
         _get_kg_ia_schema(),
+        _get_trace_execution_flow_schema(),
         _get_story_generate_schema(),
     ]
 
@@ -1074,6 +1075,42 @@ def _get_kg_ia_schema() -> Tool:
         inputSchema={
             "type": "object",
             "properties": {},
+        },
+    )
+
+
+def _get_trace_execution_flow_schema() -> Tool:
+    """Get trace_execution_flow tool schema."""
+    return Tool(
+        name="trace_execution_flow",
+        description=(
+            "Trace the call chain from a function entry point through the codebase. "
+            "Shows what a function calls, and what calls it, up to N hops deep. "
+            "Requires knowledge graph to be built first (mvs index kg). "
+            "Uses the CALLS relationship graph built from source code analysis."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "entry_point": {
+                    "type": "string",
+                    "description": "Function or class name to trace from (e.g. 'handle_search_code', 'WikiPublisher')",
+                },
+                "depth": {
+                    "type": "integer",
+                    "description": "Maximum call chain depth to traverse (default: 3, max: 8)",
+                    "default": 3,
+                    "minimum": 1,
+                    "maximum": 8,
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["outgoing", "incoming", "both"],
+                    "description": "outgoing=what it calls, incoming=what calls it, both=full neighborhood",
+                    "default": "outgoing",
+                },
+            },
+            "required": ["entry_point"],
         },
     )
 

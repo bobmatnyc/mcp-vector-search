@@ -1547,6 +1547,179 @@ def get_inheritance(
     asyncio.run(_inherits())
 
 
+@kg_app.command("trace")
+def kg_trace(
+    entry_point: str = typer.Argument(..., help="Function or class name to trace from"),
+    depth: int = typer.Option(
+        3, "--depth", "-d", help="Max call chain depth (1–8)", min=1, max=8
+    ),
+    direction: str = typer.Option(
+        "outgoing",
+        "--direction",
+        help="outgoing=what it calls, incoming=what calls it, both=full neighborhood",
+    ),
+    output_format: str = typer.Option(
+        "tree",
+        "--format",
+        "-f",
+        help="Output format: tree, flat, or json",
+    ),
+) -> None:
+    """Trace execution flow from a function through the call graph.
+
+    Shows the call chain from a function entry point, following CALLS
+    relationships in the knowledge graph up to the specified depth.
+
+    Requires 'mvs index kg' to have been run first.
+
+    Examples:
+
+      mvs kg trace handle_search_code
+
+      mvs kg trace WikiPublisher --depth 4 --direction incoming
+
+      mvs kg trace enrich_with_git_blame --format flat
+    """
+    if direction not in ("outgoing", "incoming", "both"):
+        console.print(
+            f"[red]Invalid direction '{direction}'. Use: outgoing, incoming, both[/red]"
+        )
+        raise typer.Exit(1)
+
+    if output_format not in ("tree", "flat", "json"):
+        console.print(
+            f"[red]Invalid format '{output_format}'. Use: tree, flat, json[/red]"
+        )
+        raise typer.Exit(1)
+
+    async def run():
+        project_root = Path.cwd()
+        kg_path = project_root / ".mcp-vector-search" / "knowledge_graph"
+
+        if not kg_path.exists():
+            console.print(
+                "[red]Knowledge graph not found.[/red] "
+                "Run [cyan]mvs index kg[/cyan] to build it first."
+            )
+            raise typer.Exit(1)
+
+        kg = KnowledgeGraph(kg_path)
+        try:
+            await kg.initialize()
+        except Exception as e:
+            console.print(f"[red]Failed to initialize knowledge graph: {e}[/red]")
+            raise typer.Exit(1)
+
+        with console.status(f"[bold blue]Tracing {entry_point}...[/bold blue]"):
+            result = await kg.trace_execution_flow(
+                entry_point=entry_point,
+                depth=depth,
+                direction=direction,
+            )
+
+        await kg.close()
+
+        if result["entry"] is None:
+            console.print(
+                f"[yellow]No entity found matching '{entry_point}'.[/yellow] "
+                "Try a more specific name."
+            )
+            raise typer.Exit(1)
+
+        entry = result["entry"]
+        nodes = result["nodes"]
+        edges = result["edges"]
+
+        if output_format == "json":
+            # Raw JSON to stdout — pipe-friendly
+            import sys
+
+            json.dump(result, sys.stdout, indent=2, default=str)
+            sys.stdout.write("\n")
+            return
+
+        if output_format == "flat":
+            # Flat list — one entry per node, ordered by depth
+            print(
+                f"{entry['name']}  [{(entry.get('file_path') or '?').split('/src/')[-1]}]  (entry)"
+            )
+            for node in sorted(nodes, key=lambda n: (n["depth"], n["name"])):
+                short = (node.get("file_path") or "?").split("/src/")[-1]
+                print(f"{node['name']}  [{short}]  depth={node['depth']}")
+            return
+
+        # Tree format (default)
+        short_entry_file = (entry.get("file_path") or "?").split("/src/")[-1]
+        direction_label = {
+            "outgoing": "calls",
+            "incoming": "called by",
+            "both": "related",
+        }[direction]
+
+        console.print()
+        root_label = (
+            f"[bold cyan]{entry['name']}[/bold cyan] "
+            f"[dim]({entry.get('entity_type', 'function')})[/dim] "
+            f"[dim green][{short_entry_file}][/dim green]"
+        )
+        tree = Tree(root_label)
+
+        if not nodes:
+            tree.add(f"[dim]No {direction_label} found[/dim]")
+        else:
+            # Build tree structure: group edges by depth, then by caller
+            node_map = {n["id"]: n for n in nodes}
+            node_map[entry["id"]] = entry
+
+            def add_children(
+                parent_tree: Tree, parent_id: str, current_depth: int, visited: set
+            ):
+                if current_depth > depth:
+                    return
+                child_edges = [e for e in edges if e["from_id"] == parent_id]
+                for edge in child_edges:
+                    child_id = edge["to_id"]
+                    child = node_map.get(child_id)
+                    if child is None:
+                        continue
+                    short_file = (child.get("file_path") or "?").split("/src/")[-1]
+                    child_label = (
+                        f"[cyan]{child['name']}[/cyan] "
+                        f"[dim]({child.get('entity_type', '?')})[/dim] "
+                        f"[dim green][{short_file}:{child.get('start_line', '?')}][/dim green]"
+                    )
+                    subtree = parent_tree.add(child_label)
+                    if child_id not in visited:
+                        visited.add(child_id)
+                        add_children(subtree, child_id, current_depth + 1, visited)
+
+            if direction in ("outgoing", "both"):
+                add_children(tree, entry["id"], 1, {entry["id"]})
+            else:
+                # Incoming: show callers
+                caller_edges = [e for e in edges if e["to_id"] == entry["id"]]
+                for edge in caller_edges:
+                    caller = node_map.get(edge["from_id"])
+                    if caller:
+                        short_file = (caller.get("file_path") or "?").split("/src/")[-1]
+                        tree.add(
+                            f"[cyan]{caller['name']}[/cyan] "
+                            f"[dim green][{short_file}:{caller.get('start_line', '?')}][/dim green]"
+                            f" [dim]calls this[/dim]"
+                        )
+
+        console.print(tree)
+        console.print(
+            f"\n[dim]Nodes: {result['total_nodes']} | "
+            f"Edges: {len(edges)} | "
+            f"Depth reached: {result['depth_reached']}/{depth}"
+            + (" | [yellow]truncated[/yellow]" if result["truncated"] else "")
+            + "[/dim]"
+        )
+
+    asyncio.run(run())
+
+
 @kg_app.command("visualize")
 def visualize_kg(
     port: int = typer.Option(
