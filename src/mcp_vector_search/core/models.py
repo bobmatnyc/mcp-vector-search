@@ -446,6 +446,11 @@ class SearchResult(BaseModel):
         default=None, description="Commit hash of last modification"
     )
 
+    # Monorepo support
+    subproject_name: str | None = Field(
+        default=None, description="Monorepo subproject name if applicable"
+    )
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property

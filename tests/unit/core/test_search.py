@@ -671,3 +671,136 @@ class TestSemanticSearchEngine:
         # Calling warm_up multiple times should not raise
         await search_engine.warm_up()
         await search_engine.warm_up()
+
+
+class TestSubprojectFiltering:
+    """Test cases for monorepo subproject filtering."""
+
+    @pytest.mark.asyncio
+    async def test_search_with_subproject_filter(self, mock_database):
+        """Test that search filters results by subproject_name."""
+        from mcp_vector_search.core.models import CodeChunk
+
+        # Create chunks for two different subprojects
+        frontend_chunk = CodeChunk(
+            content="function LoginButton() { return <button>Login</button>; }",
+            file_path=Path("/repo/frontend/src/LoginButton.jsx"),
+            start_line=1,
+            end_line=1,
+            language="javascript",
+            chunk_type="function",
+            function_name="LoginButton",
+            subproject_name="frontend",
+            subproject_path="frontend",
+        )
+        backend_chunk = CodeChunk(
+            content="def login(request): return authenticate(request)",
+            file_path=Path("/repo/backend/views.py"),
+            start_line=10,
+            end_line=10,
+            language="python",
+            chunk_type="function",
+            function_name="login",
+            subproject_name="backend",
+            subproject_path="backend",
+        )
+
+        await mock_database.add_chunks([frontend_chunk, backend_chunk])
+
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/repo"),
+            similarity_threshold=0.0,
+        )
+
+        # Search with subproject filter
+        results = await search_engine.search(
+            "login",
+            limit=10,
+            filters={"subproject_name": "frontend"},
+            similarity_threshold=0.0,
+        )
+
+        # Only frontend results should be returned
+        for result in results:
+            assert result.subproject_name == "frontend", (
+                f"Expected subproject 'frontend', got '{result.subproject_name}'"
+            )
+
+    @pytest.mark.asyncio
+    async def test_search_result_carries_subproject_name(self, mock_database):
+        """Test that SearchResult objects have subproject_name populated."""
+        from mcp_vector_search.core.models import CodeChunk
+
+        chunk = CodeChunk(
+            content="def authenticate(user, password): pass",
+            file_path=Path("/repo/auth/service.py"),
+            start_line=1,
+            end_line=1,
+            language="python",
+            chunk_type="function",
+            function_name="authenticate",
+            subproject_name="auth-service",
+            subproject_path="auth",
+        )
+
+        await mock_database.add_chunks([chunk])
+
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/repo"),
+            similarity_threshold=0.0,
+        )
+
+        results = await search_engine.search(
+            "authenticate", limit=5, similarity_threshold=0.0
+        )
+
+        assert len(results) > 0, "Expected at least one result"
+        # Find the result for our chunk
+        auth_results = [r for r in results if r.function_name == "authenticate"]
+        assert len(auth_results) > 0, "Expected to find authenticate function"
+        assert auth_results[0].subproject_name == "auth-service"
+
+    @pytest.mark.asyncio
+    async def test_search_without_filter_returns_all_subprojects(self, mock_database):
+        """Test that search without subproject filter returns results from all subprojects."""
+        from mcp_vector_search.core.models import CodeChunk
+
+        chunks = [
+            CodeChunk(
+                content="const api = new APIClient();",
+                file_path=Path("/repo/frontend/api.js"),
+                start_line=1,
+                end_line=1,
+                language="javascript",
+                chunk_type="code",
+                subproject_name="frontend",
+                subproject_path="frontend",
+            ),
+            CodeChunk(
+                content="class APIService: pass",
+                file_path=Path("/repo/backend/api.py"),
+                start_line=1,
+                end_line=1,
+                language="python",
+                chunk_type="class",
+                class_name="APIService",
+                subproject_name="backend",
+                subproject_path="backend",
+            ),
+        ]
+
+        await mock_database.add_chunks(chunks)
+
+        search_engine = SemanticSearchEngine(
+            database=mock_database,
+            project_root=Path("/repo"),
+            similarity_threshold=0.0,
+        )
+
+        # Search without filter - should return results from all subprojects
+        results = await search_engine.search("api", limit=10, similarity_threshold=0.0)
+
+        # Both subprojects should be represented (if both match the query)
+        assert len(results) >= 1, "Expected at least one result"

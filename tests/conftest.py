@@ -318,6 +318,26 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
             # Simple mock search based on text matching
             results = []
             for chunk in self.chunks:
+                # Apply filters
+                if filters:
+                    if "language" in filters and chunk.language != filters["language"]:
+                        continue
+                    if (
+                        "function_name" in filters
+                        and chunk.function_name != filters["function_name"]
+                    ):
+                        continue
+                    if (
+                        "class_name" in filters
+                        and chunk.class_name != filters["class_name"]
+                    ):
+                        continue
+                    if (
+                        "subproject_name" in filters
+                        and chunk.subproject_name != filters["subproject_name"]
+                    ):
+                        continue
+
                 # Simple similarity calculation - normalize content for comparison
                 query_words = set(query.lower().split())
                 # Handle multi-line content by replacing newlines with spaces
@@ -347,6 +367,7 @@ async def mock_database() -> AsyncGenerator[VectorDatabase, None]:
                                 chunk_type=chunk.chunk_type,
                                 function_name=chunk.function_name,
                                 class_name=chunk.class_name,
+                                subproject_name=chunk.subproject_name,
                                 context_before=[],
                                 context_after=[],
                                 highlights=[],

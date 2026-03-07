@@ -189,6 +189,8 @@ def print_search_results(
             header += f" → [cyan]{result.function_name}()[/cyan]"
         if result.class_name:
             header += f" in [yellow]{result.class_name}[/yellow]"
+        if result.subproject_name:
+            header += f" [dim magenta][{result.subproject_name}][/dim magenta]"
 
         # Add location
         location = f"[dim]{result.location}[/dim]"

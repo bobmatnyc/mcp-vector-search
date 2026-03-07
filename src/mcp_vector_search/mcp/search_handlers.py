@@ -38,6 +38,7 @@ class SearchHandlers:
         function_name = args.get("function_name")
         class_name = args.get("class_name")
         files = args.get("files")
+        project_name = args.get("project_name")
         expand = args.get("expand", True)
         use_rerank = args.get("use_rerank", True)
         rerank_top_n = args.get("rerank_top_n", 50)
@@ -110,6 +111,8 @@ class SearchHandlers:
             filters["function_name"] = function_name
         if class_name:
             filters["class_name"] = class_name
+        if project_name:
+            filters["subproject_name"] = project_name
         if files:
             filters["file_pattern"] = files
 

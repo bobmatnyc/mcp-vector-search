@@ -86,6 +86,13 @@ def search_main(
         help="Filter by class name",
         rich_help_panel="🔍 Filters",
     ),
+    project_name: str | None = typer.Option(
+        None,
+        "--project-name",
+        "-P",
+        help="Filter results to a specific monorepo subproject",
+        rich_help_panel="🔍 Filters",
+    ),
     similarity_threshold: float | None = typer.Option(
         None,
         "--threshold",
@@ -541,6 +548,8 @@ async def run_search(
         filters["function_name"] = function_name
     if class_name:
         filters["class_name"] = class_name
+    if project_name:
+        filters["subproject_name"] = project_name
 
     try:
         async with database:

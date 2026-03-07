@@ -798,6 +798,8 @@ class LanceVectorDatabase:
                     last_author=result.get("last_author") or None,
                     last_modified=result.get("last_modified") or None,
                     commit_hash=result.get("commit_hash") or None,
+                    # Monorepo support
+                    subproject_name=result.get("subproject_name") or None,
                 )
                 search_results.append(search_result)
 
