@@ -153,6 +153,53 @@ class RubyParser(BaseParser):
 
         return chunks
 
+    def _extract_calls(self, node, source: bytes) -> list[str]:
+        """Extract method/function call names from a Ruby tree-sitter node.
+
+        Ruby uses 'call' and 'method_call' node types. The 'method' child
+        of each call node gives the method name being invoked.
+
+        Args:
+            node: Tree-sitter AST node to search within
+            source: Original source bytes (unused but kept for API consistency)
+
+        Returns:
+            Deduplicated list of called method/function name strings
+        """
+        calls: list[str] = []
+        seen: set[str] = set()
+
+        def walk(n) -> None:
+            try:
+                if n.type in ("call", "method_call"):
+                    method_child = n.child_by_field_name("method")
+                    if method_child is not None:
+                        name = method_child.text.decode("utf-8")
+                        if name and len(name) >= 2 and name not in seen:
+                            seen.add(name)
+                            calls.append(name)
+                    else:
+                        # Fallback: find identifier child (simple call)
+                        for child in n.children:
+                            if child.type == "identifier":
+                                name = child.text.decode("utf-8")
+                                if name and len(name) >= 2 and name not in seen:
+                                    seen.add(name)
+                                    calls.append(name)
+                                break
+
+                for child in n.children:
+                    walk(child)
+            except Exception:
+                pass
+
+        try:
+            walk(node)
+        except Exception:
+            pass
+
+        return list(dict.fromkeys(calls))
+
     def _extract_method(
         self,
         node,
@@ -177,6 +224,9 @@ class RubyParser(BaseParser):
         # Build full qualified name
         full_class_name = self._build_qualified_name(module_name, class_name)
 
+        # Extract calls
+        calls = self._extract_calls(node, content.encode("utf-8"))
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -186,6 +236,7 @@ class RubyParser(BaseParser):
             function_name=method_name,
             class_name=full_class_name,
             docstring=rdoc,
+            calls=calls,
         )
         chunks.append(chunk)
 
@@ -215,6 +266,9 @@ class RubyParser(BaseParser):
         # Build full qualified name
         full_class_name = self._build_qualified_name(module_name, class_name)
 
+        # Extract calls
+        calls = self._extract_calls(node, content.encode("utf-8"))
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -224,6 +278,7 @@ class RubyParser(BaseParser):
             function_name=f"self.{method_name}",
             class_name=full_class_name,
             docstring=rdoc,
+            calls=calls,
         )
         chunks.append(chunk)
 

@@ -124,6 +124,61 @@ class GoParser(BaseParser):
 
         return chunks
 
+    def _extract_calls(self, node, source: bytes) -> list[str]:
+        """Extract function/method call names from a tree-sitter node.
+
+        Walks the subtree looking for call_expression nodes and extracts
+        the callee name (identifier or selector_expression function child).
+
+        Args:
+            node: Tree-sitter AST node to search within
+            source: Original source bytes (unused but kept for API consistency)
+
+        Returns:
+            Deduplicated list of callee name strings
+        """
+        calls: list[str] = []
+        seen: set[str] = set()
+
+        def walk(n) -> None:
+            try:
+                if n.type == "call_expression":
+                    # First child is the function being called
+                    for child in n.children:
+                        if child.type == "identifier":
+                            name = child.text.decode("utf-8")
+                            if name and len(name) >= 2 and name not in seen:
+                                seen.add(name)
+                                calls.append(name)
+                            break
+                        elif child.type == "selector_expression":
+                            # e.g. obj.Method or pkg.Func
+                            # Last identifier child is the method/func name
+                            last_ident = None
+                            for sc in child.children:
+                                if sc.type in ("identifier", "field_identifier"):
+                                    last_ident = sc.text.decode("utf-8")
+                            if last_ident and len(last_ident) >= 2:
+                                # Include full dotted name for method calls
+                                full = child.text.decode("utf-8")
+                                if full not in seen:
+                                    seen.add(full)
+                                    calls.append(full)
+                            break
+                        elif child.type not in ("(", ")"):
+                            break
+                for child in n.children:
+                    walk(child)
+            except Exception:
+                pass
+
+        try:
+            walk(node)
+        except Exception:
+            pass
+
+        return list(dict.fromkeys(calls))
+
     def _extract_function(
         self, node, lines: list[str], file_path: Path, current_type: str | None
     ) -> list[CodeChunk]:
@@ -144,6 +199,10 @@ class GoParser(BaseParser):
         parameters = self._extract_parameters(node)
         return_type = self._extract_return_type(node)
 
+        # Extract calls
+        source = content.encode("utf-8")
+        calls = self._extract_calls(node, source)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -155,6 +214,7 @@ class GoParser(BaseParser):
             complexity_score=complexity,
             parameters=parameters,
             return_type=return_type,
+            calls=calls,
         )
 
         return [chunk]
@@ -182,6 +242,10 @@ class GoParser(BaseParser):
         parameters = self._extract_parameters(node)
         return_type = self._extract_return_type(node)
 
+        # Extract calls
+        source = content.encode("utf-8")
+        calls = self._extract_calls(node, source)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -194,6 +258,7 @@ class GoParser(BaseParser):
             complexity_score=complexity,
             parameters=parameters,
             return_type=return_type,
+            calls=calls,
         )
 
         return [chunk]

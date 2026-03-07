@@ -155,6 +155,63 @@ class CSharpParser(BaseParser):
 
         return chunks
 
+    def _extract_calls(self, node, source: bytes) -> list[str]:
+        """Extract invocation call names from a C# tree-sitter node.
+
+        Looks for invocation_expression nodes. The callee is typically a
+        member_access_expression whose last identifier child is the method name,
+        or a plain identifier for static/local calls.
+
+        Args:
+            node: Tree-sitter AST node to search within
+            source: Original source bytes (unused but kept for API consistency)
+
+        Returns:
+            Deduplicated list of called method/function name strings
+        """
+        calls: list[str] = []
+        seen: set[str] = set()
+
+        def walk(n) -> None:
+            try:
+                if n.type == "invocation_expression":
+                    # First child is the expression being invoked
+                    for child in n.children:
+                        if child.type == "member_access_expression":
+                            # Last identifier in member_access is the method name
+                            last_ident = None
+                            for sc in child.children:
+                                if sc.type == "identifier":
+                                    last_ident = sc.text.decode("utf-8")
+                            if (
+                                last_ident
+                                and len(last_ident) >= 2
+                                and last_ident not in seen
+                            ):
+                                seen.add(last_ident)
+                                calls.append(last_ident)
+                            break
+                        elif child.type == "identifier":
+                            name = child.text.decode("utf-8")
+                            if name and len(name) >= 2 and name not in seen:
+                                seen.add(name)
+                                calls.append(name)
+                            break
+                        elif child.type not in ("(", ")"):
+                            break
+
+                for child in n.children:
+                    walk(child)
+            except Exception:
+                pass
+
+        try:
+            walk(node)
+        except Exception:
+            pass
+
+        return list(dict.fromkeys(calls))
+
     def _extract_method(
         self, node, lines: list[str], file_path: Path, current_class: str | None
     ) -> list[CodeChunk]:
@@ -180,6 +237,10 @@ class CSharpParser(BaseParser):
         # Extract return type
         return_type = self._extract_return_type(node)
 
+        # Extract calls
+        source = content.encode("utf-8")
+        calls = self._extract_calls(node, source)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -193,6 +254,7 @@ class CSharpParser(BaseParser):
             decorators=attributes,
             parameters=parameters,
             return_type=return_type,
+            calls=calls,
         )
 
         return [chunk]
@@ -216,6 +278,10 @@ class CSharpParser(BaseParser):
         # Extract parameters
         parameters = self._extract_parameters(node)
 
+        # Extract calls
+        source = content.encode("utf-8")
+        calls = self._extract_calls(node, source)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -227,6 +293,7 @@ class CSharpParser(BaseParser):
             docstring=docstring,
             decorators=attributes,
             parameters=parameters,
+            calls=calls,
         )
 
         return [chunk]

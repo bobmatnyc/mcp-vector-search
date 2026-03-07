@@ -179,6 +179,54 @@ class JavaParser(BaseParser):
 
         return chunks
 
+    def _extract_calls(self, node, source: bytes) -> list[str]:
+        """Extract method/function call names from a Java tree-sitter node.
+
+        Looks for method_invocation nodes and extracts the name child
+        (identifier) as the callee name.
+
+        Args:
+            node: Tree-sitter AST node to search within
+            source: Original source bytes (unused but kept for API consistency)
+
+        Returns:
+            Deduplicated list of called method name strings
+        """
+        calls: list[str] = []
+        seen: set[str] = set()
+
+        def walk(n) -> None:
+            try:
+                if n.type == "method_invocation":
+                    # name child is the method identifier
+                    name_child = n.child_by_field_name("name")
+                    if name_child is not None and name_child.type == "identifier":
+                        name = name_child.text.decode("utf-8")
+                        if name and len(name) >= 2 and name not in seen:
+                            seen.add(name)
+                            calls.append(name)
+                    else:
+                        # Fallback: last identifier child before arguments
+                        for child in n.children:
+                            if child.type == "identifier":
+                                name = child.text.decode("utf-8")
+                                if name and len(name) >= 2 and name not in seen:
+                                    seen.add(name)
+                                    calls.append(name)
+                                break
+
+                for child in n.children:
+                    walk(child)
+            except Exception:
+                pass
+
+        try:
+            walk(node)
+        except Exception:
+            pass
+
+        return list(dict.fromkeys(calls))
+
     def _extract_method(
         self, node, lines: list[str], file_path: Path, current_class: str | None
     ) -> list[CodeChunk]:
@@ -204,6 +252,10 @@ class JavaParser(BaseParser):
         # Extract return type
         return_type = self._extract_return_type(node)
 
+        # Extract calls
+        source = content.encode("utf-8")
+        calls = self._extract_calls(node, source)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -217,6 +269,7 @@ class JavaParser(BaseParser):
             decorators=annotations,
             parameters=parameters,
             return_type=return_type,
+            calls=calls,
         )
 
         return [chunk]
@@ -240,6 +293,10 @@ class JavaParser(BaseParser):
         # Extract parameters
         parameters = self._extract_parameters(node)
 
+        # Extract calls
+        source = content.encode("utf-8")
+        calls = self._extract_calls(node, source)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -251,6 +308,7 @@ class JavaParser(BaseParser):
             docstring=docstring,
             decorators=annotations,
             parameters=parameters,
+            calls=calls,
         )
 
         return [chunk]

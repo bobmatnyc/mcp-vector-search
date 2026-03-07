@@ -131,6 +131,80 @@ class RustParser(BaseParser):
 
         return chunks
 
+    def _extract_calls(self, node, source: bytes) -> list[str]:
+        """Extract function/method call names from a Rust tree-sitter node.
+
+        Handles:
+        - call_expression with identifier callee -> simple function call
+        - call_expression with field_expression callee -> chained/method-style
+        - method_call_expression -> method field gives the method name
+
+        Args:
+            node: Tree-sitter AST node to search within
+            source: Original source bytes (unused but kept for API consistency)
+
+        Returns:
+            Deduplicated list of callee name strings (this. prefix stripped)
+        """
+        calls: list[str] = []
+        seen: set[str] = set()
+
+        def walk(n) -> None:
+            try:
+                if n.type == "call_expression":
+                    # First child is the function/callee
+                    for child in n.children:
+                        if child.type == "identifier":
+                            name = child.text.decode("utf-8")
+                            if name and len(name) >= 2 and name not in seen:
+                                seen.add(name)
+                                calls.append(name)
+                            break
+                        elif child.type == "field_expression":
+                            # e.g. self.helper() or obj.method()
+                            # Last identifier is the method name
+                            last_ident = None
+                            for sc in child.children:
+                                if sc.type == "field_identifier":
+                                    last_ident = sc.text.decode("utf-8")
+                            if (
+                                last_ident
+                                and len(last_ident) >= 2
+                                and last_ident not in seen
+                            ):
+                                seen.add(last_ident)
+                                calls.append(last_ident)
+                            break
+                        elif child.type == "scoped_identifier":
+                            # e.g. std::mem::drop
+                            name = child.text.decode("utf-8")
+                            if name and len(name) >= 2 and name not in seen:
+                                seen.add(name)
+                                calls.append(name)
+                            break
+                        elif child.type not in ("(", ")"):
+                            break
+                elif n.type == "method_call_expression":
+                    # method field directly gives the method name
+                    method_field = n.child_by_field_name("method")
+                    if method_field is not None:
+                        name = method_field.text.decode("utf-8")
+                        if name and len(name) >= 2 and name not in seen:
+                            seen.add(name)
+                            calls.append(name)
+
+                for child in n.children:
+                    walk(child)
+            except Exception:
+                pass
+
+        try:
+            walk(node)
+        except Exception:
+            pass
+
+        return list(dict.fromkeys(calls))
+
     def _extract_function(
         self, node, lines: list[str], file_path: Path, current_impl: str | None
     ) -> list[CodeChunk]:
@@ -157,6 +231,10 @@ class RustParser(BaseParser):
         # Determine if it's a method (inside impl block)
         chunk_type = "method" if current_impl else "function"
 
+        # Extract calls
+        source = content.encode("utf-8")
+        calls = self._extract_calls(node, source)
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -170,6 +248,7 @@ class RustParser(BaseParser):
             decorators=attributes,
             parameters=parameters,
             return_type=return_type,
+            calls=calls,
         )
 
         return [chunk]

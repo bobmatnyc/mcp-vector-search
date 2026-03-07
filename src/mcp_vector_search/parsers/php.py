@@ -158,6 +158,64 @@ class PHPParser(BaseParser):
 
         return chunks
 
+    def _extract_calls(self, node, source: bytes) -> list[str]:
+        """Extract function/method call names from a PHP tree-sitter node.
+
+        Handles:
+        - function_call_expression: name child is the function identifier
+        - member_call_expression: name child is the method identifier
+
+        Args:
+            node: Tree-sitter AST node to search within
+            source: Original source bytes (unused but kept for API consistency)
+
+        Returns:
+            Deduplicated list of called function/method name strings
+        """
+        calls: list[str] = []
+        seen: set[str] = set()
+
+        def walk(n) -> None:
+            try:
+                if n.type == "function_call_expression":
+                    name_child = n.child_by_field_name("function")
+                    if name_child is None:
+                        # Try first identifier child as fallback
+                        for child in n.children:
+                            if child.type in ("name", "identifier", "qualified_name"):
+                                name_child = child
+                                break
+                    if name_child is not None:
+                        name = name_child.text.decode("utf-8")
+                        if name and len(name) >= 2 and name not in seen:
+                            seen.add(name)
+                            calls.append(name)
+
+                elif n.type == "member_call_expression":
+                    name_child = n.child_by_field_name("name")
+                    if name_child is None:
+                        # Fallback: last identifier child
+                        for child in n.children:
+                            if child.type in ("name", "identifier"):
+                                name_child = child
+                    if name_child is not None:
+                        name = name_child.text.decode("utf-8")
+                        if name and len(name) >= 2 and name not in seen:
+                            seen.add(name)
+                            calls.append(name)
+
+                for child in n.children:
+                    walk(child)
+            except Exception:
+                pass
+
+        try:
+            walk(node)
+        except Exception:
+            pass
+
+        return list(dict.fromkeys(calls))
+
     def _extract_function(
         self,
         node,
@@ -184,6 +242,9 @@ class PHPParser(BaseParser):
         if namespace and not class_name:
             full_name = f"{namespace}\\{function_name}"
 
+        # Extract calls
+        calls = self._extract_calls(node, content.encode("utf-8"))
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -193,6 +254,7 @@ class PHPParser(BaseParser):
             function_name=full_name,
             class_name=class_name,
             docstring=phpdoc,
+            calls=calls,
         )
         chunks.append(chunk)
 
@@ -219,6 +281,9 @@ class PHPParser(BaseParser):
         # Extract PHPDoc if present
         phpdoc = self._extract_phpdoc(node, lines)
 
+        # Extract calls
+        calls = self._extract_calls(node, content.encode("utf-8"))
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -228,6 +293,7 @@ class PHPParser(BaseParser):
             function_name=method_name,
             class_name=class_name,
             docstring=phpdoc,
+            calls=calls,
         )
         chunks.append(chunk)
 

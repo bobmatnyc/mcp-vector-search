@@ -141,6 +141,90 @@ class DartParser(BaseParser):
 
         return chunks
 
+    def _extract_calls(self, node, source: bytes) -> list[str]:
+        """Extract function/method call names from a Dart tree-sitter node.
+
+        In Dart's tree-sitter grammar a function/method call is expressed as
+        an expression_statement containing an identifier (or dotted chain)
+        followed by a selector node that has an argument_part child.
+
+        Pattern matched:
+          expression_statement
+            identifier          <- callee name for simple calls
+            selector
+              argument_part
+                arguments
+
+        For chained calls (obj.method(...)):
+          expression_statement
+            identifier          <- object
+            selector
+              '.'
+              identifier        <- method name  (followed by argument_part sibling)
+
+        Args:
+            node: Tree-sitter AST node to search within
+            source: Original source bytes (unused but kept for API consistency)
+
+        Returns:
+            Deduplicated list of called function/method name strings
+        """
+        calls: list[str] = []
+        seen: set[str] = set()
+
+        def _selector_has_args(sel_node) -> bool:
+            """Return True if a selector node contains an argument_part."""
+            for child in sel_node.children:
+                if child.type == "argument_part":
+                    return True
+            return False
+
+        def walk(n) -> None:
+            try:
+                # Dart call: identifier immediately followed by selector(argument_part)
+                if n.type == "expression_statement":
+                    children = list(n.children)
+                    for i, child in enumerate(children):
+                        if child.type == "identifier":
+                            # Check if next sibling is a selector with args
+                            rest = children[i + 1 :]
+                            for sib in rest:
+                                if sib.type == "selector" and _selector_has_args(sib):
+                                    name = child.text.decode("utf-8")
+                                    if name and len(name) >= 2 and name not in seen:
+                                        seen.add(name)
+                                        calls.append(name)
+                                    # Look inside selector for chained .method(args)
+                                    sel_children = list(sib.children)
+                                    for j, sc in enumerate(sel_children):
+                                        if sc.type == "identifier":
+                                            # Check next sib in selector is argument_part
+                                            if any(
+                                                x.type == "argument_part"
+                                                for x in sel_children[j + 1 :]
+                                            ):
+                                                mname = sc.text.decode("utf-8")
+                                                if (
+                                                    mname
+                                                    and len(mname) >= 2
+                                                    and mname not in seen
+                                                ):
+                                                    seen.add(mname)
+                                                    calls.append(mname)
+                                    break
+
+                for child in n.children:
+                    walk(child)
+            except Exception:
+                pass
+
+        try:
+            walk(node)
+        except Exception:
+            pass
+
+        return list(dict.fromkeys(calls))
+
     def _extract_function(
         self, node, lines: list[str], file_path: Path, class_name: str | None = None
     ) -> list[CodeChunk]:
@@ -149,13 +233,34 @@ class DartParser(BaseParser):
 
         function_name = self._get_node_name(node)
         start_line = node.start_point[0] + 1
-        end_line = node.end_point[0] + 1
 
-        # Get function content
+        # In Dart's grammar a function_signature is immediately followed by
+        # a function_body sibling in the parent node.  We need to find that
+        # sibling so we can (a) compute the real end_line and (b) extract calls.
+        body_node = None
+        parent = node.parent
+        if parent is not None:
+            try:
+                idx = list(parent.children).index(node)
+                siblings = parent.children
+                if (
+                    idx + 1 < len(siblings)
+                    and siblings[idx + 1].type == "function_body"
+                ):
+                    body_node = siblings[idx + 1]
+            except (ValueError, IndexError):
+                pass
+
+        end_line = (body_node or node).end_point[0] + 1
+
+        # Get function content (signature + body if available)
         content = node.text.decode()
 
         # Extract dartdoc if present
         dartdoc = self._extract_dartdoc(node, lines)
+
+        # Extract calls from the body (calls live in function_body, not signature)
+        calls = self._extract_calls(body_node if body_node is not None else node, b"")
 
         chunk = self._create_chunk(
             content=content,
@@ -166,6 +271,7 @@ class DartParser(BaseParser):
             function_name=function_name,
             class_name=class_name,
             docstring=dartdoc,
+            calls=calls,
         )
         chunks.append(chunk)
 
@@ -216,6 +322,9 @@ class DartParser(BaseParser):
         # Extract dartdoc if present
         dartdoc = self._extract_dartdoc(node, lines)
 
+        # Extract calls
+        calls = self._extract_calls(node, content.encode("utf-8"))
+
         chunk = self._create_chunk(
             content=content,
             file_path=file_path,
@@ -225,6 +334,7 @@ class DartParser(BaseParser):
             function_name=constructor_name,
             class_name=class_name,
             docstring=dartdoc,
+            calls=calls,
         )
         chunks.append(chunk)
 
