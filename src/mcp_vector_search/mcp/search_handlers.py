@@ -42,6 +42,7 @@ class SearchHandlers:
         expand = args.get("expand", True)
         use_rerank = args.get("use_rerank", True)
         rerank_top_n = args.get("rerank_top_n", 50)
+        include_git_blame = args.get("include_git_blame", False)
 
         if not query:
             return CallToolResult(
@@ -140,6 +141,12 @@ class SearchHandlers:
             search_mode=search_mode,
             hybrid_alpha=hybrid_alpha,
         )
+
+        # Enrich with git blame if requested
+        if include_git_blame and results:
+            from ..core.git_blame import enrich_with_git_blame
+
+            await enrich_with_git_blame(results, self.project_root)
 
         # Format results
         response_text = self._format_search_results(results, query)

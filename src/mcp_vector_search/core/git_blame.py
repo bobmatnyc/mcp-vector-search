@@ -2,8 +2,13 @@
 
 This module provides utilities to extract git blame information for code chunks,
 showing who last modified each line and when.
+
+It also provides on-demand async enrichment for search results via
+:func:`enrich_with_git_blame`.
 """
 
+import asyncio
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -224,3 +229,111 @@ class GitBlameCache:
     def clear(self) -> None:
         """Clear the blame cache."""
         self._cache = {}
+
+
+# ---------------------------------------------------------------------------
+# On-demand async enrichment for search results
+# ---------------------------------------------------------------------------
+
+_RESULT_COMMIT_RE = re.compile(r"^([0-9a-f]{40})\s", re.MULTILINE)
+_RESULT_AUTHOR_TIME_RE = re.compile(r"^author-time\s+(\d+)", re.MULTILINE)
+_RESULT_AUTHOR_RE = re.compile(r"^author\s+(.+)$", re.MULTILINE)
+_RESULT_AUTHOR_MAIL_RE = re.compile(r"^author-mail\s+(.+)$", re.MULTILINE)
+
+
+async def enrich_with_git_blame(
+    results: list,
+    project_root: Path,
+) -> None:
+    """Populate last_author, last_modified, commit_hash on results via git blame.
+
+    Runs git blame only for results that have file_path accessible. Failures
+    are non-fatal — result fields stay None if git blame cannot run.
+
+    Args:
+        results: Search results (SearchResult instances) to enrich in-place.
+        project_root: Project root directory (used as git working dir).
+    """
+    for result in results:
+        try:
+            await _blame_result(result, project_root)
+        except Exception as exc:
+            logger.debug(f"git blame skipped for {result.file_path}: {exc}")
+
+
+async def _blame_result(result: object, project_root: Path) -> None:
+    """Run git blame for a single search result and update its fields.
+
+    Args:
+        result: A SearchResult instance whose fields will be updated in-place.
+        project_root: Working directory for the git subprocess.
+    """
+    file_path = result.file_path  # type: ignore[attr-defined]
+    start_line = result.start_line  # type: ignore[attr-defined]
+    end_line = result.end_line  # type: ignore[attr-defined]
+
+    line_spec = f"{start_line},{end_line}"
+
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "blame",
+        "-L",
+        line_spec,
+        "--porcelain",
+        str(file_path),
+        cwd=project_root,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        logger.debug(
+            f"git blame returned {proc.returncode} for {file_path}: "
+            f"{stderr.decode(errors='replace').strip()}"
+        )
+        return
+
+    blame_info = _parse_porcelain(stdout.decode(errors="replace"))
+    if blame_info:
+        result.last_author = blame_info.get("author")  # type: ignore[attr-defined]
+        result.last_modified = blame_info.get("author-time-iso")  # type: ignore[attr-defined]
+        result.commit_hash = blame_info.get("commit")  # type: ignore[attr-defined]
+
+
+def _parse_porcelain(output: str) -> dict[str, str] | None:
+    """Parse git blame --porcelain output into an author metadata dict.
+
+    Args:
+        output: Raw stdout from ``git blame --porcelain``.
+
+    Returns:
+        Dict with keys ``commit``, ``author``, and ``author-time-iso``,
+        or ``None`` if the output is empty / unparseable.
+    """
+    if not output.strip():
+        return None
+
+    parsed: dict[str, str] = {}
+
+    commit_match = _RESULT_COMMIT_RE.search(output)
+    if commit_match:
+        parsed["commit"] = commit_match.group(1)
+
+    author_match = _RESULT_AUTHOR_RE.search(output)
+    if author_match:
+        name = author_match.group(1).strip()
+        mail_match = _RESULT_AUTHOR_MAIL_RE.search(output)
+        if mail_match:
+            mail = mail_match.group(1).strip().strip("<>")
+            parsed["author"] = f"{name} <{mail}>"
+        else:
+            parsed["author"] = name
+
+    time_match = _RESULT_AUTHOR_TIME_RE.search(output)
+    if time_match:
+        ts = int(time_match.group(1))
+        dt = datetime.fromtimestamp(ts, tz=UTC)
+        parsed["author-time-iso"] = dt.strftime("%Y-%m-%d")
+
+    return parsed if parsed else None

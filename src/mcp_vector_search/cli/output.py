@@ -217,6 +217,11 @@ def print_search_results(
             similarity = f"[green]{result.similarity_score:.2%}[/green]"
             metadata_parts.append(f"Similarity: {similarity}")
 
+        # Show git blame info if available
+        if result.last_author:
+            blame_date = f" ({result.last_modified})" if result.last_modified else ""
+            metadata_parts.append(f"[dim]👤 {result.last_author}{blame_date}[/dim]")
+
         console.print(f"  {' | '.join(metadata_parts)}")
 
         # Add quality indicator line if quality metrics are available and not shown in scores
