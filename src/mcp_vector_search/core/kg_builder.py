@@ -168,6 +168,9 @@ class KGBuilder:
         self.kg = kg
         self.project_root = project_root
         self._entity_map: dict[str, str] = {}  # name -> chunk_id mapping
+        self._entity_name_counts: dict[
+            str, int
+        ] = {}  # name -> count (for ambiguity detection)
         self._metadata_path = (
             project_root / ".mcp-vector-search" / "knowledge_graph" / "kg_metadata.json"
         )
@@ -414,6 +417,10 @@ class KGBuilder:
             "CONTAINS_SECTION": [],
             "RELATED_TO": [],
         }
+
+        # Pre-scan: build complete entity map before resolving relationships
+        # This ensures calls to later-processed entities are not silently dropped
+        self._prescan_entity_names(code_chunks)
 
         # Extract from code chunks
         start_time = time.time()
@@ -909,6 +916,10 @@ class KGBuilder:
                 "RELATED_TO": [],
             }
 
+            # Pre-scan: build complete entity map before resolving relationships
+            # This ensures calls to later-processed entities are not silently dropped
+            self._prescan_entity_names(code_chunks)
+
             # Extract from code chunks
             for chunk in code_chunks:
                 entity, rels, modules = self._extract_code_entity(chunk)
@@ -1004,6 +1015,10 @@ class KGBuilder:
                 "RELATED_TO": [],
             }
 
+            # Pre-scan: build complete entity map before resolving relationships
+            # This ensures calls to later-processed entities are not silently dropped
+            self._prescan_entity_names(code_chunks)
+
             # Extract from code chunks
             for chunk in code_chunks:
                 entity, rels, modules = self._extract_code_entity(chunk)
@@ -1082,6 +1097,30 @@ class KGBuilder:
 
         return stats
 
+    def _prescan_entity_names(self, chunks: list["CodeChunk"]) -> None:
+        """Pre-populate entity name map and count occurrences before relationship extraction.
+
+        This must be called with ALL code chunks before any call to _extract_code_entity,
+        so that _resolve_entity has a complete map when resolving CALLS relationships.
+
+        Args:
+            chunks: All code chunks to scan
+        """
+        self._entity_map.clear()
+        self._entity_name_counts.clear()
+
+        for chunk in chunks:
+            chunk_id = chunk.chunk_id or chunk.id
+            name = self._get_entity_name(chunk)
+
+            if self._is_generic_entity(name):
+                continue
+
+            # Count occurrences (for ambiguity detection)
+            self._entity_name_counts[name] = self._entity_name_counts.get(name, 0) + 1
+            # Last-write-wins for the map — counts tell us if it's ambiguous
+            self._entity_map[name] = chunk_id
+
     def _extract_code_entity(
         self, chunk: CodeChunk
     ) -> tuple[CodeEntity | None, dict[str, list[CodeRelationship]], list[CodeEntity]]:
@@ -1146,7 +1185,9 @@ class KGBuilder:
         )
 
         # Track entity name mapping for relationship resolution
-        self._entity_map[name] = chunk_id
+        # Pre-scan already populated this; update to ensure this chunk's id is current
+        if name not in self._entity_map or self._entity_name_counts.get(name, 0) == 1:
+            self._entity_map[name] = chunk_id
 
         relationships: dict[str, list[CodeRelationship]] = {
             "CALLS": [],
@@ -1308,20 +1349,35 @@ class KGBuilder:
     def _resolve_entity(self, name: str) -> str | None:
         """Resolve entity name to chunk ID.
 
+        Only resolves names that are unique across the codebase — ambiguous names
+        (multiple entities sharing the same name) return None to avoid false-positive
+        CALLS edges.
+
         Args:
-            name: Entity name to resolve
+            name: Entity name to resolve (may be dotted, e.g. "module.function")
 
         Returns:
-            Chunk ID if found, None otherwise
+            Chunk ID if found and unambiguous, None otherwise
         """
         # Direct lookup
         if name in self._entity_map:
+            # Skip if multiple entities share this name — would create wrong edge
+            if self._entity_name_counts.get(name, 0) > 1:
+                logger.debug(
+                    f"Skipping ambiguous entity: '{name}' ({self._entity_name_counts[name]} occurrences)"
+                )
+                return None
             return self._entity_map[name]
 
         # Try without module prefix (e.g., "module.function" -> "function")
         if "." in name:
             short_name = name.split(".")[-1]
             if short_name in self._entity_map:
+                if self._entity_name_counts.get(short_name, 0) > 1:
+                    logger.debug(
+                        f"Skipping ambiguous short name: '{short_name}' (from '{name}')"
+                    )
+                    return None
                 return self._entity_map[short_name]
 
         return None

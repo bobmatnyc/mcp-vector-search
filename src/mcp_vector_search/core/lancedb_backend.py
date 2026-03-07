@@ -1236,15 +1236,48 @@ class LanceVectorDatabase:
         else:
             inherits_from = []
 
+        # Derive function_name and class_name from the LanceDB schema.
+        # LanceDB stores: `name` (function/class name), `hierarchy_path`
+        # (e.g. "ClassName.method_name"), `chunk_type`.
+        # Legacy CodeChunk fields `function_name`/`class_name` may not be
+        # present as columns — fall back to `name`/`hierarchy_path` parsing.
+        raw_chunk_type = batch_dict.get("chunk_type", ["code"] * num_rows)[i]
+        raw_name = batch_dict.get("name", [None] * num_rows)[i] or None
+        raw_hierarchy = batch_dict.get("hierarchy_path", [None] * num_rows)[i] or ""
+
+        # `function_name` column takes priority; fall back to `name` for function chunks
+        _fn_col = batch_dict.get("function_name", [None] * num_rows)[i] or None
+        _cn_col = batch_dict.get("class_name", [None] * num_rows)[i] or None
+
+        if _fn_col is not None or _cn_col is not None:
+            # Legacy schema with explicit columns — use as-is
+            derived_function_name = _fn_col
+            derived_class_name = _cn_col
+        else:
+            # New schema: derive from name + hierarchy_path + chunk_type
+            if raw_chunk_type == "class":
+                derived_function_name = None
+                derived_class_name = raw_name
+            elif raw_chunk_type in ("function", "method"):
+                derived_function_name = raw_name
+                # hierarchy_path is "ClassName.method" for class methods
+                if raw_hierarchy and "." in raw_hierarchy:
+                    derived_class_name = raw_hierarchy.split(".")[0]
+                else:
+                    derived_class_name = None
+            else:
+                derived_function_name = None
+                derived_class_name = None
+
         return CodeChunk(
             content=batch_dict["content"][i],
             file_path=Path(batch_dict["file_path"][i]),
             start_line=batch_dict["start_line"][i],
             end_line=batch_dict["end_line"][i],
             language=batch_dict["language"][i],
-            chunk_type=batch_dict.get("chunk_type", ["code"] * num_rows)[i],
-            function_name=batch_dict.get("function_name", [None] * num_rows)[i] or None,
-            class_name=batch_dict.get("class_name", [None] * num_rows)[i] or None,
+            chunk_type=raw_chunk_type,
+            function_name=derived_function_name,
+            class_name=derived_class_name,
             docstring=batch_dict.get("docstring", [None] * num_rows)[i] or None,
             imports=imports,
             calls=calls,
@@ -1318,15 +1351,40 @@ class LanceVectorDatabase:
         else:
             inherits_from = []
 
+        # Derive function_name and class_name (same logic as _batch_dict_to_chunk)
+        _row_chunk_type = row.get("chunk_type", "code")
+        _row_name = row.get("name") or None
+        _row_hierarchy = row.get("hierarchy_path") or ""
+        _fn_col = row.get("function_name") or None
+        _cn_col = row.get("class_name") or None
+
+        if _fn_col is not None or _cn_col is not None:
+            derived_function_name = _fn_col
+            derived_class_name = _cn_col
+        else:
+            if _row_chunk_type == "class":
+                derived_function_name = None
+                derived_class_name = _row_name
+            elif _row_chunk_type in ("function", "method"):
+                derived_function_name = _row_name
+                derived_class_name = (
+                    _row_hierarchy.split(".")[0]
+                    if _row_hierarchy and "." in _row_hierarchy
+                    else None
+                )
+            else:
+                derived_function_name = None
+                derived_class_name = None
+
         return CodeChunk(
             content=row["content"],
             file_path=Path(row["file_path"]),
             start_line=row["start_line"],
             end_line=row["end_line"],
             language=row["language"],
-            chunk_type=row.get("chunk_type", "code"),
-            function_name=row.get("function_name") or None,
-            class_name=row.get("class_name") or None,
+            chunk_type=_row_chunk_type,
+            function_name=derived_function_name,
+            class_name=derived_class_name,
             docstring=row.get("docstring") or None,
             imports=imports,
             calls=calls,
