@@ -171,6 +171,8 @@ class KGBuilder:
         self._entity_name_counts: dict[
             str, int
         ] = {}  # name -> count (for ambiguity detection)
+        self._class_member_map: dict[str, dict[str, str]] = {}
+        # class_name -> {method_name -> chunk_id}
         self._metadata_path = (
             project_root / ".mcp-vector-search" / "knowledge_graph" / "kg_metadata.json"
         )
@@ -1108,10 +1110,19 @@ class KGBuilder:
         """
         self._entity_map.clear()
         self._entity_name_counts.clear()
+        self._class_member_map.clear()
 
         for chunk in chunks:
             chunk_id = chunk.chunk_id or chunk.id
             name = self._get_entity_name(chunk)
+
+            # Track class members for scoped self.method() / cls.method() resolution.
+            # Done before the generic-name filter so that private methods (_foo) are
+            # still reachable via scoped resolution even if excluded from the global map.
+            if chunk.class_name and chunk.function_name:
+                if chunk.class_name not in self._class_member_map:
+                    self._class_member_map[chunk.class_name] = {}
+                self._class_member_map[chunk.class_name][chunk.function_name] = chunk_id
 
             if self._is_generic_entity(name):
                 continue
@@ -1200,7 +1211,11 @@ class KGBuilder:
         # Process function calls
         if hasattr(chunk, "calls") and chunk.calls:
             for called in chunk.calls:
-                target_id = self._resolve_entity(called)
+                # Try scoped resolution (self.method() / cls.method()) first
+                target_id = self._resolve_scoped(called, chunk.class_name)
+                if target_id is None:
+                    # Fall back to unique-name resolution
+                    target_id = self._resolve_entity(called)
                 if target_id:
                     relationships["CALLS"].append(
                         CodeRelationship(
@@ -1275,8 +1290,11 @@ class KGBuilder:
             # Process function calls
             if hasattr(chunk, "calls") and chunk.calls:
                 for called in chunk.calls:
-                    # Try to resolve target entity
-                    target_id = self._resolve_entity(called)
+                    # Try scoped resolution (self.method() / cls.method()) first
+                    target_id = self._resolve_scoped(called, chunk.class_name)
+                    if target_id is None:
+                        # Fall back to unique-name resolution
+                        target_id = self._resolve_entity(called)
 
                     if target_id:
                         rel = CodeRelationship(
@@ -1345,6 +1363,26 @@ class KGBuilder:
 
         except Exception as e:
             logger.debug(f"Failed to process chunk {chunk_id}: {e}")
+
+    def _resolve_scoped(self, name: str, caller_class_name: str | None) -> str | None:
+        """Resolve self.method() / cls.method() using class membership.
+
+        Args:
+            name: Raw callee name, e.g. 'self.search' or 'cls._build'
+            caller_class_name: class_name of the chunk making the call
+
+        Returns:
+            chunk_id if resolved, else None
+        """
+        if not caller_class_name:
+            return None
+        if "." not in name:
+            return None
+        base, _, method = name.partition(".")
+        if base not in ("self", "cls"):
+            return None
+        class_methods = self._class_member_map.get(caller_class_name, {})
+        return class_methods.get(method)
 
     def _resolve_entity(self, name: str) -> str | None:
         """Resolve entity name to chunk ID.
