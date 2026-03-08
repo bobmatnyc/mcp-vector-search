@@ -24,7 +24,7 @@ from ..analysis.trends import TrendTracker
 from ..config.settings import ProjectConfig
 from ..parsers.registry import get_parser_registry
 from ..utils.monorepo import MonorepoDetector
-from .bm25_backend import BM25Backend
+from .bm25_builder import build_bm25_index as _build_bm25_index_fn
 from .chunk_dict import build_hierarchy_path as _build_hierarchy_path_fn
 from .chunk_dict import chunk_to_storage_dict
 from .chunk_processor import ChunkProcessor
@@ -39,11 +39,15 @@ from .exceptions import (
     ParsingError,
 )
 from .file_discovery import FileDiscovery
+from .file_move_detector import detect_file_moves as _detect_file_moves_fn
 from .index_cleanup import (  # re-exported for backward compatibility
     _detect_filesystem_type,
     cleanup_stale_locks,
     cleanup_stale_progress,
     cleanup_stale_transactions,
+)
+from .index_cleanup import (
+    run_auto_migrations as _run_auto_migrations_fn,
 )
 from .index_metadata import IndexMetadata
 from .memory_monitor import MemoryMonitor
@@ -535,63 +539,9 @@ class SemanticIndexer:
     async def _run_auto_migrations(self) -> None:
         """Check and run pending database migrations automatically.
 
-        This method is called during indexer initialization to ensure
-        the database schema is up-to-date before indexing begins.
-
-        Only runs migrations that are needed (check_needed() returns True).
-        Logs warnings if migrations fail but doesn't stop indexing.
+        Delegates to :func:`core.index_cleanup.run_auto_migrations`.
         """
-        try:
-            from ..migrations import MigrationRunner
-            from ..migrations.v2_3_0_two_phase import TwoPhaseArchitectureMigration
-
-            # Create migration runner
-            runner = MigrationRunner(self.project_root)
-
-            # Register migrations that might be needed
-            runner.register_migrations([TwoPhaseArchitectureMigration()])
-
-            # Get pending migrations
-            pending = runner.get_pending_migrations()
-
-            if not pending:
-                logger.debug("No pending migrations, schema is up-to-date")
-                return
-
-            logger.info(
-                f"Found {len(pending)} pending migration(s), running automatically..."
-            )
-
-            # Run pending migrations
-            for migration in pending:
-                logger.info(
-                    f"Running migration: {migration.name} (v{migration.version})"
-                )
-
-                result = runner.run_migration(migration, dry_run=False, force=False)
-
-                if result.status.value == "success":
-                    logger.info(f"✓ Migration {migration.name} completed successfully")
-                    if result.metadata:
-                        for key, value in result.metadata.items():
-                            logger.debug(f"  {key}: {value}")
-                elif result.status.value == "skipped":
-                    logger.debug(
-                        f"⊘ Migration {migration.name} skipped: {result.message}"
-                    )
-                elif result.status.value == "failed":
-                    logger.warning(
-                        f"✗ Migration {migration.name} failed: {result.message}\n"
-                        "  Continuing with indexing, but you may encounter issues.\n"
-                        "  Run 'mcp-vector-search migrate' to fix manually."
-                    )
-
-        except Exception as e:
-            logger.warning(
-                f"Auto-migration check failed: {e}\n"
-                "  Continuing with indexing, but you may encounter schema issues.\n"
-                "  Run 'mcp-vector-search migrate' to fix manually."
-            )
+        await _run_auto_migrations_fn(self.project_root)
 
     async def _index_with_pipeline(
         self, force_reindex: bool = False
@@ -1332,102 +1282,14 @@ class SemanticIndexer:
     ) -> tuple[list[tuple[str, str, str]], set[str], dict[Path, str]]:
         """Detect file moves/renames by matching content hashes.
 
-        Compares the set of currently indexed paths against on-disk paths.
-        When an indexed path is gone but a new path has the same SHA-256
-        content hash, we treat that as a move rather than a delete+add.
-
-        Only unambiguous 1-to-1 moves are handled.  If multiple indexed
-        paths share the same hash, they are matched by sorted name order —
-        this covers batch directory-rename scenarios while staying safe.
-
-        Also returns the file_path → hash mapping computed during the scan
-        so callers can reuse it for change detection without re-hashing.
-
-        Args:
-            current_files: All currently-discoverable files on disk
-            indexed_file_hashes: Mapping of rel_path → file_hash from the DB
-
-        Returns:
-            Tuple of:
-            - List of (old_path, new_path, file_hash) for each detected move
-            - Set of old_path strings that were moved (exclude from normal
-              delete/re-process flow after caller reloads hashes)
-            - Dict mapping absolute Path → hash for all scanned files
-              (reusable by change detection to avoid double-hashing)
+        Delegates to :func:`core.file_move_detector.detect_file_moves`.
         """
-        import time as _time
-
-        # Reverse index: hash → set of paths currently in the DB
-        hash_to_indexed: dict[str, set[str]] = {}
-        for path, hash_val in indexed_file_hashes.items():
-            hash_to_indexed.setdefault(hash_val, set()).add(path)
-
-        # Build set of relative paths that exist on disk right now, and a
-        # reverse map from hash → set of on-disk relative paths.
-        # Also cache file_path → hash so callers skip double-hashing.
-        current_rel_paths: set[str] = set()
-        current_hash_to_paths: dict[str, set[str]] = {}
-        file_hash_cache: dict[Path, str] = {}
-        total = len(current_files)
-        scan_start = _time.time()
-        for idx, file_path in enumerate(current_files, start=1):
-            try:
-                rel_path = str(file_path.relative_to(self.project_root))
-                current_rel_paths.add(rel_path)
-                file_hash = compute_file_hash(file_path)
-                current_hash_to_paths.setdefault(file_hash, set()).add(rel_path)
-                file_hash_cache[file_path] = file_hash
-            except Exception:  # nosec B112
-                continue
-
-            # Progress feedback during hashing
-            if self.progress_tracker:
-                self.progress_tracker.progress_bar_with_eta(
-                    current=idx,
-                    total=total,
-                    prefix="Scanning files",
-                    start_time=scan_start,
-                )
-            elif idx % 500 == 0:
-                logger.info(f"Scanning files: {idx:,}/{total:,} hashed")
-
-        if total >= 500:
-            logger.info(f"Scanned {total:,} files in {_time.time() - scan_start:.1f}s")
-
-        # Find moves: indexed paths that are no longer on disk (orphaned) paired
-        # with new on-disk paths that share the same hash and are not yet indexed
-        moves: list[tuple[str, str, str]] = []
-        moved_old_paths: set[str] = set()
-
-        for hash_val, indexed_paths in hash_to_indexed.items():
-            # Paths in DB that are no longer on disk at their original location
-            orphaned = indexed_paths - current_rel_paths
-            if not orphaned:
-                continue
-
-            # On-disk paths with the same hash that are not yet in the DB
-            new_paths = current_hash_to_paths.get(hash_val, set()) - set(
-                indexed_file_hashes.keys()
-            )
-            if not new_paths:
-                continue
-
-            if len(orphaned) == 1 and len(new_paths) == 1:
-                # Unambiguous 1-to-1 move
-                old_path = next(iter(orphaned))
-                new_path = next(iter(new_paths))
-                moves.append((old_path, new_path, hash_val))
-                moved_old_paths.add(old_path)
-            elif len(orphaned) == len(new_paths):
-                # Same number of orphaned and new paths with matching hash
-                # (e.g., directory rename).  Match by sorted name for stability.
-                for old_p, new_p in zip(
-                    sorted(orphaned), sorted(new_paths), strict=True
-                ):
-                    moves.append((old_p, new_p, hash_val))
-                    moved_old_paths.add(old_p)
-
-        return moves, moved_old_paths, file_hash_cache
+        return _detect_file_moves_fn(
+            project_root=self.project_root,
+            current_files=current_files,
+            indexed_file_hashes=indexed_file_hashes,
+            progress_tracker=self.progress_tracker,
+        )
 
     async def _phase1_chunk_files(
         self,
@@ -3957,103 +3819,13 @@ class SemanticIndexer:
     async def _build_bm25_index(self) -> None:
         """Build BM25 index from all chunks for keyword search.
 
-        This is Phase 3 of indexing (after chunks are built).
-        BM25 index enables hybrid search by combining keyword and semantic search.
-        BM25 only needs text content, not embeddings, so reads from chunks.lance.
+        Delegates to :func:`core.bm25_builder.build_bm25_index`.
         """
-        try:
-            # Get all chunks from chunks.lance table
-            # ChunksBackend has all chunk data including content (vectors not needed for BM25)
-            if self.chunks_backend._db is None or self.chunks_backend._table is None:
-                logger.warning(
-                    "Chunks backend not initialized, skipping BM25 index build"
-                )
-                return
-
-            logger.info("📚 Phase 3: Building BM25 index for keyword search...")
-
-            # Read only the columns BM25 needs (skip large/unused columns like
-            # embeddings, metadata, etc.) to reduce memory and I/O.
-            import asyncio
-
-            bm25_columns = ["chunk_id", "content", "name", "file_path", "chunk_type"]
-
-            def _read_bm25_columns():
-                """Read only required columns via Lance scanner for speed."""
-                try:
-                    # Use lance scanner with column projection (faster than to_pandas)
-                    scanner = self.chunks_backend._table.to_lance().scanner(
-                        columns=bm25_columns
-                    )
-                    table = scanner.to_table()
-                    return table.to_pandas()
-                except Exception:
-                    # Fallback: read all columns if scanner fails
-                    return self.chunks_backend._table.to_pandas()
-
-            df = await asyncio.to_thread(_read_bm25_columns)
-
-            if df.empty:
-                logger.info("No chunks in chunks table, skipping BM25 index build")
-                return
-
-            # Show chunk count after reading from database
-            chunk_count = len(df)
-            if self.progress_tracker:
-                sys.stderr.write(
-                    f"  Building keyword search index ({chunk_count:,} chunks)...\n"
-                )
-                sys.stderr.flush()
-
-            # Vectorised conversion: use to_dict("records") instead of iterrows()
-            # (~10-50x faster for 200K+ rows).
-            # Fill missing columns with defaults before converting.
-            if "name" not in df.columns:
-                df["name"] = ""
-            else:
-                df["name"] = df["name"].fillna("")
-            if "chunk_type" not in df.columns:
-                df["chunk_type"] = "code"
-            else:
-                df["chunk_type"] = df["chunk_type"].fillna("code")
-
-            chunks_for_bm25 = df[bm25_columns].to_dict("records")
-
-            logger.info(
-                f"📚 Phase 3: Building BM25 index from {len(chunks_for_bm25):,} chunks..."
-            )
-
-            # Build BM25 index with tokenization progress reporting
-            bm25_start = time.monotonic()
-
-            def _bm25_progress(current: int, total: int) -> None:
-                if self.progress_tracker:
-                    self.progress_tracker.progress_bar_with_eta(
-                        current=current,
-                        total=total,
-                        prefix="Tokenizing chunks",
-                        start_time=bm25_start,
-                    )
-
-            bm25_backend = BM25Backend()
-            bm25_backend.build_index(chunks_for_bm25, progress_callback=_bm25_progress)
-
-            # Save to disk.
-            # Use self._mcp_dir (respects index_path) instead of config.index_path
-            # so that a separate index_path is honoured here too.
-            bm25_path = self._mcp_dir / "bm25_index.pkl"
-            bm25_backend.save(bm25_path)
-
-            stats = bm25_backend.get_stats()
-            logger.info(
-                f"✓ Phase 3 complete: BM25 index built with {stats['chunk_count']} chunks "
-                f"(avg doc length: {stats['avg_doc_length']:.1f} tokens)"
-            )
-
-        except Exception as e:
-            # Non-fatal: BM25 failure shouldn't break indexing
-            logger.warning(f"BM25 index building failed (non-fatal): {e}")
-            logger.warning("Hybrid search will fall back to vector-only mode")
+        await _build_bm25_index_fn(
+            chunks_backend=self.chunks_backend,
+            mcp_dir=self._mcp_dir,
+            progress_tracker=self.progress_tracker,
+        )
 
     # ------------------------------------------------------------------
     # Public API: metadata and health

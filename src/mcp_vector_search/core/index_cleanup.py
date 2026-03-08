@@ -1,4 +1,4 @@
-"""Utility functions for cleaning up stale index artifacts.
+"""Utility functions for cleaning up stale index artifacts and running migrations.
 
 These module-level helpers were extracted from indexer.py so they can be
 imported and tested independently of the full SemanticIndexer class.
@@ -7,6 +7,7 @@ Public API (re-exported from indexer.py for backward compatibility):
     cleanup_stale_locks
     cleanup_stale_transactions
     cleanup_stale_progress
+    run_auto_migrations
 
 Private helper (not re-exported):
     _detect_filesystem_type
@@ -136,6 +137,68 @@ def cleanup_stale_progress(index_path: Path, stale_age_seconds: int = 3600) -> N
             )
     except Exception:
         pass  # Non-fatal: never block indexing over a cleanup failure
+
+
+async def run_auto_migrations(project_root: Path) -> None:
+    """Check and run pending database migrations automatically.
+
+    Called during indexer initialization to ensure the database schema is
+    up-to-date before indexing begins.
+
+    Only runs migrations that are needed (check_needed() returns True).
+    Logs warnings if migrations fail but does not stop indexing.
+
+    Args:
+        project_root: Root directory of the project.  The migration runner
+            uses this to locate the ``.mcp-vector-search`` directory.
+    """
+    try:
+        from ..migrations import MigrationRunner
+        from ..migrations.v2_3_0_two_phase import TwoPhaseArchitectureMigration
+
+        # Create migration runner
+        runner = MigrationRunner(project_root)
+
+        # Register migrations that might be needed
+        runner.register_migrations([TwoPhaseArchitectureMigration()])
+
+        # Get pending migrations
+        pending = runner.get_pending_migrations()
+
+        if not pending:
+            logger.debug("No pending migrations, schema is up-to-date")
+            return
+
+        logger.info(
+            f"Found {len(pending)} pending migration(s), running automatically..."
+        )
+
+        # Run pending migrations
+        for migration in pending:
+            logger.info(f"Running migration: {migration.name} (v{migration.version})")
+
+            result = runner.run_migration(migration, dry_run=False, force=False)
+
+            if result.status.value == "success":
+                logger.info(f"Migration {migration.name} completed successfully")
+                if result.metadata:
+                    for key, value in result.metadata.items():
+                        logger.debug(f"  {key}: {value}")
+            elif result.status.value == "skipped":
+                logger.debug(f"Migration {migration.name} skipped: {result.message}")
+            elif result.status.value == "failed":
+                logger.warning(
+                    f"Migration {migration.name} failed: {result.message}\n"
+                    "  Continuing with indexing, but you may encounter issues.\n"
+                    "  Run 'mcp-vector-search migrate' to fix manually."
+                )
+
+    except Exception as e:
+        logger.warning(
+            f"Auto-migration check failed: {e}\n"
+            "  Continuing with indexing, but you may encounter schema issues.\n"
+            "  Run 'mcp-vector-search migrate' to fix manually."
+        )
 
 
 def _detect_filesystem_type(db_path: Path) -> str:
