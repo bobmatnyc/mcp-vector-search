@@ -247,8 +247,8 @@ class FileWatcher:
             relative_path = file_path
 
         # Remove chunks from database
-        await self.database.remove_file_chunks(str(relative_path))
-        logger.debug(f"Removed chunks for deleted file: {relative_path}")
+        deleted = await self.database.delete_by_file(relative_path)
+        logger.debug(f"Removed {deleted} chunks for deleted file: {relative_path}")
 
     async def _reindex_file(self, file_path: Path) -> None:
         """Re-index a single file."""
