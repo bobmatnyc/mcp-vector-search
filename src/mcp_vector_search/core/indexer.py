@@ -7,13 +7,11 @@ Phase 2: Embed chunks, store to vectors.lance (resumable, incremental)
 import asyncio
 import gc
 import os
-import shutil
 import sys
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +22,7 @@ from ..analysis.trends import TrendTracker
 from ..config.settings import ProjectConfig
 from ..parsers.registry import get_parser_registry
 from ..utils.monorepo import MonorepoDetector
+from .atomic_rebuild import AtomicRebuildManager
 from .bm25_builder import build_bm25_index as _build_bm25_index_fn
 from .chunk_dict import build_hierarchy_path as _build_hierarchy_path_fn
 from .chunk_dict import chunk_to_storage_dict
@@ -32,6 +31,7 @@ from .chunks_backend import ChunksBackend, compute_file_hash
 from .context_builder import build_contextual_text
 from .database import VectorDatabase
 from .directory_index import DirectoryIndex
+from .embedding_runner import run_phase2_embedding
 from .exceptions import (
     DatabaseError,
     DatabaseInitializationError,
@@ -1655,6 +1655,8 @@ class SemanticIndexer:
         This phase is resumable - can restart after crashes. Only embeds
         chunks that are in "pending" status in chunks.lance.
 
+        Thin delegate to :func:`~.embedding_runner.run_phase2_embedding`.
+
         Args:
             batch_size: Chunks per embedding batch
             checkpoint_interval: Chunks between checkpoint logs
@@ -1662,240 +1664,17 @@ class SemanticIndexer:
         Returns:
             Tuple of (chunks_embedded, batches_processed)
         """
-        chunks_embedded = 0
-        batches_processed = 0
-        batch_id = int(datetime.now().timestamp())
-
-        logger.info(
-            "🧠 Phase 2: Embedding pending chunks (GPU processing for semantic search)..."
+        return await run_phase2_embedding(
+            chunks_backend=self.chunks_backend,
+            vectors_backend=self.vectors_backend,
+            database=self.database,
+            memory_monitor=self.memory_monitor,
+            progress_tracker=self.progress_tracker,
+            get_model_name_fn=self.get_embedding_model_name,
+            get_project_name_fn=self._get_project_name,
+            batch_size=batch_size,
+            checkpoint_interval=checkpoint_interval,
         )
-
-        # Get metrics tracker
-        metrics_tracker = get_metrics_tracker()
-
-        # Track start time for progress bar ETA
-        embed_start_time = time.time()
-
-        # Get total pending chunks count BEFORE starting (for accurate progress bar)
-        total_pending_chunks = await self.chunks_backend.count_pending_chunks()
-        logger.info(f"Found {total_pending_chunks:,} pending chunks to embed")
-
-        if total_pending_chunks == 0:
-            logger.info("No pending chunks — skipping embedding phase")
-            return 0, 0
-
-        # Show chunk count to user so they know embedding is starting
-        if self.progress_tracker:
-            sys.stderr.write(
-                f"  Embedding {total_pending_chunks:,} chunks"
-                f" (batch size: {batch_size})...\n"
-            )
-            sys.stderr.flush()
-
-        with metrics_tracker.phase("embedding") as embedding_metrics:
-            while True:
-                # CRITICAL: Check memory BEFORE loading batch to prevent spikes
-                usage_pct = self.memory_monitor.get_memory_usage_pct()
-
-                # Proactively reduce batch size if memory is high
-                while usage_pct > 0.90 and batch_size > 100:
-                    batch_size = batch_size // 2
-                    logger.warning(
-                        f"⚠️  Memory at {usage_pct * 100:.1f}%, proactively reducing batch to {batch_size}"
-                    )
-                    usage_pct = self.memory_monitor.get_memory_usage_pct()
-
-                # If still over 90%, wait for memory to free
-                if usage_pct > 0.90:
-                    logger.warning(
-                        f"Memory usage at {usage_pct * 100:.1f}%, waiting for memory to drop..."
-                    )
-                    await self.memory_monitor.wait_for_memory_available(target_pct=0.80)
-
-                # Get pending chunks from chunks.lance FIRST
-                pending = await self.chunks_backend.get_pending_chunks(batch_size)
-                if not pending:
-                    logger.info("No more pending chunks to embed")
-                    break
-
-                # Check memory AFTER loading batch (when memory is at peak)
-                is_ok, usage_pct, status = self.memory_monitor.check_memory_limit()
-
-                if not is_ok:
-                    # Memory limit exceeded after loading - apply backpressure
-                    logger.warning(
-                        f"Memory limit exceeded after loading batch "
-                        f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB), "
-                        "waiting for memory to free up..."
-                    )
-                    await self.memory_monitor.wait_for_memory_available(
-                        target_pct=self.memory_monitor.warn_threshold
-                    )
-
-                # Adjust batch size based on memory pressure
-                adjusted_batch_size = self.memory_monitor.get_adjusted_batch_size(
-                    batch_size, min_batch_size=100
-                )
-                if adjusted_batch_size != batch_size:
-                    logger.info(
-                        f"Adjusted embedding batch size: {batch_size} → {adjusted_batch_size} "
-                        f"(memory usage: {usage_pct * 100:.1f}%)"
-                    )
-                    batch_size = adjusted_batch_size
-
-                # Mark as processing (for crash recovery)
-                chunk_ids = [c["chunk_id"] for c in pending]
-                await self.chunks_backend.mark_chunks_processing(chunk_ids, batch_id)
-
-                try:
-                    # Generate embeddings using database's embedding function
-                    contents = [c["content"] for c in pending]
-
-                    # CRITICAL: Check memory before expensive embedding operation
-                    is_ok, usage_pct, status = self.memory_monitor.check_memory_limit()
-                    if not is_ok:
-                        logger.error(
-                            f"Memory limit exceeded before embedding "
-                            f"({usage_pct * 100:.1f}% of {self.memory_monitor.max_memory_gb:.1f}GB). "
-                            f"Reducing batch size and retrying..."
-                        )
-
-                        # Return chunks to pending state
-                        await self.chunks_backend.mark_chunks_pending(chunk_ids)
-
-                        # Wait for memory to free
-                        await self.memory_monitor.wait_for_memory_available(
-                            target_pct=self.memory_monitor.warn_threshold
-                        )
-
-                        # Dramatically reduce batch size
-                        batch_size = max(100, batch_size // 4)
-                        logger.info(
-                            f"Reduced batch size to {batch_size} due to memory pressure"
-                        )
-                        continue  # Skip to next iteration with smaller batch
-
-                    # Generate embeddings in batch
-                    vectors = None
-
-                    # Method 1: Check for _embedding_function (ChromaDB)
-                    if hasattr(self.database, "_embedding_function"):
-                        vectors = self.database._embedding_function(contents)
-                    # Method 2: Check for _collection and its embedding function
-                    elif hasattr(self.database, "_collection") and hasattr(
-                        self.database._collection, "_embedding_function"
-                    ):
-                        vectors = self.database._collection._embedding_function(
-                            contents
-                        )
-                    # Method 3: Use database.embedding_function (proper API)
-                    elif hasattr(self.database, "embedding_function"):
-                        vectors = self.database.embedding_function.embed_documents(
-                            contents
-                        )
-                    else:
-                        logger.error(
-                            "Cannot access embedding function from database, "
-                            "skipping batch embedding"
-                        )
-                        await self.chunks_backend.mark_chunks_complete(chunk_ids)
-                        chunks_embedded += len(pending)
-                        batches_processed += 1
-                        continue
-
-                    if vectors is None:
-                        raise ValueError("Failed to generate embeddings")
-
-                    # Add to vectors table with embeddings
-                    chunks_with_vectors = []
-                    for chunk, vec in zip(pending, vectors, strict=True):
-                        # Derive function_name and class_name from chunk data
-                        chunk_type = chunk.get("chunk_type", "")
-                        chunk_name = chunk.get("name", "")
-                        hierarchy = chunk.get("hierarchy_path", "")
-
-                        # Determine function_name and class_name based on chunk_type
-                        if chunk_type in ("function", "method"):
-                            fn_name = chunk_name
-                            cls_name = ""
-                            # If hierarchy has a dot, the part before is the class
-                            if "." in hierarchy:
-                                parts = hierarchy.split(".")
-                                cls_name = parts[0]
-                                fn_name = parts[-1]
-                        elif chunk_type == "class":
-                            fn_name = ""
-                            cls_name = chunk_name
-                        else:
-                            fn_name = ""
-                            cls_name = ""
-
-                        chunk_with_vec = {
-                            "chunk_id": chunk["chunk_id"],
-                            "vector": vec,
-                            "file_path": chunk["file_path"],
-                            "content": chunk["content"],
-                            "language": chunk["language"],
-                            "start_line": chunk["start_line"],
-                            "end_line": chunk["end_line"],
-                            "chunk_type": chunk["chunk_type"],
-                            "name": chunk["name"],
-                            "function_name": fn_name,
-                            "class_name": cls_name,
-                            "project_name": self._get_project_name(chunk["file_path"]),
-                            "hierarchy_path": chunk["hierarchy_path"],
-                        }
-                        chunks_with_vectors.append(chunk_with_vec)
-
-                    # Store vectors to vectors.lance
-                    model_name = self.get_embedding_model_name()
-                    await self.vectors_backend.add_vectors(
-                        chunks_with_vectors, model_version=model_name
-                    )
-
-                    # Mark as complete in chunks.lance
-                    await self.chunks_backend.mark_chunks_complete(chunk_ids)
-
-                    chunks_embedded += len(pending)
-                    batches_processed += 1
-
-                    # Show progress bar if tracker is available
-                    if self.progress_tracker and total_pending_chunks > 0:
-                        self.progress_tracker.progress_bar_with_eta(
-                            current=chunks_embedded,
-                            total=total_pending_chunks,
-                            prefix="Embedding chunks",
-                            start_time=embed_start_time,
-                        )
-
-                    # Checkpoint logging with memory status
-                    if chunks_embedded % checkpoint_interval == 0:
-                        self.memory_monitor.log_memory_summary()
-                        if not self.progress_tracker:
-                            logger.info(
-                                f"Checkpoint: {chunks_embedded} chunks embedded"
-                            )
-
-                    # Check memory after each batch and clear references
-                    del pending, chunk_ids, contents, vectors, chunks_with_vectors
-
-                except Exception as e:
-                    logger.error(f"Embedding batch failed: {e}")
-                    # Mark chunks as error in chunks.lance
-                    error_msg = f"{type(e).__name__}: {str(e)}"
-                    await self.chunks_backend.mark_chunks_error(chunk_ids, error_msg)
-                    # Continue with next batch instead of crashing
-                    continue
-
-            # Update metrics
-            embedding_metrics.item_count = chunks_embedded
-
-        # Log memory summary after Phase 2
-        self.memory_monitor.log_memory_summary()
-        logger.info(
-            f"✓ Phase 2 complete: {chunks_embedded} chunks embedded in {batches_processed} batches"
-        )
-        return chunks_embedded, batches_processed
 
     async def re_embed_chunks(
         self, batch_size: int = 10000, checkpoint_interval: int = 50000
@@ -1977,182 +1756,41 @@ class SemanticIndexer:
         3. On success: rename old to .old, rename new to final, delete .old
         4. On failure: delete .new, keep old database intact
 
+        Thin delegate to :class:`~.atomic_rebuild.AtomicRebuildManager`.
+
         Args:
             force: If True, perform atomic rebuild
 
         Returns:
             True if atomic rebuild was performed, False otherwise
         """
-        if not force:
-            return False
-
-        base_path = self._mcp_dir
-
-        # Database paths (only .new paths used in this method - others in _finalize)
-        lance_new = base_path / "lance.new"
-        kg_new = base_path / "knowledge_graph.new"
-        chroma_new = base_path / "chroma.sqlite3.new"
-        code_search_new = base_path / "code_search.lance.new"
-
-        try:
-            # Step 1: Rename existing databases to .new (build target)
-            logger.info("🔄 Atomic rebuild: preparing new database directories...")
-
-            # Remove any stale .new directories from previous interrupted rebuilds
-            for new_path in [lance_new, kg_new, code_search_new]:
-                if new_path.exists():
-                    try:
-                        shutil.rmtree(new_path)
-                        logger.debug(f"Removed stale directory: {new_path}")
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to remove stale directory {new_path}: {e}. "
-                            "Attempting to continue anyway."
-                        )
-            if chroma_new.exists():
-                try:
-                    chroma_new.unlink()
-                except Exception as e:
-                    logger.warning(f"Failed to remove stale file {chroma_new}: {e}")
-
-            # Create new database directories
-            lance_new.mkdir(parents=True, exist_ok=True)
-            kg_new.mkdir(parents=True, exist_ok=True)
-
-            # Update backend paths to point to .new databases
-            self.chunks_backend = ChunksBackend(lance_new)
-            self.vectors_backend = VectorsBackend(lance_new)
-
-            # Update database path for LanceDB backend
-            # This requires modifying the database's persist_directory
-            # We'll handle this by creating a new database instance pointing to .new
-            from .embeddings import create_embedding_function
-            from .factory import create_database
-
-            # Create new database instance for .new location
-            # Pass config model to create_embedding_function (None = auto-select by device)
-            model_name = self.config.embedding_model if self.config else None
-            embedding_function, _ = create_embedding_function(model_name=model_name)
-            new_db_path = base_path / "code_search.lance.new"
-            self.database = create_database(
-                persist_directory=new_db_path, embedding_function=embedding_function
-            )
-
-            logger.info("✓ New database directories prepared")
-            # Set flag to skip delete operations (building into fresh database)
+        manager = AtomicRebuildManager(self._mcp_dir, self.config)
+        active = await manager.rebuild(force=force)
+        if active:
+            self.chunks_backend = manager.chunks_backend
+            self.vectors_backend = manager.vectors_backend
+            self.database = manager.database
             self._atomic_rebuild_active = True
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to prepare atomic rebuild: {e}")
-            # Cleanup .new directories on failure
-            for new_path in [lance_new, kg_new, code_search_new]:
-                if new_path.exists():
-                    shutil.rmtree(new_path, ignore_errors=True)
-            if chroma_new.exists():
-                chroma_new.unlink()
+        else:
             self._atomic_rebuild_active = False
-            return False
+        # Store manager so _finalize_atomic_rebuild can reuse the same mcp_dir reference
+        self._atomic_rebuild_manager = manager
+        return active
 
     async def _finalize_atomic_rebuild(self) -> None:
         """Finalize atomic rebuild by atomically switching databases.
 
         Called after successful indexing when force_reindex=True.
         Performs atomic rename operations to switch from .new to final.
+
+        Thin delegate to :class:`~.atomic_rebuild.AtomicRebuildManager`.
         """
-        base_path = self._mcp_dir
-
-        # Database paths
-        lance_path = base_path / "lance"
-        lance_new = base_path / "lance.new"
-        lance_old = base_path / "lance.old"
-
-        kg_path = base_path / "knowledge_graph"
-        kg_new = base_path / "knowledge_graph.new"
-        kg_old = base_path / "knowledge_graph.old"
-
-        chroma_path = base_path / "chroma.sqlite3"
-        chroma_new = base_path / "chroma.sqlite3.new"
-        chroma_old = base_path / "chroma.sqlite3.old"
-
-        code_search_path = base_path / "code_search.lance"
-        code_search_new = base_path / "code_search.lance.new"
-        code_search_old = base_path / "code_search.lance.old"
-
-        try:
-            logger.info("🔄 Atomic rebuild: finalizing database switch...")
-
-            # Step 2: Atomic switch for lance directory
-            if lance_new.exists():
-                if lance_path.exists():
-                    lance_path.rename(lance_old)
-                lance_new.rename(lance_path)
-                if lance_old.exists():
-                    try:
-                        shutil.rmtree(lance_old)
-                        logger.debug(f"Removed old directory: {lance_old}")
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to remove old directory {lance_old}: {e}"
-                        )
-
-            # Step 3: Atomic switch for knowledge_graph directory
-            if kg_new.exists():
-                if kg_path.exists():
-                    kg_path.rename(kg_old)
-                kg_new.rename(kg_path)
-                if kg_old.exists():
-                    try:
-                        shutil.rmtree(kg_old)
-                        logger.debug(f"Removed old directory: {kg_old}")
-                    except Exception as e:
-                        logger.warning(f"Failed to remove old directory {kg_old}: {e}")
-
-            # Step 4: Atomic switch for code_search.lance
-            if code_search_new.exists():
-                if code_search_path.exists():
-                    code_search_path.rename(code_search_old)
-                code_search_new.rename(code_search_path)
-                if code_search_old.exists():
-                    try:
-                        shutil.rmtree(code_search_old)
-                        logger.debug(f"Removed old directory: {code_search_old}")
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to remove old directory {code_search_old}: {e}"
-                        )
-
-            # Step 5: Handle chroma.sqlite3 (deprecated, but may exist)
-            if chroma_new.exists():
-                if chroma_path.exists():
-                    chroma_path.rename(chroma_old)
-                chroma_new.rename(chroma_path)
-                if chroma_old.exists():
-                    chroma_old.unlink()
-
-            logger.info("✓ Atomic rebuild complete: databases switched successfully")
-            # Reset flag after successful finalization
-            self._atomic_rebuild_active = False
-
-        except Exception as e:
-            logger.error(f"Failed to finalize atomic rebuild: {e}")
-            # Attempt to rollback
-            try:
-                logger.warning("Attempting rollback to old databases...")
-                if lance_old.exists() and not lance_path.exists():
-                    lance_old.rename(lance_path)
-                if kg_old.exists() and not kg_path.exists():
-                    kg_old.rename(kg_path)
-                if code_search_old.exists() and not code_search_path.exists():
-                    code_search_old.rename(code_search_path)
-                if chroma_old.exists() and not chroma_path.exists():
-                    chroma_old.rename(chroma_path)
-                logger.info("✓ Rollback successful, old databases restored")
-            except Exception as rollback_error:
-                logger.error(f"Rollback failed: {rollback_error}")
-            # Reset flag after rollback attempt
-            self._atomic_rebuild_active = False
-            raise
+        manager = getattr(self, "_atomic_rebuild_manager", None)
+        if manager is None:
+            # Fallback: construct a manager with the current mcp_dir
+            manager = AtomicRebuildManager(self._mcp_dir, self.config)
+        await manager.finalize()
+        self._atomic_rebuild_active = manager.active
 
     async def chunk_files(self, fresh: bool = False) -> dict:
         """Chunk files independently without embedding.
