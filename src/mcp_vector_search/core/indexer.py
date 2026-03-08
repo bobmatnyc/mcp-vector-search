@@ -6,7 +6,6 @@ Phase 2: Embed chunks, store to vectors.lance (resumable, incremental)
 
 import asyncio
 import gc
-import json
 import os
 import shutil
 import sys
@@ -26,6 +25,8 @@ from ..config.settings import ProjectConfig
 from ..parsers.registry import get_parser_registry
 from ..utils.monorepo import MonorepoDetector
 from .bm25_backend import BM25Backend
+from .chunk_dict import build_hierarchy_path as _build_hierarchy_path_fn
+from .chunk_dict import chunk_to_storage_dict
 from .chunk_processor import ChunkProcessor
 from .chunks_backend import ChunksBackend, compute_file_hash
 from .context_builder import build_contextual_text
@@ -38,194 +39,26 @@ from .exceptions import (
     ParsingError,
 )
 from .file_discovery import FileDiscovery
+from .index_cleanup import (  # re-exported for backward compatibility
+    _detect_filesystem_type,
+    cleanup_stale_locks,
+    cleanup_stale_progress,
+    cleanup_stale_transactions,
+)
 from .index_metadata import IndexMetadata
 from .memory_monitor import MemoryMonitor
 from .metrics import get_metrics_tracker
 from .metrics_collector import IndexerMetricsCollector
-from .models import CodeChunk, IndexResult, IndexStats, ProjectStatus
+from .models import (
+    CodeChunk,
+    HealthStatus,  # noqa: F401  # re-exported; avoids LanceDB in package __init__
+    IndexResult,
+    IndexStats,
+    ProjectStatus,
+)
 from .relationships import RelationshipStore
 from .resource_manager import calculate_optimal_workers
 from .vectors_backend import VectorsBackend
-
-
-def cleanup_stale_locks(project_dir: Path) -> None:
-    """Remove stale SQLite journal files that indicate interrupted transactions.
-
-    Journal files (-journal, -wal, -shm) can be left behind if indexing is
-    interrupted or crashes, preventing future database access. This function
-    safely removes stale lock files at index startup.
-
-    Args:
-        project_dir: Project root directory containing .mcp-vector-search/
-    """
-    mcp_dir = project_dir / ".mcp-vector-search"
-    if not mcp_dir.exists():
-        return
-
-    # SQLite journal file extensions that indicate locks/transactions
-    lock_extensions = ["-journal", "-wal", "-shm"]
-
-    removed_count = 0
-    for ext in lock_extensions:
-        lock_path = mcp_dir / f"chroma.sqlite3{ext}"
-        if lock_path.exists():
-            try:
-                lock_path.unlink()
-                logger.warning(f"Removed stale database lock file: {lock_path.name}")
-                removed_count += 1
-            except Exception as e:
-                logger.error(f"Failed to remove stale lock file {lock_path}: {e}")
-
-    if removed_count > 0:
-        logger.info(
-            f"Cleaned up {removed_count} stale lock files (indexing can now proceed)"
-        )
-
-
-def cleanup_stale_transactions(index_path: Path, stale_age_seconds: int = 3600) -> None:
-    """Remove stale LanceDB transaction files from crashed previous runs.
-
-    LanceDB writes *.txn files inside {table}/_transactions/ directories while a
-    write is in progress. If the process crashes mid-transaction these files are
-    left behind and cause the next run to fail during table initialisation with
-    an OS-level exit code (e.g. 120) that is indistinguishable from a signal.
-
-    This helper removes transaction files that are older than *stale_age_seconds*
-    (default: 1 hour). It is intentionally non-fatal — any OSError is swallowed
-    so a failed cleanup never blocks indexing.
-
-    Args:
-        index_path: Root of the index directory (contains the ``lance/`` sub-dir).
-        stale_age_seconds: Files older than this many seconds are considered stale
-            and will be removed. Default is 3600 (one hour).
-    """
-    import glob
-
-    lance_dir = index_path / "lance"
-    if not lance_dir.exists():
-        return
-
-    txn_pattern = str(lance_dir / "**" / "_transactions" / "*.txn")
-    stale_cutoff = time.time() - stale_age_seconds
-    cleaned = 0
-    for txn_file in glob.glob(txn_pattern, recursive=True):
-        try:
-            if os.path.getmtime(txn_file) < stale_cutoff:
-                os.remove(txn_file)
-                cleaned += 1
-                logger.debug("Removed stale LanceDB transaction file: %s", txn_file)
-        except OSError:
-            pass  # Non-fatal: never block indexing over a cleanup failure
-
-    if cleaned:
-        logger.info(
-            "Cleaned up %d stale LanceDB transaction file(s) from previous crashed run",
-            cleaned,
-        )
-
-
-def cleanup_stale_progress(index_path: Path, stale_age_seconds: int = 3600) -> None:
-    """Remove a stale progress.json left by a crashed indexing run.
-
-    If progress.json reports ``phase: "chunking"`` with zero files processed and
-    the file itself is older than *stale_age_seconds* it almost certainly belongs
-    to a run that crashed at initialisation (before any real work was done).
-    Leaving it around causes subsequent runs to display misleading progress.
-
-    Args:
-        index_path: Root of the index directory (contains ``.mcp-vector-search/``).
-        stale_age_seconds: Files older than this many seconds are considered stale.
-            Default is 3600 (one hour).
-    """
-    progress_file = index_path / ".mcp-vector-search" / "progress.json"
-    if not progress_file.exists():
-        return
-
-    try:
-        age = time.time() - os.path.getmtime(str(progress_file))
-        if age < stale_age_seconds:
-            return  # Recent file — leave it alone
-
-        with open(progress_file) as fh:
-            data = json.load(fh)
-
-        phase = data.get("phase", "")
-        chunking = data.get("chunking", {})
-        processed_files = chunking.get("processed_files", -1)
-
-        if phase == "chunking" and processed_files == 0:
-            os.remove(str(progress_file))
-            logger.info(
-                "Removed stale progress.json (phase=chunking, 0 files processed, "
-                "age=%.0f s) — likely left by a crashed previous run",
-                age,
-            )
-    except Exception:
-        pass  # Non-fatal: never block indexing over a cleanup failure
-
-
-def _detect_filesystem_type(db_path: Path) -> str:
-    """Detect filesystem type of the database path for I/O optimization.
-
-    Returns: "nfs" for NFS/EFS/CIFS mounts, "nvme" for local NVMe, "default" otherwise.
-
-    Non-fatal: any error causes fallback to "default".
-    """
-    try:
-        # Linux: parse /proc/mounts to find the mount for db_path
-        if Path("/proc/mounts").exists():
-            db_str = str(db_path.resolve())
-            best_mount = ""
-            best_fstype = "default"
-            best_source = ""
-
-            with open("/proc/mounts") as f:
-                for line in f:
-                    parts = line.split()
-                    if len(parts) < 3:
-                        continue
-                    source = parts[0]
-                    mount_point = parts[1]
-                    fstype = parts[2].lower()
-                    # Find longest matching mount point for db_path
-                    if db_str.startswith(mount_point) and len(mount_point) > len(
-                        best_mount
-                    ):
-                        best_mount = mount_point
-                        best_fstype = fstype
-                        best_source = source
-
-            if best_fstype in ("nfs", "nfs4", "cifs", "smbfs", "efs"):
-                return "nfs"
-
-            # Check for NVMe: source device name contains "nvme" (e.g. /dev/nvme0n1p1)
-            # OR mount point path suggests a dedicated NVMe mount (e.g. /mnt/nvme)
-            if "nvme" in best_source.lower() or "/nvme" in best_mount.lower():
-                return "nvme"
-
-        # macOS / fallback: use stat -f to detect network filesystems
-        import subprocess
-
-        result = subprocess.run(  # nosec B607
-            ["stat", "-f", "-c", "%T", str(db_path.resolve())],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=2,
-        )
-        if result.returncode == 0:
-            fstype = result.stdout.strip().lower()
-            if "nfs" in fstype or "smbfs" in fstype or "cifs" in fstype:
-                return "nfs"
-
-        return "default"
-    except Exception:
-        return "default"
-
-
-# HealthStatus lives in models.py to avoid pulling LanceDB into the package
-# __init__.py import chain (which would break the KG subprocess).
-from .models import HealthStatus  # noqa: F401, E402
 
 
 @dataclass
@@ -1055,40 +888,10 @@ class SemanticIndexer:
                             )
 
                             # Convert CodeChunk objects to dicts for storage
-                            chunk_dicts = []
-                            for chunk in chunks_with_hierarchy:
-                                chunk_dict = {
-                                    "chunk_id": chunk.chunk_id,
-                                    "file_path": rel_path,
-                                    "content": chunk.content,
-                                    "language": chunk.language,
-                                    "start_line": chunk.start_line,
-                                    "end_line": chunk.end_line,
-                                    "start_char": 0,
-                                    "end_char": 0,
-                                    "chunk_type": chunk.chunk_type,
-                                    "name": chunk.function_name
-                                    or chunk.class_name
-                                    or "",
-                                    "parent_name": "",
-                                    "hierarchy_path": self._build_hierarchy_path(chunk),
-                                    "docstring": chunk.docstring or "",
-                                    "signature": "",
-                                    "complexity": int(chunk.complexity_score),
-                                    "token_count": len(chunk.content.split()),
-                                    "last_author": chunk.last_author or "",
-                                    "last_modified": chunk.last_modified or "",
-                                    "commit_hash": chunk.commit_hash or "",
-                                    "calls": chunk.calls or [],
-                                    "imports": [
-                                        json.dumps(imp)
-                                        if isinstance(imp, dict)
-                                        else imp
-                                        for imp in (chunk.imports or [])
-                                    ],
-                                    "inherits_from": chunk.inherits_from or [],
-                                }
-                                chunk_dicts.append(chunk_dict)
+                            chunk_dicts = [
+                                chunk_to_storage_dict(chunk, rel_path)
+                                for chunk in chunks_with_hierarchy
+                            ]
 
                             # Accumulate chunks for a single batched write after the
                             # full batch is parsed.  file_hash is injected here so
@@ -1846,41 +1649,7 @@ class SemanticIndexer:
                     # Convert CodeChunk objects to dicts and inject file_hash for batching
                     file_chunk_count = 0
                     for chunk in chunks_with_hierarchy:
-                        chunk_dict = {
-                            "chunk_id": chunk.chunk_id,
-                            "file_path": rel_path,
-                            # file_hash is required by add_chunks_batch (pre-injected here)
-                            "file_hash": file_hash,
-                            "content": chunk.content,
-                            "language": chunk.language,
-                            "start_line": chunk.start_line,
-                            "end_line": chunk.end_line,
-                            "start_char": 0,  # Not tracked in CodeChunk
-                            "end_char": 0,  # Not tracked in CodeChunk
-                            "chunk_type": chunk.chunk_type,
-                            "name": chunk.function_name
-                            or chunk.class_name
-                            or "",  # Primary name
-                            "parent_name": "",  # Could derive from parent_chunk_id if needed
-                            "hierarchy_path": self._build_hierarchy_path(
-                                chunk
-                            ),  # e.g., "MyClass.my_method"
-                            "docstring": chunk.docstring or "",
-                            "signature": "",  # Not directly in CodeChunk, could build from params
-                            "complexity": int(chunk.complexity_score),
-                            "token_count": len(chunk.content.split()),  # Rough estimate
-                            # Git blame metadata
-                            "last_author": chunk.last_author or "",
-                            "last_modified": chunk.last_modified or "",
-                            "commit_hash": chunk.commit_hash or "",
-                            # Code relationships (for KG)
-                            "calls": chunk.calls or [],
-                            "imports": [
-                                json.dumps(imp) if isinstance(imp, dict) else imp
-                                for imp in (chunk.imports or [])
-                            ],
-                            "inherits_from": chunk.inherits_from or [],
-                        }
+                        chunk_dict = chunk_to_storage_dict(chunk, rel_path, file_hash)
                         pending_chunks.append(chunk_dict)
                         file_chunk_count += 1
 
@@ -1988,12 +1757,7 @@ class SemanticIndexer:
 
     def _build_hierarchy_path(self, chunk: CodeChunk) -> str:
         """Build dotted hierarchy path (e.g., MyClass.my_method)."""
-        parts = []
-        if chunk.class_name:
-            parts.append(chunk.class_name)
-        if chunk.function_name:
-            parts.append(chunk.function_name)
-        return ".".join(parts) if parts else ""
+        return _build_hierarchy_path_fn(chunk)
 
     def _get_project_name(self, rel_path: str) -> str:
         """Get monorepo subproject name for a file path.
@@ -3608,34 +3372,9 @@ class SemanticIndexer:
                         await self.chunks_backend.delete_file_chunks(rel_path)
 
                     # Convert CodeChunk objects to dicts for storage
-                    chunk_dicts = []
-                    for chunk in file_chunks:
-                        chunk_dict = {
-                            "chunk_id": chunk.chunk_id,
-                            "file_path": rel_path,
-                            "content": chunk.content,
-                            "language": chunk.language,
-                            "start_line": chunk.start_line,
-                            "end_line": chunk.end_line,
-                            "start_char": 0,
-                            "end_char": 0,
-                            "chunk_type": chunk.chunk_type,
-                            "name": chunk.function_name or chunk.class_name or "",
-                            "parent_name": "",
-                            "hierarchy_path": self._build_hierarchy_path(chunk),
-                            "docstring": chunk.docstring or "",
-                            "signature": "",
-                            "complexity": int(chunk.complexity_score),
-                            "token_count": len(chunk.content.split()),
-                            # Code relationships (for KG)
-                            "calls": chunk.calls or [],
-                            "imports": [
-                                json.dumps(imp) if isinstance(imp, dict) else imp
-                                for imp in (chunk.imports or [])
-                            ],
-                            "inherits_from": chunk.inherits_from or [],
-                        }
-                        chunk_dicts.append(chunk_dict)
+                    chunk_dicts = [
+                        chunk_to_storage_dict(chunk, rel_path) for chunk in file_chunks
+                    ]
 
                     # Store to chunks.lance
                     if chunk_dicts:
@@ -3770,34 +3509,10 @@ class SemanticIndexer:
                 await self.chunks_backend.delete_file_chunks(rel_path)
 
             # Convert CodeChunk objects to dicts for storage
-            chunk_dicts = []
-            for chunk in chunks_with_hierarchy:
-                chunk_dict = {
-                    "chunk_id": chunk.chunk_id,
-                    "file_path": rel_path,
-                    "content": chunk.content,
-                    "language": chunk.language,
-                    "start_line": chunk.start_line,
-                    "end_line": chunk.end_line,
-                    "start_char": 0,
-                    "end_char": 0,
-                    "chunk_type": chunk.chunk_type,
-                    "name": chunk.function_name or chunk.class_name or "",
-                    "parent_name": "",
-                    "hierarchy_path": self._build_hierarchy_path(chunk),
-                    "docstring": chunk.docstring or "",
-                    "signature": "",
-                    "complexity": int(chunk.complexity_score),
-                    "token_count": len(chunk.content.split()),
-                    # Code relationships (for KG)
-                    "calls": chunk.calls or [],
-                    "imports": [
-                        json.dumps(imp) if isinstance(imp, dict) else imp
-                        for imp in (chunk.imports or [])
-                    ],
-                    "inherits_from": chunk.inherits_from or [],
-                }
-                chunk_dicts.append(chunk_dict)
+            chunk_dicts = [
+                chunk_to_storage_dict(chunk, rel_path)
+                for chunk in chunks_with_hierarchy
+            ]
 
             # Store to chunks.lance
             if chunk_dicts:
