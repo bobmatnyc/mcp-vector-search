@@ -488,3 +488,114 @@ class KGHandlers:
         return CallToolResult(
             content=[TextContent(type="text", text="\n".join(lines))],
         )
+
+    async def handle_kg_history(self, args: dict[str, Any]) -> CallToolResult:
+        """Handle kg_history tool call.
+
+        Returns the commit metadata stored in the KG for a named entity.
+        V1 semantic: reflects the most recent commit at last kg_build time.
+
+        Args:
+            args: Tool arguments:
+                - entity_name (str): Entity name to look up.
+
+        Returns:
+            CallToolResult with entity history records.
+        """
+        entity_name = args.get("entity_name", "")
+        if not entity_name:
+            return CallToolResult(
+                content=[TextContent(type="text", text="entity_name is required")],
+                isError=True,
+            )
+
+        try:
+            kg_path = self.project_root / ".mcp-vector-search" / "knowledge_graph"
+            kg = KnowledgeGraph(kg_path)
+            await kg.initialize()
+
+            history = await kg.get_entity_history(entity_name)
+            await kg.close()
+
+            result = {
+                "status": "success",
+                "entity_name": entity_name,
+                "history": history,
+                "note": (
+                    "V1: reflects the most recent commit per file at kg_build time, "
+                    "not the full git log."
+                ),
+            }
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(result, indent=2))],
+                isError=False,
+            )
+
+        except Exception as e:
+            logger.error(f"kg_history failed: {e}")
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"kg_history failed: {e}")],
+                isError=True,
+            )
+
+    async def handle_kg_callers_at_commit(self, args: dict[str, Any]) -> CallToolResult:
+        """Handle kg_callers_at_commit tool call.
+
+        Returns callers whose stored commit_sha is an ancestor of the given commit.
+        V1 semantic: reflects the most recent commit at last kg_build time.
+
+        Args:
+            args: Tool arguments:
+                - entity_name (str): Name of the callee entity.
+                - commit_sha (str): Reference git commit SHA.
+
+        Returns:
+            CallToolResult with caller records.
+        """
+        entity_name = args.get("entity_name", "")
+        commit_sha = args.get("commit_sha", "")
+
+        if not entity_name or not commit_sha:
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text="entity_name and commit_sha are required",
+                    )
+                ],
+                isError=True,
+            )
+
+        try:
+            kg_path = self.project_root / ".mcp-vector-search" / "knowledge_graph"
+            kg = KnowledgeGraph(kg_path)
+            await kg.initialize()
+
+            callers = await kg.get_callers_at_commit(
+                entity_name, commit_sha, self.project_root
+            )
+            await kg.close()
+
+            result = {
+                "status": "success",
+                "entity_name": entity_name,
+                "commit_sha": commit_sha,
+                "callers": callers,
+                "note": (
+                    "V1: reflects the most recent commit per file at kg_build time, "
+                    "not the full git log."
+                ),
+            }
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(result, indent=2))],
+                isError=False,
+            )
+
+        except Exception as e:
+            logger.error(f"kg_callers_at_commit failed: {e}")
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text=f"kg_callers_at_commit failed: {e}")
+                ],
+                isError=True,
+            )

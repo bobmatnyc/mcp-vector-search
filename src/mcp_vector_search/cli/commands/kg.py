@@ -1797,6 +1797,141 @@ def kg_trace(
     asyncio.run(run())
 
 
+@kg_app.command("history")
+def kg_history(
+    entity_name: str = typer.Argument(..., help="Entity name to look up"),
+    project_root: Path = typer.Option(
+        ".", help="Project root directory", exists=True, file_okay=False
+    ),
+):
+    """Show the commit history recorded for a named entity.
+
+    Returns the commit SHA(s) stored at last kg_build time for the entity.
+    V1 note: reflects the most recent commit per file at kg_build time,
+    not the full git log.
+
+    Examples:
+        mcp-vector-search kg history "MyClass"
+        mcp-vector-search kg history "process_request"
+    """
+    project_root = project_root.resolve()
+
+    async def _history() -> None:
+        kg_path = project_root / ".mcp-vector-search" / "knowledge_graph"
+        kg = KnowledgeGraph(kg_path)
+        await kg.initialize()
+
+        history = await kg.get_entity_history(entity_name)
+        await kg.close()
+
+        if not history:
+            console.print(
+                f"[yellow]No entity named '{entity_name}' found in the knowledge graph.[/yellow]"
+            )
+            raise typer.Exit(0)
+
+        table = Table(title=f"KG history: {entity_name}")
+        table.add_column("Name", style="cyan")
+        table.add_column("Type", style="green")
+        table.add_column("File")
+        table.add_column("Commit SHA", style="dim")
+
+        for entry in history:
+            table.add_row(
+                entry["name"],
+                entry["entity_type"],
+                entry["file_path"] or "(none)",
+                entry["commit_sha"] or "(none)",
+            )
+
+        console.print(table)
+        console.print(
+            "[dim]V1: reflects the most recent commit per file at kg_build time.[/dim]"
+        )
+
+    asyncio.run(_history())
+
+
+@kg_app.command("callers-at")
+def kg_callers_at(
+    entity_name: str = typer.Argument(..., help="Callee entity name"),
+    commit_sha: str = typer.Argument(..., help="Git commit SHA"),
+    project_root: Path = typer.Option(
+        ".", help="Project root directory", exists=True, file_okay=False
+    ),
+):
+    """Show what called entity_name as of a given commit.
+
+    Returns callers whose stored commit_sha is an ancestor of (or equal to)
+    the specified commit.  Requires the knowledge graph to be built first.
+
+    Examples:
+        mcp-vector-search kg callers-at "process_request" abc1234
+        mcp-vector-search kg callers-at "MyClass.__init__" HEAD
+    """
+    project_root = project_root.resolve()
+
+    async def _callers_at() -> None:
+        kg_path = project_root / ".mcp-vector-search" / "knowledge_graph"
+        kg = KnowledgeGraph(kg_path)
+        await kg.initialize()
+
+        callers = await kg.get_callers_at_commit(entity_name, commit_sha, project_root)
+        await kg.close()
+
+        if not callers:
+            console.print(
+                f"[yellow]No callers found for '{entity_name}' at commit {commit_sha}.[/yellow]"
+            )
+            raise typer.Exit(0)
+
+        table = Table(title=f"Callers of '{entity_name}' as of {commit_sha[:12]}")
+        table.add_column("Caller", style="cyan")
+        table.add_column("File")
+        table.add_column("Caller commit SHA", style="dim")
+        table.add_column("Callee", style="green")
+
+        for c in callers:
+            table.add_row(
+                c["caller_name"],
+                c["caller_file"] or "(none)",
+                c["caller_commit_sha"] or "(none)",
+                c["callee_name"],
+            )
+
+        console.print(table)
+
+    asyncio.run(_callers_at())
+
+
+@kg_app.command("ancestor")
+def kg_ancestor(
+    earlier: str = typer.Argument(..., help="Earlier (ancestor) commit SHA"),
+    later: str = typer.Argument(..., help="Later (descendant) commit SHA"),
+    project_root: Path = typer.Option(
+        ".", help="Project root directory", exists=True, file_okay=False
+    ),
+):
+    """Check if earlier commit is an ancestor of later commit.
+
+    Prints 'yes' (exit 0) or 'no' (exit 1).
+
+    Examples:
+        mcp-vector-search kg ancestor abc1234 def5678
+        mcp-vector-search kg ancestor HEAD~3 HEAD
+    """
+    from ...core.git_utils import is_ancestor_commit
+
+    project_root = project_root.resolve()
+    result = is_ancestor_commit(earlier, later, project_root)
+    if result:
+        console.print("yes")
+        raise typer.Exit(0)
+    else:
+        console.print("no")
+        raise typer.Exit(1)
+
+
 @kg_app.command("visualize")
 def visualize_kg(
     port: int = typer.Option(

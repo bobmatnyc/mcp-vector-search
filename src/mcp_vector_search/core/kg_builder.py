@@ -1277,6 +1277,7 @@ class KGBuilder:
             name=name,
             entity_type=chunk.chunk_type,
             file_path=str(chunk.file_path),
+            commit_sha=chunk.commit_hash or "",
         )
 
         # Track entity name mapping for relationship resolution
@@ -1362,6 +1363,7 @@ class KGBuilder:
             name=name,
             entity_type=chunk.chunk_type,
             file_path=str(chunk.file_path),
+            commit_sha=chunk.commit_hash or "",
         )
 
         try:

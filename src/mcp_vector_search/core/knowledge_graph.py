@@ -3171,6 +3171,192 @@ class KnowledgeGraph:
             "truncated": truncated,
         }
 
+    # ------------------------------------------------------------------
+    # Temporal query methods (v1)
+    #
+    # V1 semantic: each entity is tagged with the most recent commit that
+    # touched its file at kg_build time.  These methods answer "what
+    # existed as of commit X?" by checking ancestry via git.
+    # ------------------------------------------------------------------
+
+    async def get_entities_at_commit(
+        self,
+        commit_sha: str,
+        repo_root: Path,
+    ) -> list[dict[str, Any]]:
+        """Return entities whose stored commit_sha is an ancestor of commit_sha.
+
+        V1 note: reflects the most recent commit at last ``kg_build`` time,
+        not full git history.  Entities with an empty commit_sha are excluded.
+
+        Args:
+            commit_sha: The reference git commit SHA.
+            repo_root: Repository root for git operations.
+
+        Returns:
+            List of dicts with keys: id, name, entity_type, file_path, commit_sha.
+        """
+        from .git_utils import is_ancestor_commit
+
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Step 1: collect all distinct non-empty commit SHAs stored in the KG.
+            result = self.conn.execute(
+                "MATCH (e:CodeEntity) WHERE e.commit_sha <> '' "
+                "RETURN DISTINCT e.commit_sha"
+            )
+            all_shas: list[str] = []
+            while result.has_next():
+                row = result.get_next()
+                sha = row[0]
+                if sha:
+                    all_shas.append(sha)
+
+            # Step 2: filter to SHAs that are ancestors of (or equal to) commit_sha.
+            ancestor_shas = [
+                sha
+                for sha in all_shas
+                if is_ancestor_commit(sha, commit_sha, repo_root)
+            ]
+
+            if not ancestor_shas:
+                return []
+
+            # Step 3: fetch all entities with those commit SHAs.
+            entities: list[dict[str, Any]] = []
+            for sha in ancestor_shas:
+                r2 = self.conn.execute(
+                    "MATCH (e:CodeEntity) WHERE e.commit_sha = $sha "
+                    "RETURN e.id, e.name, e.entity_type, e.file_path, e.commit_sha",
+                    {"sha": sha},
+                )
+                while r2.has_next():
+                    row = r2.get_next()
+                    entities.append(
+                        {
+                            "id": row[0],
+                            "name": row[1],
+                            "entity_type": row[2],
+                            "file_path": row[3],
+                            "commit_sha": row[4],
+                        }
+                    )
+
+            return entities
+
+        except Exception as e:
+            logger.error(f"get_entities_at_commit failed: {e}")
+            return []
+
+    async def get_callers_at_commit(
+        self,
+        entity_name: str,
+        commit_sha: str,
+        repo_root: Path,
+    ) -> list[dict[str, Any]]:
+        """Return CALLS edges whose calling entity's commit_sha is an ancestor of commit_sha.
+
+        V1 note: reflects the most recent commit at last ``kg_build`` time,
+        not full git history.
+
+        Args:
+            entity_name: Name of the callee entity.
+            commit_sha: The reference git commit SHA.
+            repo_root: Repository root for git operations.
+
+        Returns:
+            List of dicts: caller_name, caller_file, caller_commit_sha, callee_name.
+        """
+        from .git_utils import is_ancestor_commit
+
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            result = self.conn.execute(
+                """
+                MATCH (caller:CodeEntity)-[:CALLS]->(e:CodeEntity)
+                WHERE e.name = $name
+                RETURN caller.name, caller.file_path, caller.commit_sha, e.name
+                """,
+                {"name": entity_name},
+            )
+
+            rows: list[tuple[str, str, str, str]] = []
+            while result.has_next():
+                row = result.get_next()
+                rows.append((row[0], row[1], row[2] or "", row[3]))
+
+            callers: list[dict[str, Any]] = []
+            for caller_name, caller_file, caller_sha, callee_name in rows:
+                if caller_sha and is_ancestor_commit(caller_sha, commit_sha, repo_root):
+                    callers.append(
+                        {
+                            "caller_name": caller_name,
+                            "caller_file": caller_file,
+                            "caller_commit_sha": caller_sha,
+                            "callee_name": callee_name,
+                        }
+                    )
+
+            return callers
+
+        except Exception as e:
+            logger.error(f"get_callers_at_commit failed for '{entity_name}': {e}")
+            return []
+
+    async def get_entity_history(self, entity_name: str) -> list[dict[str, Any]]:
+        """Return the entity's recorded commit metadata.
+
+        V1 note: each entity stores the commit recorded at last ``kg_build``
+        time — not a full git log.  One entry per distinct commit_sha for the
+        given name (handles renamed entities stored under different IDs).
+
+        Args:
+            entity_name: Entity name to look up.
+
+        Returns:
+            List of dicts: name, entity_type, file_path, commit_sha.
+            Empty list if entity not found or KG not initialized.
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            result = self.conn.execute(
+                """
+                MATCH (e:CodeEntity)
+                WHERE e.name = $name
+                RETURN e.name, e.entity_type, e.file_path, e.commit_sha
+                """,
+                {"name": entity_name},
+            )
+
+            seen: set[str] = set()
+            history: list[dict[str, Any]] = []
+            while result.has_next():
+                row = result.get_next()
+                sha = row[3] or ""
+                key = f"{row[2]}:{sha}"
+                if key not in seen:
+                    seen.add(key)
+                    history.append(
+                        {
+                            "name": row[0],
+                            "entity_type": row[1],
+                            "file_path": row[2],
+                            "commit_sha": sha,
+                        }
+                    )
+
+            return history
+
+        except Exception as e:
+            logger.error(f"get_entity_history failed for '{entity_name}': {e}")
+            return []
+
     async def get_inheritance_tree(self, class_name_or_id: str) -> list[dict[str, Any]]:
         """Get class hierarchy (parents and children).
 

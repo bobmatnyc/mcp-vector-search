@@ -33,6 +33,8 @@ def get_tool_schemas() -> list[Tool]:
         _get_kg_ontology_schema(),
         _get_kg_ia_schema(),
         _get_trace_execution_flow_schema(),
+        _get_kg_history_schema(),
+        _get_kg_callers_at_commit_schema(),
         _get_story_generate_schema(),
     ]
 
@@ -1111,6 +1113,57 @@ def _get_trace_execution_flow_schema() -> Tool:
                 },
             },
             "required": ["entry_point"],
+        },
+    )
+
+
+def _get_kg_history_schema() -> Tool:
+    """Get kg_history tool schema."""
+    return Tool(
+        name="kg_history",
+        description=(
+            "Get the recorded commit history for a named entity in the knowledge graph. "
+            "Returns the commit SHA(s) stored at last kg_build time for the entity. "
+            "V1 note: reflects the most recent commit per file at kg_build time, "
+            "not the full git log."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "entity_name": {
+                    "type": "string",
+                    "description": "Name of the entity to look up (e.g. 'MyClass', 'my_function')",
+                },
+            },
+            "required": ["entity_name"],
+        },
+    )
+
+
+def _get_kg_callers_at_commit_schema() -> Tool:
+    """Get kg_callers_at_commit tool schema."""
+    return Tool(
+        name="kg_callers_at_commit",
+        description=(
+            "Find what called a function as of a given git commit. "
+            "Returns CALLS edges whose calling entity's stored commit_sha is an "
+            "ancestor of (or equal to) the specified commit. "
+            "Requires knowledge graph to be built first (mvs kg build). "
+            "V1 note: reflects the most recent commit per file at kg_build time."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "entity_name": {
+                    "type": "string",
+                    "description": "Name of the callee entity (e.g. 'process_request')",
+                },
+                "commit_sha": {
+                    "type": "string",
+                    "description": "Git commit SHA to query as-of (full or abbreviated)",
+                },
+            },
+            "required": ["entity_name", "commit_sha"],
         },
     )
 
