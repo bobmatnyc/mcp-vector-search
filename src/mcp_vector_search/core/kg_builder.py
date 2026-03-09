@@ -210,6 +210,7 @@ class KGBuilder:
         entities_created: int,
         relationships_created: int,
         build_duration_seconds: float,
+        file_hashes: dict[str, str] | None = None,
     ) -> None:
         """Save KG metadata to disk.
 
@@ -219,6 +220,8 @@ class KGBuilder:
             entities_created: Number of entities created
             relationships_created: Number of relationships created
             build_duration_seconds: Build duration in seconds
+            file_hashes: Optional mapping of file_path -> sha256 used in this build.
+                When provided, enables hash-based incremental builds.
         """
         # Ensure directory exists
         self._metadata_path.parent.mkdir(parents=True, exist_ok=True)
@@ -238,12 +241,93 @@ class KGBuilder:
             "build_duration_seconds": build_duration_seconds,
         }
 
+        if file_hashes is not None:
+            metadata["file_hashes"] = file_hashes
+
         try:
             with open(self._metadata_path, "w") as f:
                 json.dump(metadata, f, indent=2)
             logger.debug(f"Saved KG metadata to {self._metadata_path}")
         except Exception as e:
             logger.warning(f"Failed to save KG metadata: {e}")
+
+    def update_metadata_file_hashes(self, file_hashes: dict[str, str]) -> None:
+        """Patch the on-disk kg_metadata.json to store updated file hashes.
+
+        Called by the parent process after a successful incremental subprocess build
+        to record the new hashes for files that were processed or deleted.
+
+        Args:
+            file_hashes: Full current mapping of file_path -> sha256 (all indexed files).
+        """
+        self._metadata_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Load existing metadata (may not exist on first run)
+        existing: dict = {}
+        if self._metadata_path.exists():
+            try:
+                with open(self._metadata_path) as f:
+                    existing = json.load(f)
+            except Exception as e:
+                logger.warning(
+                    f"update_metadata_file_hashes: failed to load existing metadata: {e}"
+                )
+
+        existing["file_hashes"] = file_hashes
+
+        try:
+            with open(self._metadata_path, "w") as f:
+                json.dump(existing, f, indent=2)
+            logger.debug(
+                "update_metadata_file_hashes: stored %d file hashes in %s",
+                len(file_hashes),
+                self._metadata_path,
+            )
+        except Exception as e:
+            logger.warning(
+                f"update_metadata_file_hashes: failed to write metadata: {e}"
+            )
+
+    def _get_changed_files(
+        self,
+        current_hashes: dict[str, str],
+    ) -> tuple[set[str], set[str], set[str]]:
+        """Compare current file hashes to the last KG build.
+
+        Reads ``file_hashes`` from ``kg_metadata.json``.  If the field is absent
+        (first run or old build without hash tracking) all current files are
+        reported as *new* so a full build is triggered.
+
+        Args:
+            current_hashes: Mapping of file_path -> sha256 from LanceDB (all
+                currently indexed files).
+
+        Returns:
+            Tuple of (changed_files, new_files, deleted_files) — each a set of
+            file_path strings.
+            - changed_files: files present in both sets but with differing hash
+            - new_files: files in current_hashes not in the stored metadata
+            - deleted_files: files in stored metadata not in current_hashes
+        """
+        metadata = self._load_metadata()
+        if metadata is None or "file_hashes" not in metadata:
+            # No prior hash data — treat everything as new (full build)
+            return set(), set(current_hashes.keys()), set()
+
+        stored_hashes: dict[str, str] = metadata["file_hashes"]
+
+        current_set = set(current_hashes.keys())
+        stored_set = set(stored_hashes.keys())
+
+        new_files = current_set - stored_set
+        deleted_files = stored_set - current_set
+        changed_files = {
+            fp
+            for fp in current_set & stored_set
+            if current_hashes[fp] != stored_hashes[fp]
+        }
+
+        return changed_files, new_files, deleted_files
 
     def _get_processed_chunk_ids(self) -> set[str]:
         """Get set of chunk IDs from metadata.

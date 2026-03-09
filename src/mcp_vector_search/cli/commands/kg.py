@@ -14,6 +14,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
+from ...core.chunks_backend import ChunksBackend
 from ...core.factory import ComponentFactory
 from ...core.kg_builder import KGBuilder
 from ...core.knowledge_graph import KnowledgeGraph
@@ -291,8 +292,21 @@ def _build_kg_impl(
     )
 
     async def _load_and_prepare_chunks():
-        """Load chunks from database and save to temp file for subprocess."""
+        """Load chunks from database and save to temp file for subprocess.
+
+        Returns:
+            Tuple of (chunks_temp_path, files_to_delete_temp_path, current_hashes).
+            - chunks_temp_path: path to JSON file with chunks to build into KG
+            - files_to_delete_temp_path: path to JSON file with file paths whose KG
+              entities should be deleted before building (None if not incremental or
+              no deletions needed)
+            - current_hashes: dict[file_path, sha256] for all currently indexed files
+              (empty dict when incremental=False, used to update metadata after build)
+        """
+        import os
+        import sys
         import tempfile
+        from dataclasses import asdict
 
         # Initialize database to load chunks
         components = await ComponentFactory.create_standard_components(
@@ -301,6 +315,9 @@ def _build_kg_impl(
         database = components.database
 
         temp_path = None
+        files_to_delete_path = None
+        current_hashes: dict[str, str] = {}
+
         async with database:
             # Check if index exists
             chunk_count = database.get_chunk_count()
@@ -315,38 +332,58 @@ def _build_kg_impl(
                     f"[cyan]Loading {chunk_count} chunks from database...[/cyan]"
                 )
 
-            # Load chunks based on incremental mode
-            processed_chunk_ids = set()
+            # --- Incremental: hash-based change detection ---
+            files_to_process: set[str] | None = None  # None = process all
+            files_to_delete: set[str] = set()
+
             if incremental:
-                # Load processed chunk IDs from KG metadata
-                metadata_path = (
-                    project_root
-                    / ".mcp-vector-search"
-                    / "knowledge_graph"
-                    / "kg_metadata.json"
+                # Use ChunksBackend to get per-file hashes (file_hash lives there)
+                lance_path = project_root / ".mcp-vector-search" / "lance"
+                chunks_backend = ChunksBackend(lance_path)
+                await chunks_backend.initialize()
+                try:
+                    current_hashes = await chunks_backend.get_all_indexed_file_hashes()
+                finally:
+                    # ChunksBackend has no async close; just release reference
+                    pass
+
+                # Compare against last KG build's stored hashes
+                builder_for_diff = KGBuilder(
+                    None,  # type: ignore[arg-type]  # only metadata path needed
+                    project_root,
                 )
-                if metadata_path.exists():
-                    with open(metadata_path) as f:
-                        metadata = json.load(f)
-                        processed_chunk_ids = set(
-                            metadata.get("processed_chunk_ids", [])
-                        )
+                changed_files, new_files, deleted_files = (
+                    builder_for_diff._get_changed_files(current_hashes)
+                )
+
+                files_to_process = changed_files | new_files
+                files_to_delete = changed_files | deleted_files
+
                 if verbose:
                     console.print(
-                        f"[yellow]Incremental mode: {len(processed_chunk_ids)} chunks already processed[/yellow]"
+                        f"[yellow]Incremental mode: {len(new_files)} new, "
+                        f"{len(changed_files)} changed, "
+                        f"{len(deleted_files)} deleted file(s)[/yellow]"
                     )
 
-            # Load all chunks
+                if not files_to_process and not files_to_delete:
+                    console.print(
+                        "[green]✓ KG already up to date — no file changes detected[/green]"
+                    )
+                    raise typer.Exit(0)
+
+                if verbose:
+                    console.print(
+                        f"[cyan]Processing {len(files_to_process)} file(s), "
+                        f"deleting entities from {len(files_to_delete)} file(s)[/cyan]"
+                    )
+
+            # --- Load all chunks (filtered if incremental) ---
             chunks = []
             for batch in database.iter_chunks_batched(batch_size=5000):
-                # Filter out already processed chunks in incremental mode
-                if incremental:
-                    batch = [
-                        c
-                        for c in batch
-                        if (c.chunk_id or c.id) not in processed_chunk_ids
-                    ]
-
+                if files_to_process is not None:
+                    # Only keep chunks belonging to files that changed or are new
+                    batch = [c for c in batch if str(c.file_path) in files_to_process]
                 chunks.extend(batch)
 
                 # Apply limit if specified
@@ -354,59 +391,73 @@ def _build_kg_impl(
                     chunks = chunks[:limit]
                     break
 
-            if incremental and len(chunks) == 0:
+            if incremental and len(chunks) == 0 and not files_to_delete:
                 console.print(
-                    "[green]✓ No new chunks to process in incremental mode[/green]"
+                    "[green]✓ No chunks to process in incremental mode[/green]"
                 )
                 raise typer.Exit(0)
 
             if verbose:
                 console.print(f"[green]✓ Loaded {len(chunks)} chunks[/green]")
 
-            # Serialize chunks to temp JSON file (inside async with to ensure DB is open)
-            import sys
-            from dataclasses import asdict
-
+            # --- Serialize chunks to temp JSON file ---
             if verbose:
                 console.print("[dim]Serializing chunks to temp file...[/dim]")
-                sys.stdout.flush()  # Force flush
+                sys.stdout.flush()
             temp_fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="kg_chunks_")
             try:
                 with open(temp_path, "w") as f:
-                    # Serialize chunks to JSON (use asdict for dataclasses)
                     chunks_data = [asdict(chunk) for chunk in chunks]
-                    # Convert Path objects to strings for JSON serialization
                     for chunk_dict in chunks_data:
                         chunk_dict["file_path"] = str(chunk_dict["file_path"])
                     json.dump(chunks_data, f)
                 if verbose:
                     console.print(f"[dim]Saved chunks to {temp_path}[/dim]")
-                    sys.stdout.flush()  # Force flush
+                    sys.stdout.flush()
             finally:
-                import os
-
                 os.close(temp_fd)
 
-        # Return temp_path AFTER database is properly closed
+            # --- Write files-to-delete list (incremental only) ---
+            if incremental and files_to_delete:
+                del_fd, files_to_delete_path = tempfile.mkstemp(
+                    suffix=".json", prefix="kg_delete_"
+                )
+                try:
+                    with open(files_to_delete_path, "w") as f:
+                        json.dump(list(files_to_delete), f)
+                    if verbose:
+                        console.print(
+                            f"[dim]Saved {len(files_to_delete)} file(s) to delete at "
+                            f"{files_to_delete_path}[/dim]"
+                        )
+                finally:
+                    os.close(del_fd)
+
+        # Return paths AFTER database is properly closed
         if verbose:
             console.print("[dim]Closing database...[/dim]")
-            sys.stdout.flush()  # Force flush
+            sys.stdout.flush()
 
         # CRITICAL: Explicitly close database and await cleanup
-        # This ensures the async context manager has fully released resources
         await database.close()
         if verbose:
             console.print("[dim]Database closed explicitly[/dim]")
             sys.stdout.flush()
 
-        return temp_path
+        return temp_path, files_to_delete_path, current_hashes
 
     # Load chunks in parent process (before spawning subprocess)
     if verbose:
         console.print("[cyan]Loading chunks in parent process...[/cyan]")
-    chunks_file = asyncio.run(_load_and_prepare_chunks())
+    chunks_file, files_to_delete_path, current_hashes = asyncio.run(
+        _load_and_prepare_chunks()
+    )
     if verbose:
         console.print(f"[green]✓ Chunks saved to {chunks_file}[/green]")
+        if files_to_delete_path:
+            console.print(
+                f"[green]✓ Files-to-delete saved to {files_to_delete_path}[/green]"
+            )
 
     # CRITICAL: Force cleanup of asyncio resources and background threads
     # LanceDB creates a persistent "LanceDBBackgroundEventLoop" daemon thread
@@ -513,6 +564,8 @@ def _build_kg_impl(
         cmd.append("--skip-documents")
     if verbose:
         cmd.append("--verbose")
+    if files_to_delete_path:
+        cmd.extend(["--files-to-delete", files_to_delete_path])
 
     if verbose:
         console.print(f"[dim]Command: {' '.join(cmd)}[/dim]")
@@ -524,6 +577,15 @@ def _build_kg_impl(
         stdout=None,  # Inherit stdout (shows in console)
         stderr=None,  # Inherit stderr (shows in console)
     )
+
+    # Clean up files-to-delete temp file (chunks file is cleaned by subprocess)
+    if files_to_delete_path:
+        try:
+            Path(files_to_delete_path).unlink(missing_ok=True)
+        except Exception as e:
+            logger.debug(
+                "Failed to clean up temp delete file %s: %s", files_to_delete_path, e
+            )
 
     if verbose:
         console.print(
@@ -549,6 +611,21 @@ def _build_kg_impl(
         raise typer.Exit(
             1
         )  # Always normalize to 1, never propagate raw signal/OS codes
+
+    # --- Post-build: persist file hashes so next incremental run can diff ---
+    if incremental and current_hashes:
+        try:
+            builder_for_meta = KGBuilder(
+                None,  # type: ignore[arg-type]  # only metadata path needed
+                project_root,
+            )
+            builder_for_meta.update_metadata_file_hashes(current_hashes)
+            if verbose:
+                console.print(
+                    f"[dim]Updated kg_metadata.json with {len(current_hashes)} file hashes[/dim]"
+                )
+        except Exception as e:
+            logger.warning("Failed to update KG metadata file hashes: %s", e)
 
     if verbose:
         console.print("[green]✓ Build completed successfully in subprocess[/green]")

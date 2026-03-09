@@ -40,6 +40,13 @@ def main():
     parser.add_argument(
         "--verbose", action="store_true", help="Enable verbose debug output"
     )
+    parser.add_argument(
+        "--files-to-delete",
+        type=str,
+        default=None,
+        help="Path to JSON file listing file paths whose KG entities should be deleted "
+        "before building (used by incremental builds)",
+    )
     args = parser.parse_args()
 
     # Suppress DEBUG logs unless --verbose
@@ -155,8 +162,30 @@ def main():
         kg = KnowledgeGraph(kg_path)
         kg.initialize_sync()
 
-        # Check if graph already exists
-        if not args.force:
+        # --- Incremental: delete stale entities BEFORE building new ones ---
+        if args.files_to_delete and Path(args.files_to_delete).exists():
+            with open(args.files_to_delete) as f:
+                files_to_delete = json.load(f)
+            if files_to_delete:
+                if args.verbose:
+                    console.print(
+                        f"[yellow]Deleting KG entities for {len(files_to_delete)} "
+                        f"changed/removed file(s)...[/yellow]"
+                    )
+                kg.delete_entities_for_files(files_to_delete)
+                if args.verbose:
+                    console.print(
+                        f"[green]✓ Deleted entities for {len(files_to_delete)} file(s)[/green]"
+                    )
+            logger.info(
+                "Incremental KG: deleted entities for %d file(s)", len(files_to_delete)
+            )
+
+        # Check if graph already exists — skip this guard in incremental mode
+        # (files_to_delete being set signals an incremental build where the KG is
+        # intentionally non-empty and we are *adding* to it, not replacing it)
+        incremental_mode = bool(args.files_to_delete)
+        if not args.force and not incremental_mode:
             stats = kg.get_stats_sync()
             if stats["total_entities"] > 0:
                 console.print(

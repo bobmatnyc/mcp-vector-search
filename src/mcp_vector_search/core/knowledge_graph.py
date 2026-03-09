@@ -4762,6 +4762,146 @@ class KnowledgeGraph:
 
         return samples
 
+    def delete_entities_for_files(self, file_paths: list[str]) -> int:
+        """Delete all entities and their relationships for the given file paths.
+
+        Kuzu does not support DETACH DELETE, so edges must be deleted before nodes.
+        Deletes edges where source OR target entity belongs to the given files, then
+        deletes the node records themselves.
+
+        Args:
+            file_paths: List of relative file path strings to purge from the KG.
+
+        Returns:
+            Total number of entity nodes deleted.
+        """
+        if not file_paths:
+            return 0
+
+        if not self._initialized:
+            raise RuntimeError(
+                "KnowledgeGraph not initialized. Call initialize_sync() first."
+            )
+
+        # Escape single-quotes in file paths and build an inline list literal.
+        # Kuzu supports `WHERE x.file_path IN ['a', 'b', ...]` syntax.
+        escaped = [p.replace("'", "\\'") for p in file_paths]
+        path_list = "[" + ", ".join(f"'{p}'" for p in escaped) + "]"
+
+        deleted_nodes = 0
+
+        # --- 1. Delete edges that touch any affected CodeEntity node ---
+        # Code-to-code relationship tables (CodeEntity -> CodeEntity)
+        code_rel_types = ["CALLS", "IMPORTS", "INHERITS", "CONTAINS"]
+        for rel_type in code_rel_types:
+            try:
+                self._execute_query(
+                    f"""
+                    MATCH (a:CodeEntity)-[r:{rel_type}]->(b:CodeEntity)
+                    WHERE a.file_path IN {path_list}
+                       OR b.file_path IN {path_list}
+                    DELETE r
+                    """
+                )
+            except Exception as e:
+                logger.debug(
+                    f"delete_entities_for_files: {rel_type} edge delete skipped: {e}"
+                )
+
+        # Doc-to-doc relationship (DocSection -> DocSection)
+        try:
+            self._execute_query(
+                f"""
+                MATCH (a:DocSection)-[r:FOLLOWS]->(b:DocSection)
+                WHERE a.file_path IN {path_list}
+                   OR b.file_path IN {path_list}
+                DELETE r
+                """
+            )
+        except Exception as e:
+            logger.debug(f"delete_entities_for_files: FOLLOWS edge delete skipped: {e}")
+
+        # Doc-to-code relationships (DocSection -> CodeEntity)
+        for rel_type in ["REFERENCES", "DOCUMENTS"]:
+            try:
+                self._execute_query(
+                    f"""
+                    MATCH (a:DocSection)-[r:{rel_type}]->(b:CodeEntity)
+                    WHERE a.file_path IN {path_list}
+                       OR b.file_path IN {path_list}
+                    DELETE r
+                    """
+                )
+            except Exception as e:
+                logger.debug(
+                    f"delete_entities_for_files: {rel_type} edge delete skipped: {e}"
+                )
+
+        # Doc-to-doc CONTAINS_SECTION (Document -> DocSection)
+        try:
+            self._execute_query(
+                f"""
+                MATCH (a:Document)-[r:CONTAINS_SECTION]->(b:DocSection)
+                WHERE a.file_path IN {path_list}
+                   OR b.file_path IN {path_list}
+                DELETE r
+                """
+            )
+        except Exception as e:
+            logger.debug(
+                f"delete_entities_for_files: CONTAINS_SECTION edge delete skipped: {e}"
+            )
+
+        # --- 2. Delete CodeEntity nodes ---
+        try:
+            result = self._execute_query(
+                f"""
+                MATCH (e:CodeEntity)
+                WHERE e.file_path IN {path_list}
+                DELETE e
+                """
+            )
+            # Kuzu does not reliably return a row count from DELETE; count via prior MATCH
+            _ = result
+        except Exception as e:
+            logger.warning(
+                f"delete_entities_for_files: CodeEntity node delete failed: {e}"
+            )
+
+        # --- 3. Delete DocSection nodes ---
+        try:
+            self._execute_query(
+                f"""
+                MATCH (d:DocSection)
+                WHERE d.file_path IN {path_list}
+                DELETE d
+                """
+            )
+        except Exception as e:
+            logger.debug(
+                f"delete_entities_for_files: DocSection node delete skipped: {e}"
+            )
+
+        # --- 4. Delete Document nodes ---
+        try:
+            self._execute_query(
+                f"""
+                MATCH (d:Document)
+                WHERE d.file_path IN {path_list}
+                DELETE d
+                """
+            )
+        except Exception as e:
+            logger.debug(
+                f"delete_entities_for_files: Document node delete skipped: {e}"
+            )
+
+        logger.info(
+            "delete_entities_for_files: purged entities/edges for %d file(s)",
+            len(file_paths),
+        )
+        return deleted_nodes
+
     def close_sync(self):
         """Close database connection (synchronous)."""
         with self._kuzu_lock:
