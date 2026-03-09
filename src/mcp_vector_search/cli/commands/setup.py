@@ -867,7 +867,7 @@ def main(
     save_api_key: bool = typer.Option(
         False,
         "--save-api-key",
-        help="Interactively save OpenRouter API key to config",
+        help="Enter interactive API key setup (OpenAI / OpenRouter)",
         rich_help_panel="🤖 Chat Options",
     ),
 ) -> None:
@@ -1124,9 +1124,11 @@ async def _run_smart_setup(
     # Phase 6: LLM API Key Setup (Optional)
     # ===========================================================================
     console.print("\n[bold blue]🤖 Chat Command Setup (Optional)...[/bold blue]")
-    # Always prompt interactively during setup - user can press Enter to skip/keep
-    # The save_api_key flag is now deprecated but kept for backward compatibility
-    llm_configured = setup_llm_api_keys(project_root=project_root, interactive=True)
+    # Non-interactive by default — setup runs autonomously without user input.
+    # Pass --save-api-key to drop into interactive API key configuration.
+    llm_configured = setup_llm_api_keys(
+        project_root=project_root, interactive=save_api_key
+    )
 
     # ===========================================================================
     # Phase 7: Skills Installation
@@ -1173,6 +1175,18 @@ async def _run_smart_setup(
             print_info(
                 "   Claude skills directory not found, skipping skill installation"
             )
+
+        # Run skill-install migration to ensure metadata and version tracking
+        # are in sync (also handles force re-setup updating outdated skills).
+        try:
+            from ...migrations import MigrationRunner
+            from ...migrations.v3_1_0_skill_install import SkillInstallMigration
+
+            skill_runner = MigrationRunner(project_root)
+            skill_runner.register_migrations([SkillInstallMigration()])
+            skill_runner.run_pending_migrations()
+        except Exception as e:
+            logger.debug(f"Skill install migration skipped: {e}")
 
     except Exception as e:
         print_warning(f"   ⚠️  Skill installation failed: {e}")
