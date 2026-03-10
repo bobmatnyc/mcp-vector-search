@@ -120,6 +120,7 @@ def _run_all_phases(
             force=force,
             batch_size=512,
             verbose=verbose,
+            show_deprecation=False,
         )
     except typer.Exit:
         # Re-raise typer.Exit to preserve exit codes

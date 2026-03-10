@@ -63,6 +63,7 @@ def reindex_main(
         "-v",
         help="Show verbose output",
     ),
+    show_deprecation: bool = True,
 ) -> None:
     """🔄 Full reindex: chunk files, embed chunks, and build knowledge graph.
 
@@ -87,9 +88,10 @@ def reindex_main(
         return
 
     # Show deprecation warning
-    console.print(
-        "[yellow]⚠ 'mvs reindex' is deprecated. Use 'mvs index' instead.[/yellow]"
-    )
+    if show_deprecation:
+        console.print(
+            "[yellow]⚠ 'mvs reindex' is deprecated. Use 'mvs index' instead.[/yellow]"
+        )
 
     # --force is alias for --fresh
     if force:
