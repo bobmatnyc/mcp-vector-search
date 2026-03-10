@@ -123,21 +123,26 @@ def _detect_device() -> str:
         return env_device
 
     # Apple Silicon MPS provides significant speedup for models >50M params on Apple Silicon
-    # PyTorch 2.10.0 has a known MPS regression, so we fall back to CPU for that version
     if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-        # Check for PyTorch 2.10.0 regression
-        if torch.__version__.startswith("2.10.0"):
+        # Smoke-test MPS with a tiny op — catches regressions without version pinning.
+        # More robust than a version blacklist: works for any future regression too.
+        try:
+            _t = torch.zeros(1, device="mps")
+            _ = _t + 1  # triggers actual MPS kernel
+            del _t
+            logger.info(
+                "Apple Silicon detected. Using MPS for GPU-accelerated inference."
+            )
+            return "mps"
+        except Exception as e:
             global _pytorch_warning_shown
             if not _pytorch_warning_shown:
                 logger.warning(
-                    "PyTorch 2.10.0 detected — falling back to CPU due to known MPS regression. "
-                    "Upgrade PyTorch to restore GPU acceleration."
+                    f"MPS available but smoke test failed ({e}) — falling back to CPU. "
+                    "Try upgrading PyTorch: pip install torch --upgrade"
                 )
                 _pytorch_warning_shown = True
             return "cpu"
-
-        logger.info("Apple Silicon detected. Using MPS for GPU-accelerated inference.")
-        return "mps"
 
     # Check for NVIDIA CUDA with detailed diagnostics
     if torch.cuda.is_available():
