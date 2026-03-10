@@ -247,6 +247,21 @@ class SemanticSearchEngine:
             else self._query_processor.get_adaptive_threshold(query)
         )
 
+        # Auto-adjust hybrid_alpha for identifier-style queries (SDK names, package names, etc.)
+        # These are better served by BM25 (exact match) than vector similarity.
+        from mcp_vector_search.core.query_processor import is_identifier_query
+
+        if (
+            search_mode == SearchMode.HYBRID
+            and hybrid_alpha == 0.7
+            and is_identifier_query(query)
+        ):
+            hybrid_alpha = 0.2
+            logger.debug(
+                "Identifier-style query detected — lowering hybrid_alpha from 0.7 to 0.2 "
+                "to favour BM25 exact matching over vector similarity."
+            )
+
         try:
             # Preprocess query
             processed_query = self._query_processor.preprocess_query(query)
@@ -414,6 +429,8 @@ class SemanticSearchEngine:
         function_name: str | None = None,
         limit: int = 10,
         similarity_threshold: float | None = None,
+        search_mode: SearchMode = SearchMode.HYBRID,
+        hybrid_alpha: float = 0.7,
     ) -> list[SearchResult]:
         """Find code similar to a specific function or file.
 
@@ -422,6 +439,8 @@ class SemanticSearchEngine:
             function_name: Specific function name (optional)
             limit: Maximum number of results
             similarity_threshold: Minimum similarity score
+            search_mode: Search mode (vector, bm25, or hybrid)
+            hybrid_alpha: Weight for vector search in hybrid mode
 
         Returns:
             List of similar code results
@@ -447,6 +466,8 @@ class SemanticSearchEngine:
                 limit=limit,
                 similarity_threshold=similarity_threshold,
                 include_context=True,
+                search_mode=search_mode,
+                hybrid_alpha=hybrid_alpha,
             )
 
         except Exception as e:
@@ -458,6 +479,8 @@ class SemanticSearchEngine:
         context_description: str,
         focus_areas: list[str] | None = None,
         limit: int = 10,
+        search_mode: SearchMode = SearchMode.HYBRID,
+        hybrid_alpha: float = 0.7,
     ) -> list[SearchResult]:
         """Search for code based on contextual description.
 
@@ -465,6 +488,8 @@ class SemanticSearchEngine:
             context_description: Description of what you're looking for
             focus_areas: Areas to focus on (e.g., ["security", "authentication"])
             limit: Maximum number of results
+            search_mode: Search mode (vector, bm25, or hybrid)
+            hybrid_alpha: Weight for vector search in hybrid mode
 
         Returns:
             List of contextually relevant results
@@ -481,6 +506,8 @@ class SemanticSearchEngine:
             query=enhanced_query,
             limit=limit,
             include_context=True,
+            search_mode=search_mode,
+            hybrid_alpha=hybrid_alpha,
         )
 
     async def search_with_context(

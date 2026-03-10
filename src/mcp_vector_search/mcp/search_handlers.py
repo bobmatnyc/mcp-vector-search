@@ -165,6 +165,8 @@ class SearchHandlers:
         function_name = args.get("function_name")
         limit = args.get("limit", 10)
         similarity_threshold = args.get("similarity_threshold", 0.3)
+        search_mode = args.get("search_mode", "hybrid")
+        hybrid_alpha = float(args.get("hybrid_alpha", 0.7))
 
         if not file_path:
             return CallToolResult(
@@ -188,12 +190,22 @@ class SearchHandlers:
                     isError=True,
                 )
 
+            # Convert search_mode string to enum
+            from ..core.search import SearchMode
+
+            try:
+                search_mode_enum = SearchMode(search_mode.lower())
+            except ValueError:
+                search_mode_enum = SearchMode.HYBRID
+
             # Run similar search
             results = await self.search_engine.search_similar(
                 file_path=file_path_obj,
                 function_name=function_name,
                 limit=limit,
                 similarity_threshold=similarity_threshold,
+                search_mode=search_mode_enum,
+                hybrid_alpha=hybrid_alpha,
             )
 
             # Format results
@@ -231,6 +243,8 @@ class SearchHandlers:
         description = args.get("description", "")
         focus_areas = args.get("focus_areas")
         limit = args.get("limit", 10)
+        search_mode = args.get("search_mode", "hybrid")
+        hybrid_alpha = float(args.get("hybrid_alpha", 0.7))
 
         if not description:
             return CallToolResult(
@@ -241,9 +255,21 @@ class SearchHandlers:
             )
 
         try:
+            # Convert search_mode string to enum
+            from ..core.search import SearchMode
+
+            try:
+                search_mode_enum = SearchMode(search_mode.lower())
+            except ValueError:
+                search_mode_enum = SearchMode.HYBRID
+
             # Perform context search
             results = await self.search_engine.search_by_context(
-                context_description=description, focus_areas=focus_areas, limit=limit
+                context_description=description,
+                focus_areas=focus_areas,
+                limit=limit,
+                search_mode=search_mode_enum,
+                hybrid_alpha=hybrid_alpha,
             )
 
             # Format results

@@ -314,12 +314,14 @@ class BM25Backend:
         """
         import re
 
-        # Lowercase
-        text = text.lower()
-
-        # Split on whitespace, punctuation, and special chars
-        # Keep alphanumeric sequences and underscores (common in code)
-        tokens = re.findall(r"\w+", text)
+        # Two-pass tokenizer: preserves "getstream.io" as one token AND indexes "getstream" and "io" separately
+        text_lower = text.lower()
+        # First pass: preserve dotted/hyphenated/slashed compound identifiers as single tokens
+        compound_tokens = re.findall(r"[\w][\w.\-/]*[\w]", text_lower)
+        # Second pass: also index individual word components for partial matching
+        word_tokens = re.findall(r"\w+", text_lower)
+        # Combine: compound forms first (higher BM25 weight from position), then components
+        tokens = compound_tokens + [t for t in word_tokens if t not in compound_tokens]
 
         # Filter empty tokens
         tokens = [t for t in tokens if t]

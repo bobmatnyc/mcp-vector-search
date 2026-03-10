@@ -333,6 +333,8 @@ def search_main(
                     limit=limit,
                     similarity_threshold=similarity_threshold,
                     json_output=json_output,
+                    search_mode=search_mode,
+                    hybrid_alpha=hybrid_alpha,
                 )
             )
         elif context:
@@ -348,6 +350,8 @@ def search_main(
                     focus_areas=focus_areas,
                     limit=limit,
                     json_output=json_output,
+                    search_mode=search_mode,
+                    hybrid_alpha=hybrid_alpha,
                 )
             )
         else:
@@ -768,6 +772,18 @@ async def run_search(
                     print_info(
                         "  • Check if files are indexed with [cyan]mcp-vector-search status[/cyan]"
                     )
+                    from ...core.query_processor import is_identifier_query
+
+                    if (
+                        search_mode == "hybrid"
+                        and hybrid_alpha >= 0.5
+                        and is_identifier_query(query)
+                    ):
+                        print_info(
+                            "  \U0001f4a1 This query looks like an SDK/package name. Try:\n"
+                            "       --search-mode bm25       (exact keyword matching)\n"
+                            "       --hybrid-alpha 0.2       (80% BM25, 20% vector)"
+                        )
 
     except Exception as e:
         logger.error(f"Search execution failed: {e}")
@@ -855,6 +871,8 @@ async def run_similar_search(
     limit: int = 10,
     similarity_threshold: float | None = None,
     json_output: bool = False,
+    search_mode: str = "hybrid",
+    hybrid_alpha: float = 0.7,
 ) -> None:
     """Run similar code search."""
     project_manager = ProjectManager(project_root)
@@ -876,12 +894,16 @@ async def run_similar_search(
         similarity_threshold=similarity_threshold or config.similarity_threshold,
     )
 
+    mode = SearchMode(search_mode.lower())
+
     async with database:
         results = await search_engine.search_similar(
             file_path=file_path,
             function_name=function_name,
             limit=limit,
             similarity_threshold=similarity_threshold,
+            search_mode=mode,
+            hybrid_alpha=hybrid_alpha,
         )
 
         if json_output:
@@ -968,6 +990,8 @@ async def run_context_search(
     focus_areas: list[str] | None = None,
     limit: int = 10,
     json_output: bool = False,
+    search_mode: str = "hybrid",
+    hybrid_alpha: float = 0.7,
 ) -> None:
     """Run contextual search."""
     project_manager = ProjectManager(project_root)
@@ -989,11 +1013,15 @@ async def run_context_search(
         similarity_threshold=config.similarity_threshold,
     )
 
+    mode = SearchMode(search_mode.lower())
+
     async with database:
         results = await search_engine.search_by_context(
             context_description=description,
             focus_areas=focus_areas,
             limit=limit,
+            search_mode=mode,
+            hybrid_alpha=hybrid_alpha,
         )
 
         if json_output:

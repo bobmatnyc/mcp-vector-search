@@ -2,6 +2,30 @@
 
 import re
 
+_IDENTIFIER_PATTERNS = [
+    re.compile(r"\b[\w-]+\.[\w-]+"),  # dotted: getstream.io, io.sentry
+    re.compile(r"\b[a-z][\w]*[A-Z][\w]*\b"),  # camelCase: StreamApp, getStream
+    re.compile(r"\b@[\w][\w/-]+\b"),  # npm scoped: @tanstack/query
+    re.compile(
+        r"\b[\w][\w]*-[\w][\w]*-[\w][\w]*\b"
+    ),  # multi-hyphen: react-activity-feed
+]
+_PACKAGE_KEYWORDS = frozenset(
+    ["sdk", "npm", "pip", "pypi", "crate", "package", "library", "lib"]
+)
+
+
+def is_identifier_query(query: str) -> bool:
+    """Return True if the query looks like an SDK name, package, or code identifier.
+
+    These queries are better served by BM25 than vector similarity, so callers
+    should lower hybrid_alpha (e.g. 0.2) when this returns True.
+    """
+    for pattern in _IDENTIFIER_PATTERNS:
+        if pattern.search(query):
+            return True
+    return any(w in _PACKAGE_KEYWORDS for w in query.lower().split())
+
 
 class QueryProcessor:
     """Handles query preprocessing, expansion, and adaptive threshold calculation."""
