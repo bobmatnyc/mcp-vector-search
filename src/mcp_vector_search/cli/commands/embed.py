@@ -45,7 +45,7 @@ def embed_main(
         min=100,
         max=10000,
     ),
-    device: str = typer.Option(
+    device: str | None = typer.Option(
         None,
         "--device",
         "-d",

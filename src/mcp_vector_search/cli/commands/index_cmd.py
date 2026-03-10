@@ -268,7 +268,7 @@ def index_embed(
             ctx=ctx,
             fresh=force,
             batch_size=batch_size,
-            device=device if device is not None else "",
+            device=device,
             verbose=verbose,
         )
     except typer.Exit:
@@ -292,11 +292,6 @@ def index_kg(
         False,
         "--entities-only",
         help="Extract entities only (skip relationships)",
-    ),
-    relationships_only: bool = typer.Option(
-        False,
-        "--relationships-only",
-        help="Extract relationships only (requires existing entities)",
     ),
     incremental: bool = typer.Option(
         False,
@@ -338,9 +333,6 @@ def index_kg(
         # Map flags to kg build parameters
         skip_documents = entities_only  # For now, map to skip_documents
         limit = None
-        # relationships_only is reserved for future use; acknowledge to satisfy linters
-        _ = relationships_only
-
         _build_kg_impl(
             project_root=project_root,
             force=force,
