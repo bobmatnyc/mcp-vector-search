@@ -98,29 +98,23 @@ def _run_all_phases(
         project_root: Project root directory
         verbose: Show verbose output
     """
-    # Import reindex_main to reuse existing logic
-    from .reindex import reindex_main
+    # Import the internal async function directly to avoid type issues with MockContext
+    import asyncio
 
-    # Create context object to match reindex expectations
-    ctx_obj = {"project_root": project_root}
+    from .reindex import _run_reindex
 
-    # Create a mock context (reindex_main expects typer.Context)
-    class MockContext:
-        def __init__(self, obj):
-            self.obj = obj
-            self.invoked_subcommand = None
+    # Resolve project_root before calling the async function
+    resolved_root = project_root or Path.cwd()
 
-    ctx = MockContext(ctx_obj)
-
-    # Call reindex_main which implements full pipeline
+    # Call the internal async function directly (bypasses CLI wrapper and MockContext)
     try:
-        reindex_main(
-            ctx=ctx,
-            fresh=force,
-            force=force,
-            batch_size=512,
-            verbose=verbose,
-            show_deprecation=False,
+        asyncio.run(
+            _run_reindex(
+                resolved_root,
+                fresh=force,
+                batch_size=512,
+                verbose=verbose,
+            )
         )
     except typer.Exit:
         # Re-raise typer.Exit to preserve exit codes
@@ -268,11 +262,13 @@ def index_embed(
     from .embed import embed_main
 
     try:
+        # embed_main's device parameter is annotated as str but accepts None at runtime;
+        # resolve None to "" (falsy) so Pyright sees a str being passed.
         embed_main(
             ctx=ctx,
             fresh=force,
             batch_size=batch_size,
-            device=device,
+            device=device if device is not None else "",
             verbose=verbose,
         )
     except typer.Exit:
@@ -342,6 +338,8 @@ def index_kg(
         # Map flags to kg build parameters
         skip_documents = entities_only  # For now, map to skip_documents
         limit = None
+        # relationships_only is reserved for future use; acknowledge to satisfy linters
+        _ = relationships_only
 
         _build_kg_impl(
             project_root=project_root,
