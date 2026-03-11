@@ -11,6 +11,7 @@ for semantic search. Enables:
 import platform
 import shutil
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -127,6 +128,13 @@ class VectorsBackend:
         self._append_count = 0  # Track appends (row count) for periodic compaction
         # Fix 5: schema verification cache — avoids per-call set-diff on stable schema
         self._schema_verified: bool = False
+
+        # TTL cache for get_stats() — avoids column-projected scan on repeated calls.
+        # Follows the same time.monotonic() wall-clock gate as SemanticSearchEngine
+        # health check throttle (search.py:88-90). Invalidated on any write or reset.
+        self._stats_cache: dict[str, Any] | None = None
+        self._stats_cache_time: float = 0.0
+        self._stats_cache_ttl: float = 30.0  # seconds
 
     # ------------------------------------------------------------------
     # Helpers: idempotent table operations
@@ -660,6 +668,7 @@ class VectorsBackend:
             if self._append_count % 20_000 < len(normalized_vectors):
                 self._compact_table()
 
+            self._stats_cache = None
             return len(normalized_vectors)
 
         except Exception as e:
@@ -926,6 +935,7 @@ class VectorsBackend:
 
             # Delete matching rows
             self._table.delete(filter_expr)
+            self._stats_cache = None
 
             logger.debug(f"Deleted {count} vectors for file: {file_path}")
             return count
@@ -993,6 +1003,8 @@ class VectorsBackend:
                         e,
                     )
 
+        if deleted_count > 0:
+            self._stats_cache = None
         logger.debug("Batch delete complete: %d files processed", deleted_count)
         return deleted_count
 
@@ -1176,6 +1188,14 @@ class VectorsBackend:
                 "avg_vector_norm": 0.0,
             }
 
+        # TTL cache guard — skip the column-projected scan if result is still fresh.
+        now = time.monotonic()
+        if (
+            self._stats_cache is not None
+            and (now - self._stats_cache_time) < self._stats_cache_ttl
+        ):
+            return self._stats_cache
+
         try:
             # Fix 3: use count_rows() for total and column-projected scanner for
             # aggregation metadata — avoids loading 768-float vectors (300MB for 100K rows).
@@ -1202,7 +1222,7 @@ class VectorsBackend:
                 chunk_type_counts = df_full["chunk_type"].value_counts().to_dict()
                 model_counts = df_full["model_version"].value_counts().to_dict()
 
-            return {
+            result = {
                 "total": total,
                 "files": file_count,
                 "languages": language_counts,
@@ -1211,6 +1231,9 @@ class VectorsBackend:
                 # avg_vector_norm omitted: computing it requires loading all vectors (300MB+)
                 "avg_vector_norm": 0.0,
             }
+            self._stats_cache = result
+            self._stats_cache_time = time.monotonic()
+            return result
 
         except Exception as e:
             # Check for corruption and auto-recover

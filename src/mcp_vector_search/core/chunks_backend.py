@@ -10,6 +10,7 @@ before embedding. Enables:
 
 import hashlib
 import platform
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -130,6 +131,13 @@ class ChunksBackend:
         self._db = None
         self._table = None
         self._append_count = 0  # Track appends for periodic compaction
+
+        # TTL cache for get_stats() — avoids column-projected scan on repeated calls.
+        # Follows the same time.monotonic() wall-clock gate as SemanticSearchEngine
+        # health check throttle (search.py:88-90). Invalidated on any write or reset.
+        self._stats_cache: dict[str, Any] | None = None
+        self._stats_cache_time: float = 0.0
+        self._stats_cache_ttl: float = 30.0  # seconds
 
     # ------------------------------------------------------------------
     # Helpers: idempotent table operations
@@ -364,6 +372,7 @@ class ChunksBackend:
             if self._append_count % 20_000 < len(normalized_chunks):
                 self._compact_table()
 
+            self._stats_cache = None
             return len(normalized_chunks)
 
         except Exception as e:
@@ -917,6 +926,7 @@ class ChunksBackend:
             if count > 0:
                 # Delete matching rows
                 self._table.delete(filter_expr)
+                self._stats_cache = None
                 logger.debug(f"Deleted {count} chunks for file: {file_path}")
 
             return count
@@ -991,6 +1001,8 @@ class ChunksBackend:
                         e,
                     )
 
+        if deleted_count > 0:
+            self._stats_cache = None
         logger.debug("Batch delete complete: %d files processed", deleted_count)
         return deleted_count
 
@@ -1055,6 +1067,14 @@ class ChunksBackend:
                 "languages": {},
             }
 
+        # TTL cache guard — skip the column-projected scan if result is still fresh.
+        now = time.monotonic()
+        if (
+            self._stats_cache is not None
+            and (now - self._stats_cache_time) < self._stats_cache_ttl
+        ):
+            return self._stats_cache
+
         try:
             # OPTIMIZATION: Use LanceDB scanner for efficient aggregations
             # However, for stats we need to read all rows to count by status/language
@@ -1075,7 +1095,7 @@ class ChunksBackend:
             # Count by language
             language_counts = df["language"].value_counts().to_dict()
 
-            return {
+            result = {
                 "total": len(df),
                 "pending": status_counts.get("pending", 0),
                 "processing": status_counts.get("processing", 0),
@@ -1084,6 +1104,9 @@ class ChunksBackend:
                 "files": file_count,
                 "languages": language_counts,
             }
+            self._stats_cache = result
+            self._stats_cache_time = time.monotonic()
+            return result
 
         except Exception as e:
             logger.error(f"Failed to get chunk stats: {e}")
@@ -1248,6 +1271,7 @@ class ChunksBackend:
             self._table.delete("chunk_id IS NOT NULL")  # Delete all rows
             self._table.add(df.to_dict("records"))
 
+            self._stats_cache = None
             logger.info(
                 f"Reset {chunk_count:,} chunks to pending status for re-embedding"
             )
