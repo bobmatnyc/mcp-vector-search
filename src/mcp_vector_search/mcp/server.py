@@ -126,6 +126,10 @@ class MCPVectorSearchServer:
                 database=self.database, project_root=self.project_root
             )
 
+            # Pre-load embedding model and cross-encoder reranker so the first
+            # search request is fast (no cold-start latency). Non-fatal on failure.
+            await self.search_engine.warm_up()
+
             # Check if reindex is needed due to version upgrade (non-fatal)
             if config.auto_reindex_on_upgrade:
                 await self._check_auto_reindex(config)

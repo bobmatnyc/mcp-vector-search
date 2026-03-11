@@ -8,6 +8,7 @@ LanceDB provides:
 - High performance for large-scale operations
 """
 
+import functools
 import hashlib
 import json
 import os
@@ -102,6 +103,7 @@ def _create_lance_schema(vector_dim: int) -> pa.Schema:
 LANCEDB_SCHEMA = _create_lance_schema(768)
 
 
+@functools.lru_cache(maxsize=1)  # Cache: sysctl subprocess only runs once per process
 def _detect_optimal_write_buffer_size() -> int:
     """Detect optimal write buffer size based on available RAM.
 

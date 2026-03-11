@@ -402,6 +402,27 @@ class EmbeddingCache:
         }
 
 
+@functools.lru_cache(maxsize=1)  # Cache: sysctl subprocess only runs once per process
+def _get_apple_silicon_chip_name() -> str:
+    """Return Apple Silicon chip name via sysctl (cached after first call).
+
+    Extracted from CodeBERTEmbeddingFunction.__init__ so the subprocess
+    runs at most once across multiple model loads in the same process.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(  # nosec B607 - safe read-only sysctl
+            ["sysctl", "-n", "machdep.cpu.brand_string"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.stdout.strip() if result.returncode == 0 else "Apple Silicon"
+    except Exception:
+        return "Apple Silicon"
+
+
 class CodeBERTEmbeddingFunction:
     """ChromaDB-compatible embedding function using CodeBERT."""
 
@@ -496,6 +517,10 @@ class CodeBERTEmbeddingFunction:
             self.model_name = model_name
             self.timeout = timeout
             self.device = device  # Store device for use in encode() calls
+            # Expose vector dimension so callers (e.g. LanceVectorDatabase) can read it
+            # without triggering a full model inference pass. This avoids the fallback
+            # test-embedding path in lancedb_backend.py.__init__.
+            self._dims: int = actual_dims
 
             # Fix 1: Cache batch size once at init — avoids spawning sysctl on every call.
             self._encode_batch_size = _detect_optimal_batch_size()
@@ -505,23 +530,8 @@ class CodeBERTEmbeddingFunction:
 
             # Log device usage and model details
             if device == "mps":
-                import subprocess
-
-                try:
-                    # Get Apple Silicon chip info
-                    result = subprocess.run(  # nosec B607 - safe read-only sysctl
-                        ["sysctl", "-n", "machdep.cpu.brand_string"],
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    )
-                    chip_name = (
-                        result.stdout.strip()
-                        if result.returncode == 0
-                        else "Apple Silicon"
-                    )
-                except Exception:
-                    chip_name = "Apple Silicon"
+                # Use cached helper — avoids spawning a sysctl subprocess on every model load
+                chip_name = _get_apple_silicon_chip_name()
 
                 logger.info(
                     f"Loaded {model_type} embedding model: {model_name} "
@@ -628,6 +638,15 @@ class CodeBERTEmbeddingFunction:
     def name(self) -> str:
         """Return embedding function name (ChromaDB requirement)."""
         return f"CodeBERTEmbeddingFunction:{self.model_name}"
+
+    @property
+    def dimension(self) -> int:
+        """Vector dimension of this embedding model.
+
+        LanceVectorDatabase checks for this property to avoid running a full
+        model inference just to measure the output length (Fix 1 perf patch).
+        """
+        return self._dims
 
     def __call__(self, input: list[str]) -> list[list[float]]:
         """Generate embeddings for input texts (ChromaDB interface)."""

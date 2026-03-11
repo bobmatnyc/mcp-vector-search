@@ -148,7 +148,7 @@ async def _run_embed(
     cache_dir = (
         get_default_cache_path(project_root) if config.cache_embeddings else None
     )
-    embedding_function, cache = create_embedding_function(
+    embedding_function, _ = create_embedding_function(
         model_name=config.embedding_model,
         cache_dir=cache_dir,
         cache_size=config.max_cache_size,

@@ -11,6 +11,7 @@ from loguru import logger
 from ...core.embeddings import create_embedding_function
 from ...core.exceptions import ProjectNotFoundError
 from ...core.factory import create_database
+from ...core.index_metadata import IndexMetadata
 from ...core.indexer import SemanticIndexer
 from ...core.project import ProjectManager
 from ...core.search import SearchMode, SemanticSearchEngine
@@ -459,14 +460,20 @@ async def _check_auto_reindex(
     if not config.auto_reindex_on_upgrade:
         return
 
+    # Fast path: read the metadata file directly to check version compatibility
+    # before constructing the heavyweight SemanticIndexer. IndexMetadata only
+    # opens a small JSON file, whereas SemanticIndexer initialises file discovery,
+    # worker pools, and other subsystems even when no reindex is needed.
+    metadata = IndexMetadata(project_root=project_root)
+    if not metadata.needs_reindex_for_version():
+        return
+
+    # Reindex is required — now construct the full indexer.
     indexer = SemanticIndexer(
         database=database,
         project_root=project_root,
         config=config,
     )
-
-    if not indexer.needs_reindex_for_version():
-        return
 
     from ..output import console
 
