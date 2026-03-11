@@ -14,6 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from mcp.types import TextContent
 
 from mcp_vector_search.core.models import SearchResult
 from mcp_vector_search.mcp.hybrid_search_handler import (
@@ -164,7 +165,9 @@ class TestHandleSearchHybrid:
         handler = _make_handler()
         result = await handler.handle_search_hybrid({})
         assert result.isError is True
-        assert "query" in result.content[0].text.lower()
+        content = result.content[0]
+        assert isinstance(content, TextContent)
+        assert "query" in content.text.lower()
 
     @pytest.mark.asyncio
     async def test_returns_error_when_query_blank(self) -> None:
@@ -199,7 +202,7 @@ class TestHandleSearchHybrid:
                 return [txt_result]
             return []
 
-        handler.search_engine.search = fake_search
+        handler.search_engine.search = fake_search  # type: ignore[method-assign]
 
         # KG strategy is disabled so we don't need a real DB.
         result = await handler.handle_search_hybrid(
@@ -207,7 +210,9 @@ class TestHandleSearchHybrid:
         )
 
         assert result.isError is False
-        payload = json.loads(result.content[0].text)
+        _content = result.content[0]
+        assert isinstance(_content, TextContent)
+        payload = json.loads(_content.text)
 
         # Top-level keys
         assert "results" in payload
@@ -258,14 +263,16 @@ class TestHandleSearchHybrid:
                 return sem_results
             return []
 
-        handler.search_engine.search = fake_search
+        handler.search_engine.search = fake_search  # type: ignore[method-assign]
 
         result = await handler.handle_search_hybrid(
             {"query": "anything", "limit": 3, "strategies": ["semantic"]}
         )
 
         assert result.isError is False
-        payload = json.loads(result.content[0].text)
+        _content = result.content[0]
+        assert isinstance(_content, TextContent)
+        payload = json.loads(_content.text)
         assert len(payload["results"]) <= 3
 
     @pytest.mark.asyncio
@@ -283,14 +290,16 @@ class TestHandleSearchHybrid:
                 return [sem_result]
             raise RuntimeError("BM25 index not available")
 
-        handler.search_engine.search = fake_search
+        handler.search_engine.search = fake_search  # type: ignore[method-assign]
 
         result = await handler.handle_search_hybrid(
             {"query": "good", "strategies": ["semantic", "text"]}
         )
 
         assert result.isError is False
-        payload = json.loads(result.content[0].text)
+        _content = result.content[0]
+        assert isinstance(_content, TextContent)
+        payload = json.loads(_content.text)
         assert len(payload["results"]) == 1
         assert payload["results"][0]["file_path"] == "good.py"
         # Text strategy contributed 0 results.
@@ -309,14 +318,16 @@ class TestHandleSearchHybrid:
                 return [_make_result("a.py", 1, 5, 0.9)]
             return []
 
-        handler.search_engine.search = fake_search
+        handler.search_engine.search = fake_search  # type: ignore[method-assign]
 
         result = await handler.handle_search_hybrid(
             {"query": "something", "strategies": ["semantic", "kg"]}
         )
 
         assert result.isError is False
-        payload = json.loads(result.content[0].text)
+        _content = result.content[0]
+        assert isinstance(_content, TextContent)
+        payload = json.loads(_content.text)
         assert payload["strategy_counts"]["kg"] == 0
         assert len(payload["results"]) == 1
 
@@ -332,12 +343,13 @@ class TestHandleSearchHybrid:
 
         async def fake_search(**kwargs: Any) -> list[SearchResult]:
             mode = kwargs.get("search_mode")
-            call_log.append(mode)
+            if mode is not None:
+                call_log.append(mode)
             if mode == SearchMode.VECTOR:
                 return [sem_result]
             return []
 
-        handler.search_engine.search = fake_search
+        handler.search_engine.search = fake_search  # type: ignore[method-assign]
 
         result = await handler.handle_search_hybrid(
             {"query": "solo", "strategies": ["semantic"]}
@@ -346,7 +358,9 @@ class TestHandleSearchHybrid:
         assert result.isError is False
         # BM25 search must NOT have been invoked.
         assert SearchMode.BM25 not in call_log
-        payload = json.loads(result.content[0].text)
+        _content = result.content[0]
+        assert isinstance(_content, TextContent)
+        payload = json.loads(_content.text)
         assert payload["strategy_counts"]["text"] == 0
 
 
@@ -380,3 +394,175 @@ class TestSearchHybridSchema:
         props = hybrid.inputSchema["properties"]
         for expected_prop in ("query", "limit", "strategies", "project_path"):
             assert expected_prop in props, f"Missing property: {expected_prop}"
+
+    def test_schema_documents_warnings_field(self) -> None:
+        """The response schema documents the 'warnings' output field."""
+        from mcp_vector_search.mcp.tool_schemas import get_tool_schemas
+
+        schemas = get_tool_schemas()
+        hybrid = next(t for t in schemas if t.name == "search_hybrid")
+        response_schema = hybrid.inputSchema.get("x-response-schema", {})
+        assert "warnings" in response_schema.get("properties", {}), (
+            "warnings field must be documented in x-response-schema"
+        )
+
+
+# ---------------------------------------------------------------------------
+# New fix tests
+# ---------------------------------------------------------------------------
+
+
+class TestKGWarning:
+    """Tests for Fix 1: KG-not-built warning in response."""
+
+    @pytest.mark.asyncio
+    async def test_kg_warning_when_not_built(self, tmp_path: Path) -> None:
+        """When KG is requested but the DB dir is absent, a warning is emitted."""
+        # tmp_path has no .mcp-vector-search/knowledge_graph/code_kg directory.
+        handler = _make_handler(project_root=tmp_path)
+
+        from mcp_vector_search.core.search import SearchMode
+
+        async def fake_search(**kwargs: Any) -> list[SearchResult]:
+            if kwargs.get("search_mode") == SearchMode.VECTOR:
+                return [_make_result("src/core/search.py", 1, 10, 0.9)]
+            return []
+
+        handler.search_engine.search = fake_search  # type: ignore[method-assign]
+
+        result = await handler.handle_search_hybrid(
+            {"query": "search engine", "strategies": ["semantic", "kg"]}
+        )
+
+        assert result.isError is False
+        _content = result.content[0]
+        assert isinstance(_content, TextContent)
+        payload = json.loads(_content.text)
+
+        assert "warnings" in payload, "Response must contain 'warnings' key"
+        assert isinstance(payload["warnings"], list)
+        assert len(payload["warnings"]) == 1
+        assert "kg_build" in payload["warnings"][0].lower()
+        assert "not built" in payload["warnings"][0].lower()
+
+    @pytest.mark.asyncio
+    async def test_no_warnings_when_kg_not_requested(self, tmp_path: Path) -> None:
+        """When KG strategy is not requested, warnings list is empty."""
+        handler = _make_handler(project_root=tmp_path)
+
+        from mcp_vector_search.core.search import SearchMode
+
+        async def fake_search(**kwargs: Any) -> list[SearchResult]:
+            if kwargs.get("search_mode") == SearchMode.VECTOR:
+                return [_make_result("src/core/search.py", 1, 10, 0.9)]
+            return []
+
+        handler.search_engine.search = fake_search  # type: ignore[method-assign]
+
+        result = await handler.handle_search_hybrid(
+            {"query": "search engine", "strategies": ["semantic", "text"]}
+        )
+
+        assert result.isError is False
+        _content = result.content[0]
+        assert isinstance(_content, TextContent)
+        payload = json.loads(_content.text)
+        assert "warnings" in payload
+        assert payload["warnings"] == []
+
+    @pytest.mark.asyncio
+    async def test_warnings_empty_on_successful_response(self) -> None:
+        """A fully successful call includes 'warnings' as an empty list."""
+        handler = _make_handler()
+
+        from mcp_vector_search.core.search import SearchMode
+
+        async def fake_search(**kwargs: Any) -> list[SearchResult]:
+            if kwargs.get("search_mode") == SearchMode.VECTOR:
+                return [_make_result("src/a.py", 1, 5, 0.9)]
+            return []
+
+        handler.search_engine.search = fake_search  # type: ignore[method-assign]
+
+        result = await handler.handle_search_hybrid(
+            {"query": "something", "strategies": ["semantic"]}
+        )
+
+        _content = result.content[0]
+        assert isinstance(_content, TextContent)
+        payload = json.loads(_content.text)
+        assert "warnings" in payload
+        assert payload["warnings"] == []
+
+
+class TestMinScoreCutoff:
+    """Tests for Fix 3: Minimum RRF score cutoff."""
+
+    @pytest.mark.asyncio
+    async def test_min_score_cutoff_filters_low_scores(self) -> None:
+        """Results with RRF score below 0.01 are excluded from the response."""
+        handler = _make_handler()
+
+        from mcp_vector_search.core.search import SearchMode
+
+        # Produce 100 distinct results — the 100th result gets rank 100.
+        # RRF score at rank 100 = 1/(60+100) = 0.00625, which is below 0.01.
+        many_results = [
+            _make_result(f"file_{i}.py", 1, 10, 1.0 - i * 0.005) for i in range(100)
+        ]
+
+        async def fake_search(**kwargs: Any) -> list[SearchResult]:
+            if kwargs.get("search_mode") == SearchMode.VECTOR:
+                return many_results
+            return []
+
+        handler.search_engine.search = fake_search  # type: ignore[method-assign]
+
+        result = await handler.handle_search_hybrid(
+            {"query": "test cutoff", "limit": 100, "strategies": ["semantic"]}
+        )
+
+        assert result.isError is False
+        _content = result.content[0]
+        assert isinstance(_content, TextContent)
+        payload = json.loads(_content.text)
+
+        # All returned results must be above the 0.01 threshold.
+        for item in payload["results"]:
+            assert item["score"] >= 0.01, (
+                f"Result {item['file_path']} has score {item['score']} below 0.01 cutoff"
+            )
+
+        # The 100-result list should have fewer items after the cutoff.
+        # rank 39 → 1/(60+39) = 0.0101 (passes), rank 40 → 1/(60+40) = 0.01 (passes),
+        # rank 41 → 1/(60+41) = 0.00990 (filtered out).
+        assert len(payload["results"]) < 100
+
+    @pytest.mark.asyncio
+    async def test_high_score_results_pass_cutoff(self) -> None:
+        """Results with good ranks always survive the min-score filter."""
+        handler = _make_handler()
+
+        from mcp_vector_search.core.search import SearchMode
+
+        top_results = [
+            _make_result(f"src/module_{i}.py", 1, 10, 0.95 - i * 0.01) for i in range(5)
+        ]
+
+        async def fake_search(**kwargs: Any) -> list[SearchResult]:
+            if kwargs.get("search_mode") == SearchMode.VECTOR:
+                return top_results
+            return []
+
+        handler.search_engine.search = fake_search  # type: ignore[method-assign]
+
+        result = await handler.handle_search_hybrid(
+            {"query": "module search", "limit": 10, "strategies": ["semantic"]}
+        )
+
+        assert result.isError is False
+        _content = result.content[0]
+        assert isinstance(_content, TextContent)
+        payload = json.loads(_content.text)
+        # All 5 high-quality results should survive.
+        assert len(payload["results"]) == 5

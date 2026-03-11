@@ -1327,5 +1327,41 @@ def _get_search_hybrid_schema() -> Tool:
                 },
             },
             "required": ["query"],
+            "x-response-schema": {
+                "type": "object",
+                "description": "JSON response returned in the tool result text.",
+                "properties": {
+                    "results": {
+                        "type": "array",
+                        "description": (
+                            "Ranked list of code chunks fused via RRF. "
+                            "Each item contains file_path, content, score, "
+                            "strategies, semantic_score, text_score, kg_score, "
+                            "line_start, line_end, and chunk_type."
+                        ),
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "The original query string.",
+                    },
+                    "strategy_counts": {
+                        "type": "object",
+                        "description": (
+                            "Per-strategy result counts before fusion, plus "
+                            "total_before_dedup and total_after_dedup."
+                        ),
+                    },
+                    "warnings": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Non-fatal advisory messages. Populated when a "
+                            "requested strategy could not contribute results. "
+                            'Example: "KG index not built — run kg_build first '
+                            'to enable KG strategy". Empty list when no issues.'
+                        ),
+                    },
+                },
+            },
         },
     )

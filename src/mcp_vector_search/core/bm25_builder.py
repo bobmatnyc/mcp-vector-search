@@ -96,7 +96,9 @@ async def build_bm25_index(
         )
 
         # Build BM25 index with tokenization progress reporting
-        bm25_start = time.monotonic()
+        bm25_start = (
+            time.time()
+        )  # must use time.time() to match progress_bar_with_eta epoch
 
         def _bm25_progress(current: int, total: int) -> None:
             if progress_tracker:

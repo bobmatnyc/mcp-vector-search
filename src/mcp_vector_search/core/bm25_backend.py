@@ -49,7 +49,6 @@ class BM25Backend:
         """Initialize BM25 backend."""
         self._bm25: BM25Okapi | None = None
         self._chunk_ids: list[str] = []
-        self._corpus_texts: list[str] = []  # For debugging/inspection
 
     def build_index(
         self,
@@ -79,7 +78,6 @@ class BM25Backend:
             logger.warning("No chunks provided for BM25 indexing")
             self._bm25 = None
             self._chunk_ids = []
-            self._corpus_texts = []
             return
 
         try:
@@ -134,7 +132,8 @@ class BM25Backend:
             # Build BM25 index
             self._bm25 = BM25Okapi(corpus)
             self._chunk_ids = chunk_ids
-            self._corpus_texts = [" ".join(tokens) for tokens in corpus]
+            # _corpus_texts removed: was an O(N*T) re-join pass stored in the pickle
+            # for debugging only. Halves pickle size and saves ~150-300 MB RAM at build time.
 
             logger.info(
                 f"Built BM25 index with {len(corpus)} chunks "
@@ -221,7 +220,6 @@ class BM25Backend:
             index_data = {
                 "bm25": self._bm25,
                 "chunk_ids": self._chunk_ids,
-                "corpus_texts": self._corpus_texts,
             }
 
             with open(path, "wb") as f:
@@ -246,7 +244,6 @@ class BM25Backend:
             logger.warning(f"BM25 index not found at {path}")
             self._bm25 = None
             self._chunk_ids = []
-            self._corpus_texts = []
             return
 
         try:
@@ -255,7 +252,8 @@ class BM25Backend:
 
             self._bm25 = index_data["bm25"]
             self._chunk_ids = index_data["chunk_ids"]
-            self._corpus_texts = index_data.get("corpus_texts", [])
+            # corpus_texts removed from pickle format; kept for backward compat read, then discarded
+            _ = index_data.get("corpus_texts", [])
 
             logger.info(
                 f"Loaded BM25 index from {path} ({len(self._chunk_ids)} chunks)"
@@ -266,7 +264,6 @@ class BM25Backend:
             # Non-fatal: set to None and continue (allows graceful fallback)
             self._bm25 = None
             self._chunk_ids = []
-            self._corpus_texts = []
             logger.warning("BM25 search will be unavailable (index load failed)")
 
     def is_built(self) -> bool:
@@ -314,16 +311,65 @@ class BM25Backend:
         """
         import re
 
-        # Two-pass tokenizer: preserves "getstream.io" as one token AND indexes "getstream" and "io" separately
+        # Three-pass tokenizer:
+        # Pass 1: preserve dotted/hyphenated/slashed compound identifiers as single tokens
+        #   e.g. "getstream.io" → "getstream.io"
+        # Pass 2: index individual word components for partial matching
+        #   e.g. "getstream.io" → "getstream", "io"
+        # Pass 3: split snake_case and camelCase into sub-words for natural language queries
+        #   e.g. "find_by_tag_docs" → "find", "by", "tag", "docs"
+        #   e.g. "HybridSearchHandler" → "hybrid", "search", "handler"
         text_lower = text.lower()
         # First pass: preserve dotted/hyphenated/slashed compound identifiers as single tokens
         compound_tokens = re.findall(r"[\w][\w.\-/]*[\w]", text_lower)
         # Second pass: also index individual word components for partial matching
         word_tokens = re.findall(r"\w+", text_lower)
-        # Combine: compound forms first (higher BM25 weight from position), then components
-        tokens = compound_tokens + [t for t in word_tokens if t not in compound_tokens]
 
-        # Filter empty tokens
-        tokens = [t for t in tokens if t]
+        # Pass 3: sub-word tokens from snake_case and camelCase splitting
+        # Work on the original (non-lowercased) text for camelCase detection, then lowercase results.
+        sub_word_tokens: list[str] = []
+        for token in re.findall(r"\w+", text):
+            # Split snake_case: find_by_tag_docs → [find, by, tag, docs]
+            parts = [
+                p.lower()
+                for p in token.split("_")
+                if p and len(p) > 1 and not p.isdigit()
+            ]
+            sub_word_tokens.extend(parts)
+
+            # Split camelCase: HybridSearchHandler → [Hybrid, Search, Handler]
+            camel_parts = re.findall(
+                r"[A-Z][a-z]+|[a-z]+(?=[A-Z])|[A-Z]{2,}(?=[A-Z][a-z])|[A-Z]{2,}$|[a-z]{2,}$",
+                token,
+            )
+            sub_word_tokens.extend([p.lower() for p in camel_parts if len(p) > 1])
+
+        # Build compound and word token sets for deduplication
+        compound_set = set(compound_tokens)
+        word_set = set(word_tokens)
+
+        # Deduplicate sub_word_tokens preserving order, then exclude any token
+        # already covered by pass 1 or pass 2.
+        seen_sub: set[str] = set()
+        unique_sub_word_tokens: list[str] = []
+        for t in sub_word_tokens:
+            if t not in seen_sub:
+                seen_sub.add(t)
+                unique_sub_word_tokens.append(t)
+
+        # Combine: compound tokens first (higher IDF weight), then word tokens not already
+        # in compound set, then sub-words not already covered by either pass.
+        tokens = (
+            compound_tokens
+            + [t for t in word_tokens if t not in compound_set]
+            + [
+                t
+                for t in unique_sub_word_tokens
+                if t not in compound_set and t not in word_set
+            ]
+        )
+
+        # Filter empty tokens and pure-numeric tokens
+        tokens = [t for t in tokens if t and not t.isdigit()]
 
         return tokens

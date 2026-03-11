@@ -89,8 +89,37 @@ class FunctionExtractor(NodeExtractorBase):
 class ClassExtractor(NodeExtractorBase):
     """Extracts class definitions as code chunks."""
 
+    # Classes with more than this many methods produce skeleton chunks that are
+    # too large to be useful in BM25 ranking — they contain every method name as
+    # a token and score highly for any related query, drowning out the specific
+    # method chunks.  When a class exceeds this threshold we skip the skeleton
+    # chunk entirely; the individual method chunks already provide full coverage.
+    MAX_SKELETON_METHODS = 40
+
+    @staticmethod
+    def _count_methods(node) -> int:
+        """Count direct function_definition children inside the class body block.
+
+        Args:
+            node: Tree-sitter class definition node
+
+        Returns:
+            Number of method definitions found in the class body
+        """
+        for child in node.children:
+            if child.type == "block":
+                return sum(
+                    1 for stmt in child.children if stmt.type == "function_definition"
+                )
+        return 0
+
     def extract(self, node, lines: list[str], file_path: Path) -> list[CodeChunk]:
         """Extract class definition as a chunk (skeleton only, no method bodies).
+
+        Classes with more than MAX_SKELETON_METHODS methods are skipped: the
+        skeleton would contain all method names as BM25 tokens and pollute
+        rankings for any method-related query.  Individual method chunks cover
+        all the content that would otherwise be in the skeleton.
 
         Args:
             node: Tree-sitter class definition node
@@ -98,13 +127,18 @@ class ClassExtractor(NodeExtractorBase):
             file_path: Path to source file
 
         Returns:
-            List containing the class chunk
+            List containing the class chunk, or empty list if class is too large
         """
         chunks = []
 
         class_name = MetadataExtractor.get_node_name(node)
         start_line = node.start_point[0] + 1
         end_line = node.end_point[0] + 1
+
+        # Drop skeleton for oversized classes to avoid BM25 token pollution
+        method_count = ClassExtractor._count_methods(node)
+        if method_count > ClassExtractor.MAX_SKELETON_METHODS:
+            return chunks
 
         # Get class skeleton (without method bodies)
         content = ClassSkeletonGenerator.generate_from_node(node, lines)

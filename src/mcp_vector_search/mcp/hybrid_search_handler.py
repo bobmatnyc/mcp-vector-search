@@ -172,8 +172,26 @@ class HybridSearchHandlers:
             kg_results=kg_results,
         )
 
+        # Fix 3: Drop results below minimum confidence threshold.
+        # 0.01 corresponds to ~rank 100 in a single strategy — too low to surface.
+        min_rrf_score = 0.01
+        fused = [c for c in fused if c.rrf_score >= min_rrf_score]
+
         total_before_dedup = len(semantic_results) + len(text_results) + len(kg_results)
         total_after_dedup = len(fused)
+
+        # Fix 1: Build warnings for KG requested but contributing 0 results.
+        warnings: list[str] = []
+        if _STRATEGY_KG in active_strategies and strategy_counts[_STRATEGY_KG] == 0:
+            kg_db_path = (
+                self.project_root / ".mcp-vector-search" / "knowledge_graph" / "code_kg"
+            )
+            if not kg_db_path.exists():
+                warnings.append(
+                    "KG index not built — run kg_build first to enable KG strategy"
+                )
+            else:
+                warnings.append("KG strategy returned no results for this query")
 
         # Apply final limit.
         top_results = fused[:limit]
@@ -205,6 +223,7 @@ class HybridSearchHandlers:
                 "total_before_dedup": total_before_dedup,
                 "total_after_dedup": total_after_dedup,
             },
+            "warnings": warnings,
         }
 
         return CallToolResult(
@@ -469,6 +488,12 @@ class HybridSearchHandlers:
         _process(semantic_results, _STRATEGY_SEMANTIC, "semantic_score")
         _process(text_results, _STRATEGY_TEXT, "text_score")
         _process(kg_results, _STRATEGY_KG, "kg_score")
+
+        # Boost source code results over documentation.
+        # Counteracts doc-dominance where research docs outrank the source they describe.
+        for candidate in candidates.values():
+            if "/src/" in candidate.file_path or candidate.file_path.startswith("src/"):
+                candidate.rrf_score *= 1.15
 
         # Sort by RRF score descending.
         return sorted(candidates.values(), key=lambda c: c.rrf_score, reverse=True)
