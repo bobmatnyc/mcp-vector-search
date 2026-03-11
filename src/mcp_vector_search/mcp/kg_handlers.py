@@ -146,11 +146,11 @@ class KGHandlers:
                 isError=True,
             )
 
-    async def handle_kg_stats(self, args: dict[str, Any]) -> CallToolResult:
+    async def handle_kg_stats(self, _args: dict[str, Any]) -> CallToolResult:
         """Handle kg_stats tool call.
 
         Args:
-            args: Tool arguments (none required)
+            _args: Tool arguments (none required)
 
         Returns:
             CallToolResult with KG statistics
@@ -241,7 +241,7 @@ class KGHandlers:
                 isError=True,
             )
 
-    async def handle_kg_ia(self, args: dict[str, Any]) -> CallToolResult:
+    async def handle_kg_ia(self, _args: dict[str, Any]) -> CallToolResult:
         """Handle kg_ia tool call — return IA tree.
 
         Returns:
@@ -286,8 +286,14 @@ class KGHandlers:
 
         Args:
             args: Tool arguments containing:
-                - entity (str): Entity name to query
+                - entity (str): Entity name to query, OR a tag query in the
+                  form "tag:<name>" / "tags:<name>" for tag-based doc lookup.
+                  Comma-separated tags perform an AND query:
+                  "tag:python,async" → docs that have BOTH tags.
+                - query_type (str | None): Set to "tag" to force tag-query mode
+                  regardless of the entity string format.
                 - relationship (str | None): Relationship type filter
+                  (ignored for tag queries).
                 - limit (int): Max results (default: 20)
 
         Returns:
@@ -297,6 +303,7 @@ class KGHandlers:
             entity = args.get("entity")
             relationship = args.get("relationship")
             limit = args.get("limit", 20)
+            query_type = args.get("query_type", "")
 
             if not entity:
                 return CallToolResult(
@@ -308,6 +315,22 @@ class KGHandlers:
                     ],
                     isError=True,
                 )
+
+            # --- Detect tag-query mode ---
+            # Triggered by query_type="tag" OR entity prefixed with "tag:" / "tags:"
+            tag_names: list[str] = []
+            is_tag_query = query_type == "tag"
+            if not is_tag_query:
+                lower_entity = entity.lower()
+                if lower_entity.startswith("tag:") or lower_entity.startswith("tags:"):
+                    is_tag_query = True
+                    # Strip prefix and split comma-separated tags
+                    prefix_end = entity.index(":") + 1
+                    raw_tags = entity[prefix_end:]
+                    tag_names = [t.strip() for t in raw_tags.split(",") if t.strip()]
+            if is_tag_query and not tag_names:
+                # query_type="tag" path — use entity value directly as tag name(s)
+                tag_names = [t.strip() for t in entity.split(",") if t.strip()]
 
             # Initialize knowledge graph
             kg_path = self.project_root / ".mcp-vector-search" / "knowledge_graph"
@@ -328,7 +351,40 @@ class KGHandlers:
                     isError=True,
                 )
 
-            # Query based on relationship type
+            # --- Tag query path ---
+            if is_tag_query:
+                tag_results = await kg.find_by_tag_docs(tag_names, limit=limit)
+                await kg.close()
+
+                if not tag_results:
+                    result = {
+                        "status": "success",
+                        "query": {
+                            "type": "tag",
+                            "tags": tag_names,
+                        },
+                        "results": [],
+                        "message": f"No documents found with tag(s): {tag_names}",
+                    }
+                else:
+                    result = {
+                        "status": "success",
+                        "query": {
+                            "type": "tag",
+                            "tags": tag_names,
+                        },
+                        "results": tag_results,
+                        "count": len(tag_results),
+                    }
+
+                return CallToolResult(
+                    content=[
+                        TextContent(type="text", text=json.dumps(result, indent=2))
+                    ],
+                    isError=False,
+                )
+
+            # --- Normal entity query path ---
             results = []
 
             if relationship in ["calls", "called_by"]:

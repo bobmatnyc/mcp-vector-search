@@ -10,7 +10,7 @@ import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
 
 import yaml
 from loguru import logger
@@ -31,6 +31,7 @@ from .knowledge_graph import (
     Repository,
 )
 from .models import CodeChunk
+from .progress import ProgressTracker
 from .resource_manager import get_batch_size_for_memory, get_configured_workers
 
 console = Console()
@@ -547,7 +548,7 @@ class KGBuilder:
                 )
 
         # Build Document (file-level) nodes from collected doc sections
-        documents, doc_relationships = self._build_document_nodes(
+        documents, doc_relationships, frontmatter_persons = self._build_document_nodes(
             doc_sections, text_chunks
         )
         for rel in doc_relationships:
@@ -620,6 +621,18 @@ class KGBuilder:
             else:
                 console.print(f"  ✓ {stats['tags']} tags")
 
+        # Insert frontmatter-derived Person nodes (author fields) before relationships
+        if frontmatter_persons:
+            self.kg.add_persons_batch_sync(list(frontmatter_persons))
+            if progress_tracker:
+                progress_tracker.item(
+                    f"{len(frontmatter_persons):,} frontmatter authors", done=True
+                )
+            else:
+                console.print(
+                    f"  ✓ {len(frontmatter_persons)} frontmatter author persons"
+                )
+
         # IA Topics: populate Topic nodes and HAS_TOPIC edges from Document.doc_category
         if documents:
             ia_stats = self._build_ia_topics_sync(documents, progress_tracker)
@@ -650,7 +663,8 @@ class KGBuilder:
             result = self.kg._execute_query(
                 "MATCH (c:CodeEntity) RETURN c.id as id", {}
             )
-            code_entity_ids = {row[0] for row in result}
+            assert not isinstance(result, list)
+            code_entity_ids = {cast(list[Any], row)[0] for row in result}
             valid_entity_ids.update(code_entity_ids)
             if progress_tracker:
                 progress_tracker.debug(
@@ -673,7 +687,8 @@ class KGBuilder:
             result = self.kg._execute_query(
                 "MATCH (d:DocSection) RETURN d.id as id", {}
             )
-            doc_ids = {row[0] for row in result}
+            assert not isinstance(result, list)
+            doc_ids = {cast(list[Any], row)[0] for row in result}
             valid_entity_ids.update(doc_ids)
             if progress_tracker:
                 progress_tracker.debug(f"Found {len(doc_ids)} DocSection IDs in Kuzu")
@@ -690,7 +705,8 @@ class KGBuilder:
         # Query Tag IDs
         try:
             result = self.kg._execute_query("MATCH (t:Tag) RETURN t.id as id", {})
-            tag_ids = {row[0] for row in result}
+            assert not isinstance(result, list)
+            tag_ids = {cast(list[Any], row)[0] for row in result}
             valid_entity_ids.update(tag_ids)
             if progress_tracker:
                 progress_tracker.debug(f"Found {len(tag_ids)} Tag IDs in Kuzu")
@@ -705,7 +721,8 @@ class KGBuilder:
         # Query Document IDs
         try:
             result = self.kg._execute_query("MATCH (d:Document) RETURN d.id as id", {})
-            document_node_ids = {row[0] for row in result}
+            assert not isinstance(result, list)
+            document_node_ids = {cast(list[Any], row)[0] for row in result}
             valid_entity_ids.update(document_node_ids)
             if progress_tracker:
                 progress_tracker.debug(
@@ -721,6 +738,28 @@ class KGBuilder:
             else:
                 console.print(
                     f"[yellow]Warning: Failed to query Document IDs: {e}[/yellow]"
+                )
+
+        # Query Person IDs (includes both git-sourced and frontmatter-sourced persons)
+        try:
+            result = self.kg._execute_query("MATCH (p:Person) RETURN p.id as id", {})
+            assert not isinstance(result, list)
+            person_node_ids = {cast(list[Any], row)[0] for row in result}
+            valid_entity_ids.update(person_node_ids)
+            if progress_tracker:
+                progress_tracker.debug(
+                    f"Found {len(person_node_ids)} Person IDs in Kuzu"
+                )
+            else:
+                console.print(
+                    f"[dim]Found {len(person_node_ids)} Person IDs in Kuzu[/dim]"
+                )
+        except Exception as e:
+            if progress_tracker:
+                progress_tracker.warning(f"Failed to query Person IDs: {e}")
+            else:
+                console.print(
+                    f"[yellow]Warning: Failed to query Person IDs: {e}[/yellow]"
                 )
 
         if progress_tracker:
@@ -802,7 +841,7 @@ class KGBuilder:
                         rtype: str,
                         n_total: int,
                         start: float,
-                        tracker: object,
+                        tracker: ProgressTracker | None,
                         con: Console,
                     ):
                         def _callback(inserted: int, total: int) -> None:
@@ -1025,8 +1064,8 @@ class KGBuilder:
                     relationships[rel_type].extend(rel_list)
 
             # Build Document (file-level) nodes from collected doc sections
-            documents, doc_relationships = self._build_document_nodes(
-                doc_sections, text_chunks
+            documents, doc_relationships, frontmatter_persons = (
+                self._build_document_nodes(doc_sections, text_chunks)
             )
             for rel in doc_relationships:
                 rel_type = rel.relationship_type.upper()
@@ -1056,6 +1095,12 @@ class KGBuilder:
             if tags:
                 stats["tags"] = await self.kg.add_tags_batch(list(tags))
                 console.print(f"  ✓ {stats['tags']} tags")
+
+            if frontmatter_persons:
+                self.kg.add_persons_batch_sync(list(frontmatter_persons))
+                console.print(
+                    f"  ✓ {len(frontmatter_persons)} frontmatter author persons"
+                )
 
             total_entities = (
                 len(code_entities) + len(doc_sections) + len(documents) + len(tags)
@@ -1124,8 +1169,8 @@ class KGBuilder:
                     relationships[rel_type].extend(rel_list)
 
             # Build Document (file-level) nodes from collected doc sections
-            documents, doc_relationships = self._build_document_nodes(
-                doc_sections, text_chunks
+            documents, doc_relationships, frontmatter_persons = (
+                self._build_document_nodes(doc_sections, text_chunks)
             )
             for rel in doc_relationships:
                 rel_type = rel.relationship_type.upper()
@@ -1158,6 +1203,12 @@ class KGBuilder:
             if tags:
                 stats["tags"] = await self.kg.add_tags_batch(list(tags))
                 logger.info(f"✓ Inserted {stats['tags']} tags")
+
+            if frontmatter_persons:
+                self.kg.add_persons_batch_sync(list(frontmatter_persons))
+                logger.info(
+                    f"✓ Inserted {len(frontmatter_persons)} frontmatter author persons"
+                )
 
             # Phase 3: Batch insert relationships
             logger.info("Phase 3: Batch inserting relationships...")
@@ -1600,7 +1651,7 @@ class KGBuilder:
                 languages.add(lang)
 
         # Extract markdown headers
-        headers = self._extract_headers(chunk.content, chunk.start_line)
+        headers = self._extract_headers(chunk.content, chunk.start_line or 0)
 
         # If no headers, still add tags from frontmatter and code blocks
         if not headers:
@@ -2015,24 +2066,53 @@ class KGBuilder:
 
         return "other"
 
+    # Known frontmatter fields that are handled explicitly and should NOT be
+    # stored in the schemaless JSON blob.
+    _KNOWN_FRONTMATTER_FIELDS: frozenset[str] = frozenset(
+        [
+            "tags",
+            "categories",
+            "keywords",
+            "labels",
+            "related",
+            "date",
+            "created_at",
+            "updated_at",
+            "author",
+            "authors",
+            "entities",
+            "title",
+        ]
+    )
+
     def _build_document_nodes(
         self,
         doc_sections: list[DocSection],
         text_chunks: list[CodeChunk],
-    ) -> tuple[list[Document], list[CodeRelationship]]:
+    ) -> tuple[list[Document], list[CodeRelationship], list[Person]]:
         """Build Document (file-level) nodes from collected doc sections.
 
         Groups DocSections by file_path, creates one Document per unique file,
         classifies by category, and extracts cross-document markdown links.
+
+        Also reads frontmatter to:
+        - Populate Document.last_modified (from date/created_at/updated_at fields
+          or filesystem mtime as fallback).
+        - Populate Document.frontmatter (JSON blob of non-standard fields).
+        - Create frontmatter-author Person nodes and WROTE relationships.
+        - Create REFERENCES relationships for explicit frontmatter entity lists.
 
         Args:
             doc_sections: All DocSection nodes collected from text chunks
             text_chunks: All text chunks for word count and link extraction
 
         Returns:
-            Tuple of (documents, relationships) where relationships contains
-            CONTAINS_SECTION and RELATED_TO edges
+            Tuple of (documents, relationships, author_persons) where
+            relationships contains CONTAINS_SECTION, RELATED_TO, and
+            REFERENCES edges, and author_persons holds Person objects
+            derived from frontmatter author fields.
         """
+        import os
         from collections import defaultdict
 
         # Group sections and chunks by file path
@@ -2046,6 +2126,8 @@ class KGBuilder:
 
         documents: list[Document] = []
         all_relationships: list[CodeRelationship] = []
+        # Persons derived from frontmatter author fields (keyed by person_id)
+        frontmatter_persons: dict[str, Person] = {}
 
         # Track document IDs for cross-reference resolution
         file_to_doc_id: dict[str, str] = {}
@@ -2071,6 +2153,61 @@ class KGBuilder:
             # Category classification
             doc_category = self._classify_document(file_path)
 
+            # --- last_modified: frontmatter date fields or filesystem mtime ---
+            last_modified: str | None = None
+            frontmatter_data: dict | None = None
+            abs_path = (
+                self.project_root / file_path
+                if not Path(file_path).is_absolute()
+                else Path(file_path)
+            )
+            if abs_path.exists():
+                try:
+                    full_content = abs_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                    frontmatter_data = self._extract_frontmatter(full_content)
+                except Exception as e:
+                    logger.debug(f"Could not read frontmatter for {file_path}: {e}")
+
+            if frontmatter_data:
+                for date_key in ("date", "created_at", "updated_at"):
+                    raw = frontmatter_data.get(date_key)
+                    if raw:
+                        # Normalize: could be a datetime object (yaml parses dates
+                        # natively), a date object, or a plain string.
+                        try:
+                            if hasattr(raw, "isoformat"):
+                                last_modified = raw.isoformat()
+                            else:
+                                last_modified = str(raw)
+                        except Exception:
+                            pass
+                        if last_modified:
+                            break
+
+            if not last_modified and abs_path.exists():
+                try:
+                    mtime = os.stat(abs_path).st_mtime
+                    last_modified = datetime.fromtimestamp(mtime, tz=UTC).isoformat()
+                except Exception as e:
+                    logger.debug(f"Could not stat {file_path}: {e}")
+
+            # --- Schemaless frontmatter blob ---
+            extra_frontmatter: dict = {}
+            if frontmatter_data:
+                for k, v in frontmatter_data.items():
+                    if k not in self._KNOWN_FRONTMATTER_FIELDS:
+                        try:
+                            # Ensure the value is JSON-serializable; skip if not
+                            json.dumps(v)
+                            extra_frontmatter[k] = v
+                        except (TypeError, ValueError):
+                            extra_frontmatter[k] = str(v)
+            frontmatter_json = (
+                json.dumps(extra_frontmatter) if extra_frontmatter else "{}"
+            )
+
             doc = Document(
                 id=doc_id,
                 file_path=file_path,
@@ -2078,6 +2215,8 @@ class KGBuilder:
                 doc_category=doc_category,
                 word_count=word_count,
                 section_count=len(sections),
+                last_modified=last_modified,
+                frontmatter=frontmatter_json,
             )
             documents.append(doc)
 
@@ -2090,6 +2229,70 @@ class KGBuilder:
                         relationship_type="CONTAINS_SECTION",
                     )
                 )
+
+            # --- Frontmatter author → Person node + WROTE edge ---
+            if frontmatter_data:
+                raw_author = frontmatter_data.get("author") or frontmatter_data.get(
+                    "authors"
+                )
+                author_names: list[str] = []
+                if isinstance(raw_author, str):
+                    author_names = [raw_author.strip()]
+                elif isinstance(raw_author, list):
+                    for entry in raw_author:
+                        if isinstance(entry, str) and entry.strip():
+                            author_names.append(entry.strip())
+
+                for author_name in author_names:
+                    # Use a name-based ID (no email available from frontmatter)
+                    name_hash = hashlib.sha256(
+                        author_name.lower().encode()
+                    ).hexdigest()[:16]
+                    person_id = f"person:fm:{name_hash}"
+
+                    if person_id not in frontmatter_persons:
+                        frontmatter_persons[person_id] = Person(
+                            id=person_id,
+                            name=author_name,
+                            email_hash=name_hash,
+                            commits_count=0,
+                        )
+
+                    # WROTE relationship: Person → Document
+                    all_relationships.append(
+                        CodeRelationship(
+                            source_id=person_id,
+                            target_id=doc_id,
+                            relationship_type="WROTE",
+                        )
+                    )
+
+            # --- Frontmatter entities → REFERENCES edges ---
+            if frontmatter_data:
+                entity_refs = frontmatter_data.get("entities", [])
+                if isinstance(entity_refs, list):
+                    for ent_name in entity_refs:
+                        if not isinstance(ent_name, str):
+                            continue
+                        entity_id = self._resolve_entity(ent_name)
+                        if entity_id:
+                            # Use first DocSection of this document as source
+                            first_section = (
+                                sorted_sections[0] if sorted_sections else None
+                            )
+                            if first_section:
+                                all_relationships.append(
+                                    CodeRelationship(
+                                        source_id=first_section.id,
+                                        target_id=entity_id,
+                                        relationship_type="references",
+                                    )
+                                )
+                        else:
+                            logger.debug(
+                                f"frontmatter entities: no CodeEntity found "
+                                f"for '{ent_name}' in {file_path}"
+                            )
 
         # Extract cross-document links from chunk content
         # Pattern matches [link text](path/to/file.md) or [link text](path.md#anchor)
@@ -2133,7 +2336,7 @@ class KGBuilder:
                     except Exception:
                         continue  # Skip unresolvable links
 
-        return documents, all_relationships
+        return documents, all_relationships, list(frontmatter_persons.values())
 
     async def _process_text_chunk(self, chunk: CodeChunk, stats: dict[str, int]):
         """Extract documentation sections and references from text chunk.
@@ -2220,7 +2423,7 @@ class KGBuilder:
         seen_langs = set()
 
         # Extract markdown headers from content
-        headers = self._extract_headers(chunk.content, chunk.start_line)
+        headers = self._extract_headers(chunk.content, chunk.start_line or 0)
 
         if not headers:
             return
@@ -2325,7 +2528,7 @@ class KGBuilder:
             except Exception as e:
                 logger.debug(f"Failed to process doc section: {e}")
 
-    def _extract_headers(self, content: str, start_line: int) -> list[dict[str, any]]:
+    def _extract_headers(self, content: str, start_line: int) -> list[dict[str, Any]]:
         """Extract markdown headers from content.
 
         Args:
@@ -2560,11 +2763,12 @@ class KGBuilder:
         # Get all code entity info from KG
         entity_info = []
         try:
-            result = self.kg.conn.execute(
+            result = self.kg._conn.execute(
                 "MATCH (e:CodeEntity) RETURN e.id, e.name, e.entity_type, e.file_path"
             )
+            assert not isinstance(result, list)
             while result.has_next():
-                row = result.get_next()
+                row: list[Any] = cast(list[Any], result.get_next())
                 entity_info.append((row[0], row[1], row[2], row[3]))
         except Exception as e:
             logger.debug(f"Failed to fetch code entities: {e}")
@@ -2578,7 +2782,7 @@ class KGBuilder:
         # Extract headers from doc chunks and create doc section IDs
         doc_sections = []
         for chunk in doc_chunks:
-            headers = self._extract_headers(chunk.content, chunk.start_line)
+            headers = self._extract_headers(chunk.content, chunk.start_line or 0)
             for header in headers:
                 section_id = f"doc:{chunk.chunk_id}:{header['line']}"
                 section_content = self._extract_section_content(
@@ -3045,12 +3249,13 @@ class KGBuilder:
 
         # Detect languages from file extensions in CodeEntity nodes
         try:
-            result = self.kg.conn.execute(
+            result = self.kg._conn.execute(
                 "MATCH (e:CodeEntity) RETURN DISTINCT e.file_path"
             )
+            assert not isinstance(result, list)
             file_paths = []
             while result.has_next():
-                file_paths.append(result.get_next()[0])
+                file_paths.append(cast(list[Any], result.get_next())[0])
 
             # Count language usage
             language_counts: dict[str, int] = {}
@@ -3999,11 +4204,12 @@ class KGBuilder:
             # Get file paths for all code entities
             entity_files: dict[str, list[str]] = {}  # file_path -> [entity_ids]
             try:
-                result = self.kg.conn.execute(
+                result = self.kg._conn.execute(
                     "MATCH (e:CodeEntity) RETURN e.id, e.file_path"
                 )
+                assert not isinstance(result, list)
                 while result.has_next():
-                    row = result.get_next()
+                    row = cast(list[Any], result.get_next())
                     entity_id, file_path = row[0], row[1]
                     if file_path:
                         # Normalize to relative path
@@ -4153,7 +4359,7 @@ class KGBuilder:
 
                     # Add author to list (most recent commits first from git log)
                     file_authors_map[file_path].append(
-                        (person_id, current_time, current_commit)
+                        (person_id, current_time or "", current_commit or "")
                     )
 
             logger.info(f"Mapped {len(file_authors_map)} files to authors from git log")
@@ -4301,7 +4507,7 @@ class KGBuilder:
 
                     # Add author to list (most recent commits first from git log)
                     file_authors_map[file_path].append(
-                        (person_id, current_time, current_commit)
+                        (person_id, current_time or "", current_commit or "")
                     )
 
         except subprocess.TimeoutExpired:
@@ -4577,12 +4783,13 @@ class KGBuilder:
         if languages:
             logger.info("Creating WRITTEN_IN relationships...")
             try:
-                result = self.kg.conn.execute(
+                result = self.kg._conn.execute(
                     "MATCH (e:CodeEntity) RETURN e.id, e.file_path"
                 )
+                assert not isinstance(result, list)
                 written_in_count = 0
                 while result.has_next():
-                    row = result.get_next()
+                    row = cast(list[Any], result.get_next())
                     entity_id, file_path = row[0], row[1]
                     if file_path:
                         lang = self._detect_language_from_extension(file_path)
@@ -4612,11 +4819,12 @@ class KGBuilder:
         if persons:
             entity_files = []
             try:
-                result = self.kg.conn.execute(
+                result = self.kg._conn.execute(
                     "MATCH (e:CodeEntity) RETURN e.id, e.file_path"
                 )
+                assert not isinstance(result, list)
                 while result.has_next():
-                    row = result.get_next()
+                    row = cast(list[Any], result.get_next())
                     if row[1]:  # Has file path
                         entity_files.append((row[0], row[1]))
             except Exception as e:
@@ -4629,10 +4837,11 @@ class KGBuilder:
             if project:
                 logger.info("Creating PART_OF relationships...")
                 try:
-                    result = self.kg.conn.execute("MATCH (e:CodeEntity) RETURN e.id")
+                    result = self.kg._conn.execute("MATCH (e:CodeEntity) RETURN e.id")
+                    assert not isinstance(result, list)
                     entity_ids = []
                     while result.has_next():
-                        entity_ids.append(result.get_next()[0])
+                        entity_ids.append(cast(list[Any], result.get_next())[0])
 
                     # Use batch insert for PART_OF
                     part_of_count = await self.kg.add_part_of_batch(

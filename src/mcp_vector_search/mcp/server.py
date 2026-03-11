@@ -24,6 +24,7 @@ from ..core.project import ProjectManager
 from ..core.search import SemanticSearchEngine
 from ..core.watcher import FileWatcher
 from .analysis_handlers import AnalysisHandlers
+from .hybrid_search_handler import HybridSearchHandlers  # type: ignore[import-untyped]
 from .kg_handlers import KGHandlers
 from .project_handlers import ProjectHandlers
 from .review_handlers import ReviewHandlers
@@ -88,6 +89,7 @@ class MCPVectorSearchServer:
 
         # Initialize handler instances (lazy initialization on first use)
         self._search_handlers: SearchHandlers | None = None
+        self._hybrid_search_handlers: HybridSearchHandlers | None = None
         self._analysis_handlers: AnalysisHandlers | None = None
         self._project_handlers: ProjectHandlers | None = None
         self._wiki_handlers: WikiHandlers | None = None
@@ -159,6 +161,9 @@ class MCPVectorSearchServer:
 
             # Initialize handlers (after indexer setup for status access)
             self._search_handlers = SearchHandlers(
+                self.search_engine, self.project_root
+            )
+            self._hybrid_search_handlers = HybridSearchHandlers(
                 self.search_engine, self.project_root
             )
             self._analysis_handlers = AnalysisHandlers(self.project_root)
@@ -310,7 +315,22 @@ class MCPVectorSearchServer:
 
         try:
             tool_name = request.params.name
-            args = request.params.arguments
+            args = request.params.arguments or {}
+
+            # Guard: all handlers must be initialized via initialize()
+            if not all(
+                [
+                    self._search_handlers,
+                    self._hybrid_search_handlers,
+                    self._project_handlers,
+                    self._analysis_handlers,
+                    self._wiki_handlers,
+                    self._kg_handlers,
+                    self._story_handlers,
+                    self._review_handlers,
+                ]
+            ):
+                raise RuntimeError("Server not initialized — call initialize() first")
 
             # Delegate to search handlers
             if tool_name == "search_code":
@@ -319,6 +339,8 @@ class MCPVectorSearchServer:
                 return await self._search_handlers.handle_search_similar(args)
             elif tool_name == "search_context":
                 return await self._search_handlers.handle_search_context(args)
+            elif tool_name == "search_hybrid":
+                return await self._hybrid_search_handlers.handle_search_hybrid(args)
 
             # Delegate to project handlers
             elif tool_name == "get_project_status":

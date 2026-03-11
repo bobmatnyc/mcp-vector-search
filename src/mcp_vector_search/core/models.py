@@ -451,6 +451,11 @@ class SearchResult(BaseModel):
         default=None, description="Monorepo subproject name if applicable"
     )
 
+    # Chunk identifier (from vectors backend, used for deduplication)
+    chunk_id: str | None = Field(
+        default=None, description="Unique chunk identifier from the vector index"
+    )
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property

@@ -13,6 +13,7 @@ def get_tool_schemas() -> list[Tool]:
         _get_search_code_schema(),
         _get_search_similar_schema(),
         _get_search_context_schema(),
+        _get_search_hybrid_schema(),
         _get_project_status_schema(),
         _get_index_project_schema(),
         _get_embed_chunks_schema(),
@@ -704,6 +705,7 @@ def _get_kg_query_schema() -> Tool:
 - Supports filtering by relationship type
 - Returns relationship metadata and paths
 - Traverses graph within specified hops
+- Supports tag-based document lookup (see Tag queries below)
 
 **Relationship types:**
 - **calls**: Functions called BY this entity
@@ -715,6 +717,15 @@ def _get_kg_query_schema() -> Tool:
 - **contains**: Entities CONTAINED BY this entity (module contains functions)
 - **contained_by**: Entities that CONTAIN this entity
 
+**Tag queries — find documents by tag:**
+Use the "tag:" prefix in the entity field to search by frontmatter tag instead
+of by entity name.  Comma-separated tags perform an AND query (all tags must match).
+Alternatively, pass query_type="tag" and use the entity field as the tag value.
+
+- Single tag:  {"entity": "tag:python"}
+- AND query:   {"entity": "tag:python,async"}
+- Explicit:    {"entity": "async", "query_type": "tag"}
+
 **Query patterns:**
 1. **Call graph discovery**: Find all functions a method calls
 2. **Impact analysis**: Find what calls a function (callers)
@@ -722,6 +733,7 @@ def _get_kg_query_schema() -> Tool:
 4. **Module structure**: Find what a module contains
 5. **Dependency analysis**: Find import relationships
 6. **General exploration**: Find all related entities (no relationship filter)
+7. **Tag search**: Find documentation sections by frontmatter tag
 
 **Example queries:**
 1. Find all functions called by search_code:
@@ -742,7 +754,13 @@ def _get_kg_query_schema() -> Tool:
 6. Limit results:
    {"entity": "search", "relationship": "calls", "limit": 10}
 
-**Example response:**
+7. Find docs tagged "performance":
+   {"entity": "tag:performance"}
+
+8. Find docs tagged both "python" and "async":
+   {"entity": "tag:python,async"}
+
+**Example response (entity query):**
 {
   "status": "success",
   "query": {
@@ -755,15 +773,26 @@ def _get_kg_query_schema() -> Tool:
       "type": "function",
       "direction": "calls",
       "file_path": "src/core/search.py"
-    },
-    {
-      "name": "_filter_results",
-      "type": "function",
-      "direction": "calls",
-      "file_path": "src/core/search.py"
     }
   ],
-  "count": 2
+  "count": 1
+}
+
+**Example response (tag query):**
+{
+  "status": "success",
+  "query": {
+    "type": "tag",
+    "tags": ["performance"]
+  },
+  "results": [
+    {
+      "file_path": "docs/performance-guide.md",
+      "title": "Performance Guide",
+      "section_id": "doc:abc123:10"
+    }
+  ],
+  "count": 1
 }
 
 **Empty results:**
@@ -778,7 +807,19 @@ def _get_kg_query_schema() -> Tool:
             "properties": {
                 "entity": {
                     "type": "string",
-                    "description": "Entity name or ID to query (e.g., 'search_code', 'VectorDatabase', 'SemanticSearchEngine')",
+                    "description": (
+                        "Entity name or ID to query (e.g., 'search_code', 'VectorDatabase'). "
+                        "For tag queries use 'tag:<name>' prefix (e.g., 'tag:python' or "
+                        "'tag:python,async' for AND)."
+                    ),
+                },
+                "query_type": {
+                    "type": "string",
+                    "enum": ["tag"],
+                    "description": (
+                        "Set to 'tag' to treat the entity field as a tag name "
+                        "and search documentation sections by frontmatter tag."
+                    ),
                 },
                 "relationship": {
                     "type": "string",
@@ -792,7 +833,7 @@ def _get_kg_query_schema() -> Tool:
                         "contains",
                         "contained_by",
                     ],
-                    "description": "Filter by relationship type. Omit to return all relationships.",
+                    "description": "Filter by relationship type. Omit to return all relationships. Ignored for tag queries.",
                 },
                 "limit": {
                     "type": "integer",
@@ -1233,5 +1274,58 @@ def _get_story_generate_schema() -> Tool:
                 },
             },
             "required": [],
+        },
+    )
+
+
+def _get_search_hybrid_schema() -> Tool:
+    """Get search_hybrid tool schema."""
+    return Tool(
+        name="search_hybrid",
+        description=(
+            "Hybrid search that fuses semantic (vector), full-text (BM25), and "
+            "knowledge-graph (KG) strategies in parallel using Reciprocal Rank "
+            "Fusion (RRF). Returns a single ranked list that benefits from the "
+            "complementary strengths of all three strategies. Use when you want "
+            "the most comprehensive search results, or when standard search_code "
+            "misses expected results."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query",
+                },
+                "project_path": {
+                    "type": "string",
+                    "description": (
+                        "Absolute path to the project root. "
+                        "Defaults to the server's configured project root."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return (after fusion)",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 50,
+                },
+                "strategies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["semantic", "text", "kg"],
+                    },
+                    "description": (
+                        "Which search strategies to activate. "
+                        'Defaults to all three: ["semantic", "text", "kg"]. '
+                        'Omit the "kg" strategy if the knowledge graph has not '
+                        "been built yet."
+                    ),
+                    "default": ["semantic", "text", "kg"],
+                },
+            },
+            "required": ["query"],
         },
     )
