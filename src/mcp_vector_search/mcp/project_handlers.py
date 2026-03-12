@@ -3,12 +3,14 @@
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from mcp.types import CallToolResult, TextContent
 
 from ..core.exceptions import ProjectNotFoundError
 from ..core.indexer import SemanticIndexer
 from ..core.project import ProjectManager
 from ..core.search import SemanticSearchEngine
+from ..utils.gitignore_updater import ensure_gitignore_entry
 
 
 class ProjectHandlers:
@@ -50,14 +52,45 @@ class ProjectHandlers:
             if self.search_engine:
                 stats = await self.search_engine.database.get_stats()
 
+                # Query VectorsBackend separately to get Phase 2 (embedded vectors) count.
+                # chunks_stored = Phase 1 complete; vectors_embedded = Phase 2 complete.
+                vectors_embedded = 0
+                lance_path = config.index_path / "lance"
+                vectors_path = lance_path / "vectors.lance"
+                if vectors_path.exists():
+                    try:
+                        from ..core.vectors_backend import VectorsBackend
+
+                        vb = VectorsBackend(lance_path)
+                        await vb.initialize()
+                        vb_stats = await vb.get_stats()
+                        vectors_embedded = vb_stats.get("total", 0)
+                        await vb.close()
+                    except Exception as e:
+                        logger.debug(f"Could not read vectors_backend stats: {e}")
+
+                chunks_stored = int(stats.total_chunks)
+
+                # Derive two-phase indexing status
+                if chunks_stored == 0:
+                    indexing_status = "not_indexed"
+                elif vectors_embedded == 0:
+                    indexing_status = "embedding_incomplete"
+                elif vectors_embedded < chunks_stored:
+                    indexing_status = "partially_embedded"
+                else:
+                    indexing_status = "ready"
+
                 status_info = {
                     "project_root": str(config.project_root),
                     "index_path": str(config.index_path),
                     "file_extensions": config.file_extensions,
                     "embedding_model": config.embedding_model,
                     "languages": config.languages,
-                    "total_chunks": stats.total_chunks,
+                    "chunks_stored": chunks_stored,
+                    "vectors_embedded": vectors_embedded,
                     "total_files": stats.total_files,
+                    "indexing_status": indexing_status,
                     "index_size": (
                         f"{stats.index_size_mb:.2f} MB"
                         if hasattr(stats, "index_size_mb")
@@ -65,11 +98,18 @@ class ProjectHandlers:
                     ),
                 }
 
+                # Add resume hint when Phase 1 complete but Phase 2 not started
+                if chunks_stored > 0 and vectors_embedded == 0:
+                    status_info["hint"] = (
+                        "Chunks are ready but vectors are not embedded. "
+                        "Run embed_chunks to complete indexing without re-chunking."
+                    )
+
                 # Add KG status
                 # Check if indexer is available (for live status during background build)
                 if self.indexer:
                     status_info["kg_status"] = self.indexer.get_kg_status()
-                    status_info["search_available"] = True
+                    status_info["search_available"] = vectors_embedded > 0
                 else:
                     # Check if KG database file exists (for servers without file watching)
                     kg_db_path = (
@@ -82,7 +122,7 @@ class ProjectHandlers:
                         status_info["kg_status"] = "complete"
                     else:
                         status_info["kg_status"] = "not_started"
-                    status_info["search_available"] = stats.total_chunks > 0
+                    status_info["search_available"] = vectors_embedded > 0
             else:
                 status_info = {
                     "project_root": str(config.project_root),
@@ -126,10 +166,14 @@ class ProjectHandlers:
         file_extensions = args.get("file_extensions")
 
         try:
+            # Ensure .mcp-vector-search/ is gitignored for MCP-first workflows
+            # (when 'init' was never run, the gitignore entry may be missing)
+            ensure_gitignore_entry(self.project_root)
+
             # Check if index already exists (unless force is set)
             if not force and self.search_engine:
                 stats = await self.search_engine.database.get_stats()
-                if stats.total_chunks > 0:
+                if int(stats.total_chunks) > 0:
                     return CallToolResult(
                         content=[
                             TextContent(
@@ -254,12 +298,52 @@ class ProjectHandlers:
         response_text += f"**Embedding Model:** {status_info['embedding_model']}\n"
         response_text += f"**Languages:** {', '.join(status_info['languages'])}\n"
 
-        if "total_chunks" in status_info:
+        if "chunks_stored" in status_info:
+            chunks_stored = status_info["chunks_stored"]
+            vectors_embedded = status_info["vectors_embedded"]
+            indexing_status = status_info.get("indexing_status", "unknown")
+
+            response_text += f"**Chunks Stored (Phase 1):** {chunks_stored}\n"
+            response_text += f"**Vectors Embedded (Phase 2):** {vectors_embedded}\n"
+            response_text += f"**Total Files:** {status_info['total_files']}\n"
+            response_text += f"**Index Size:** {status_info['index_size']}\n"
+
+            # Indexing status with human-readable label
+            status_labels = {
+                "not_indexed": "Not indexed",
+                "embedding_incomplete": "Chunked but not embedded (Phase 2 incomplete)",
+                "partially_embedded": f"Partially embedded ({vectors_embedded}/{chunks_stored} vectors ready)",
+                "ready": "Ready",
+            }
+            status_display = status_labels.get(indexing_status, indexing_status)
+            response_text += f"**Indexing Status:** {status_display}\n"
+
+            # Surface hint when Phase 2 is missing
+            if "hint" in status_info:
+                response_text += f"\n> **Hint:** {status_info['hint']}\n"
+
+            # Add KG status and search availability
+            if "kg_status" in status_info:
+                kg_status = status_info["kg_status"]
+                if kg_status == "not_started":
+                    kg_display = "Not built"
+                elif kg_status == "building":
+                    kg_display = "Building in background..."
+                elif kg_status == "complete":
+                    kg_display = "Available"
+                elif kg_status.startswith("error:"):
+                    kg_display = f"Failed: {kg_status[7:]}"
+                else:
+                    kg_display = kg_status
+
+                response_text += f"**Knowledge Graph:** {kg_display}\n"
+                response_text += f"**Search Available:** {'Yes' if status_info['search_available'] else 'No'}\n"
+        elif "total_chunks" in status_info:
+            # Fallback for callers that still pass the old total_chunks key
             response_text += f"**Total Chunks:** {status_info['total_chunks']}\n"
             response_text += f"**Total Files:** {status_info['total_files']}\n"
             response_text += f"**Index Size:** {status_info['index_size']}\n"
 
-            # Add KG status and search availability
             if "kg_status" in status_info:
                 kg_status = status_info["kg_status"]
                 if kg_status == "not_started":

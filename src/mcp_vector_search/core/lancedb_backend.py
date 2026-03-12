@@ -339,8 +339,9 @@ class LanceVectorDatabase:
             table_path = self.persist_directory / f"{table_name}.lance"
             if table_path.exists():
                 logger.warning(
-                    f"Detected corrupted {table_name} table (missing data fragment). "
-                    f"Auto-recovering by deleting: {table_path}"
+                    f"Corrupted LanceDB table detected at {table_path}. "
+                    f"Auto-recovering by removing corrupted data. "
+                    f"Re-indexing will be required for this table."
                 )
                 shutil.rmtree(table_path)
                 logger.info(f"Deleted corrupted table: {table_path}")
