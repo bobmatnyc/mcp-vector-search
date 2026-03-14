@@ -407,6 +407,14 @@ class SemanticSearchEngine:
                 )
                 enhanced_results.append(enhanced_result)
 
+            # Filter out stale results whose files no longer exist
+            pre_filter_count = len(enhanced_results)
+            enhanced_results = [r for r in enhanced_results if not r.file_missing]
+            if len(enhanced_results) < pre_filter_count:
+                logger.info(
+                    f"Filtered {pre_filter_count - len(enhanced_results)} stale results (files no longer exist)"
+                )
+
             # Apply additional ranking if needed
             ranked_results = self._result_ranker.rerank_results(enhanced_results, query)
 
@@ -1041,6 +1049,7 @@ class SemanticSearchEngine:
                     rank=idx + 1,  # 1-based ranking
                     chunk_type=result.get("chunk_type", "unknown"),
                     function_name=result.get("name"),  # Map 'name' to 'function_name'
+                    chunk_id=result.get("chunk_id") or None,
                 )
                 search_results.append(search_result)
 
@@ -1583,6 +1592,7 @@ class SemanticSearchEngine:
                         rank=len(search_results) + 1,
                         chunk_type=row.get("chunk_type", "unknown"),
                         function_name=row.get("name"),
+                        chunk_id=chunk_id,
                     )
                     search_results.append(search_result)
                 except Exception as e:
@@ -1741,6 +1751,7 @@ class SemanticSearchEngine:
                                     rank=i + 1,
                                     chunk_type=row.get("chunk_type", "unknown"),
                                     function_name=row.get("name"),
+                                    chunk_id=chunk_id,
                                 )
                                 hybrid_results.append(search_result)
                     except Exception as e:

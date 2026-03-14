@@ -811,6 +811,7 @@ class LanceVectorDatabase:
                     commit_hash=result.get("commit_hash") or None,
                     # Monorepo support
                     subproject_name=result.get("subproject_name") or None,
+                    chunk_id=result.get("chunk_id") or None,
                 )
                 search_results.append(search_result)
 
