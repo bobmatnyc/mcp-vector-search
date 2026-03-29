@@ -1,5 +1,5 @@
 ---
-name: mcp-vector-search
+name: vector-search
 description: Semantic code search, knowledge graph, and analysis tools for this project
 version: 1.0.0
 author: mcp-vector-search

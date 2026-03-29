@@ -24,7 +24,7 @@ from loguru import logger
 from .migration import Migration, MigrationContext, MigrationResult, MigrationStatus
 
 # Skill name (matches the .md filename stem and SKILL.md directory name)
-SKILL_NAME = "mcp-vector-search"
+SKILL_NAME = "vector-search"
 
 # Candidate locations for the Claude skills directory (checked in order)
 _CLAUDE_SKILLS_DIRS: list[Path] = [
