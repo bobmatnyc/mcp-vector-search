@@ -364,7 +364,7 @@ class ReviewEngine:
                     relationships.append(
                         {
                             "entity": entity_name,
-                            "type": entity.get("type"),
+                            "type": entity.split(":")[0],
                             "file": str(result.file_path),
                             "related": related,
                         }
@@ -451,10 +451,13 @@ class ReviewEngine:
         # Get specialized prompt for review type
         prompt_template = get_review_prompt(review_type)
 
-        # Fill in context
-        prompt = prompt_template.format(
-            code_context=code_context,
-            kg_relationships=kg_context,
+        # Fill in context using str.replace() instead of str.format() to avoid
+        # KeyError when prompt templates contain literal { } characters (e.g. JSON
+        # examples in the few-shot section of each prompt).  str.format() treats
+        # every {…} as a placeholder and raises KeyError('\n    "title"') when it
+        # encounters the opening brace of the embedded JSON example object.
+        prompt = prompt_template.replace("{code_context}", code_context).replace(
+            "{kg_relationships}", kg_context
         )
 
         # Call LLM

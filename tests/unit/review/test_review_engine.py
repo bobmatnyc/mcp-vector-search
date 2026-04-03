@@ -12,6 +12,7 @@ from mcp_vector_search.analysis.review.models import (
     ReviewType,
     Severity,
 )
+from mcp_vector_search.analysis.review.prompts import get_review_prompt
 
 
 @pytest.fixture
@@ -470,3 +471,58 @@ def test_severity_enum_values():
     assert Severity.MEDIUM.value == "medium"
     assert Severity.LOW.value == "low"
     assert Severity.INFO.value == "info"
+
+
+# --- Regression tests for GitHub issue #136 ---
+# The prompts contain JSON examples with literal { } characters.
+# Using str.format() raises KeyError('\n    "title"') because format() treats
+# every {...} as a placeholder.  The fix uses str.replace() for substitution.
+
+
+@pytest.mark.parametrize("review_type", list(ReviewType))
+def test_prompt_template_substitution_does_not_raise(review_type):
+    """All prompt templates must accept substitution without KeyError.
+
+    Regression test for GitHub issue #136: review_repository raised
+    "Unexpected error: '\\n    \"title\"'" because prompt templates contain
+    literal JSON examples with { } braces and str.format() treated them as
+    format placeholders.
+    """
+    template = get_review_prompt(review_type)
+    # This must not raise KeyError
+    result = template.replace("{code_context}", "SAMPLE_CODE").replace(
+        "{kg_relationships}", "SAMPLE_KG"
+    )
+    assert "SAMPLE_CODE" in result
+    assert "SAMPLE_KG" in result
+
+
+@pytest.mark.parametrize("review_type", list(ReviewType))
+def test_prompt_template_str_format_fails_without_fix(review_type):
+    """Confirm the original str.format() approach fails (documents the bug).
+
+    This test intentionally verifies that the raw prompt templates DO raise
+    KeyError when used with str.format(), proving the regression is real.
+    """
+    template = get_review_prompt(review_type)
+    with pytest.raises(KeyError):
+        template.format(code_context="SAMPLE_CODE", kg_relationships="SAMPLE_KG")
+
+
+@pytest.mark.asyncio
+async def test_analyze_with_llm_architecture_does_not_raise_key_error(
+    review_engine, mock_llm_client
+):
+    """_analyze_with_llm must not raise KeyError for architecture review type.
+
+    Regression test for GitHub issue #136: architecture review failed with
+    "Unexpected error: '\\n    \"title\"'" due to broken prompt substitution.
+    """
+    mock_llm_client._chat_completion = AsyncMock(
+        return_value={"choices": [{"message": {"content": "[]"}}]}
+    )
+    # Must not raise
+    findings = await review_engine._analyze_with_llm(
+        ReviewType.ARCHITECTURE, "sample code", "sample kg"
+    )
+    assert findings == []
