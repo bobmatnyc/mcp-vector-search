@@ -220,8 +220,13 @@ async def run_audit(
         settings = settings.model_copy(update={"require_kg_path": False})
 
     # Step 4: Extract claims
+    active_extractor = (
+        settings.openrouter_extractor_model
+        if settings.llm_backend == "openrouter"
+        else settings.extractor_model
+    )
     console.print(
-        f"[bold]Extracting claims from policy[/bold] using {settings.extractor_model}..."
+        f"[bold]Extracting claims from policy[/bold] using {active_extractor}..."
     )
     claims = await extract_claims(policy_text, settings)
     console.print(f"[green]Extracted {len(claims)} claims[/green]")
@@ -299,7 +304,11 @@ async def run_audit(
         policy_snapshot_path=policy_snapshot_path,
         generated_at=generated_at,
         generator_version=__version__,
-        auditor_model=settings.judge_model,
+        auditor_model=(
+            settings.openrouter_judge_model
+            if settings.llm_backend == "openrouter"
+            else settings.judge_model
+        ),
         verdicts=verdicts,
         summary=summary,
         overall_status=overall_status,  # type: ignore[arg-type]

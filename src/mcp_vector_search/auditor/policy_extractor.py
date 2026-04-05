@@ -24,6 +24,30 @@ _PROMPT_PATH = Path(__file__).parent / "prompts" / "extract_claims.md"
 
 
 # ---------------------------------------------------------------------------
+# Model selection helper
+# ---------------------------------------------------------------------------
+
+
+def _get_model(settings: AuditorSettings, role: str) -> str:
+    """Return the correct model name based on backend and role.
+
+    Args:
+        settings: Auditor settings.
+        role: Either "extractor" or "judge".
+
+    Returns:
+        Model identifier string appropriate for the configured backend.
+    """
+    if settings.llm_backend == "openrouter":
+        return (
+            settings.openrouter_extractor_model
+            if role == "extractor"
+            else settings.openrouter_judge_model
+        )
+    return settings.extractor_model if role == "extractor" else settings.judge_model
+
+
+# ---------------------------------------------------------------------------
 # Prompt helpers (LLM path)
 # ---------------------------------------------------------------------------
 
@@ -116,31 +140,108 @@ def _parse_claims_from_response(
     return claims
 
 
+def _parse_claims_from_json(text: str, settings: AuditorSettings) -> list[PolicyClaim]:
+    """Parse claims from a JSON string returned by the OpenRouter backend.
+
+    OpenRouter returns a plain text/JSON response (no tool-use blocks).
+    We expect the model to return a JSON array of claim objects or a JSON
+    object with a "claims" key.
+
+    Args:
+        text: Raw text response from the OpenRouter model.
+        settings: Auditor settings (used for max_claims_per_policy guard).
+
+    Returns:
+        List of validated PolicyClaim objects.
+    """
+    claims: list[PolicyClaim] = []
+    text = text.strip()
+
+    # Extract JSON — the model may wrap it in markdown code fences
+    if "```" in text:
+        # Pull out the content between the first ``` and last ```
+        parts = text.split("```")
+        for part in parts[1::2]:
+            # Strip optional language tag (e.g. "json\n[...")
+            if part.startswith("json"):
+                part = part[4:]
+            text = part.strip()
+            break
+
+    # Handle both {"claims": [...]} and [...] formats
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        # Try to find the first [ ... ] block
+        start = text.find("[")
+        end = text.rfind("]") + 1
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(text[start:end])
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Could not parse JSON from OpenRouter extractor response"
+                )
+                return claims
+        else:
+            logger.warning("No JSON array found in OpenRouter extractor response")
+            return claims
+
+    if isinstance(parsed, dict):
+        raw_list = parsed.get("claims", [])
+    elif isinstance(parsed, list):
+        raw_list = parsed
+    else:
+        logger.warning("Unexpected JSON structure from OpenRouter extractor")
+        return claims
+
+    for raw in raw_list:
+        if len(claims) >= settings.max_claims_per_policy:
+            logger.warning(
+                "Reached max_claims_per_policy=%d — truncating",
+                settings.max_claims_per_policy,
+            )
+            break
+        try:
+            claim_id = PolicyClaim.compute_id(
+                raw.get("category", ""),
+                raw.get("normalized", ""),
+            )
+            offsets = raw.get("source_offsets", [0, 0])
+            claim = PolicyClaim(
+                id=claim_id,
+                category=raw["category"],
+                text=raw.get("text", ""),
+                normalized=raw.get("normalized", ""),
+                keywords=raw.get("keywords", []),
+                policy_section=raw.get("policy_section"),
+                testable=raw.get("testable", True),
+                source_offsets=(offsets[0], offsets[1]),
+            )
+            claims.append(claim)
+        except (KeyError, ValueError) as exc:
+            logger.warning("Skipping malformed claim: %s — %s", raw, exc)
+
+    return claims
+
+
 # ---------------------------------------------------------------------------
-# LLM extractor (internal)
+# LLM extractor (internal) — Anthropic path
 # ---------------------------------------------------------------------------
 
 
-async def extract_claims_llm(
+async def _extract_claims_anthropic(
     policy_text: str,
     settings: AuditorSettings,
 ) -> list[PolicyClaim]:
-    """Extract claims via Claude (tool-use structured output).
-
-    This is the LLM-based path.  Call extract_claims() instead for the hybrid
-    strategy that always falls back to text analysis.
+    """Extract claims via Anthropic's tool-use API.
 
     Args:
         policy_text: Full text of the privacy policy document.
-        settings: Auditor settings containing model name and API key.
+        settings: Auditor settings.
 
     Returns:
-        List of PolicyClaim objects (up to settings.max_claims_per_policy).
-
-    Raises:
-        ImportError: If the anthropic package is not installed.
-        ValueError: If no API key is configured.
-        Exception: On Anthropic API errors.
+        List of PolicyClaim objects.
     """
     try:
         import anthropic
@@ -159,7 +260,6 @@ async def extract_claims_llm(
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
 
-    # Define the tool for structured output
     submit_claims_tool = {
         "name": "submit_claims",
         "description": "Submit the extracted atomic privacy claims as structured data.",
@@ -213,29 +313,129 @@ async def extract_claims_llm(
     }
 
     prompt = _build_prompt(policy_text, settings.max_claims_per_policy)
+    model = _get_model(settings, "extractor")
 
     logger.info(
         "Extracting claims from policy (%d chars) using model=%s",
         len(policy_text),
-        settings.extractor_model,
+        model,
     )
 
     response = await client.messages.create(
-        model=settings.extractor_model,
+        model=model,
         max_tokens=4096,
         tools=[submit_claims_tool],
         tool_choice={"type": "auto"},
-        messages=[
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
+        messages=[{"role": "user", "content": prompt}],
     )
 
     claims = _parse_claims_from_response(response.content, settings)
     logger.info("LLM extracted %d claims from policy", len(claims))
     return claims
+
+
+# ---------------------------------------------------------------------------
+# LLM extractor (internal) — OpenRouter path
+# ---------------------------------------------------------------------------
+
+
+async def _extract_claims_openrouter(
+    policy_text: str,
+    settings: AuditorSettings,
+) -> list[PolicyClaim]:
+    """Extract claims via OpenRouter's OpenAI-compatible API.
+
+    Uses a JSON-mode prompt since OpenRouter may not support Anthropic-style
+    tool-use blocks.
+
+    Args:
+        policy_text: Full text of the privacy policy document.
+        settings: Auditor settings.
+
+    Returns:
+        List of PolicyClaim objects.
+    """
+    try:
+        from openai import AsyncOpenAI
+    except ImportError as exc:
+        raise ImportError(
+            "The 'openai' package is required for the OpenRouter backend. "
+            "Install it with: pip install openai"
+        ) from exc
+
+    if not settings.openrouter_api_key:
+        raise ValueError(
+            "OPENROUTER_API_KEY is not set. "
+            "Export OPENROUTER_API_KEY or set MVS_AUDIT_OPENROUTER_API_KEY."
+        )
+
+    api_key = settings.openrouter_api_key.get_secret_value()
+    client = AsyncOpenAI(
+        base_url=settings.openrouter_base_url,
+        api_key=api_key,
+    )
+
+    model = _get_model(settings, "extractor")
+    prompt = _build_prompt(policy_text, settings.max_claims_per_policy)
+
+    # Augment prompt to request JSON output since we can't use Anthropic tool-use
+    json_instruction = (
+        "\n\nRespond with ONLY a JSON array of claim objects. "
+        "Each object must have: category (one of: data_sharing, encryption, retention, "
+        "user_rights, third_party, logging_pii, consent, security, access_control), "
+        "text (verbatim quote), normalized (canonical statement), keywords (array of strings), "
+        "policy_section (string or null), testable (boolean), "
+        "source_offsets (array of two integers [start, end]). "
+        "Do not include any explanation or markdown — return raw JSON only."
+    )
+
+    logger.info(
+        "Extracting claims from policy (%d chars) using OpenRouter model=%s",
+        len(policy_text),
+        model,
+    )
+
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": prompt + json_instruction,
+            }
+        ],
+        max_tokens=4096,
+        temperature=0.0,
+    )
+
+    raw_text = response.choices[0].message.content or ""
+    claims = _parse_claims_from_json(raw_text, settings)
+    logger.info("OpenRouter extracted %d claims from policy", len(claims))
+    return claims
+
+
+# ---------------------------------------------------------------------------
+# Public LLM extraction entry point (selects backend)
+# ---------------------------------------------------------------------------
+
+
+async def extract_claims_llm(
+    policy_text: str,
+    settings: AuditorSettings,
+) -> list[PolicyClaim]:
+    """Extract claims via the configured LLM backend.
+
+    Dispatches to Anthropic or OpenRouter based on settings.llm_backend.
+
+    Args:
+        policy_text: Full text of the privacy policy document.
+        settings: Auditor settings containing model name and API key.
+
+    Returns:
+        List of PolicyClaim objects (up to settings.max_claims_per_policy).
+    """
+    if settings.llm_backend == "openrouter":
+        return await _extract_claims_openrouter(policy_text, settings)
+    return await _extract_claims_anthropic(policy_text, settings)
 
 
 # ---------------------------------------------------------------------------
@@ -314,8 +514,20 @@ async def extract_claims(
     claims = text_claims
     used_llm = False
 
-    # 2. If API key available AND configured to use LLM, enhance
-    if settings.anthropic_api_key.get_secret_value() and settings.use_llm_extraction:
+    # 2. Determine whether an API key is available for the configured backend
+    has_api_key = False
+    if settings.llm_backend == "openrouter":
+        has_api_key = bool(
+            settings.openrouter_api_key
+            and settings.openrouter_api_key.get_secret_value()
+        )
+    else:
+        has_api_key = bool(
+            settings.anthropic_api_key and settings.anthropic_api_key.get_secret_value()
+        )
+
+    # 3. If API key available AND configured to use LLM, enhance
+    if has_api_key and settings.use_llm_extraction:
         try:
             llm_claims = await extract_claims_llm(policy_text, settings)
             claims = merge_claims(text_claims, llm_claims)

@@ -86,6 +86,7 @@ docs = [
 [project.optional-dependencies]
 auditor = [
     "anthropic>=0.40.0",
+    "openai>=1.0.0",
     "pydantic-settings>=2.0.0",
     "gitpython>=3.1.40",
     "pyyaml>=6.0",

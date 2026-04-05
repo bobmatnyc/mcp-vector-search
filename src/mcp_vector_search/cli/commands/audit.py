@@ -140,8 +140,13 @@ async def _run_audit_async(
     console.print(f"  Target repo : {target_repo}")
     console.print(f"  Policy file : {policy_path}")
     console.print(f"  Output dir  : {output_dir}")
-    console.print(f"  Extractor   : {settings.extractor_model}")
-    console.print(f"  Judge       : {settings.judge_model}")
+    if settings.llm_backend == "openrouter":
+        console.print("  Backend     : openrouter")
+        console.print(f"  Extractor   : {settings.openrouter_extractor_model}")
+        console.print(f"  Judge       : {settings.openrouter_judge_model}")
+    else:
+        console.print(f"  Extractor   : {settings.extractor_model}")
+        console.print(f"  Judge       : {settings.judge_model}")
     console.print(f"  Ignore file : {'disabled' if no_ignore else 'enabled'}")
     console.print("")
 
