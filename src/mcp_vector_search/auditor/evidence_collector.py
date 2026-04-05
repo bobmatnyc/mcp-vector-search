@@ -17,6 +17,9 @@ from loguru import logger
 from .claim_router import QueryPlan
 from .models import Evidence
 
+# Module-level flag: emit the KG-unavailable warning at most once per process.
+_kg_unavailable_warned = False
+
 # ---------------------------------------------------------------------------
 # Search engine / KG bootstrap helpers
 # ---------------------------------------------------------------------------
@@ -73,18 +76,25 @@ async def _get_search_engine(target_repo: Path):
 async def _get_knowledge_graph(target_repo: Path):
     """Bootstrap a KnowledgeGraph for the target repo.
 
-    Returns None if the KG does not exist yet (logs a warning).
+    Returns None if the KG does not exist yet (logs a warning the first time
+    only — subsequent calls for the same run are silent).
     """
+    global _kg_unavailable_warned
+
     try:
         from ..core.knowledge_graph import KnowledgeGraph
 
         kg_path = target_repo / ".mcp-vector-search" / "knowledge_graph"
         if not kg_path.exists():
-            logger.warning(
-                "Target repo %s has no knowledge graph — kg_query tools will be skipped. "
-                "Run 'mvs index' in the target repo first.",
-                target_repo,
-            )
+            if not _kg_unavailable_warned:
+                logger.warning(
+                    "Knowledge graph not available for %s. "
+                    "KG-based evidence collection will be skipped. "
+                    "Build one with: mvs index --project-root %s",
+                    target_repo,
+                    target_repo,
+                )
+                _kg_unavailable_warned = True
             return None
 
         kg = KnowledgeGraph(kg_path)
@@ -92,11 +102,13 @@ async def _get_knowledge_graph(target_repo: Path):
         return kg
 
     except Exception as exc:
-        logger.warning(
-            "Failed to initialise knowledge graph for %s: %s — skipping KG tools",
-            target_repo,
-            exc,
-        )
+        if not _kg_unavailable_warned:
+            logger.warning(
+                "Failed to initialise knowledge graph for %s: %s — skipping KG tools",
+                target_repo,
+                exc,
+            )
+            _kg_unavailable_warned = True
         return None
 
 

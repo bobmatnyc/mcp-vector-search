@@ -310,14 +310,31 @@ async def extract_claims(
         List of PolicyClaim objects.
     """
     # 1. Always run text analysis (no API key needed)
-    claims = await extract_claims_text(policy_text)
+    text_claims = await extract_claims_text(policy_text)
+    claims = text_claims
+    used_llm = False
 
     # 2. If API key available AND configured to use LLM, enhance
     if settings.anthropic_api_key.get_secret_value() and settings.use_llm_extraction:
         try:
             llm_claims = await extract_claims_llm(policy_text, settings)
-            claims = merge_claims(claims, llm_claims)
+            claims = merge_claims(text_claims, llm_claims)
+            used_llm = True
         except Exception as e:
             logger.warning("LLM extraction failed, using text analysis only: %s", e)
+
+    if used_llm:
+        logger.info(
+            "Extracted %d claims (text: %d, LLM: %d, merged: %d)",
+            len(claims),
+            len(text_claims),
+            len(llm_claims),  # type: ignore[possibly-undefined]
+            len(claims) - len(text_claims),
+        )
+    else:
+        logger.info(
+            "Extracted %d claims via text analysis only (no API key or LLM disabled)",
+            len(claims),
+        )
 
     return claims

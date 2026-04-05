@@ -208,6 +208,17 @@ async def run_audit(
     # Step 3b: Check vector index staleness
     _check_index_staleness(target_repo)
 
+    # Step 3c: Auto-detect KG availability and relax require_kg_path if absent
+    kg_path = target_repo / ".mcp-vector-search" / "knowledge_graph"
+    if not kg_path.exists() and settings.require_kg_path:
+        logger.info(
+            "No knowledge graph found at %s. Disabling KG requirement for this audit. "
+            "Build one with: mvs index --project-root %s",
+            kg_path,
+            target_repo,
+        )
+        settings = settings.model_copy(update={"require_kg_path": False})
+
     # Step 4: Extract claims
     console.print(
         f"[bold]Extracting claims from policy[/bold] using {settings.extractor_model}..."
