@@ -1,0 +1,24 @@
+category: retention
+description: Detects data retention, deletion, and purge logic
+queries:
+  - tool: search_hybrid
+    query: "delete purge TTL expire retention period"
+    weight: 1.0
+  - tool: search_code
+    query: "DELETE FROM DROP TABLE truncate cleanup expire"
+    weight: 0.9
+  - tool: kg_query
+    query: "data deletion purge schedule"
+    weight: 0.8
+  - tool: search_hybrid
+    query: "data lifecycle expiration scheduled cleanup job"
+    weight: 0.7
+  - tool: kg_callers_at_commit
+    query: "delete_user remove_data purge_records"
+    weight: 0.8
+  - tool: search_code
+    query: "max_age expires_in ttl retention_days"
+    weight: 0.7
+keyword_interpolation:
+  enabled: true
+  template: "{keywords} delete expire retention"

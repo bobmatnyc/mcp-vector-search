@@ -191,6 +191,7 @@ explore unfamiliar projects, and integrate with AI coding tools via MCP.
 
 # Import command modules
 from .commands.analyze import analyze_app  # noqa: E402
+from .commands.audit import audit_app  # noqa: E402
 from .commands.chat import chat_app  # noqa: E402
 from .commands.config import config_app  # noqa: E402
 from .commands.demo import demo_app  # noqa: E402
@@ -335,6 +336,9 @@ if _kg_available and kg_app:
 app.add_typer(
     story_app, name="story", help="📖 Generate development narrative from git history"
 )
+
+# 12.8. AUDIT - Privacy-policy vs code certification
+app.add_typer(audit_app, name="audit", help="Privacy-policy vs code certification")
 
 # 13. HELP - Enhanced help
 # (defined below inline)

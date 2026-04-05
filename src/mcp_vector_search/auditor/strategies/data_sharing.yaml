@@ -1,0 +1,21 @@
+category: data_sharing
+description: Detects outgoing data flows to third-party services and external APIs
+queries:
+  - tool: search_hybrid
+    query: "third party SDK send data external API"
+    weight: 1.0
+  - tool: search_code
+    query: "requests.post fetch axios http.post"
+    weight: 0.9
+  - tool: kg_query
+    query: "outgoing HTTP calls external endpoints"
+    weight: 0.8
+  - tool: search_hybrid
+    query: "data transfer upload telemetry analytics"
+    weight: 0.7
+  - tool: search_code
+    query: "urllib.request httpx.post aiohttp.post"
+    weight: 0.7
+keyword_interpolation:
+  enabled: true
+  template: "{keywords} data transfer external service"

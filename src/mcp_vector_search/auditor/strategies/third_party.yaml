@@ -1,0 +1,24 @@
+category: third_party
+description: Detects third-party integrations, analytics SDKs, and vendor dependencies
+queries:
+  - tool: search_code
+    query: "analytics segment amplitude mixpanel google_analytics"
+    weight: 1.0
+  - tool: search_hybrid
+    query: "third party vendor SDK integration analytics tracking"
+    weight: 0.9
+  - tool: search_code
+    query: "import stripe twilio sendgrid datadog sentry"
+    weight: 0.8
+  - tool: kg_query
+    query: "external service integration vendor dependency"
+    weight: 0.8
+  - tool: search_hybrid
+    query: "advertising pixel tracking script embed"
+    weight: 0.7
+  - tool: search_code
+    query: "facebook twitter linkedin oauth social"
+    weight: 0.6
+keyword_interpolation:
+  enabled: true
+  template: "{keywords} third party integration vendor"

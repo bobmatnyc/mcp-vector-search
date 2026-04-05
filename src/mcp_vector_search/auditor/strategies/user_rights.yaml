@@ -1,0 +1,24 @@
+category: user_rights
+description: Detects GDPR/CCPA user rights implementation (access, deletion, portability)
+queries:
+  - tool: search_hybrid
+    query: "GDPR CCPA DSAR user rights data export portability"
+    weight: 1.0
+  - tool: kg_query
+    query: "user export endpoint data access request"
+    weight: 0.9
+  - tool: search_code
+    query: "right_to_erasure right_to_access data_export gdpr"
+    weight: 0.9
+  - tool: search_hybrid
+    query: "delete account user data request download"
+    weight: 0.8
+  - tool: search_code
+    query: "users export download privacy request erasure"
+    weight: 0.7
+  - tool: search_hybrid
+    query: "consent withdrawal opt out unsubscribe"
+    weight: 0.6
+keyword_interpolation:
+  enabled: true
+  template: "{keywords} user rights request"
