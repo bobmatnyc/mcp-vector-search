@@ -1,7 +1,11 @@
-"""Policy claim extractor using Anthropic Claude (haiku model).
+"""Policy claim extractor — hybrid text-analysis + optional LLM enhancement.
 
-Task 4: Extracts atomic, testable PolicyClaim objects from policy text
-using structured output (tool-use) via the Anthropic SDK.
+Extracts atomic, testable PolicyClaim objects from policy text.
+
+Strategy:
+1. Always run text analysis (no API key needed) via text_extractor.
+2. If an API key is available AND use_llm_extraction is True, also run the
+   LLM-based extractor and merge the results (dedup by normalized text similarity).
 """
 
 from __future__ import annotations
@@ -14,8 +18,14 @@ from loguru import logger
 
 from .config import AuditorSettings
 from .models import PolicyClaim
+from .text_extractor import extract_claims_text
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "extract_claims.md"
+
+
+# ---------------------------------------------------------------------------
+# Prompt helpers (LLM path)
+# ---------------------------------------------------------------------------
 
 
 def _load_prompt_template() -> str:
@@ -106,14 +116,19 @@ def _parse_claims_from_response(
     return claims
 
 
-async def extract_claims(
+# ---------------------------------------------------------------------------
+# LLM extractor (internal)
+# ---------------------------------------------------------------------------
+
+
+async def extract_claims_llm(
     policy_text: str,
     settings: AuditorSettings,
 ) -> list[PolicyClaim]:
-    """Extract atomic, testable claims from a privacy policy.
+    """Extract claims via Claude (tool-use structured output).
 
-    Uses Claude Haiku with tool-use (structured output) to parse the policy
-    and return a list of PolicyClaim objects.
+    This is the LLM-based path.  Call extract_claims() instead for the hybrid
+    strategy that always falls back to text analysis.
 
     Args:
         policy_text: Full text of the privacy policy document.
@@ -124,6 +139,7 @@ async def extract_claims(
 
     Raises:
         ImportError: If the anthropic package is not installed.
+        ValueError: If no API key is configured.
         Exception: On Anthropic API errors.
     """
     try:
@@ -138,7 +154,7 @@ async def extract_claims(
     if not api_key:
         raise ValueError(
             "MVS_AUDIT_ANTHROPIC_API_KEY environment variable is not set. "
-            "This is required for policy claim extraction."
+            "This is required for LLM-based policy claim extraction."
         )
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
@@ -218,5 +234,90 @@ async def extract_claims(
     )
 
     claims = _parse_claims_from_response(response.content, settings)
-    logger.info("Extracted %d claims from policy", len(claims))
+    logger.info("LLM extracted %d claims from policy", len(claims))
+    return claims
+
+
+# ---------------------------------------------------------------------------
+# Merge / dedup helpers
+# ---------------------------------------------------------------------------
+
+
+def _word_overlap_ratio(a: str, b: str) -> float:
+    """Compute simple word-overlap Jaccard similarity between two strings."""
+    words_a = set(a.lower().split())
+    words_b = set(b.lower().split())
+    if not words_a or not words_b:
+        return 0.0
+    return len(words_a & words_b) / len(words_a | words_b)
+
+
+def merge_claims(
+    base: list[PolicyClaim],
+    extra: list[PolicyClaim],
+    similarity_threshold: float = 0.80,
+) -> list[PolicyClaim]:
+    """Merge two claim lists, deduplicating by normalized text similarity.
+
+    Claims in *extra* that have >similarity_threshold word-overlap with any
+    claim already in *base* are dropped.  Claims that are genuinely new are
+    appended.
+
+    Args:
+        base: Primary claim list (text-extracted).
+        extra: Secondary claim list (LLM-extracted).
+        similarity_threshold: Overlap ratio above which two claims are considered
+            duplicates (default 0.80).
+
+    Returns:
+        Merged, deduplicated list.
+    """
+    merged = list(base)
+    base_normalized = [c.normalized for c in merged]
+
+    for candidate in extra:
+        is_dup = any(
+            _word_overlap_ratio(candidate.normalized, existing) >= similarity_threshold
+            for existing in base_normalized
+        )
+        if not is_dup:
+            merged.append(candidate)
+            base_normalized.append(candidate.normalized)
+
+    return merged
+
+
+# ---------------------------------------------------------------------------
+# Public API — hybrid entry point
+# ---------------------------------------------------------------------------
+
+
+async def extract_claims(
+    policy_text: str,
+    settings: AuditorSettings,
+) -> list[PolicyClaim]:
+    """Extract claims using hybrid approach: text analysis first, LLM enhancement optional.
+
+    1. Always run text analysis (no API key needed).
+    2. If API key available AND settings.use_llm_extraction is True, enhance
+       with LLM extraction and merge results.
+
+    Args:
+        policy_text: Full text of the privacy policy document.
+        settings: Auditor settings controlling models and feature flags.
+
+    Returns:
+        List of PolicyClaim objects.
+    """
+    # 1. Always run text analysis (no API key needed)
+    claims = await extract_claims_text(policy_text)
+
+    # 2. If API key available AND configured to use LLM, enhance
+    if settings.anthropic_api_key.get_secret_value() and settings.use_llm_extraction:
+        try:
+            llm_claims = await extract_claims_llm(policy_text, settings)
+            claims = merge_claims(claims, llm_claims)
+        except Exception as e:
+            logger.warning("LLM extraction failed, using text analysis only: %s", e)
+
     return claims

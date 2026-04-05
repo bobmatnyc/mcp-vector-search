@@ -130,6 +130,47 @@ def _compute_summary(verdicts: list[Verdict]) -> dict[str, int]:
     return summary
 
 
+def _get_latest_commit_time(repo_path: Path) -> float | None:
+    """Return the Unix timestamp of the latest git commit in the repo.
+
+    Returns None if git is unavailable or the repo has no commits.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "log", "-1", "--format=%ct"],  # noqa: S607  # nosec B607
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
+        pass
+    return None
+
+
+def _check_index_staleness(target_repo: Path) -> None:
+    """Warn if the vector index exists but is older than the latest commit.
+
+    Args:
+        target_repo: Root directory of the repository being audited.
+    """
+    index_path = target_repo / ".mcp-vector-search" / "index" / "lance"
+    if not index_path.exists():
+        # No index at all — the evidence collector will warn about this separately.
+        return
+
+    index_mtime = index_path.stat().st_mtime
+    latest_commit_time = _get_latest_commit_time(target_repo)
+
+    if latest_commit_time is not None and latest_commit_time > index_mtime:
+        logger.warning(
+            "Vector index may be stale. Consider re-indexing: mvs index --project-root %s",
+            target_repo,
+        )
+
+
 async def run_audit(
     target_repo: Path,
     policy_path: Path,
@@ -163,6 +204,9 @@ async def run_audit(
     # Step 3: Load ignore list
     ignore_list = IgnoreList.load(target_repo)
     logger.info("Ignore list: %d entries", len(ignore_list))
+
+    # Step 3b: Check vector index staleness
+    _check_index_staleness(target_repo)
 
     # Step 4: Extract claims
     console.print(

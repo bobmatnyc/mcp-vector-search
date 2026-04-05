@@ -93,14 +93,22 @@ def audit_run(
         mvs audit run --target ~/my-project --policy ~/my-project/PRIVACY.md
         mvs audit run --target . --policy ./privacy-policy.txt --output-dir ./certs
     """
-    asyncio.run(
-        _run_audit_async(
-            target_repo=target,
-            policy_path=policy,
-            output_dir=output_dir,
-            no_ignore=no_ignore,
+    try:
+        asyncio.run(
+            _run_audit_async(
+                target_repo=target,
+                policy_path=policy,
+                output_dir=output_dir,
+                no_ignore=no_ignore,
+            )
         )
-    )
+    except ImportError:
+        err_console = Console(stderr=True)
+        err_console.print(
+            "[red]Error:[/red] 'anthropic' package required. "
+            "Install with: pip install 'mcp-vector-search[auditor]'"
+        )
+        sys.exit(1)
 
 
 async def _run_audit_async(
