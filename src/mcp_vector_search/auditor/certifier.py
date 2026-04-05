@@ -6,11 +6,27 @@ JSON signing is deferred to M2.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from loguru import logger
 
-from .models import CertificationDocument, Verdict
+from .models import CertificationDocument, Evidence, Verdict
+
+# Maximum evidence snippets displayed per claim.
+_MAX_EVIDENCE_DISPLAY = 10
+
+# Minimum non-zero-score snippets before we allow zero-score ones.
+_MIN_NONZERO_BEFORE_ZEROS = 3
+
+# Snippet character limit for display.
+_SNIPPET_DISPLAY_CHARS = 200
+
+# Regex to extract referenced filenames from judge reasoning text.
+# Matches things like: README.md, package.json, src/app.ts, CLAUDE.md
+_FILE_REF_RE = re.compile(
+    r"\b([\w.\-/]+\.(?:md|json|ts|tsx|js|jsx|py|yaml|yml|env|txt|toml|lock|config))\b"
+)
 
 # ---------------------------------------------------------------------------
 # Markdown rendering
@@ -35,6 +51,41 @@ _OVERALL_STATUS_HEADER = {
     "CERTIFIED_WITH_EXCEPTIONS": "CERTIFIED WITH EXCEPTIONS",
     "FAILED": "FAILED",
 }
+
+
+def _select_display_evidence(evidence: list[Evidence]) -> list[Evidence]:
+    """Select up to _MAX_EVIDENCE_DISPLAY evidence items for display.
+
+    Preference order:
+    1. Non-zero-score items first (sorted by score desc, already sorted by
+       evidence_collector).
+    2. If fewer than _MIN_NONZERO_BEFORE_ZEROS non-zero items exist, pad
+       with zero-score items to reach that minimum.
+    3. Hard cap at _MAX_EVIDENCE_DISPLAY total items.
+    """
+    nonzero = [ev for ev in evidence if ev.score > 0.0]
+    zero = [ev for ev in evidence if ev.score == 0.0]
+
+    if len(nonzero) >= _MIN_NONZERO_BEFORE_ZEROS:
+        selected = nonzero[:_MAX_EVIDENCE_DISPLAY]
+    else:
+        # Pad with zero-score items to reach minimum
+        needed_zeros = max(0, _MIN_NONZERO_BEFORE_ZEROS - len(nonzero))
+        selected = nonzero + zero[:needed_zeros]
+        selected = selected[:_MAX_EVIDENCE_DISPLAY]
+
+    return selected
+
+
+def _extract_key_files(reasoning: str) -> set[str]:
+    """Extract filenames the judge referenced in its reasoning text.
+
+    Matches patterns like: README.md, package.json, src/app.ts
+    Returns a set of matched filename strings (just the basename portion).
+    """
+    matches = _FILE_REF_RE.findall(reasoning)
+    # Return just the basename to avoid long path noise
+    return {m.rsplit("/", 1)[-1] for m in matches if m}
 
 
 def render_markdown(doc: CertificationDocument) -> str:
@@ -121,17 +172,41 @@ def render_markdown(doc: CertificationDocument) -> str:
         lines.append("")
 
         if verdict.evidence:
-            lines.append("**Evidence:**")
+            # Select up to _MAX_EVIDENCE_DISPLAY items, preferring non-zero scores.
+            display_evidence = _select_display_evidence(verdict.evidence)
+
+            # Parse the judge's reasoning for referenced filenames.
+            key_files = _extract_key_files(verdict.reasoning)
+            if key_files:
+                lines.append("**Key Evidence Files Referenced by Judge:**")
+                for fname in sorted(key_files):
+                    lines.append(f"- `{fname}`")
+                lines.append("")
+
+            lines.append(
+                f"**Evidence** (showing {len(display_evidence)} of {len(verdict.evidence)}, sorted by relevance score):"
+            )
             lines.append("")
-            for ev in verdict.evidence[:5]:  # cap at 5 evidence items per claim
+            for idx, ev in enumerate(display_evidence, 1):
+                # Number evidence items to match what the judge sees.
+                score_str = f"{ev.score:.3f}"
+                line_range = (
+                    f"lines {ev.start_line}–{ev.end_line}"
+                    if ev.start_line or ev.end_line
+                    else "lines n/a"
+                )
                 lines.append(
-                    f"- **[{ev.tool}]** `{ev.file_path}` lines {ev.start_line}-{ev.end_line} (score: {ev.score:.3f})"
+                    f"**Evidence #{idx}** — `{ev.file_path}` {line_range} "
+                    f"| score: {score_str} | tool: {ev.tool}"
                 )
                 if ev.kg_path:
                     lines.append(f"  - KG path: {' -> '.join(ev.kg_path)}")
-                snippet_preview = ev.snippet[:150].replace("\n", " ")
+                snippet_preview = (
+                    ev.snippet[:_SNIPPET_DISPLAY_CHARS].replace("\n", " ").strip()
+                )
                 if snippet_preview:
-                    lines.append(f"  - `{snippet_preview}`")
+                    lines.append(f"  > {snippet_preview}")
+                lines.append("")
             lines.append("")
 
         lines.append("---")

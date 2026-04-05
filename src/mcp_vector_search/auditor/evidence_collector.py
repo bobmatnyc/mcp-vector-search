@@ -9,6 +9,7 @@ internal modules the MCP server uses.
 
 from __future__ import annotations
 
+import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,50 @@ from .models import Evidence
 
 # Module-level flag: emit the KG-unavailable warning at most once per process.
 _kg_unavailable_warned = False
+
+# ---------------------------------------------------------------------------
+# Noise filtering
+# ---------------------------------------------------------------------------
+
+# File patterns that never contain useful privacy evidence.
+# Matched against file_path using fnmatch glob semantics.
+EVIDENCE_NOISE_PATTERNS: list[str] = [
+    "*.css",
+    "*.scss",
+    "*.less",  # stylesheets
+    "*.svg",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "*.ico",  # images
+    "**/ui/*.tsx",
+    "**/ui/*.jsx",
+    "**/components/ui/*.tsx",
+    "**/components/ui/*.jsx",  # generic shadcn/UI components
+    "*.lock",
+    "*.map",  # lockfiles, sourcemaps
+    "**/*.test.*",
+    "**/*.spec.*",  # test files
+]
+
+
+def _is_noise_file(file_path: str) -> bool:
+    """Return True if file_path matches any EVIDENCE_NOISE_PATTERNS.
+
+    Uses both fnmatch (for simple glob patterns) and pathlib.PurePath.match
+    (for ** patterns) to handle both styles.
+    """
+    p = file_path.replace("\\", "/")
+    for pattern in EVIDENCE_NOISE_PATTERNS:
+        # fnmatch handles simple glob like *.css
+        if fnmatch.fnmatch(p, pattern):
+            return True
+        # Also match against just the filename for extension-only patterns
+        filename = p.rsplit("/", 1)[-1] if "/" in p else p
+        if fnmatch.fnmatch(filename, pattern):
+            return True
+    return False
+
 
 # ---------------------------------------------------------------------------
 # Search engine / KG bootstrap helpers
@@ -308,18 +353,51 @@ async def _run_find_smells(
 # ---------------------------------------------------------------------------
 
 
+def _ranges_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
+    """Return True if two line ranges overlap (inclusive)."""
+    # Treat 0,0 as a point that overlaps only exact matches
+    if a_start == 0 and a_end == 0 and b_start == 0 and b_end == 0:
+        return True
+    if a_start == 0 and a_end == 0:
+        return False
+    if b_start == 0 and b_end == 0:
+        return False
+    return a_start <= b_end and b_start <= a_end
+
+
 def _dedup_evidence(evidence_list: list[Evidence]) -> list[Evidence]:
     """Deduplicate evidence by (file_path, start_line, end_line).
 
-    When duplicates exist, keep the one with the highest score.
+    When duplicates with exact key exist, keep the highest-scored one.
+    Additionally, if two items are from the same file and their line ranges
+    overlap, keep only the higher-scored one.
     """
-    seen: dict[tuple[str, int, int], Evidence] = {}
+    # Step 1: exact key dedup
+    seen_exact: dict[tuple[str, int, int], Evidence] = {}
     for ev in evidence_list:
         key = (ev.file_path, ev.start_line, ev.end_line)
-        existing = seen.get(key)
+        existing = seen_exact.get(key)
         if existing is None or ev.score > existing.score:
-            seen[key] = ev
-    return list(seen.values())
+            seen_exact[key] = ev
+
+    # Step 2: overlapping line-range dedup per file, keep highest score
+    candidates = sorted(seen_exact.values(), key=lambda e: e.score, reverse=True)
+    kept: list[Evidence] = []
+    for ev in candidates:
+        overlaps = False
+        for existing in kept:
+            if existing.file_path != ev.file_path:
+                continue
+            if _ranges_overlap(
+                existing.start_line, existing.end_line, ev.start_line, ev.end_line
+            ):
+                # existing already has higher or equal score (sorted desc)
+                overlaps = True
+                break
+        if not overlaps:
+            kept.append(ev)
+
+    return kept
 
 
 # ---------------------------------------------------------------------------
@@ -385,10 +463,49 @@ async def collect(target_repo: Path, plans: list[QueryPlan]) -> list[Evidence]:
         else:
             logger.warning("Unknown tool '%s' in QueryPlan — skipping", tool)
 
+    # Boost package.json score for third_party claims — it's the most
+    # reliable source for detecting undisclosed third-party packages.
+    third_party_categories = {p.params.get("category") for p in plans}
+    is_third_party = "third_party" in third_party_categories
+    if not is_third_party:
+        # Infer from query text when category param not explicitly set
+        all_queries = " ".join(p.query.lower() for p in plans)
+        is_third_party = any(
+            kw in all_queries
+            for kw in (
+                "third party",
+                "third-party",
+                "package.json",
+                "analytics",
+                "vendor",
+            )
+        )
+
+    if is_third_party:
+        boosted: list[Evidence] = []
+        for ev in all_evidence:
+            if ev.file_path.endswith("package.json"):
+                # Boost score by 1.5x, cap at 1.0 — replace with updated copy
+                ev = ev.model_copy(update={"score": min(ev.score * 1.5, 1.0)})
+            boosted.append(ev)
+        all_evidence = boosted
+
+    # Filter noise files — CSS, images, UI components, test files, etc.
+    before_filter = len(all_evidence)
+    all_evidence = [ev for ev in all_evidence if not _is_noise_file(ev.file_path)]
+    filtered_count = before_filter - len(all_evidence)
+    if filtered_count:
+        logger.debug("collect(): filtered %d noise evidence items", filtered_count)
+
     deduped = _dedup_evidence(all_evidence)
+
+    # Sort by score descending so highest-relevance evidence is first
+    deduped.sort(key=lambda e: e.score, reverse=True)
+
     logger.debug(
-        "collect(): %d plans → %d raw evidence → %d after dedup",
+        "collect(): %d plans → %d raw evidence → %d after noise filter → %d after dedup",
         len(plans),
+        before_filter,
         len(all_evidence),
         len(deduped),
     )

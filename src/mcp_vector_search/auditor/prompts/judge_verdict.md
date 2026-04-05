@@ -49,3 +49,5 @@ Return a JSON object:
 - Consider that absence of evidence for bad practice can support PASS (e.g., no plaintext password storage found).
 - Look for both positive evidence (claim is implemented) and negative evidence (claim is violated).
 - Consider the knowledge graph path if present — it shows actual code call chains.
+- **Reference evidence by number** in your reasoning (e.g., "Evidence #3 shows...", "Evidence #7 contradicts..."). This allows cert readers to cross-reference your reasoning with the displayed evidence snippets.
+- When citing a file, use the exact filename from the evidence (e.g., `package.json`, `README.md`, `app.ts`).
