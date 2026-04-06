@@ -111,3 +111,19 @@ class AuditIgnoreEntry(BaseModel):
     justification: str = Field(min_length=20)
     expires: date | None = None
     approved_by: str
+
+
+class DriftReport(BaseModel):
+    """Report of policy/code drift since the last certification audit."""
+
+    target: str
+    has_drift: bool
+    policy_changed: bool
+    code_changed: bool
+    last_audit_timestamp: str | None
+    last_audit_commit: str | None
+    last_audit_policy_sha256: str | None
+    current_commit: str | None
+    current_policy_sha256: str | None
+    days_since_last_audit: int | None
+    details: str  # human-readable summary

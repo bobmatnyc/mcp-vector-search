@@ -89,6 +89,31 @@ Environment variables (prefix: `MVS_AUDIT_`):
 | `MVS_AUDIT_MIN_EVIDENCE_COUNT` | `2` | Minimum evidence items for PASS |
 | `MVS_AUDIT_GPG_KEY_ID` | — | GPG key for signing |
 
+## Drift Detection
+
+Check if the privacy policy or code has changed since the last audit:
+
+```bash
+# Human-readable output
+mvs audit drift-check --target /path/to/repo --policy /path/to/repo/PRIVACY.md
+
+# JSON output (for CI)
+mvs audit drift-check --target /path/to/repo --policy /path/to/repo/PRIVACY.md --json
+```
+
+Exit code 0 means no drift; exit code 1 means drift was detected.
+
+### Scheduled Checks
+
+The `privacy-drift-check.yml` workflow runs daily at 6am UTC and creates
+a GitHub issue if drift is detected. Trigger it manually with:
+
+```bash
+gh workflow run privacy-drift-check.yml \
+  -f target_repo=https://github.com/org/repo \
+  -f policy_path=PRIVACY.md
+```
+
 ## .audit-ignore.yml
 
 Place in the target repo root to suppress specific claims:

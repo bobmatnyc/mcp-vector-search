@@ -386,3 +386,97 @@ def audit_list(
             )
 
     console.print(table)
+
+
+@audit_app.command("drift-check")
+def audit_drift_check(
+    target: Path = typer.Option(
+        ...,
+        "--target",
+        "-t",
+        help="Path to the target repository to check for drift",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        resolve_path=True,
+        rich_help_panel="Required Options",
+    ),
+    policy: Path = typer.Option(
+        ...,
+        "--policy",
+        "-p",
+        help="Path to the privacy policy file to compare",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        resolve_path=True,
+        rich_help_panel="Required Options",
+    ),
+    output_dir: Path = typer.Option(
+        Path("certifications"),
+        "--output-dir",
+        "-o",
+        help="Certifications root directory to read index.json from",
+        rich_help_panel="Options",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Output DriftReport as JSON (for CI consumption)",
+        rich_help_panel="Options",
+    ),
+) -> None:
+    """Check whether the privacy policy or code has drifted since the last audit.
+
+    Compares the current HEAD commit and policy SHA-256 against the values
+    recorded in the most recent certification in certifications/index.json.
+
+    Exit code: 0 if no drift detected, 1 if drift is detected.
+
+    Examples:
+        mvs audit drift-check --target /path/to/repo --policy /path/to/repo/PRIVACY.md
+        mvs audit drift-check --target . --policy ./PRIVACY.md --json
+    """
+    try:
+        from ...auditor.drift import check_drift
+    except ImportError as exc:
+        console.print(f"[red]Import error:[/red] {exc}")
+        sys.exit(1)
+
+    report = check_drift(
+        target_repo=target,
+        policy_path=policy,
+        certifications_dir=output_dir,
+    )
+
+    if as_json:
+        console.print(report.model_dump_json(indent=2))
+    else:
+        if report.has_drift:
+            drift_style = "bold red"
+            drift_label = "DRIFT DETECTED"
+        else:
+            drift_style = "bold green"
+            drift_label = "NO DRIFT"
+
+        console.print(f"\n[{drift_style}]{drift_label}[/{drift_style}]")
+        console.print(f"Target      : {report.target}")
+        console.print(f"Details     : {report.details}")
+
+        if report.last_audit_timestamp:
+            console.print(f"Last audit  : {report.last_audit_timestamp}")
+        if report.days_since_last_audit is not None:
+            console.print(f"Days since  : {report.days_since_last_audit}")
+        if report.last_audit_commit:
+            console.print(f"Last commit : {report.last_audit_commit[:12]}")
+        if report.current_commit:
+            console.print(f"Curr commit : {report.current_commit[:12]}")
+
+        console.print(f"Policy drift: {'yes' if report.policy_changed else 'no'}")
+        console.print(f"Code drift  : {'yes' if report.code_changed else 'no'}")
+        console.print("")
+
+    if report.has_drift:
+        sys.exit(1)
