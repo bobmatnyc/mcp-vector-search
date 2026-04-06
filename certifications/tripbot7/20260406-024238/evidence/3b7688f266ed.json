@@ -1,0 +1,208 @@
+{
+  "claim_id": "3b7688f266ed",
+  "claim_text": "Claim is marked as non-testable — requires human review.",
+  "confidence": 1.0,
+  "evidence": [
+    {
+      "end_line": 9,
+      "file_path": "CLAUDE.md",
+      "kg_path": null,
+      "query": "third party SDK send data external API",
+      "score": 0.0,
+      "snippet": "## Tech Stack\n- **Framework**: Next.js 15 App Router (TypeScript, strict mode)\n- **API Layer**: Hono (mounted as catch-all in Next.js route handlers)\n- **Auth**: Auth.js v5 (NextAuth) with Google OAuth\n- **Storage**: Vercel Blob (private JSON for itineraries/user data)\n- **Cache**: Vercel KV (Redis) for event cache by date:country:city\n- **UI**: Tailwind CSS + shadcn/ui (mobile-first)\n- **AI**: Vercel AI SDK + OpenRouter (Claude Haiku via OpenRouter)\n- **Search**: Tavily Search API for hyperlocal events",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 1,
+      "file_path": "docs/research/tech-stack-validation-2026-04-04.md",
+      "kg_path": null,
+      "query": "third party SDK send data external API",
+      "score": 0.0,
+      "snippet": "**Sources:** [Tavily API docs](https://docs.tavily.com/documentation/api-reference/endpoint/search), [SerpAPI Google Events API](https://serpapi.com/google-events-api), [SERP API comparison](https://dev.to/ritza/best-serp-api-comparison-2025-serpapi-vs-exa-vs-tavily-vs-scrapingdog-vs-scrapingbee-2jci)",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 9,
+      "file_path": "docs/research/tech-stack-validation-2026-04-04.md",
+      "kg_path": null,
+      "query": "third party SDK send data external API",
+      "score": 0.0,
+      "snippet": "**File:** `app/api/[[...route]]/route.ts`",
+      "start_line": 9,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 5,
+      "file_path": "docs/research/e2e-flow-audit-2026-04-04.md",
+      "kg_path": null,
+      "query": "requests.post fetch axios http.post",
+      "score": 0.0,
+      "snippet": "- Calls `POST /api/itinerary/parse` with `{ text }` body -- matches Hono route exactly\n- Correctly reads `data.parsed` from response (Hono returns `{ parsed }`)\n- Save calls `POST /api/trips` with `{ rawText, parsed }` -- matches Hono route\n- Redirects to `/trips/${data.trip.id}` after save -- correct path\n- Error handling present for both parse and save",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 15,
+      "file_path": "docs/research/tech-stack-validation-2026-04-04.md",
+      "kg_path": null,
+      "query": "requests.post fetch axios http.post",
+      "score": 0.0,
+      "snippet": "app.get('/hello', (c) => c.json({ message: 'Hello' }))",
+      "start_line": 15,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 3,
+      "file_path": "src/app/api/auth/[...nextauth]/route.ts",
+      "kg_path": null,
+      "query": "requests.post fetch axios http.post",
+      "score": 0.0,
+      "snippet": "import { handlers } from \"@/lib/auth\"\n\nexport const { GET, POST } = handlers",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 6,
+      "file_path": "docs/research/travel-guidance-research-2026-04-04.md",
+      "kg_path": null,
+      "query": "data transfer upload telemetry analytics",
+      "score": 0.0,
+      "snippet": "**Cons for our use case:**\n- Extremely complex (thousands of XSD files)\n- Designed for B2B system integration, not consumer apps\n- Overkill for our itinerary planning use case\n- Poor fit for discovery/planning phase\n- No activity discovery or hyperlocal data",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 5,
+      "file_path": "docs/research/itinerary-schema-proposal-2026-04-04.md",
+      "kg_path": null,
+      "query": "data transfer upload telemetry analytics",
+      "score": 0.0,
+      "snippet": "### Phase 3: Enrichment Pipeline (following sprint)\n- Per-segment enrichment API endpoint\n- Cost estimation via AI\n- Transfer routing via AI (or future API integration)\n- Opening hours via search/API",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 1,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "data transfer upload telemetry analytics",
+      "score": 0.0,
+      "snippet": "Each third-party provider operates under their own privacy policy. We send only the minimum data necessary for each service to function.",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 28,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "data transfer upload telemetry analytics",
+      "score": 0.0,
+      "snippet": "We do not sell your data to third parties.",
+      "start_line": 28,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 23,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "data transfer upload telemetry analytics",
+      "score": 0.0,
+      "snippet": "## 3. Data Storage",
+      "start_line": 23,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 27,
+      "file_path": "src/components/export-menu.tsx",
+      "kg_path": null,
+      "query": "urllib.request httpx.post aiohttp.post",
+      "score": 0.0,
+      "snippet": "function downloadFile(content: string, filename: string, mimeType: string) {\n  const blob = new Blob([content], { type: mimeType })\n  const url = URL.createObjectURL(blob)\n  const link = document.createElement(\"a\")\n  link.href = url\n  link.download = filename\n  document.body.appendChild(link)\n  link.click()\n  document.body.removeChild(link)\n  URL.revokeObjectURL(url)\n}",
+      "start_line": 17,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 1,
+      "file_path": "docs/research/scaffold-status-report-2026-04-04.md",
+      "kg_path": null,
+      "query": "urllib.request httpx.post aiohttp.post",
+      "score": 0.0,
+      "snippet": "**Note:** `SERPAPI_API_KEY` listed but not used in code (planned future integration?)",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 39,
+      "file_path": "README.md",
+      "kg_path": null,
+      "query": "urllib.request httpx.post aiohttp.post",
+      "score": 0.0,
+      "snippet": "Open [http://localhost:3000](http://localhost:3000).",
+      "start_line": 39,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 209,
+      "file_path": "docs/research/scaffold-status-report-2026-04-04.md",
+      "kg_path": null,
+      "query": "urllib.request httpx.post aiohttp.post",
+      "score": 0.0,
+      "snippet": "### API Route Handlers",
+      "start_line": 209,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 41,
+      "file_path": "README.md",
+      "kg_path": null,
+      "query": "urllib.request httpx.post aiohttp.post",
+      "score": 0.0,
+      "snippet": "## API Routes (Hono)",
+      "start_line": 41,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 30,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "sell data sharing third parties data transfer external service",
+      "score": 0.0,
+      "snippet": "## 4. Third-Party Services",
+      "start_line": 30,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 25,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "sell data sharing third parties data transfer external service",
+      "score": 0.0,
+      "snippet": "Your data is stored securely using the following services:",
+      "start_line": 25,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 1,
+      "file_path": "content/terms.md",
+      "kg_path": null,
+      "query": "sell data sharing third parties data transfer external service",
+      "score": 0.0,
+      "snippet": "Access to the Service requires authentication via Google OAuth. You are responsible for maintaining the security of your account credentials. You may not share your account access or use another person's account without authorization.",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 5,
+      "file_path": "docs/research/perplexity-eval-2026-04-04.md",
+      "kg_path": null,
+      "query": "sell data sharing third parties data transfer external service",
+      "score": 0.0,
+      "snippet": "## 1. Pricing & Access",
+      "start_line": 5,
+      "tool": "search_hybrid"
+    }
+  ],
+  "status": "MANUAL_REVIEW"
+}

@@ -1,0 +1,188 @@
+{
+  "claim_id": "212f4f503978",
+  "claim_text": "The claim states that trip data and user preferences stored in Vercel Blob are encrypted. Evidence #1 shows AES-256-GCM encryption implementation (ALGORITHM constant and cipher operations with authentication tags). Evidence #8 demonstrates encryptTripPII function that encrypts trip.rawText before storage using encryptWithPrefix. Evidence #5 shows encryptWithPrefix adds a prefix and encrypts data. Evidence #18 shows user preferences are encrypted via encodePrefs using encryptWithPrefix before storage. Evidence #7 and #2 show corresponding decryption functions (decryptTripPII and decryptWithPrefix), confirming the encryption/decryption flow. Evidence #3 and #4 show encryptFields/decryptFields utility functions for encrypting multiple object fields. The encryption uses authenticated encryption (AES-GCM with auth tags per Evidence #1), which is cryptographically sound. The code demonstrates that both trip data (specifically rawText field) and user preferences are encrypted before being stored, and decrypted when retrieved, which directly supports the claim that data is stored as encrypted JSON files in Vercel Blob.",
+  "confidence": 0.82,
+  "evidence": [
+    {
+      "end_line": 38,
+      "file_path": "src/lib/crypto/encrypt.ts",
+      "kg_path": null,
+      "query": "AES encrypt decrypt TLS SSL bcrypt argon2 cryptography",
+      "score": 0.0,
+      "snippet": "function encrypt(plaintext: string): string {\n  if (!plaintext) return plaintext\n\n  const key = getMasterKey()\n  const iv = randomBytes(IV_LENGTH)\n  const cipher = createCipheriv(ALGORITHM, key, iv)\n\n  const encrypted = Buffer.concat([\n    cipher.update(plaintext, \"utf8\"),\n    cipher.final(),\n  ])\n  const authTag = cipher.getAuthTag()\n\n  // Format: base64(iv + authTag + ciphertext)\n  return Buffer.concat([iv, authTag, encrypted]).toString(\"base64\")\n}",
+      "start_line": 23,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 111,
+      "file_path": "src/lib/crypto/encrypt.ts",
+      "kg_path": null,
+      "query": "AES encrypt decrypt TLS SSL bcrypt argon2 cryptography",
+      "score": 0.0,
+      "snippet": "function decryptWithPrefix(value: string): string {\n  if (!value || !isEncrypted(value)) return value\n  return decrypt(value.slice(PREFIX.length))\n}",
+      "start_line": 108,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 81,
+      "file_path": "src/lib/crypto/encrypt.ts",
+      "kg_path": null,
+      "query": "AES encrypt decrypt TLS SSL bcrypt argon2 cryptography",
+      "score": 0.0,
+      "snippet": "function encryptFields<T extends Record<string, unknown>>(\n  obj: T,\n  fields: (keyof T)[]\n): T {\n  const result = { ...obj }\n  for (const field of fields) {\n    if (result[field] && typeof result[field] === \"string\") {\n      result[field] = encrypt(result[field] as string) as T[keyof T]\n    }\n  }\n  return result\n}",
+      "start_line": 70,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 94,
+      "file_path": "src/lib/crypto/encrypt.ts",
+      "kg_path": null,
+      "query": "AES encrypt decrypt TLS SSL bcrypt argon2 cryptography",
+      "score": 0.0,
+      "snippet": "function decryptFields<T extends Record<string, unknown>>(\n  obj: T,\n  fields: (keyof T)[]\n): T {\n  const result = { ...obj }\n  for (const field of fields) {\n    if (result[field] && typeof result[field] === \"string\") {\n      result[field] = decrypt(result[field] as string) as T[keyof T]\n    }\n  }\n  return result\n}",
+      "start_line": 83,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 106,
+      "file_path": "src/lib/crypto/encrypt.ts",
+      "kg_path": null,
+      "query": "AES encrypt decrypt TLS SSL bcrypt argon2 cryptography",
+      "score": 0.0,
+      "snippet": "function encryptWithPrefix(plaintext: string): string {\n  if (!plaintext) return plaintext\n  return PREFIX + encrypt(plaintext)\n}",
+      "start_line": 103,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 101,
+      "file_path": "src/lib/crypto/encrypt.ts",
+      "kg_path": null,
+      "query": "AES encrypt decrypt TLS SSL bcrypt argon2 cryptography",
+      "score": 0.0,
+      "snippet": "function isEncrypted(value: string): boolean {\n  return typeof value === \"string\" && value.startsWith(PREFIX)\n}",
+      "start_line": 99,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 28,
+      "file_path": "src/lib/storage/blob.ts",
+      "kg_path": null,
+      "query": "AES encrypt decrypt TLS SSL bcrypt argon2 cryptography",
+      "score": 0.0,
+      "snippet": "function decryptTripPII(trip: Trip): Trip {\n  return {\n    ...trip,\n    rawText: trip.rawText ? decryptWithPrefix(trip.rawText) : trip.rawText,\n  }\n}",
+      "start_line": 23,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 19,
+      "file_path": "src/lib/storage/blob.ts",
+      "kg_path": null,
+      "query": "crypto weak encryption plaintext password",
+      "score": 0.0,
+      "snippet": "function encryptTripPII(trip: Trip): Trip {\n  return {\n    ...trip,\n    rawText: trip.rawText ? encryptWithPrefix(trip.rawText) : trip.rawText,\n  }\n}",
+      "start_line": 14,
+      "tool": "find_smells"
+    },
+    {
+      "end_line": 67,
+      "file_path": "src/lib/crypto/encrypt.ts",
+      "kg_path": null,
+      "query": "crypto weak encryption plaintext password",
+      "score": 0.0,
+      "snippet": "function decrypt(ciphertext: string): string {\n  if (!ciphertext) return ciphertext\n\n  try {\n    const key = getMasterKey()\n    const data = Buffer.from(ciphertext, \"base64\")\n\n    const iv = data.subarray(0, IV_LENGTH)\n    const authTag = data.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH)\n    const encrypted = data.subarray(IV_LENGTH + TAG_LENGTH)\n\n    const decipher = createDecipheriv(ALGORITHM, key, iv)\n    decipher.setAuthTag(authTag)\n\n    const decrypted = Buffer.concat([\n      decipher.update(encrypted),\n      decipher.final(),\n    ])\n    return decrypted.toString(\"utf8\")\n  } catch (err) {\n    // If decryption fails, assume the value was stored unencrypted (backward compat)\n    console.warn(\n      \"Decryption failed, returning original value:\",\n      err instanceof Error ? err.message : String(err)\n    )\n    return ciphertext\n  }\n}",
+      "start_line": 40,
+      "tool": "find_smells"
+    },
+    {
+      "end_line": 10,
+      "file_path": "src/lib/crypto/index.ts",
+      "kg_path": null,
+      "query": "crypto weak encryption plaintext password",
+      "score": 0.0,
+      "snippet": "export {\n  encrypt,\n  decrypt,\n  encryptFields,\n  decryptFields,\n  isEncrypted,\n  encryptWithPrefix,\n  decryptWithPrefix,\n  hashEmail,\n} from \"./encrypt\"",
+      "start_line": 1,
+      "tool": "find_smells"
+    },
+    {
+      "end_line": 5,
+      "file_path": "docs/research/travel-guidance-research-2026-04-04.md",
+      "kg_path": null,
+      "query": "crypto weak encryption plaintext password",
+      "score": 0.0,
+      "snippet": "**PKPass Structure:**\n- ZIP archive containing JSON layout + images + cryptographic signature\n- Pass styles: `boardingPass`, `eventTicket`, `coupon`, `storeCard`, `generic`\n- Fields: up to 3 header, 1 primary, 4 secondary, 4 auxiliary fields\n- Boarding passes support transit types: air, boat, bus, generic, train",
+      "start_line": 1,
+      "tool": "find_smells"
+    },
+    {
+      "end_line": 419,
+      "file_path": "docs/research/itinerary-schema-proposal-2026-04-04.md",
+      "kg_path": null,
+      "query": "hashlib hmac fernet nacl pycryptodome",
+      "score": 0.0,
+      "snippet": "### Mapping to Apple Wallet (PKPass)",
+      "start_line": 419,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 182,
+      "file_path": "docs/research/travel-guidance-research-2026-04-04.md",
+      "kg_path": null,
+      "query": "hashlib hmac fernet nacl pycryptodome",
+      "score": 0.0,
+      "snippet": "### 2.4 Apple Wallet (PKPass) / Google Wallet",
+      "start_line": 182,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 27,
+      "file_path": "README.md",
+      "kg_path": null,
+      "query": "hashlib hmac fernet nacl pycryptodome",
+      "score": 0.0,
+      "snippet": "5. Generate an AUTH_SECRET:",
+      "start_line": 27,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 4,
+      "file_path": "docs/research/scaffold-status-report-2026-04-04.md",
+      "kg_path": null,
+      "query": "hashlib hmac fernet nacl pycryptodome",
+      "score": 0.0,
+      "snippet": "3. **Hardcoded `geo: { lat: 0, lng: 0 }` in Tavily results** -- events have no real coordinates\n4. **No error handling in AI extraction** -- if OpenRouter fails, the error propagates unhandled\n5. **N+1 fetch pattern in `listTrips`** -- fetches each blob individually\n6. **Hono auth type casting hack** -- `c.set(\"userId\" as never, ...)` should use proper Hono typing",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 6,
+      "file_path": "docs/research/itinerary-schema-proposal-2026-04-04.md",
+      "kg_path": null,
+      "query": "hashlib hmac fernet nacl pycryptodome",
+      "score": 0.0,
+      "snippet": "This proposal is based on research documented in:\n- [Travel Guidance Research (2026-04-04)](./travel-guidance-research-2026-04-04.md)\n- [schema.org Trip](https://schema.org/Trip) / [TouristTrip](https://schema.org/TouristTrip)\n- [TripIt API v1](https://tripit.github.io/api/doc/v1/)\n- [iCalendar RFC 5545](https://tools.ietf.org/html/rfc5545)\n- [Apple Wallet Developer Guide](https://developer.apple.com/library/archive/documentation/UserExperience/Conceptual/PassKit_PG/Creating.html)",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 4,
+      "file_path": "docs/research/e2e-flow-audit-2026-04-04.md",
+      "kg_path": null,
+      "query": "hashlib hmac fernet nacl pycryptodome",
+      "score": 0.0,
+      "snippet": "- Path format: `trips/{userId}/{tripId}.json`\n- Uses `addRandomSuffix: false` for deterministic paths\n- `getTrip` uses `list({ prefix })` then fetches first blob -- works with Vercel Blob\n- `listTrips` fetches all and sorts by createdAt",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 21,
+      "file_path": "src/lib/preferences/store.ts",
+      "kg_path": null,
+      "query": "at rest encryption database field encrypt",
+      "score": 0.0,
+      "snippet": "function encodePrefs(prefs: UserPreferences): string {\n  return encryptWithPrefix(JSON.stringify(prefs))\n}",
+      "start_line": 19,
+      "tool": "search_hybrid"
+    }
+  ],
+  "status": "PASS"
+}

@@ -52,6 +52,9 @@ class AuditorSettings(BaseSettings):
     openrouter_extractor_model: str = "anthropic/claude-haiku-4-5"
     openrouter_judge_model: str = "anthropic/claude-sonnet-4-5"
 
+    # GPG signing (M2)
+    gpg_key_id: str | None = None  # GPG key ID for signing (env: MVS_AUDIT_GPG_KEY_ID)
+
     @model_validator(mode="before")
     @classmethod
     def resolve_api_key(cls, values: dict) -> dict:

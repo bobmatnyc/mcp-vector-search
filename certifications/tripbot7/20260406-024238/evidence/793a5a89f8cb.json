@@ -1,0 +1,282 @@
+{
+  "claim_id": "793a5a89f8cb",
+  "claim_text": "The evidence demonstrates that users can request a copy of their trip data in standard formats. Evidence #3 shows exportTripAsJSON function in src/lib/export/json.ts, Evidence #4 shows exportTripAsMarkdown in src/lib/export/markdown.ts, and Evidence #5 shows exportTripAsPrintHTML in src/lib/export/pdf.ts. Evidence #2 confirms an ExportMenu component exists in src/components/export-menu.tsx, indicating a user-facing interface for data export. Evidence #12 and #26 reference standard format mappings and schema.org compatibility, demonstrating the exports use standard formats. Evidence #18 shows trip data storage structure that would be exported. The combination of export functions in multiple standard formats (JSON, Markdown, PDF/HTML) with a UI component for accessing them directly supports the claim that users can request copies of their trip data in standard formats.",
+  "confidence": 0.82,
+  "evidence": [
+    {
+      "end_line": 0,
+      "file_path": "src/lib/preferences/store.ts",
+      "kg_path": [
+        "setUserPreferences -> getUserPreferences",
+        "trackEventInteraction -> getUserPreferences",
+        "trackTripCreated -> getUserPreferences"
+      ],
+      "query": "user export endpoint data access request",
+      "score": 0.7,
+      "snippet": "[function] getUserPreferences",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 0,
+      "file_path": "src/components/export-menu.tsx",
+      "kg_path": null,
+      "query": "user export endpoint data access request",
+      "score": 0.7,
+      "snippet": "[function] ExportMenu",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 0,
+      "file_path": "src/lib/export/json.ts",
+      "kg_path": null,
+      "query": "user export endpoint data access request",
+      "score": 0.7,
+      "snippet": "[function] exportTripAsJSON",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 0,
+      "file_path": "src/lib/export/markdown.ts",
+      "kg_path": null,
+      "query": "user export endpoint data access request",
+      "score": 0.7,
+      "snippet": "[function] exportTripAsMarkdown",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 0,
+      "file_path": "src/lib/export/pdf.ts",
+      "kg_path": null,
+      "query": "user export endpoint data access request",
+      "score": 0.7,
+      "snippet": "[function] exportTripAsPrintHTML",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 0,
+      "file_path": "src/app/about/page.tsx",
+      "kg_path": null,
+      "query": "user export endpoint data access request",
+      "score": 0.7,
+      "snippet": "[function] generateMetadata",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 0,
+      "file_path": "src/app/privacy/page.tsx",
+      "kg_path": null,
+      "query": "user export endpoint data access request",
+      "score": 0.7,
+      "snippet": "[function] generateMetadata",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 0,
+      "file_path": "src/app/terms/page.tsx",
+      "kg_path": null,
+      "query": "user export endpoint data access request",
+      "score": 0.7,
+      "snippet": "[function] generateMetadata",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 0,
+      "file_path": "src/lib/events/city-wiki-data.ts",
+      "kg_path": null,
+      "query": "user export endpoint data access request",
+      "score": 0.7,
+      "snippet": "[module] city-wiki-data",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 25,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "GDPR CCPA DSAR user rights data export portability",
+      "score": 0.0,
+      "snippet": "Your data is stored securely using the following services:",
+      "start_line": 25,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 3,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "GDPR CCPA DSAR user rights data export portability",
+      "score": 0.0,
+      "snippet": "- **Google Profile**: Name, email address, and profile image provided through Google OAuth authentication.\n- **Trip Data**: Itinerary text you paste or type, and the structured trip data extracted from it (dates, cities, activities).\n- **Usage Analytics**: Basic usage data such as pages visited, features used, and session duration.",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 5,
+      "file_path": "docs/research/itinerary-schema-proposal-2026-04-04.md",
+      "kg_path": null,
+      "query": "GDPR CCPA DSAR user rights data export portability",
+      "score": 0.0,
+      "snippet": "1. **Backward compatible**: All new fields are optional; existing data remains valid\n2. **Segment-based**: Work on one day at a time (matches traveler mental model)\n3. **Progressive**: Minimal viable = city + country; full = everything below\n4. **Mappable**: Every field has a path to schema.org, iCal, or wallet export\n5. **Confidence-aware**: AI extraction quality is explicit throughout",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 28,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "GDPR CCPA DSAR user rights data export portability",
+      "score": 0.0,
+      "snippet": "We do not sell your data to third parties.",
+      "start_line": 28,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 440,
+      "file_path": "docs/research/itinerary-schema-proposal-2026-04-04.md",
+      "kg_path": null,
+      "query": "right_to_erasure right_to_access data_export gdpr",
+      "score": 0.0,
+      "snippet": "---\n\n## Export Formats",
+      "start_line": 440,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 4,
+      "file_path": "docs/research/e2e-flow-audit-2026-04-04.md",
+      "kg_path": null,
+      "query": "right_to_erasure right_to_access data_export gdpr",
+      "score": 0.0,
+      "snippet": "1. **Fix the DELETE export** in `src/app/api/[...route]/route.ts` (add `export const DELETE = handle(app)`)\n2. **Consider auto-searching events** on trip detail page load instead of requiring manual button clicks per segment\n3. **Add error boundaries** around the event search to prevent one failed segment from blocking others\n4. **Consider PUT export** if trip editing is planned later",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 5,
+      "file_path": "docs/research/tech-stack-validation-2026-04-04.md",
+      "kg_path": null,
+      "query": "delete account user data request download",
+      "score": 0.0,
+      "snippet": "export const GET = handle(app)\nexport const POST = handle(app)\nexport const PUT = handle(app)\nexport const DELETE = handle(app)\n```",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 139,
+      "file_path": "docs/research/scaffold-status-report-2026-04-04.md",
+      "kg_path": null,
+      "query": "delete account user data request download",
+      "score": 0.0,
+      "snippet": "**Missing:** Nothing -- clean login page.",
+      "start_line": 139,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 67,
+      "file_path": "src/lib/storage/blob.ts",
+      "kg_path": null,
+      "query": "users export download privacy request erasure",
+      "score": 0.0,
+      "snippet": "async function saveTrip(\n  trip: Trip,\n  expectedVersion?: number\n): Promise<string> {\n  if (expectedVersion !== undefined) {\n    const current = await getTrip(trip.userId, trip.id)\n    if (current && current.version !== expectedVersion) {\n      throw new VersionConflictError(current)\n    }\n  }\n\n  const tripToSave: Trip = {\n    ...trip,\n    version: (trip.version ?? 0) + 1,\n    updatedAt: new Date().toISOString(),\n  }\n\n  const path = tripPath(tripToSave.userId, tripToSave.id)\n  const encrypted = encryptTripPII(tripToSave)\n  const blob = await put(path, JSON.stringify(encrypted), {\n    access: \"private\",\n    contentType: \"application/json\",\n    addRandomSuffix: false,\n  })\n  return blob.url\n}",
+      "start_line": 42,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 3,
+      "file_path": "docs/research/scaffold-status-report-2026-04-04.md",
+      "kg_path": null,
+      "query": "users export download privacy request erasure",
+      "score": 0.0,
+      "snippet": "1. **Security: `access: \"public\"` in blob storage** (`src/lib/storage/blob.ts:13`)\n   - Trip JSON files are publicly accessible via URL\n   - Should use private access or add user validation on fetch",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 10,
+      "file_path": "src/lib/crypto/index.ts",
+      "kg_path": null,
+      "query": "users export download privacy request erasure",
+      "score": 0.0,
+      "snippet": "export {\n  encrypt,\n  decrypt,\n  encryptFields,\n  decryptFields,\n  isEncrypted,\n  encryptWithPrefix,\n  decryptWithPrefix,\n  hashEmail,\n} from \"./encrypt\"",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 6,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "consent withdrawal opt out unsubscribe",
+      "score": 0.0,
+      "snippet": "# Privacy Policy",
+      "start_line": 6,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 49,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "consent withdrawal opt out unsubscribe",
+      "score": 0.0,
+      "snippet": "## 7. Changes to This Policy",
+      "start_line": 49,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 10,
+      "file_path": "content/terms.md",
+      "kg_path": null,
+      "query": "consent withdrawal opt out unsubscribe",
+      "score": 0.0,
+      "snippet": "## 1. Acceptance of Terms",
+      "start_line": 10,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 1,
+      "file_path": "content/terms.md",
+      "kg_path": null,
+      "query": "consent withdrawal opt out unsubscribe",
+      "score": 0.0,
+      "snippet": "We reserve the right to update these Terms of Service at any time. Continued use of the Service after changes constitutes acceptance of the updated terms. We will make reasonable efforts to notify users of significant changes.",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 3,
+      "file_path": "CLAUDE.md",
+      "kg_path": null,
+      "query": "export data portability standard format user rights request",
+      "score": 0.0,
+      "snippet": "## Environment Variables\nCopy `.env.local.example` to `.env.local` and fill in values.\nRequired: AUTH_SECRET, AUTH_GOOGLE_ID, AUTH_GOOGLE_SECRET, OPENROUTER_API_KEY, TAVILY_API_KEY, BLOB_READ_WRITE_TOKEN, KV_REST_API_URL, KV_REST_API_TOKEN",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 366,
+      "file_path": "docs/research/itinerary-schema-proposal-2026-04-04.md",
+      "kg_path": null,
+      "query": "export data portability standard format user rights request",
+      "score": 0.0,
+      "snippet": "---\n\n## Standard Format Mappings",
+      "start_line": 366,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 56,
+      "file_path": "docs/research/itinerary-schema-proposal-2026-04-04.md",
+      "kg_path": null,
+      "query": "export data portability standard format user rights request",
+      "score": 0.0,
+      "snippet": "export type ConfidenceLevel = \"high\" | \"medium\" | \"low\"",
+      "start_line": 56,
+      "tool": "search_hybrid"
+    }
+  ],
+  "status": "PASS"
+}

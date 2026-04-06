@@ -3,15 +3,20 @@
 Task 1 + CLI wiring: Implements 'mvs audit run' which runs a full audit
 and writes a Markdown certification report.
 
+M2 additions:
+  - 'mvs audit verify <cert-dir>' — verify manifest hashes and GPG signature
+  - 'mvs audit list [--target]'   — list audits from index.json
+
 Exit codes:
-  0 — CERTIFIED
-  1 — FAILED
+  0 — CERTIFIED (run) or verification passed
+  1 — FAILED (run) or verification failed
   2 — CERTIFIED_WITH_EXCEPTIONS
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -83,7 +88,8 @@ def audit_run(
 
     Extracts testable claims from the policy, gathers evidence from the
     target repo's vector index and knowledge graph, judges each claim, and
-    writes a Markdown certification report.
+    writes a Markdown certification report alongside JSON sidecar, evidence
+    files, manifest, and (optionally) a GPG signature.
 
     Prerequisites:
     - Set MVS_AUDIT_ANTHROPIC_API_KEY environment variable.
@@ -121,7 +127,7 @@ async def _run_audit_async(
     try:
         from ...auditor.certifier import write_certification
         from ...auditor.config import AuditorSettings
-        from ...auditor.runner import run_audit
+        from ...auditor.runner import finalize_audit, run_audit
     except ImportError as exc:
         console.print(
             f"[red]Import error:[/red] {exc}\n"
@@ -148,6 +154,8 @@ async def _run_audit_async(
         console.print(f"  Extractor   : {settings.extractor_model}")
         console.print(f"  Judge       : {settings.judge_model}")
     console.print(f"  Ignore file : {'disabled' if no_ignore else 'enabled'}")
+    if settings.gpg_key_id:
+        console.print(f"  GPG Key     : {settings.gpg_key_id}")
     console.print("")
 
     # Read policy text for snapshot
@@ -164,8 +172,12 @@ async def _run_audit_async(
     else:
         doc = await run_audit(target_repo, policy_path, settings)
 
-    # Write certification output
+    # Write all certification artifacts (M1 + M2)
     cert_path = write_certification(doc, policy_text, output_dir)
+    cert_dir = cert_path.parent
+
+    # Finalize: GPG sign, update index, append audit log, symlink
+    signed = finalize_audit(doc, cert_dir, output_dir, settings)
 
     # Print summary table to terminal
     table = Table(title="Audit Summary", show_header=True, header_style="bold")
@@ -195,7 +207,9 @@ async def _run_audit_async(
         table.add_row(label, str(count), style=style)
 
     console.print(table)
-    console.print(f"\nCertification written to: [bold]{cert_path}[/bold]")
+    console.print(f"\nCertification written to: [bold]{cert_dir}[/bold]")
+    if signed:
+        console.print("[green]GPG signed:[/green] certification.json.sig")
 
     # Exit code based on overall status
     exit_codes = {
@@ -206,3 +220,143 @@ async def _run_audit_async(
     exit_code = exit_codes.get(doc.overall_status, 1)
     if exit_code != 0:
         sys.exit(exit_code)
+
+
+@audit_app.command("verify")
+def audit_verify(
+    cert_dir: Path = typer.Argument(
+        ...,
+        help="Path to a certification run directory (e.g. certifications/tripbot7/20260405-231955/)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        resolve_path=True,
+    ),
+) -> None:
+    """Verify a certification directory's manifest hashes and GPG signature.
+
+    Checks that all files recorded in manifest.json match their SHA-256
+    hashes.  If certification.json.sig is present, also verifies the GPG
+    detached signature against certification.json.
+
+    Exit code 0 if valid, 1 if invalid.
+    """
+    try:
+        from ...auditor.certifier import verify_certification
+    except ImportError as exc:
+        console.print(f"[red]Import error:[/red] {exc}")
+        sys.exit(1)
+
+    console.print(f"[bold]Verifying certification:[/bold] {cert_dir}")
+
+    ok = verify_certification(cert_dir)
+
+    sig_path = cert_dir / "certification.json.sig"
+    if ok:
+        if sig_path.exists():
+            console.print(
+                "[green]VALID[/green] — manifest hashes OK, GPG signature valid"
+            )
+        else:
+            console.print("[green]VALID[/green] — manifest hashes OK (unsigned)")
+        sys.exit(0)
+    else:
+        console.print("[red]INVALID[/red] — verification failed (see logs above)")
+        sys.exit(1)
+
+
+@audit_app.command("list")
+def audit_list(
+    output_dir: Path = typer.Option(
+        Path("certifications"),
+        "--output-dir",
+        "-o",
+        help="Certifications root directory",
+    ),
+    target: str | None = typer.Option(
+        None,
+        "--target",
+        "-t",
+        help="Filter to a specific target slug",
+    ),
+) -> None:
+    """List past audits from the certifications index.
+
+    Reads certifications/index.json and displays a table of all recorded
+    audits.  Use --target to filter to a specific repository slug.
+
+    Example:
+        mvs audit list
+        mvs audit list --target tripbot7
+    """
+    index_path = output_dir / "index.json"
+
+    if not index_path.exists():
+        console.print(
+            f"[yellow]No index found at {index_path}[/yellow]\n"
+            "Run 'mvs audit run' first to create certifications."
+        )
+        sys.exit(0)
+
+    try:
+        index_data = json.loads(index_path.read_bytes())
+    except (json.JSONDecodeError, OSError) as exc:
+        console.print(f"[red]Failed to read index.json:[/red] {exc}")
+        sys.exit(1)
+
+    targets: dict = index_data.get("targets", {})
+
+    if target:
+        if target not in targets:
+            console.print(f"[yellow]No audits found for target '{target}'[/yellow]")
+            sys.exit(0)
+        targets = {target: targets[target]}
+
+    if not targets:
+        console.print("[yellow]No audits recorded yet.[/yellow]")
+        sys.exit(0)
+
+    table = Table(
+        title="Audit History",
+        show_header=True,
+        header_style="bold",
+    )
+    table.add_column("Target", style="bold")
+    table.add_column("Timestamp")
+    table.add_column("Status")
+    table.add_column("Pass", justify="right", style="green")
+    table.add_column("Fail", justify="right", style="red")
+    table.add_column("Insuff.", justify="right", style="yellow")
+    table.add_column("Manual", justify="right", style="yellow")
+    table.add_column("Total", justify="right")
+    table.add_column("Signed")
+
+    status_styles = {
+        "CERTIFIED": "green",
+        "CERTIFIED_WITH_EXCEPTIONS": "yellow",
+        "FAILED": "red",
+    }
+
+    for tgt_name, tgt_data in sorted(targets.items()):
+        audits = tgt_data.get("audits", [])
+        for entry in reversed(audits):  # newest first
+            status = entry.get("overall_status", "?")
+            summary = entry.get("summary", {})
+            signed_icon = "yes" if entry.get("signed") else "no"
+            status_style = status_styles.get(status, "")
+            table.add_row(
+                tgt_name,
+                entry.get("timestamp", "?"),
+                f"[{status_style}]{status}[/{status_style}]"
+                if status_style
+                else status,
+                str(summary.get("PASS", 0)),
+                str(summary.get("FAIL", 0)),
+                str(summary.get("INSUFFICIENT_EVIDENCE", 0)),
+                str(summary.get("MANUAL_REVIEW", 0)),
+                str(summary.get("TOTAL", 0)),
+                signed_icon,
+            )
+
+    console.print(table)

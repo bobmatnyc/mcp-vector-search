@@ -1,0 +1,98 @@
+{
+  "claim_id": "60b654ec4220",
+  "claim_text": "Evidence #2 shows the claim exists in content/privacy.md, confirming this is a stated policy. However, none of the evidence provides actual code implementation that demonstrates data minimization practices when sending data to third-party services. Evidence #4 shows cost tracking code (tracker.ts) but doesn't reveal what data is sent to external services. Evidence #5-9 are documentation snippets unrelated to data transmission. To verify this claim, we would need to see actual API calls to third-party services showing what data fields are included in requests, but no such code evidence is present. The absence of code evidence means we cannot confirm whether the implementation matches the policy statement.",
+  "confidence": 0.3,
+  "evidence": [
+    {
+      "end_line": 1,
+      "file_path": "content/terms.md",
+      "kg_path": null,
+      "query": "We send only the minimum data necessary for each service to function.",
+      "score": 0.0,
+      "snippet": "The Service is provided \"as is\" without warranties of any kind, express or implied. We are not liable for missed events, incorrect times, canceled activities, travel disruptions, or any losses arising from reliance on information provided by the Service. Use the Service at your own discretion.",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 1,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "We send only the minimum data necessary for each service to function.",
+      "score": 0.0,
+      "snippet": "Each third-party provider operates under their own privacy policy. We send only the minimum data necessary for each service to function.",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 12,
+      "file_path": "content/terms.md",
+      "kg_path": null,
+      "query": "We send only the minimum data necessary for each service to function.",
+      "score": 0.0,
+      "snippet": "## 2. Description of Service",
+      "start_line": 12,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 46,
+      "file_path": "src/lib/costs/tracker.ts",
+      "kg_path": null,
+      "query": "We send only the minimum data necessary for each service to function.",
+      "score": 0.0,
+      "snippet": "function trackCost(\n  operation: string,\n  cost: number,\n  city?: string\n): void {\n  try {\n    const dateKey = new Date().toISOString().split(\"T\")[0]\n    const monthKey = dateKey.slice(0, 7)\n\n    const promises: Promise<unknown>[] = [\n      kv.hincrbyfloat(`costs:daily:${dateKey}`, operation, cost),\n      kv.hincrbyfloat(`costs:monthly:${monthKey}`, operation, cost),\n      kv.hincrbyfloat(\"costs:total\", operation, cost),\n    ]\n\n    if (city) {\n      promises.push(\n        kv.hincrbyfloat(`costs:city:${city}`, operation, cost)\n      )\n    }\n\n    // Fire-and-forget: run all increments in parallel, ignore failures\n    void Promise.all(promises).catch(() => {})\n  } catch {\n    // Swallow any synchronous errors (e.g., kv not configured)\n  }\n}",
+      "start_line": 20,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 11,
+      "file_path": "docs/research/travel-guidance-research-2026-04-04.md",
+      "kg_path": null,
+      "query": "We send only the minimum data necessary for each service to function.",
+      "score": 0.0,
+      "snippet": "| Info Type | Priority | Example |\n|-----------|----------|---------|\n| Mode of transport | Critical | Train, metro, bus, walking, taxi, ferry |\n| Duration | Critical | \"35 min\" or \"2h 15m\" |\n| Cost estimate | High | \"~EUR 12\" or \"JPY 1,400\" |\n| Frequency | High | \"Every 15 min\" or \"3 departures daily\" |\n| How to buy tickets | High | \"Buy at machine in station\" or \"Tap contactless card\" |\n| Walking distance to/from | Medium | \"5-min walk to station\" |\n| Tips/gotchas | Medium | \"Validate ticket before boarding\" or \"No luggage space on metro\" |\n| Accessibility | Medium | \"Escalators at exit 2\" or \"No step-free access\" |\n| Booking required? | High | \"Reserve seats on TGV\" vs \"Just show up\" |",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 3,
+      "file_path": "docs/research/hyperlocal-search-strategy-2026-04-04.md",
+      "kg_path": null,
+      "query": "We send only the minimum data necessary for each service to function.",
+      "score": 0.0,
+      "snippet": "**Date:** 2026-04-04\n**Status:** Actionable\n**Scope:** Tavily optimization, complementary APIs, city-specific site database",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 155,
+      "file_path": "docs/research/scaffold-status-report-2026-04-04.md",
+      "kg_path": null,
+      "query": "We send only the minimum data necessary for each service to function.",
+      "score": 0.0,
+      "snippet": "**Missing:** Nothing -- minimal and correct.",
+      "start_line": 155,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 34,
+      "file_path": "docs/research/hyperlocal-search-strategy-2026-04-04.md",
+      "kg_path": null,
+      "query": "We send only the minimum data necessary for each service to function.",
+      "score": 0.0,
+      "snippet": "## 2. Tavily Optimization Recommendations",
+      "start_line": 34,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 367,
+      "file_path": "docs/research/mobile-ui-audit-2026-04-04.md",
+      "kg_path": null,
+      "query": "We send only the minimum data necessary for each service to function.",
+      "score": 0.0,
+      "snippet": "## Priority Implementation Order",
+      "start_line": 367,
+      "tool": "search_code"
+    }
+  ],
+  "status": "INSUFFICIENT_EVIDENCE"
+}

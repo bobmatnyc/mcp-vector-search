@@ -31,6 +31,12 @@ from rich.progress import (
 )
 
 from .. import __version__
+from .certifier import (
+    append_audit_log,
+    sign_certification,
+    update_index,
+    update_latest_symlink,
+)
 from .claim_router import route
 from .config import AuditorSettings
 from .evidence_collector import collect
@@ -171,6 +177,48 @@ def _check_index_staleness(target_repo: Path) -> None:
         )
 
 
+def _auto_index_if_missing(target_repo: Path) -> None:
+    """Check for a vector index and attempt to auto-index if absent.
+
+    If the index directory does not exist, calls 'mvs index' via subprocess
+    so that evidence collection can proceed with vector search results.
+    Failures are logged as warnings; the audit continues with degraded evidence.
+
+    Args:
+        target_repo: Root directory of the repository being audited.
+    """
+    index_dir = target_repo / ".mcp-vector-search" / "index"
+    if index_dir.exists():
+        return
+
+    logger.info("No vector index found at %s. Auto-indexing target repo...", index_dir)
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["mvs", "index", "--project-root", str(target_repo)],  # noqa: S607  # nosec B607
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode == 0:
+            logger.info("Auto-indexing succeeded for %s", target_repo)
+        else:
+            logger.warning(
+                "Auto-indexing failed (exit %d). Continuing with degraded evidence.\n%s",
+                result.returncode,
+                result.stderr.strip(),
+            )
+    except FileNotFoundError:
+        logger.warning(
+            "mvs CLI not found on PATH; cannot auto-index. "
+            "Run 'mvs index --project-root %s' manually.",
+            target_repo,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "Auto-indexing timed out after 5 minutes. Continuing with degraded evidence."
+        )
+
+
 async def run_audit(
     target_repo: Path,
     policy_path: Path,
@@ -204,6 +252,9 @@ async def run_audit(
     # Step 3: Load ignore list
     ignore_list = IgnoreList.load(target_repo)
     logger.info("Ignore list: %d entries", len(ignore_list))
+
+    # Step 3a.5: Auto-index if missing
+    _auto_index_if_missing(target_repo)
 
     # Step 3b: Check vector index staleness
     _check_index_staleness(target_repo)
@@ -331,3 +382,36 @@ async def run_audit(
     )
 
     return doc
+
+
+def finalize_audit(
+    doc: CertificationDocument,
+    cert_dir: Path,
+    output_dir: Path,
+    settings: AuditorSettings,
+) -> bool:
+    """Run post-write finalization steps for a completed audit.
+
+    This is called after write_certification() to:
+    1. Optionally GPG-sign the certification.json
+    2. Update certifications/index.json
+    3. Append to certifications/audit-log.jsonl
+    4. Create/update certifications/<target>/latest symlink
+
+    Args:
+        doc: The completed CertificationDocument.
+        cert_dir: Path to the run directory written by write_certification().
+        output_dir: Root certifications directory.
+        settings: AuditorSettings (used for GPG key ID).
+
+    Returns:
+        True if signing was performed, False otherwise.
+    """
+    sig_path = sign_certification(cert_dir, settings)
+    signed = sig_path is not None
+
+    update_index(cert_dir, doc, output_dir, signed=signed)
+    append_audit_log(doc, output_dir)
+    update_latest_symlink(cert_dir, output_dir, doc)
+
+    return signed

@@ -1,0 +1,168 @@
+{
+  "claim_id": "f22fe10df1e8",
+  "claim_text": "The claim states that Google OAuth is used for authentication and account management. Evidence #3 (README.md lines 1-8) explicitly lists 'Auth.js v5 (NextAuth) with Google OAuth' as part of the tech stack. Evidence #4 (CLAUDE.md lines 1-9) confirms 'Auth: Auth.js v5 (NextAuth) with Google OAuth'. Evidence #14 (tech-stack-validation-2026-04-04.md line 27) shows a validation section titled 'Auth.js v5 + App Router + Google OAuth -- CONFIRMED', indicating this integration has been validated. Evidence #11 and #12 reference auth configuration files (scaffold-status-report-2026-04-04.md), and Evidence #15 mentions middleware.ts for auth middleware. Multiple independent documentation sources consistently confirm Google OAuth is implemented for authentication. No contradictory evidence was found suggesting alternative or additional authentication methods that would violate this claim.",
+  "confidence": 0.92,
+  "evidence": [
+    {
+      "end_line": 5,
+      "file_path": "docs/research/itinerary-schema-proposal-2026-04-04.md",
+      "kg_path": null,
+      "query": "analytics segment amplitude mixpanel google_analytics",
+      "score": 0.0,
+      "snippet": "### Phase 3: Enrichment Pipeline (following sprint)\n- Per-segment enrichment API endpoint\n- Cost estimation via AI\n- Transfer routing via AI (or future API integration)\n- Opening hours via search/API",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 238,
+      "file_path": "docs/research/itinerary-schema-proposal-2026-04-04.md",
+      "kg_path": null,
+      "query": "analytics segment amplitude mixpanel google_analytics",
+      "score": 0.0,
+      "snippet": "segments: ItinerarySegment[]",
+      "start_line": 238,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 8,
+      "file_path": "README.md",
+      "kg_path": null,
+      "query": "third party vendor SDK integration analytics tracking",
+      "score": 0.0,
+      "snippet": "- **Next.js 15** (App Router, TypeScript, strict mode)\n- **Hono** mounted as API handler via catch-all route\n- **Auth.js v5** (NextAuth) with Google OAuth\n- **Vercel Blob** for private JSON storage (itineraries, user profiles)\n- **Vercel KV** (Redis) for event cache\n- **Tailwind CSS + shadcn/ui** for mobile-first UI\n- **Vercel AI SDK** (@ai-sdk/anthropic) for entity extraction with Claude Haiku\n- **Tavily Search** for hyperlocal event discovery",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 9,
+      "file_path": "CLAUDE.md",
+      "kg_path": null,
+      "query": "third party vendor SDK integration analytics tracking",
+      "score": 0.0,
+      "snippet": "## Tech Stack\n- **Framework**: Next.js 15 App Router (TypeScript, strict mode)\n- **API Layer**: Hono (mounted as catch-all in Next.js route handlers)\n- **Auth**: Auth.js v5 (NextAuth) with Google OAuth\n- **Storage**: Vercel Blob (private JSON for itineraries/user data)\n- **Cache**: Vercel KV (Redis) for event cache by date:country:city\n- **UI**: Tailwind CSS + shadcn/ui (mobile-first)\n- **AI**: Vercel AI SDK + OpenRouter (Claude Haiku via OpenRouter)\n- **Search**: Tavily Search API for hyperlocal events",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 1,
+      "file_path": "docs/research/tech-stack-validation-2026-04-04.md",
+      "kg_path": null,
+      "query": "third party vendor SDK integration analytics tracking",
+      "score": 0.0,
+      "snippet": "`generateObject` with Zod schemas works with Anthropic models. The SDK handles schema validation and type safety automatically.",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 44,
+      "file_path": "package.json",
+      "kg_path": null,
+      "query": "third party vendor SDK integration analytics tracking",
+      "score": 0.0,
+      "snippet": "{\n  \"name\": \"tripbot7\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"scripts\": {\n    \"dev\": \"next dev -p 5432\",\n    \"build\": \"next build\",\n    \"start\": \"next start\",\n    \"lint\": \"eslint\"\n  },\n  \"dependencies\": {\n    \"@openrouter/ai-sdk-provider\": \"^2.3.3\",\n    \"@auth/core\": \"^0.34.3\",\n    \"@base-ui/react\": \"^1.3.0\",\n    \"@hono/node-server\": \"^1.19.12\",\n    \"@tavily/core\": \"^0.7.2\",\n    \"@vercel/blob\": \"^2.3.3\",\n    \"@vercel/kv\": \"^3.0.0\",\n    \"ai\": \"^6.0.146\",\n    \"class-variance-authority\": \"^0.7.1\",\n    \"clsx\": \"^2.1.1\",\n    \"hono\": \"^4.12.10\",\n    \"lucide-react\": \"^1.7.0\",\n    \"next\": \"16.2.2\",\n    \"next-auth\": \"5.0.0-beta.30\",\n    \"next-themes\": \"^0.4.6\",\n    \"react\": \"19.2.4\",\n    \"react-dom\": \"19.2.4\",\n    \"shadcn\": \"^4.1.2\",\n    \"tailwind-merge\": \"^3.5.0\",\n    \"tw-animate-css\": \"^1.4.0\",\n    \"zod\": \"^4.3.6\"\n  },\n  \"devDependencies\": {\n    \"@tailwindcss/postcss\": \"^4\",\n    \"@types/node\": \"^20\",\n    \"@types/react\": \"^19\",\n    \"@types/react-dom\": \"^19\",\n    \"eslint\": \"^9\",\n    \"eslint-config-next\": \"16.2.2\",\n    \"tailwindcss\": \"^4\",\n    \"typescript\": \"^5\"\n  }\n}",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 131,
+      "file_path": "docs/research/travel-guidance-research-2026-04-04.md",
+      "kg_path": null,
+      "query": "import stripe twilio sendgrid datadog sentry",
+      "score": 0.0,
+      "snippet": "### 2.2 TripIt API Data Model",
+      "start_line": 131,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 24,
+      "file_path": "src/components/google-analytics.tsx",
+      "kg_path": null,
+      "query": "advertising pixel tracking script embed",
+      "score": 0.0,
+      "snippet": "function GoogleAnalytics() {\n  return (\n    <>\n      <Script\n        src={`https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`}\n        strategy=\"afterInteractive\"\n      />\n      <Script id=\"google-analytics\" strategy=\"afterInteractive\">\n        {`\n          window.dataLayer = window.dataLayer || [];\n          function gtag(){dataLayer.push(arguments);}\n          gtag('js', new Date());\n          gtag('config', '${GA_MEASUREMENT_ID}');\n        `}\n      </Script>\n    </>\n  )\n}",
+      "start_line": 7,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 63,
+      "file_path": "src/app/events/[city]/[eventId]/visit-source-button.tsx",
+      "kg_path": null,
+      "query": "advertising pixel tracking script embed",
+      "score": 0.0,
+      "snippet": "function VisitSourceButton({\n  url,\n  title,\n  city,\n  sourceDomain,\n  category,\n}: VisitSourceButtonProps) {\n  const handleClick = () => {\n    // Analytics (existing)\n    if (typeof window !== \"undefined\" && window.gtag) {\n      window.gtag(\"event\", \"visit_source\", {\n        event_category: \"engagement\",\n        event_label: title,\n        city,\n        source_domain: sourceDomain,\n      })\n    }\n\n    // Fire-and-forget preference tracking (does not block navigation)\n    if (category) {\n      try {\n        fetch(\"/api/preferences/track\", {\n          method: \"POST\",\n          headers: { \"Content-Type\": \"application/json\" },\n          body: JSON.stringify({ category, city }),\n          keepalive: true,\n        }).catch(() => {\n          // Ignore - anonymous users will get 401, non-critical\n        })\n      } catch {\n        // Ignore\n      }\n    }\n  }\n\n  return (\n    <a\n      href={url}\n      target=\"_blank\"\n      rel=\"noopener noreferrer\"\n      onClick={handleClick}\n      className=\"block\"\n    >\n      <Button size=\"lg\" className=\"w-full gap-2 text-base font-semibold\">\n        Visit Source\n        <ExternalLink className=\"h-4 w-4\" />\n      </Button>\n    </a>\n  )\n}",
+      "start_line": 14,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 50,
+      "file_path": "docs/design/treatment.md",
+      "kg_path": null,
+      "query": "advertising pixel tracking script embed",
+      "score": 0.0,
+      "snippet": "### Discover Feed\nDynamic, context-aware recommendations:",
+      "start_line": 49,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 1,
+      "file_path": "docs/research/scaffold-status-report-2026-04-04.md",
+      "kg_path": null,
+      "query": "facebook twitter linkedin oauth social",
+      "score": 0.0,
+      "snippet": "**Missing:** Nothing -- clean and functional Auth.js v5 setup.",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 90,
+      "file_path": "docs/research/scaffold-status-report-2026-04-04.md",
+      "kg_path": null,
+      "query": "facebook twitter linkedin oauth social",
+      "score": 0.0,
+      "snippet": "### 8. `src/lib/auth.ts` -- Auth.js Config",
+      "start_line": 90,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 27,
+      "file_path": "README.md",
+      "kg_path": null,
+      "query": "facebook twitter linkedin oauth social",
+      "score": 0.0,
+      "snippet": "5. Generate an AUTH_SECRET:",
+      "start_line": 27,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 27,
+      "file_path": "docs/research/tech-stack-validation-2026-04-04.md",
+      "kg_path": null,
+      "query": "Google OAuth authentication third party integration vendor",
+      "score": 0.0,
+      "snippet": "## 2. Auth.js v5 + App Router + Google OAuth -- CONFIRMED",
+      "start_line": 27,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 32,
+      "file_path": "CLAUDE.md",
+      "kg_path": null,
+      "query": "Google OAuth authentication third party integration vendor",
+      "score": 0.0,
+      "snippet": "└── middleware.ts           # Auth middleware\n```",
+      "start_line": 31,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 1,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "Google OAuth authentication third party integration vendor",
+      "score": 0.0,
+      "snippet": "The Service integrates with the following third-party providers:",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    }
+  ],
+  "status": "PASS"
+}

@@ -1,0 +1,98 @@
+{
+  "claim_id": "a47dd0f37640",
+  "claim_text": "The claim states that the application collects Google Profile information (name, email, profile image) through Google OAuth authentication. However, the evidence provided does not contain code snippets showing actual data collection implementation. Evidence #7 (src/lib/auth.ts lines 16-27) shows authorization logic checking if a user is logged in, but does not reveal what data is collected during authentication. Evidence #1-3 show file headers from README.md, terms.md, and privacy.md but contain no implementation details. Evidence #4-6 reference authentication-related files and middleware but provide no code showing Google OAuth integration or data collection. Evidence #8-9 mention data storage and user accounts but without specifics. To verify this claim, we would need to see: (1) Google OAuth provider configuration, (2) user profile data extraction from OAuth response, (3) database schema or storage logic for user data. The absence of such evidence means we cannot confirm whether the application actually collects the stated Google Profile information.",
+  "confidence": 0.3,
+  "evidence": [
+    {
+      "end_line": 1,
+      "file_path": "README.md",
+      "kg_path": null,
+      "query": "The application does collect the following information when you use tripbot",
+      "score": 0.0,
+      "snippet": "# TripBot",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 1,
+      "file_path": "content/terms.md",
+      "kg_path": null,
+      "query": "The application does collect the following information when you use tripbot",
+      "score": 0.0,
+      "snippet": "The Service, including its design, code, and branding, is the intellectual property of tripbot.tours. You may not copy, modify, or distribute any part of the Service without prior written consent.",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 4,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "The application does collect the following information when you use tripbot",
+      "score": 0.0,
+      "snippet": "---\ntitle: Privacy Policy - tripbot.tours\ndescription: Privacy Policy for tripbot.tours\n---",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 27,
+      "file_path": "README.md",
+      "kg_path": null,
+      "query": "authentication",
+      "score": 0.0,
+      "snippet": "5. Generate an AUTH_SECRET:",
+      "start_line": 27,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 32,
+      "file_path": "CLAUDE.md",
+      "kg_path": null,
+      "query": "authentication",
+      "score": 0.0,
+      "snippet": "└── middleware.ts           # Auth middleware\n```",
+      "start_line": 31,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 305,
+      "file_path": "docs/research/mobile-ui-audit-2026-04-04.md",
+      "kg_path": null,
+      "query": "authentication",
+      "score": 0.0,
+      "snippet": "### 12. `src/components/auth-button.tsx` — Auth Button",
+      "start_line": 305,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 27,
+      "file_path": "src/lib/auth.ts",
+      "kg_path": null,
+      "query": "authentication",
+      "score": 0.0,
+      "snippet": "authorized({ auth, request: { nextUrl } }) {\n      const isLoggedIn = !!auth?.user\n      const isProtected =\n        nextUrl.pathname.startsWith(\"/chat\") ||\n        nextUrl.pathname.startsWith(\"/trips\")\n\n      if (isProtected && !isLoggedIn) {\n        return false\n      }\n\n      return true\n    }",
+      "start_line": 16,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 25,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "authentication",
+      "score": 0.0,
+      "snippet": "Your data is stored securely using the following services:",
+      "start_line": 25,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 14,
+      "file_path": "content/terms.md",
+      "kg_path": null,
+      "query": "authentication",
+      "score": 0.0,
+      "snippet": "## 3. User Accounts",
+      "start_line": 14,
+      "tool": "search_code"
+    }
+  ],
+  "status": "INSUFFICIENT_EVIDENCE"
+}
