@@ -55,6 +55,14 @@ class AuditorSettings(BaseSettings):
     # GPG signing (M2)
     gpg_key_id: str | None = None  # GPG key ID for signing (env: MVS_AUDIT_GPG_KEY_ID)
 
+    # GitHub issue creation (M4)
+    github_token: SecretStr | None = (
+        None  # env: MVS_AUDIT_GITHUB_TOKEN, fallback: GITHUB_TOKEN
+    )
+    github_repo: str | None = None  # env: MVS_AUDIT_GITHUB_REPO, format: owner/repo
+    reviewer: str | None = None  # GitHub username to assign issues to
+    create_issues: bool = True  # set False to disable issue creation
+
     @model_validator(mode="before")
     @classmethod
     def resolve_api_key(cls, values: dict) -> dict:
@@ -62,6 +70,8 @@ class AuditorSettings(BaseSettings):
 
         Also checks OPENROUTER_API_KEY and auto-selects backend when only
         OpenRouter key is available.
+
+        Falls back to GITHUB_TOKEN if MVS_AUDIT_GITHUB_TOKEN is not set.
         """
         # Resolve Anthropic key
         if not values.get("anthropic_api_key"):
@@ -81,5 +91,11 @@ class AuditorSettings(BaseSettings):
             has_openrouter = bool(values.get("openrouter_api_key"))
             if has_openrouter and not has_anthropic:
                 values["llm_backend"] = "openrouter"
+
+        # Resolve GitHub token (MVS_AUDIT_GITHUB_TOKEN takes priority, then GITHUB_TOKEN)
+        if not values.get("github_token"):
+            gh_token = os.environ.get("GITHUB_TOKEN", "")
+            if gh_token:
+                values["github_token"] = gh_token
 
         return values

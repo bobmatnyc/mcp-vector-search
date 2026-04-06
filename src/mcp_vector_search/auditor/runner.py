@@ -384,6 +384,36 @@ async def run_audit(
     return doc
 
 
+async def maybe_create_issues(
+    doc: CertificationDocument,
+    settings: AuditorSettings,
+    cert_path: Path | None = None,
+) -> list[dict]:
+    """Create GitHub issues for verdicts requiring review, if enabled.
+
+    Args:
+        doc: The completed CertificationDocument.
+        settings: AuditorSettings with GitHub configuration.
+        cert_path: Optional path to the certification.md for cross-referencing.
+
+    Returns:
+        List of issue metadata dicts (may be empty if issues are disabled or
+        configuration is missing).
+    """
+    if not settings.create_issues:
+        return []
+
+    from .issue_creator import create_review_issues
+
+    return await create_review_issues(
+        verdicts=doc.verdicts,
+        target_repo=doc.target_repo,
+        target_commit=doc.target_commit_sha,
+        settings=settings,
+        cert_path=cert_path,
+    )
+
+
 def finalize_audit(
     doc: CertificationDocument,
     cert_dir: Path,

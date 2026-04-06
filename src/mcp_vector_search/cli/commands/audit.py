@@ -83,6 +83,12 @@ def audit_run(
         help="Ignore the .audit-ignore.yml file in the target repo",
         rich_help_panel="Audit Options",
     ),
+    no_issues: bool = typer.Option(
+        False,
+        "--no-issues",
+        help="Skip creating GitHub issues for FAIL/MANUAL_REVIEW/INSUFFICIENT_EVIDENCE verdicts",
+        rich_help_panel="Audit Options",
+    ),
 ) -> None:
     """Run a privacy-policy audit against a codebase.
 
@@ -106,6 +112,7 @@ def audit_run(
                 policy_path=policy,
                 output_dir=output_dir,
                 no_ignore=no_ignore,
+                no_issues=no_issues,
             )
         )
     except ImportError:
@@ -122,12 +129,13 @@ async def _run_audit_async(
     policy_path: Path,
     output_dir: Path,
     no_ignore: bool,
+    no_issues: bool = False,
 ) -> None:
     """Async implementation of the audit run command."""
     try:
         from ...auditor.certifier import write_certification
         from ...auditor.config import AuditorSettings
-        from ...auditor.runner import finalize_audit, run_audit
+        from ...auditor.runner import finalize_audit, maybe_create_issues, run_audit
     except ImportError as exc:
         console.print(
             f"[red]Import error:[/red] {exc}\n"
@@ -141,6 +149,10 @@ async def _run_audit_async(
     except Exception as exc:
         console.print(f"[red]Failed to load audit settings:[/red] {exc}")
         sys.exit(1)
+
+    # Apply --no-issues flag
+    if no_issues:
+        settings = settings.model_copy(update={"create_issues": False})
 
     console.print("[bold blue]Privacy Audit[/bold blue]")
     console.print(f"  Target repo : {target_repo}")
@@ -178,6 +190,20 @@ async def _run_audit_async(
 
     # Finalize: GPG sign, update index, append audit log, symlink
     signed = finalize_audit(doc, cert_dir, output_dir, settings)
+
+    # M4: Create GitHub issues for verdicts requiring review
+    issue_results = await maybe_create_issues(doc, settings, cert_path=cert_path)
+    if issue_results:
+        new_count = sum(1 for r in issue_results if r["status"] == "created")
+        updated_count = sum(1 for r in issue_results if r["status"] == "updated")
+        console.print(
+            f"\nIssues created: [green]{new_count} new[/green], "
+            f"[yellow]{updated_count} updated[/yellow]"
+        )
+        for r in issue_results:
+            action_label = "updated" if r["status"] == "updated" else ""
+            suffix = f" ({action_label})" if action_label else ""
+            console.print(f"  #{r['issue_number']}: {r['url']}{suffix}")
 
     # Print summary table to terminal
     table = Table(title="Audit Summary", show_header=True, header_style="bold")
