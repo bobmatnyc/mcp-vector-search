@@ -25,8 +25,8 @@ classifiers = [
 keywords = ["semantic-search", "code-search", "mcp", "vector-database", "visualization", "d3js", "code-graph", "interactive-graph", "force-layout"]
 requires-python = ">=3.11"
 dependencies = [
-    "lancedb>=0.6.0",
-    "pylance>=0.22.0",  # Required for LanceDB scanner API (performance optimization)
+    "lancedb>=0.20.0",
+    "pylance>=0.20.0",  # Required for LanceDB scanner API (performance optimization)
     "pandas>=2.0.0",
     "sentence-transformers>=5.2.0,<6.0.0",
     "torch>=2.9.0,<2.10.0; sys_platform == 'darwin'",  # Pin below 2.10 on macOS — MPS regression breaks Apple Silicon GPU acceleration
