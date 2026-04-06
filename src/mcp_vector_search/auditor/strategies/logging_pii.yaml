@@ -1,0 +1,24 @@
+category: logging_pii
+description: Detects PII in logs and verifies redaction/masking controls
+queries:
+  - tool: search_hybrid
+    query: "log PII redact mask scrub personally identifiable"
+    weight: 1.0
+  - tool: find_smells
+    query: "logging sensitive data password email phone"
+    weight: 0.9
+  - tool: search_code
+    query: "logger.info logger.debug logger.warning print email password"
+    weight: 0.8
+  - tool: search_hybrid
+    query: "structured logging sanitize filter sensitive fields"
+    weight: 0.7
+  - tool: search_code
+    query: "log_filter redact_fields mask_pii scrub_sensitive"
+    weight: 0.8
+  - tool: search_hybrid
+    query: "audit trail access log user activity"
+    weight: 0.6
+keyword_interpolation:
+  enabled: true
+  template: "{keywords} log sensitive data"

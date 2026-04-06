@@ -1,0 +1,1 @@
+{"claims": 20, "commit": "83c9d6568170565249a23a5a86ae2d33d1a15b35", "fail": 2, "ignored": 0, "insufficient": 8, "manual_review": 2, "pass": 8, "policy_sha256": "5d445c9fee71e76a", "status": "FAILED", "target": "tripbot7", "timestamp": "2026-04-06T02:42:38Z"}

@@ -1,0 +1,24 @@
+{
+  "targets": {
+    "tripbot7": {
+      "audits": [
+        {
+          "commit_sha": "83c9d6568170565249a23a5a86ae2d33d1a15b35",
+          "overall_status": "FAILED",
+          "policy_sha256": "5d445c9fee71e76a087721cffb5c78844e38c1b5ceac3d4688b534b120c7d8c8",
+          "signed": false,
+          "summary": {
+            "FAIL": 2,
+            "IGNORED": 0,
+            "INSUFFICIENT_EVIDENCE": 8,
+            "MANUAL_REVIEW": 2,
+            "PASS": 8,
+            "TOTAL": 20
+          },
+          "timestamp": "20260406-024238"
+        }
+      ],
+      "latest": "20260406-024238"
+    }
+  }
+}

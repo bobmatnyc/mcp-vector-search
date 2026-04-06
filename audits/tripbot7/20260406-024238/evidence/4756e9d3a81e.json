@@ -1,0 +1,248 @@
+{
+  "claim_id": "4756e9d3a81e",
+  "claim_text": "The claim states that event search results cached in Vercel KV automatically expire and are not personally identifiable. Evidence #13 from docs/research/hyperlocal-search-strategy-2026-04-04.md confirms 'Results cached in Vercel KV with 24-hour TTL, keyed as events:{date}:{country}:{city}', and Evidence #21 from CLAUDE.md states 'Events cached in Vercel KV with TTL, keyed as events:{date}:{country}:{city}'. Evidence #20 shows the cache key structure in src/lib/search/cache.ts uses only date, country, and city parameters. However, the evidence does not show the actual implementation code that sets the TTL/expiration in Vercel KV, nor does it demonstrate what data fields are stored in the cache to verify they are not personally identifiable. The cache key structure suggests non-PII data, but without seeing the actual cached values or the KV set operation with expiration parameters, we cannot definitively confirm both parts of the claim. The documentation references support the claim but lack implementation-level proof.",
+  "confidence": 0.45,
+  "evidence": [
+    {
+      "end_line": 0,
+      "file_path": "src/app/about/page.tsx",
+      "kg_path": null,
+      "query": "data deletion purge schedule",
+      "score": 0.7,
+      "snippet": "[function] generateMetadata",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 0,
+      "file_path": "src/app/privacy/page.tsx",
+      "kg_path": null,
+      "query": "data deletion purge schedule",
+      "score": 0.7,
+      "snippet": "[function] generateMetadata",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 0,
+      "file_path": "src/app/terms/page.tsx",
+      "kg_path": null,
+      "query": "data deletion purge schedule",
+      "score": 0.7,
+      "snippet": "[function] generateMetadata",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 0,
+      "file_path": "src/lib/events/city-wiki-data.ts",
+      "kg_path": null,
+      "query": "data deletion purge schedule",
+      "score": 0.7,
+      "snippet": "[module] city-wiki-data",
+      "start_line": 0,
+      "tool": "kg_query"
+    },
+    {
+      "end_line": 1,
+      "file_path": "docs/research/scaffold-status-report-2026-04-04.md",
+      "kg_path": null,
+      "query": "delete purge TTL expire retention period",
+      "score": 0.0,
+      "snippet": "2. **Missing DELETE route** -- `deleteTrip` exists but no API endpoint",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 1,
+      "file_path": "docs/research/e2e-flow-audit-2026-04-04.md",
+      "kg_path": null,
+      "query": "delete purge TTL expire retention period",
+      "score": 0.0,
+      "snippet": "**Impact:** Low -- the Hono route will return a 500 if extraction fails, and the chat page catches this.",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 7,
+      "file_path": "docs/research/e2e-flow-audit-2026-04-04.md",
+      "kg_path": null,
+      "query": "delete purge TTL expire retention period",
+      "score": 0.0,
+      "snippet": "---\n\n## Flow Trace",
+      "start_line": 7,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 29,
+      "file_path": "src/lib/sharing/store.ts",
+      "kg_path": null,
+      "query": "DELETE FROM DROP TABLE truncate cleanup expire",
+      "score": 0.0,
+      "snippet": "async function revokeShareLink(token: string): Promise<void> {\n  await kv.del(shareKey(token))\n}",
+      "start_line": 27,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 2,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "data lifecycle expiration scheduled cleanup job",
+      "score": 0.0,
+      "snippet": "- **Delete your account**: Request complete deletion of your account and all associated data.\n- **Export your data**: Request a copy of your trip data in a standard format.",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 6,
+      "file_path": "docs/research/travel-guidance-research-2026-04-04.md",
+      "kg_path": null,
+      "query": "data lifecycle expiration scheduled cleanup job",
+      "score": 0.0,
+      "snippet": "**Cons for our use case:**\n- Extremely complex (thousands of XSD files)\n- Designed for B2B system integration, not consumer apps\n- Overkill for our itinerary planning use case\n- Poor fit for discovery/planning phase\n- No activity discovery or hyperlocal data",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 23,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "data lifecycle expiration scheduled cleanup job",
+      "score": 0.0,
+      "snippet": "## 3. Data Storage",
+      "start_line": 23,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 52,
+      "file_path": "docs/research/travel-guidance-research-2026-04-04.md",
+      "kg_path": null,
+      "query": "data lifecycle expiration scheduled cleanup job",
+      "score": 0.0,
+      "snippet": "#### 5. Sequencing (Logical Day Flow)",
+      "start_line": 52,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 1,
+      "file_path": "docs/research/hyperlocal-search-strategy-2026-04-04.md",
+      "kg_path": null,
+      "query": "max_age expires_in ttl retention_days",
+      "score": 0.0,
+      "snippet": "**Caching:** Results cached in Vercel KV with 24-hour TTL, keyed as `events:{date}:{country}:{city}`.",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 85,
+      "file_path": "docs/research/hyperlocal-search-strategy-2026-04-04.md",
+      "kg_path": null,
+      "query": "max_age expires_in ttl retention_days",
+      "score": 0.0,
+      "snippet": "### F. Date-Aware Queries",
+      "start_line": 85,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 4,
+      "file_path": "docs/research/itinerary-schema-proposal-2026-04-04.md",
+      "kg_path": null,
+      "query": "max_age expires_in ttl retention_days",
+      "score": 0.0,
+      "snippet": "// Date handling: progressive (unchanged)\n  startDate?: string\n  endDate?: string\n  dateContext?: string",
+      "start_line": 1,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 3,
+      "file_path": "docs/research/perplexity-eval-2026-04-04.md",
+      "kg_path": null,
+      "query": "max_age expires_in ttl retention_days",
+      "score": 0.0,
+      "snippet": "**Date:** 2026-04-04",
+      "start_line": 3,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 8,
+      "file_path": "content/privacy.md",
+      "kg_path": null,
+      "query": "max_age expires_in ttl retention_days",
+      "score": 0.0,
+      "snippet": "Last updated: April 2026",
+      "start_line": 8,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 8,
+      "file_path": "content/terms.md",
+      "kg_path": null,
+      "query": "max_age expires_in ttl retention_days",
+      "score": 0.0,
+      "snippet": "Last updated: April 2026",
+      "start_line": 8,
+      "tool": "search_code"
+    },
+    {
+      "end_line": 4,
+      "file_path": "README.md",
+      "kg_path": null,
+      "query": "cache expiration temporary Vercel KV delete expire retention",
+      "score": 0.0,
+      "snippet": "4. Get API keys:\n   - **Anthropic**: https://console.anthropic.com/\n   - **Tavily**: https://app.tavily.com/\n   - **Vercel Blob/KV**: Create storage in your Vercel dashboard",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 6,
+      "file_path": "src/lib/search/cache.ts",
+      "kg_path": null,
+      "query": "cache expiration temporary Vercel KV delete expire retention",
+      "score": 0.0,
+      "snippet": "function cacheKey(date: string, country: string, city: string): string {\n  return `events:${date}:${country}:${city}`.toLowerCase().replace(/\\s+/g, \"_\")\n}",
+      "start_line": 4,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 6,
+      "file_path": "CLAUDE.md",
+      "kg_path": null,
+      "query": "cache expiration temporary Vercel KV delete expire retention",
+      "score": 0.0,
+      "snippet": "## Key Patterns\n- Hono is mounted at `/api/[...route]` via `hono/vercel` handle()\n- AI extraction uses `generateObject` with Zod schemas for structured output\n- Events cached in Vercel KV with TTL, keyed as `events:{date}:{country}:{city}`\n- Blob storage paths: `trips/{userId}/{tripId}.json`\n- All API routes validate auth session via Hono middleware",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 1,
+      "file_path": "docs/research/tech-stack-validation-2026-04-04.md",
+      "kg_path": null,
+      "query": "cache expiration temporary Vercel KV delete expire retention",
+      "score": 0.0,
+      "snippet": "**Design rationale:** Flat segments array (not nested by day) simplifies querying by date/city/country for event cache lookups. ISO country codes enable consistent Vercel KV keys like `2026-12-15:JP:Tokyo`.",
+      "start_line": 1,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 52,
+      "file_path": "README.md",
+      "kg_path": null,
+      "query": "cache expiration temporary Vercel KV delete expire retention",
+      "score": 0.0,
+      "snippet": "## Deploy\n\n```bash\nvercel\n```",
+      "start_line": 50,
+      "tool": "search_hybrid"
+    },
+    {
+      "end_line": 88,
+      "file_path": "docs/research/e2e-flow-audit-2026-04-04.md",
+      "kg_path": null,
+      "query": "cache expiration temporary Vercel KV delete expire retention",
+      "score": 0.0,
+      "snippet": "### 6. Cache Layer: SOLID",
+      "start_line": 88,
+      "tool": "search_hybrid"
+    }
+  ],
+  "status": "INSUFFICIENT_EVIDENCE"
+}

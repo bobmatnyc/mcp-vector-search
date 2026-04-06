@@ -1,0 +1,24 @@
+category: encryption
+description: Detects encryption implementations and verifies cryptographic controls
+queries:
+  - tool: search_code
+    query: "AES encrypt decrypt TLS SSL bcrypt argon2 cryptography"
+    weight: 1.0
+  - tool: find_smells
+    query: "crypto weak encryption plaintext password"
+    weight: 0.9
+  - tool: kg_query
+    query: "encryption key management cipher"
+    weight: 0.8
+  - tool: search_hybrid
+    query: "HTTPS certificate verify TLS configuration"
+    weight: 0.8
+  - tool: search_code
+    query: "hashlib hmac fernet nacl pycryptodome"
+    weight: 0.7
+  - tool: search_hybrid
+    query: "at rest encryption database field encrypt"
+    weight: 0.7
+keyword_interpolation:
+  enabled: true
+  template: "{keywords} encrypt implementation"

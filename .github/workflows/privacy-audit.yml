@@ -1,0 +1,108 @@
+name: Privacy Policy Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: 'Target repository path or URL to audit'
+        required: true
+        type: string
+      policy_path:
+        description: 'Path to privacy policy file (relative to target repo root)'
+        required: true
+        default: 'PRIVACY.md'
+        type: string
+      reviewer:
+        description: 'GitHub username to assign manual review issues to'
+        required: false
+        type: string
+      require_kg_path:
+        description: 'Require knowledge graph evidence path for PASS verdicts'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      llm_backend:
+        description: 'LLM backend to use'
+        required: false
+        default: 'openrouter'
+        type: choice
+        options:
+          - 'openrouter'
+          - 'anthropic'
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout auditor repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[auditor]"
+          pip install openai  # for OpenRouter backend
+
+      - name: Clone target repository
+        run: |
+          if [[ "${{ inputs.target_repo }}" == http* ]]; then
+            git clone "${{ inputs.target_repo }}" /tmp/audit-target
+            TARGET_PATH="/tmp/audit-target"
+          else
+            TARGET_PATH="${{ inputs.target_repo }}"
+          fi
+          echo "TARGET_PATH=$TARGET_PATH" >> $GITHUB_ENV
+
+      - name: Index target repository
+        run: |
+          mvs index --project-root "$TARGET_PATH"
+
+      - name: Run privacy audit
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MVS_AUDIT_REQUIRE_KG_PATH: ${{ inputs.require_kg_path }}
+          MVS_AUDIT_LLM_BACKEND: ${{ inputs.llm_backend }}
+          MVS_AUDIT_GPG_KEY_ID: ${{ secrets.AUDIT_GPG_KEY_ID }}
+        run: |
+          mvs audit run \
+            --target "$TARGET_PATH" \
+            --policy "$TARGET_PATH/${{ inputs.policy_path }}" \
+            --output-dir audits
+
+      - name: Commit certification results
+        run: |
+          git config user.name "Privacy Auditor Bot"
+          git config user.email "auditor@users.noreply.github.com"
+          git add audits/
+          git commit -m "audit: privacy certification for $(basename $TARGET_PATH) at $(date -u +%Y%m%d-%H%M%S)" || echo "No changes to commit"
+          git push
+
+      - name: Upload certification artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: privacy-certification
+          path: audits/
+          retention-days: 90
+
+      - name: Post audit summary
+        if: always()
+        run: |
+          # Find the latest certification
+          LATEST=$(find audits/ -name "certification.md" -type f | sort | tail -1)
+          if [ -f "$LATEST" ]; then
+            echo "## Privacy Audit Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            head -25 "$LATEST" >> $GITHUB_STEP_SUMMARY
+          fi
