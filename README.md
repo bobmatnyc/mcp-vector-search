@@ -392,6 +392,46 @@ Automatically reads and applies standards from your existing config files:
 
 ---
 
+## Privacy Policy Auditor
+
+Audit codebases against their stated privacy policies using semantic code search and knowledge graph analysis.
+
+### Quick Start
+```bash
+# Install with auditor dependencies
+pip install 'mcp-vector-search[auditor]'
+
+# Run a privacy audit
+mvs audit run --target /path/to/repo --policy /path/to/repo/PRIVACY.md
+
+# Check for policy/code drift
+mvs audit drift-check --target /path/to/repo --policy /path/to/repo/PRIVACY.md
+
+# Verify a certification
+mvs audit verify audits/<target>/latest/
+
+# List audit history
+mvs audit list
+```
+
+### How It Works
+1. **Extract Claims** — Parses privacy policies into testable assertions (hybrid text analysis + LLM)
+2. **Collect Evidence** — Queries the codebase via vector search, hybrid search, and knowledge graph
+3. **Judge Verdicts** — LLM evaluates each claim against evidence (PASS / FAIL / INSUFFICIENT / MANUAL_REVIEW)
+4. **Certify** — Produces signed certification documents with per-claim verdicts and evidence
+
+### Features
+- **Dual output** — Certification saved in both auditor repo and target repo
+- **Multiple LLM backends** — OpenRouter and Anthropic (auto-detected)
+- **GitHub Actions** — On-demand audit workflow + daily drift detection
+- **GPG signing** — Optional cryptographic signatures for certification integrity
+- **Auto-issue creation** — GitHub issues for claims needing review
+- **.audit-ignore.yml** — Suppress specific claims with documented justifications
+
+See [docs/features/privacy-auditor.md](docs/features/privacy-auditor.md) for full documentation.
+
+---
+
 ## 📖 Documentation
 
 ### Commands
