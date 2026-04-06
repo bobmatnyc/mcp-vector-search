@@ -28,6 +28,7 @@ from mcp_vector_search.auditor.certifier import (
     update_latest_symlink,
     verify_certification,
     write_certification,
+    write_target_copy,
 )
 from mcp_vector_search.auditor.models import (
     CertificationDocument,
@@ -91,7 +92,7 @@ def _make_doc(verdicts: list[Verdict] | None = None) -> CertificationDocument:
         target_commit_sha="abc1234567890def",
         policy_path="/path/to/privacy-policy.md",
         policy_sha256="deadbeef" * 8,
-        policy_snapshot_path="certifications/my-app/policy-snapshot.md",
+        policy_snapshot_path="audits/my-app/policy-snapshot.md",
         generated_at=datetime(2026, 4, 5, 12, 0, 0, tzinfo=UTC),
         generator_version="3.0.76",
         auditor_model="claude-opus-4-6",
@@ -387,7 +388,7 @@ class TestIndexJson:
             target_commit_sha="fffaaa000111",
             policy_path="/path/to/privacy-policy.md",
             policy_sha256="deadbeef" * 8,
-            policy_snapshot_path="certifications/my-app/policy-snapshot.md",
+            policy_snapshot_path="audits/my-app/policy-snapshot.md",
             generated_at=datetime(2026, 4, 6, 12, 0, 0, tzinfo=UTC),
             generator_version="3.0.77",
             auditor_model="claude-opus-4-6",
@@ -502,7 +503,7 @@ class TestLatestSymlink:
             target_commit_sha="fffaaa000111",
             policy_path="/path/to/privacy-policy.md",
             policy_sha256="deadbeef" * 8,
-            policy_snapshot_path="certifications/my-app/policy-snapshot.md",
+            policy_snapshot_path="audits/my-app/policy-snapshot.md",
             generated_at=datetime(2026, 4, 7, 9, 30, 0, tzinfo=UTC),
             generator_version="3.0.77",
             auditor_model="claude-opus-4-6",
@@ -538,7 +539,7 @@ class TestCertificationsReadme:
         readme = tmp_path / "README.md"
         assert readme.exists()
         content = readme.read_text()
-        assert "Privacy Certifications" in content
+        assert "Privacy Audits" in content
 
     def test_readme_not_overwritten_if_exists(self, tmp_path: Path) -> None:
         custom = "# My Custom README\n"
@@ -577,3 +578,100 @@ class TestWriteCertificationFull:
         cert_path = write_certification(doc, "Full policy text here.", tmp_path)
         cert_dir = cert_path.parent
         assert verify_certification(cert_dir) is True
+
+
+# ---------------------------------------------------------------------------
+# write_target_copy
+# ---------------------------------------------------------------------------
+
+
+class TestWriteTargetCopy:
+    def test_write_target_copy_writable(self, tmp_path: Path) -> None:
+        """write_target_copy writes 3 files to a writable target repo."""
+        doc = _make_doc()
+        target_repo = tmp_path / "target-repo"
+        target_repo.mkdir()
+
+        result = write_target_copy(doc, "Policy text.", target_repo)
+
+        assert result is not None
+        assert result.is_dir()
+        assert (result / "certification.md").exists()
+        assert (result / "certification.json").exists()
+        assert (result / "policy-snapshot.md").exists()
+
+    def test_write_target_copy_not_writable(self, tmp_path: Path) -> None:
+        """write_target_copy returns None and does not crash for non-writable target."""
+        import stat
+
+        doc = _make_doc()
+        target_repo = tmp_path / "readonly-repo"
+        target_repo.mkdir()
+        # Remove write permission from directory
+        target_repo.chmod(stat.S_IRUSR | stat.S_IXUSR)
+
+        try:
+            result = write_target_copy(doc, "Policy text.", target_repo)
+            assert result is None
+        finally:
+            # Restore permissions so pytest cleanup works
+            target_repo.chmod(stat.S_IRWXU)
+
+    def test_write_target_copy_no_evidence_files(self, tmp_path: Path) -> None:
+        """write_target_copy does not create evidence/ directory in target copy."""
+        doc = _make_multi_doc()
+        target_repo = tmp_path / "target-repo"
+        target_repo.mkdir()
+
+        result = write_target_copy(doc, "Policy text.", target_repo)
+
+        assert result is not None
+        assert not (result / "evidence").exists()
+        assert not (result / "manifest.json").exists()
+        assert not (result / "certification.json.sig").exists()
+
+    def test_write_target_copy_timestamp_dir(self, tmp_path: Path) -> None:
+        """write_target_copy creates a YYYYMMDD-HHMMSS directory under target/audits/."""
+        import re
+
+        doc = _make_doc()
+        target_repo = tmp_path / "target-repo"
+        target_repo.mkdir()
+
+        result = write_target_copy(doc, "Policy text.", target_repo)
+
+        assert result is not None
+        # Parent should be target_repo/audits/
+        assert result.parent.name == "audits"
+        assert result.parent.parent == target_repo
+        # Directory name should be YYYYMMDD-HHMMSS
+        assert re.match(r"\d{8}-\d{6}", result.name), (
+            f"Expected timestamp dir, got: {result.name}"
+        )
+
+    def test_write_target_copy_json_parseable(self, tmp_path: Path) -> None:
+        """certification.json in the target copy is valid JSON with expected fields."""
+        doc = _make_doc()
+        target_repo = tmp_path / "target-repo"
+        target_repo.mkdir()
+
+        result = write_target_copy(doc, "Policy text.", target_repo)
+
+        assert result is not None
+        data = json.loads((result / "certification.json").read_bytes())
+        assert data["target_repo"] == "/path/to/my-app"
+        assert data["overall_status"] == "CERTIFIED"
+
+    def test_write_target_copy_policy_snapshot_contains_text(
+        self, tmp_path: Path
+    ) -> None:
+        """policy-snapshot.md in the target copy contains the policy text."""
+        doc = _make_doc()
+        target_repo = tmp_path / "target-repo"
+        target_repo.mkdir()
+
+        result = write_target_copy(doc, "My policy content here.", target_repo)
+
+        assert result is not None
+        snapshot = (result / "policy-snapshot.md").read_text(encoding="utf-8")
+        assert "My policy content here." in snapshot

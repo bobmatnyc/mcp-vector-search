@@ -68,7 +68,7 @@ def _make_doc(verdicts: list[Verdict] | None = None) -> CertificationDocument:
         target_commit_sha="abc1234567890def",
         policy_path="/path/to/privacy-policy.md",
         policy_sha256="deadbeef" * 8,
-        policy_snapshot_path="certifications/my-app/policy-snapshot.md",
+        policy_snapshot_path="audits/my-app/policy-snapshot.md",
         generated_at=datetime(2026, 4, 5, 12, 0, 0, tzinfo=UTC),
         generator_version="3.0.76",
         auditor_model="claude-opus-4-6",

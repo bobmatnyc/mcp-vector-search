@@ -154,11 +154,11 @@ def _build_details(
 def check_drift(
     target_repo: Path,
     policy_path: Path,
-    certifications_dir: Path = Path("certifications"),
+    certifications_dir: Path = Path("audits"),
 ) -> DriftReport:
     """Compare current policy + code state against the most recent certification.
 
-    Reads certifications/index.json to find the latest audit for target_repo,
+    Reads audits/index.json to find the latest audit for target_repo,
     then compares the current HEAD commit SHA and policy file SHA-256 against
     the recorded values.
 

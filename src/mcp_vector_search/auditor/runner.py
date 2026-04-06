@@ -345,7 +345,7 @@ async def run_audit(
     content_hash = _compute_content_hash(verdicts)
 
     target_slug = target_repo.name
-    policy_snapshot_path = f"certifications/{target_slug}/policy-snapshot.md"
+    policy_snapshot_path = f"audits/{target_slug}/policy-snapshot.md"
 
     doc = CertificationDocument(
         target_repo=str(target_repo),
@@ -424,9 +424,9 @@ def finalize_audit(
 
     This is called after write_certification() to:
     1. Optionally GPG-sign the certification.json
-    2. Update certifications/index.json
-    3. Append to certifications/audit-log.jsonl
-    4. Create/update certifications/<target>/latest symlink
+    2. Update audits/index.json
+    3. Append to audits/audit-log.jsonl
+    4. Create/update audits/<target>/latest symlink
 
     Args:
         doc: The completed CertificationDocument.

@@ -71,7 +71,7 @@ def audit_run(
         rich_help_panel="Required Options",
     ),
     output_dir: Path = typer.Option(
-        Path("certifications"),
+        Path("audits"),
         "--output-dir",
         "-o",
         help="Directory to write certification output",
@@ -133,7 +133,7 @@ async def _run_audit_async(
 ) -> None:
     """Async implementation of the audit run command."""
     try:
-        from ...auditor.certifier import write_certification
+        from ...auditor.certifier import write_certification, write_target_copy
         from ...auditor.config import AuditorSettings
         from ...auditor.runner import finalize_audit, maybe_create_issues, run_audit
     except ImportError as exc:
@@ -184,9 +184,14 @@ async def _run_audit_async(
     else:
         doc = await run_audit(target_repo, policy_path, settings)
 
-    # Write all certification artifacts (M1 + M2)
+    # Write main copy (auditor repo)
     cert_path = write_certification(doc, policy_text, output_dir)
     cert_dir = cert_path.parent
+
+    # Write target copy (if writable)
+    target_copy = write_target_copy(doc, policy_text, target_repo)
+    if target_copy:
+        console.print(f"[dim]Target repo copy: {target_copy}[/dim]")
 
     # Finalize: GPG sign, update index, append audit log, symlink
     signed = finalize_audit(doc, cert_dir, output_dir, settings)
@@ -252,7 +257,7 @@ async def _run_audit_async(
 def audit_verify(
     cert_dir: Path = typer.Argument(
         ...,
-        help="Path to a certification run directory (e.g. certifications/tripbot7/20260405-231955/)",
+        help="Path to a certification run directory (e.g. audits/tripbot7/20260405-231955/)",
         exists=True,
         file_okay=False,
         dir_okay=True,
@@ -295,10 +300,10 @@ def audit_verify(
 @audit_app.command("list")
 def audit_list(
     output_dir: Path = typer.Option(
-        Path("certifications"),
+        Path("audits"),
         "--output-dir",
         "-o",
-        help="Certifications root directory",
+        help="Audits root directory",
     ),
     target: str | None = typer.Option(
         None,
@@ -309,7 +314,7 @@ def audit_list(
 ) -> None:
     """List past audits from the certifications index.
 
-    Reads certifications/index.json and displays a table of all recorded
+    Reads audits/index.json and displays a table of all recorded
     audits.  Use --target to filter to a specific repository slug.
 
     Example:
@@ -321,7 +326,7 @@ def audit_list(
     if not index_path.exists():
         console.print(
             f"[yellow]No index found at {index_path}[/yellow]\n"
-            "Run 'mvs audit run' first to create certifications."
+            "Run 'mvs audit run' first to create audits."
         )
         sys.exit(0)
 
@@ -415,10 +420,10 @@ def audit_drift_check(
         rich_help_panel="Required Options",
     ),
     output_dir: Path = typer.Option(
-        Path("certifications"),
+        Path("audits"),
         "--output-dir",
         "-o",
-        help="Certifications root directory to read index.json from",
+        help="Audits root directory to read index.json from",
         rich_help_panel="Options",
     ),
     as_json: bool = typer.Option(

@@ -79,13 +79,13 @@ jobs:
           mvs audit run \
             --target "$TARGET_PATH" \
             --policy "$TARGET_PATH/${{ inputs.policy_path }}" \
-            --output-dir certifications
+            --output-dir audits
 
       - name: Commit certification results
         run: |
           git config user.name "Privacy Auditor Bot"
           git config user.email "auditor@users.noreply.github.com"
-          git add certifications/
+          git add audits/
           git commit -m "audit: privacy certification for $(basename $TARGET_PATH) at $(date -u +%Y%m%d-%H%M%S)" || echo "No changes to commit"
           git push
 
@@ -93,14 +93,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: privacy-certification
-          path: certifications/
+          path: audits/
           retention-days: 90
 
       - name: Post audit summary
         if: always()
         run: |
           # Find the latest certification
-          LATEST=$(find certifications/ -name "certification.md" -type f | sort | tail -1)
+          LATEST=$(find audits/ -name "certification.md" -type f | sort | tail -1)
           if [ -f "$LATEST" ]; then
             echo "## Privacy Audit Results" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY

@@ -13,7 +13,7 @@ set -euo pipefail
 
 TARGET="${1:?Usage: run_audit.sh <target-repo> <policy-path> [output-dir]}"
 POLICY="${2:?Usage: run_audit.sh <target-repo> <policy-path> [output-dir]}"
-OUTPUT_DIR="${3:-certifications}"
+OUTPUT_DIR="${3:-audits}"
 
 echo "=== Privacy Policy Audit ==="
 echo "Target:  $TARGET"

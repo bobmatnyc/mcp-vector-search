@@ -234,11 +234,11 @@ class TestRunAuditScript:
             "Script must document required API key environment variables"
         )
 
-    def test_run_audit_script_output_dir_defaults_to_certifications(self) -> None:
-        """Script must default OUTPUT_DIR to 'certifications'."""
+    def test_run_audit_script_output_dir_defaults_to_audits(self) -> None:
+        """Script must default OUTPUT_DIR to 'audits'."""
         content = SCRIPT_PATH.read_text(encoding="utf-8")
-        assert "certifications" in content, (
-            "Script must use 'certifications' as the default output directory"
+        assert "audits" in content, (
+            "Script must use 'audits' as the default output directory"
         )
 
 

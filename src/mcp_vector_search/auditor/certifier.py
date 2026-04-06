@@ -493,7 +493,7 @@ def update_index(
     output_dir: Path,
     signed: bool = False,
 ) -> None:
-    """Update certifications/index.json with the new audit entry.
+    """Update audits/index.json with the new audit entry.
 
     Reads the existing index (or creates a new one), appends the new audit
     entry for the target, and writes the file back atomically.
@@ -557,7 +557,7 @@ def append_audit_log(
     doc: CertificationDocument,
     output_dir: Path,
 ) -> None:
-    """Append one JSON line to certifications/audit-log.jsonl.
+    """Append one JSON line to audits/audit-log.jsonl.
 
     Each line captures high-level audit metadata for quick scanning.
 
@@ -592,7 +592,7 @@ def append_audit_log(
 def update_latest_symlink(
     cert_dir: Path, output_dir: Path, doc: CertificationDocument
 ) -> None:
-    """Create or update the certifications/<target>/latest symlink.
+    """Create or update the audits/<target>/latest symlink.
 
     Points to the newest timestamp directory name (not a full path, just
     the directory name for portability).
@@ -621,14 +621,14 @@ def update_latest_symlink(
 
 
 def _ensure_certifications_readme(output_dir: Path) -> None:
-    """Write certifications/README.md if it does not already exist."""
+    """Write audits/README.md if it does not already exist."""
     readme_path = output_dir / "README.md"
     if readme_path.exists():
         return
 
     readme_path.write_text(
         """\
-# Privacy Certifications
+# Privacy Audits
 
 Audit artifacts from the mcp-vector-search privacy auditor.
 
@@ -646,12 +646,85 @@ Audit artifacts from the mcp-vector-search privacy auditor.
 ## Verification
 
 ```
-mvs audit verify certifications/<target>/<timestamp>/
+mvs audit verify audits/<target>/<timestamp>/
 ```
 """,
         encoding="utf-8",
     )
-    logger.info("Created certifications README at %s", readme_path)
+    logger.info("Created audits README at %s", readme_path)
+
+
+# ---------------------------------------------------------------------------
+# Target repo copy writer
+# ---------------------------------------------------------------------------
+
+
+def write_target_copy(
+    doc: CertificationDocument,
+    policy_text: str,
+    target_repo: Path,
+) -> Path | None:
+    """Write a lightweight copy of the certification to the target repo's audits/ directory.
+
+    Creates:
+        <target_repo>/audits/<YYYYMMDD-HHMMSS>/certification.md
+        <target_repo>/audits/<YYYYMMDD-HHMMSS>/certification.json
+        <target_repo>/audits/<YYYYMMDD-HHMMSS>/policy-snapshot.md
+
+    Evidence files, manifest, and signatures are intentionally omitted to keep
+    the target repo copy lightweight.  The authoritative master copy with all
+    artifacts lives in the auditor repo's audits/ directory.
+
+    Args:
+        doc: The CertificationDocument to write.
+        policy_text: Verbatim text of the privacy policy.
+        target_repo: Root directory of the audited repository.
+
+    Returns:
+        Path to the created <target_repo>/audits/<timestamp>/ directory if
+        successful, or None if the target repo is not writable or an error
+        occurs.
+    """
+    import os
+
+    if not os.access(target_repo, os.W_OK):
+        logger.debug(
+            "Target repo %s is not writable; skipping target copy", target_repo
+        )
+        return None
+
+    timestamp = doc.generated_at.strftime("%Y%m%d-%H%M%S")
+    audit_dir = target_repo / "audits" / timestamp
+
+    try:
+        audit_dir.mkdir(parents=True, exist_ok=True)
+
+        # certification.md
+        cert_md_path = audit_dir / "certification.md"
+        cert_md_path.write_text(render_markdown(doc), encoding="utf-8")
+
+        # certification.json
+        data = _doc_to_dict(doc)
+        pretty_bytes = _to_json_bytes(data, pretty=True)
+        (audit_dir / "certification.json").write_bytes(pretty_bytes)
+
+        # policy-snapshot.md
+        snapshot_content = (
+            f"# Policy Snapshot\n\n"
+            f"**Source:** `{doc.policy_path}`\n"
+            f"**SHA-256:** `{doc.policy_sha256}`\n\n"
+            f"---\n\n{policy_text}"
+        )
+        (audit_dir / "policy-snapshot.md").write_text(
+            snapshot_content, encoding="utf-8"
+        )
+
+        logger.info("Wrote target repo copy to %s", audit_dir)
+        return audit_dir
+
+    except Exception as exc:
+        logger.warning("Could not write target repo copy to %s: %s", audit_dir, exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
