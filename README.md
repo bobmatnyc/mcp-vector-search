@@ -989,8 +989,8 @@ cd mcp-vector-search
 make dev
 
 # Test CLI from source (recommended during development)
-./dev-mcp version        # Shows [DEV] indicator
-./dev-mcp search "test"  # No reinstall needed after code changes
+./scripts/dev-mcp version        # Shows [DEV] indicator
+./scripts/dev-mcp search "test"  # No reinstall needed after code changes
 
 # Run tests and quality checks
 make test-unit           # Run unit tests

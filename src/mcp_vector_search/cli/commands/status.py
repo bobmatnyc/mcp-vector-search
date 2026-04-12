@@ -970,7 +970,7 @@ def check_dependencies() -> bool:
         bool: True if all dependencies are available, False otherwise.
     """
     dependencies = [
-        ("chromadb", "ChromaDB"),
+        ("lancedb", "LanceDB"),
         ("sentence_transformers", "Sentence Transformers"),
         ("tree_sitter", "Tree-sitter"),
         ("tree_sitter_language_pack", "Tree-sitter Languages"),

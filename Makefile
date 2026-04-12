@@ -226,6 +226,12 @@ submodule-status: ## Show git submodule status
 	@echo "$(BLUE)Git Submodule Status:$(NC)"
 	@git submodule status
 
+.PHONY: dev
+dev: submodule-sync ## Sync submodules and install dependencies
+	@echo "$(GREEN)Syncing dependencies...$(NC)"
+	$(UV) sync
+	@echo "$(GREEN)✓ Development environment ready$(NC)"
+
 .PHONY: clean-submodules
 clean-submodules: ## Clean submodule build artifacts
 	@echo "$(GREEN)Cleaning submodule artifacts...$(NC)"
