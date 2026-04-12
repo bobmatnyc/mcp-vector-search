@@ -22,6 +22,8 @@ permissions:
 jobs:
   drift-check:
     runs-on: ubuntu-latest
+    # Skip scheduled runs when no target is configured via repository variables
+    if: ${{ inputs.target_repo != '' || vars.DRIFT_CHECK_TARGET_REPO != '' }}
     steps:
       - name: Checkout auditor repo
         uses: actions/checkout@v4
@@ -34,22 +36,32 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[auditor]"
 
-      - name: Clone target repository
+      - name: Determine target
         run: |
-          if [[ "${{ inputs.target_repo }}" == http* ]]; then
-            git clone "${{ inputs.target_repo }}" /tmp/audit-target
+          TARGET_REPO="${{ inputs.target_repo || vars.DRIFT_CHECK_TARGET_REPO }}"
+          POLICY_PATH="${{ inputs.policy_path || vars.DRIFT_CHECK_POLICY_PATH || 'PRIVACY.md' }}"
+
+          if [ -z "$TARGET_REPO" ]; then
+            echo "::error::No target repository configured. Set DRIFT_CHECK_TARGET_REPO repository variable or use workflow_dispatch."
+            exit 1
+          fi
+
+          if [[ "$TARGET_REPO" == http* ]]; then
+            git clone "$TARGET_REPO" /tmp/audit-target
             TARGET_PATH="/tmp/audit-target"
           else
-            TARGET_PATH="${{ inputs.target_repo }}"
+            TARGET_PATH="$TARGET_REPO"
           fi
+
           echo "TARGET_PATH=$TARGET_PATH" >> $GITHUB_ENV
+          echo "POLICY_PATH=$POLICY_PATH" >> $GITHUB_ENV
 
       - name: Check for drift
         id: drift
         run: |
           RESULT=$(mvs audit drift-check \
             --target "$TARGET_PATH" \
-            --policy "$TARGET_PATH/${{ inputs.policy_path || 'PRIVACY.md' }}" \
+            --policy "$TARGET_PATH/$POLICY_PATH" \
             --json)
           echo "drift_result=$RESULT" >> $GITHUB_OUTPUT
           echo "$RESULT" | python3 -c "import sys,json; r=json.load(sys.stdin); sys.exit(1 if r['has_drift'] else 0)" || echo "DRIFT_DETECTED=true" >> $GITHUB_ENV
@@ -74,7 +86,7 @@ jobs:
           ### Action Required
           Run a new privacy audit:
           \`\`\`
-          gh workflow run privacy-audit.yml -f target_repo=... -f policy_path=...
+          gh workflow run privacy-audit.yml -f target_repo=... -f policy_path=$POLICY_PATH
           \`\`\`
 
           ---
