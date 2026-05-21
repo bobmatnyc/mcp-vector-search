@@ -327,7 +327,7 @@ def _get_default_value(key: str):
         "similarity_threshold": 0.5,
         "max_chunk_size": 512,
         "languages": [],
-        "watch_files": False,
+        "watch_files": True,
         "cache_embeddings": True,
         "max_cache_size": 1000,
         "skip_dotfiles": True,
