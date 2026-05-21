@@ -1265,15 +1265,20 @@ async def _run_batch_indexing(
         console.print()
         print_tip("Run 'mcp-vector-search embed' to generate embeddings for search")
     else:
-        # Non-progress mode (fallback)
-        result = await indexer.chunk_files(fresh=force_reindex)
-        indexed_count = result.get("files_processed", 0)
-        total_chunks_created = result.get("chunks_created", 0)
+        # Non-progress mode (MCP / headless) — run both phases via index_project()
+        # so that chunking AND embedding happen in a single call without requiring
+        # a separate 'embed' step.  chunk_files() is Phase 1-only and leaves
+        # vectors_embedded=0 which causes search to return no results.
+        index_result = await indexer.index_project(
+            force_reindex=force_reindex,
+            show_progress=False,
+        )
+        indexed_count = int(index_result)
+        total_chunks_created = index_result.chunks_indexed
 
         print_success(
-            f"Chunked {indexed_count} files ({total_chunks_created} chunks created)"
+            f"Indexed {indexed_count} files ({total_chunks_created} chunks created)"
         )
-        print_tip("Run 'mcp-vector-search embed' to generate embeddings for search")
 
     # Show statistics
     stats = await indexer.get_indexing_stats()
