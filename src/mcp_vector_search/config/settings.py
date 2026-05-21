@@ -33,7 +33,8 @@ class ProjectConfig(BaseSettings):
         default=[], description="Detected programming languages"
     )
     watch_files: bool = Field(
-        default=False, description="Enable file watching for incremental updates"
+        default=True,
+        description="Enable file watching for incremental updates (default: True)",
     )
     cache_embeddings: bool = Field(default=True, description="Enable embedding caching")
     max_cache_size: int = Field(
