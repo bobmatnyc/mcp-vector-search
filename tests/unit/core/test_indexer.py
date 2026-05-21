@@ -50,6 +50,28 @@ class TestSemanticIndexer:
         assert force_count == initial_count
 
     @pytest.mark.asyncio
+    async def test_index_project_force_on_first_call(
+        self, mock_database, temp_project_dir
+    ):
+        """Test that index_project(force_reindex=True) returns > 0 on the FIRST ever call.
+
+        Regression test for the bug where force=True on a fresh project returned 0
+        because the atomic rebuild was never finalized when indexed_count == 0.
+        """
+        indexer = SemanticIndexer(
+            database=mock_database,
+            project_root=temp_project_dir,
+            file_extensions=[".py"],
+        )
+
+        # First call with force=True on a never-indexed project must process files
+        force_count = await indexer.index_project(force_reindex=True)
+        assert force_count > 0, (
+            "index_project(force_reindex=True) returned 0 on the first call; "
+            "the atomic rebuild must be finalized even on the first run."
+        )
+
+    @pytest.mark.asyncio
     async def test_incremental_indexing(self, mock_database, temp_project_dir):
         """Test incremental indexing with file modification detection."""
         indexer = SemanticIndexer(
