@@ -1,11 +1,25 @@
 """Tests for CLI signal handlers."""
 
+import ast
 import signal
 import sys
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
+
+def test_resource_module_is_not_imported_at_module_load():
+    """Ensure Windows can import the CLI without the POSIX-only resource module."""
+    source = Path("src/mcp_vector_search/cli/main.py").read_text()
+    module = ast.parse(source)
+
+    for node in module.body:
+        if isinstance(node, ast.Import):
+            assert all(alias.name != "resource" for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert node.module != "resource"
 
 
 def test_segfault_handler_registered():
