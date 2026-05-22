@@ -1,7 +1,6 @@
 """Main CLI application for MCP Vector Search."""
 
 import faulthandler
-import resource
 import signal
 import sys
 from pathlib import Path
@@ -36,6 +35,8 @@ def _raise_file_descriptor_limit() -> None:
         return
 
     try:
+        import resource
+
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         # Try to set to 65535 (or hard limit if lower)
         new_limit = min(65535, hard)
