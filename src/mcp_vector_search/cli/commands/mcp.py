@@ -71,15 +71,16 @@ def mcp_callback(ctx: typer.Context):
     if project_root is None:
         project_root = Path.cwd()
 
-    # Start the MCP server over stdio
+    # Start the MCP server over stdio. Keep the success exit outside the
+    # catch-all so typer.Exit(0) is not mistaken for a server failure.
     try:
         asyncio.run(run_mcp_server(project_root))
-        raise typer.Exit(0)
     except KeyboardInterrupt:
         raise typer.Exit(0)
     except Exception as e:
         print(f"MCP server error: {e}", file=sys.stderr)
         raise typer.Exit(1)
+    raise typer.Exit(0)
 
 
 # Supported AI tools and their configuration details
