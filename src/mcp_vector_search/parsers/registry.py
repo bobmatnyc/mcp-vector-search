@@ -9,6 +9,7 @@ from .go import GoParser
 from .html import HTMLParser
 from .java import JavaParser
 from .javascript import JavaScriptParser, TypeScriptParser
+from .matlab import MatlabParser
 from .php import PHPParser
 from .python import PythonParser
 from .ruby import RubyParser
@@ -60,6 +61,9 @@ class ParserRegistry:
             ".dart": ("dart", DartParser),
             ".php": ("php", PHPParser),
             ".rb": ("ruby", RubyParser),
+            # NOTE: .m is shared with Objective-C; this project has no
+            # Objective-C parser, so .m is mapped to MATLAB.
+            ".m": ("matlab", MatlabParser),
             ".txt": ("text", TextParser),
             ".md": ("text", TextParser),
             ".markdown": ("text", TextParser),
